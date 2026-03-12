@@ -6,10 +6,11 @@ import {
 import type { Credential } from '../credential.js';
 
 const validCredential = {
-  authority: 'HRH Prince Davit Bagrationi',
+  authority: 'Test Authority',
   date: '2026-03-11',
-  honor: 'Knight Commander of the Royal Order of Georgia',
-  recipient: 'John Quincy Doe',
+  detail: 'Test Detail',
+  honor: 'Test Honor',
+  recipient: 'Jane Doe',
   version: 1,
 };
 
@@ -115,6 +116,39 @@ describe('validateCredential', () => {
     });
   });
 
+  describe('UnsupportedVersionError sanitization', () => {
+    it('strips control characters from string version', () => {
+      const err = new UnsupportedVersionError('\x1b[31mevil\x1b[0m');
+      expect(err.message).toBe('Unsupported credential version: [31mevil[0m');
+      expect(err.message).not.toMatch(/\x1b/);
+    });
+
+    it('passes through HTML tags (sanitizeForError only strips control/bidi chars)', () => {
+      const err = new UnsupportedVersionError('<script>alert(1)</script>');
+      expect(err.message).toBe('Unsupported credential version: <script>alert(1)</script>');
+    });
+
+    it('preserves numeric version 0 in message', () => {
+      const err = new UnsupportedVersionError(0);
+      expect(err.message).toBe('Unsupported credential version: 0');
+    });
+
+    it('preserves numeric version -1 in message', () => {
+      const err = new UnsupportedVersionError(-1);
+      expect(err.message).toBe('Unsupported credential version: -1');
+    });
+
+    it('preserves NaN in message', () => {
+      const err = new UnsupportedVersionError(NaN);
+      expect(err.message).toBe('Unsupported credential version: NaN');
+    });
+
+    it('has name set to UnsupportedVersionError', () => {
+      const err = new UnsupportedVersionError(99);
+      expect(err.name).toBe('UnsupportedVersionError');
+    });
+  });
+
   describe('date validation', () => {
     it('rejects month 13', () => {
       const cred = { ...validCredential, date: '2026-13-01' };
@@ -161,6 +195,25 @@ describe('validateCredential', () => {
       } catch (e) {
         expect((e as Error).message).not.toMatch(/\n/);
       }
+    });
+
+    it('sanitizes bidi override characters in date error messages', () => {
+      const cred = { ...validCredential, date: 'abc\u202Edef\u200F\u061Cghi' };
+      try {
+        validateCredential(cred);
+      } catch (e) {
+        const msg = (e as Error).message;
+        expect(msg).not.toMatch(/\u202E/);
+        expect(msg).not.toMatch(/\u200F/);
+        expect(msg).not.toMatch(/\u061C/);
+      }
+    });
+  });
+
+  describe('year 0000 rejection', () => {
+    it('rejects year 0000 as invalid date', () => {
+      const cred = { ...validCredential, date: '0000-01-01' };
+      expect(() => validateCredential(cred)).toThrow('invalid date: 0000-01-01');
     });
   });
 

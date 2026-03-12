@@ -69,7 +69,7 @@ export function verifyCredential(
     }
     return {
       valid: false,
-      reason: `credential validation failed: ${(err as Error).message}`,
+      reason: 'credential validation failed',
     };
   }
 
@@ -81,7 +81,8 @@ export function verifyCredential(
 
   // Step 4: First pass — date-eligible keys.
   const triedKeys = new Set<KeyEntry>();
-  for (const key of keys) {
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
     if (!isDateInRange(credential.date, key)) continue;
     triedKeys.add(key);
 
@@ -89,6 +90,8 @@ export function verifyCredential(
     try {
       publicKey = decodePublicKey(key);
     } catch {
+      if (typeof console !== 'undefined')
+        console.warn('Skipping malformed registry key at index', i);
       continue;
     }
 
@@ -103,13 +106,16 @@ export function verifyCredential(
 
   // Step 5: Second pass — remaining keys (for diagnostics).
   let dateMismatch = false;
-  for (const key of keys) {
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
     if (triedKeys.has(key)) continue;
 
     let publicKey: Uint8Array;
     try {
       publicKey = decodePublicKey(key);
     } catch {
+      if (typeof console !== 'undefined')
+        console.warn('Skipping malformed registry key at index', i);
       continue;
     }
 

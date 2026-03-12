@@ -8,6 +8,7 @@
 export type CredentialV1 = {
   authority: string;
   date: string;
+  detail: string;
   honor: string;
   recipient: string;
   version: 1;
@@ -15,22 +16,23 @@ export type CredentialV1 = {
 
 export type Credential = CredentialV1;
 
+function sanitizeForError(s: string): string {
+  return s.replace(/[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '');
+}
+
 export class UnsupportedVersionError extends Error {
   constructor(version: unknown) {
-    super(`Unsupported credential version: ${version}`);
+    const safeVersion = typeof version === 'number' ? String(version) : sanitizeForError(String(version));
+    super(`Unsupported credential version: ${safeVersion}`);
     this.name = 'UnsupportedVersionError';
   }
 }
 
-const STRING_FIELDS = ['authority', 'date', 'honor', 'recipient'] as const;
+const STRING_FIELDS = ['authority', 'date', 'detail', 'honor', 'recipient'] as const;
 const ALL_FIELDS = new Set<string>([...STRING_FIELDS, 'version']);
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-function sanitizeForError(s: string): string {
-  return s.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
-}
 
 function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
@@ -43,6 +45,7 @@ function isValidDate(value: string): boolean {
   const month = parseInt(value.slice(5, 7), 10);
   const day = parseInt(value.slice(8, 10), 10);
 
+  if (year < 1) return false;
   if (month < 1 || month > 12) return false;
 
   let maxDay = DAYS_IN_MONTH[month - 1];

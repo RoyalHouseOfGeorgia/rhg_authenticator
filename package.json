@@ -12,15 +12,20 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
+    "build:verify": "esbuild src/verify-page.ts --bundle --outfile=verify/verify.js --format=iife --target=es2020 --minify",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "check:registry": "node -e \"const r=JSON.parse(require('fs').readFileSync('./keys/registry.json','utf8')); const TEST_KEY='/PjT+j342wWZypb0m/4MSBsFhHrrqzpoTe2rZ9hf0XU='; if(r.keys.some(k=>k.public_key===TEST_KEY)){console.error('ERROR: registry.json contains test key — replace before deployment');process.exit(1)}else{console.log('OK: no test keys found')}\"",
+    "audit:deps": "npm audit --omit=dev"
   },
   "dependencies": {
     "@noble/curves": "^1.8.0"
   },
   "devDependencies": {
+    "esbuild": "^0.25.0",
+    "happy-dom": "^20.8.3",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

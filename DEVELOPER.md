@@ -21,6 +21,7 @@ npm install
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run lint` | Type-check without emitting (`tsc --noEmit`) |
 | `npm run build` | Compile TypeScript to `dist/` |
+| `npm run build:verify` | Bundle verification page JS (`verify/verify.js`) |
 
 ## Project Structure
 
@@ -32,6 +33,7 @@ src/
 ├── crypto.ts             # Ed25519 sign/verify/getPublicKey
 ├── registry.ts           # Key registry schema, lookup, decoding
 ├── verify.ts             # Verification orchestrator
+├── verify-page.ts        # Verification page logic (URL parsing, fetch, render)
 ├── index.ts              # Barrel export
 └── __tests__/
     ├── canonical.test.ts
@@ -39,9 +41,18 @@ src/
     ├── credential.test.ts
     ├── crypto.test.ts
     ├── registry.test.ts
-    └── verify.test.ts
+    ├── verify.test.ts
+    └── verify-page.test.ts  # Uses happy-dom environment
+verify/
+├── index.html            # Static verification page shell
+├── styles.css            # Mobile-first CSS
+├── verify.js             # esbuild IIFE bundle (built artifact)
+├── favicon.ico           # Site favicon
+└── royal-arms-120.jpg    # Royal arms crest (120x120)
+scripts/
+└── generate-test-url.ts  # Generate signed test URLs for UI preview
 keys/
-└── registry.json         # Public key registry (placeholder)
+└── registry.json         # Public key registry (test key)
 research/
 └── signing-tool.md       # YubiKey signing research
 ```
@@ -73,7 +84,7 @@ validateCredential(obj: unknown): Credential
 ```
 
 Validates and type-narrows an unknown value as a v1 credential. Checks:
-- Required fields: `version`, `authority`, `date`, `honor`, `recipient`
+- Required fields: `version`, `authority`, `date`, `detail`, `honor`, `recipient`
 - `version` must be `1` (throws `UnsupportedVersionError` for other numbers)
 - String fields: non-empty, no leading/trailing whitespace
 - Date: arithmetic validation (leap years, month lengths) — not `Date` constructor
@@ -142,10 +153,11 @@ Failure reasons:
 import { canonicalize, base64urlEncode, sign, getPublicKey } from '@rhg/authenticator';
 
 const credential = {
-  authority: 'HRH Prince Davit Bagrationi',
+  authority: 'Issuing Authority',
   date: '2026-03-11',
-  honor: 'Knight Commander of the Royal Order of Georgia',
-  recipient: 'John Quincy Doe',
+  detail: 'Specific distinction or rank',
+  honor: 'Name of Honor',
+  recipient: 'Recipient Name',
   version: 1,
 };
 
@@ -172,6 +184,32 @@ if (result.valid) {
 }
 ```
 
+### Verification Page
+
+```typescript
+parseParams(search: string): PageParams | ParseError
+getRegistryUrl(): string
+fetchRegistry(url: string): Promise<Registry>
+runVerification(params: PageParams, registry: Registry): VerifyPageResult
+renderResult(result: VerifyPageResult, container: Element): void
+initVerifyPage(): Promise<void>
+```
+
+Client-side verification page logic. Parses URL parameters (`?p=<payload>&s=<signature>`), fetches the key registry, runs cryptographic verification, and renders the result into the DOM. All text is set via `textContent` (never `innerHTML`) to prevent XSS. Registry URL is absolute only on `verify.royalhouseofgeorgia.ge`; relative path everywhere else.
+
+### Building the Verification Page
+
+```bash
+npm run build:verify    # esbuild → verify/verify.js (IIFE, es2020, minified)
+```
+
+To preview locally:
+
+```bash
+npx tsx scripts/generate-test-url.ts   # prints test URLs
+npx http-server . -p 8080              # serve from project root
+```
+
 ## Testing Conventions
 
 - Tests live in `src/__tests__/` alongside source modules
@@ -180,6 +218,8 @@ if (result.valid) {
 - Credential test data uses realistic but fictional values
 - Crypto tests use the RFC 8032 empty-message test vector (`d75a980182b10ab7...`)
 - No mocking of internal modules — tests exercise the real code paths
+- Verification page tests use `// @vitest-environment happy-dom` per-file directive
+- `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page tests only
 
 ## Key Registry Format
 

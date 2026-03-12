@@ -29,20 +29,20 @@ No blockchain, no third-party verification services. Trust is rooted in Ed25519 
 
 ```
 ┌─────────────┐   credential JSON    ┌─────────────────┐
-│ Issuer Form │─────────────────────▶│ Signing Server   │
-│ (browser)   │                      │ (localhost)      │
+│ Issuer Form │────────────────────▶│ Signing Server  │
+│ (browser)   │                      │ (localhost)     │
 └─────────────┘                      └────────┬────────┘
                                               │ canonical JSON bytes
                                               ▼
                                      ┌─────────────────┐
-                                     │ YubiKey PIV 9c   │
-                                     │ Ed25519 sign     │
+                                     │ YubiKey PIV 9c  │
+                                     │ Ed25519 sign    │
                                      └────────┬────────┘
                                               │ 64-byte signature
                                               ▼
                                      ┌─────────────────┐
-                                     │ Base64URL encode │
-                                     │ → QR code URL    │
+                                     │ Base64URL encode│
+                                     │ → QR code URL   │
                                      └─────────────────┘
 ```
 
@@ -50,7 +50,7 @@ No blockchain, no third-party verification services. Trust is rooted in Ed25519 
 
 ```
 ┌────────────┐   scan    ┌─────────────────────────────────────────┐
-│ QR Code    │──────────▶│ https://verify.../  ?p=...&s=...        │
+│ QR Code    │──────────▶│ https://verify.../  ?p=...&s=...       │
 └────────────┘           └────────────────────┬────────────────────┘
                                               │
                          ┌────────────────────▼────────────────────┐
@@ -58,16 +58,14 @@ No blockchain, no third-party verification services. Trust is rooted in Ed25519 
                          │ 2. Base64URL decode → bytes             │
                          │ 3. Fetch /keys/registry.json            │
                          │ 4. Parse + validate credential JSON     │
-                         │ 5. Find keys by authority                │
+                         │ 5. Find keys by authority               │
                          │ 6. Verify Ed25519 signature             │
                          │ 7. Check date range                     │
                          │ 8. Display result                       │
                          └─────────────────────────────────────────┘
 ```
 
-## Module Architecture (Phase 1)
-
-All modules are pure functions with no side effects. No async operations. No runtime dependencies other than `@noble/curves`.
+## Module Architecture
 
 ```
                         ┌─────────────┐
@@ -75,11 +73,11 @@ All modules are pure functions with no side effects. No async operations. No run
                         └──────┬──────┘
                    ┌───────────┼───────────┐
                    ▼           ▼           ▼
-            ┌────────────┐ ┌──────────┐ ┌───────────┐
+            ┌─────────────┐ ┌──────────┐ ┌───────────┐
             │credential.ts│ │crypto.ts │ │registry.ts│
-            └────────────┘ └──────────┘ └─────┬─────┘
-                                              │
-                   ┌──────────────────────────┘
+            └─────────────┘ └──────────┘ └─────┬─────┘
+                                               │
+                   ┌───────────────────────────┘
                    ▼           ▼
             ┌────────────┐ ┌──────────────┐
             │base64url.ts│ │canonical.ts  │
@@ -97,6 +95,7 @@ All modules are pure functions with no side effects. No async operations. No run
 | `registry.ts` | Registry schema validation, authority lookup, SPKI key decoding | `base64url.ts` |
 | `verify.ts` | Two-pass verification orchestrator | `credential.ts`, `crypto.ts`, `registry.ts` |
 | `index.ts` | Barrel export | All modules |
+| `verify-page.ts` | Browser verification page: URL parsing, registry fetch, DOM rendering | `verify.ts`, `base64url.ts`, `registry.ts` |
 
 ## Credential Format
 
@@ -106,13 +105,14 @@ All modules are pure functions with no side effects. No async operations. No run
 type CredentialV1 = {
   authority: string;   // Formal title of the signer
   date: string;        // ISO 8601 date (YYYY-MM-DD)
+  detail: string;      // Specific distinction or rank
   honor: string;       // Title of the honor bestowed
   recipient: string;   // Full name of the recipient
   version: 1;          // Schema version
 };
 ```
 
-All five fields are required. No extra fields allowed. Strings must be non-empty with no leading/trailing whitespace.
+All six fields are required. No extra fields allowed. Strings must be non-empty with no leading/trailing whitespace.
 
 ### Canonical Form
 
@@ -220,9 +220,9 @@ Verification operates on the original payload bytes, not a re-canonicalized form
 
 ## Planned Phases
 
-### Phase 2: Verification Page
+### Phase 2: Verification Page (Complete)
 
-Static HTML/CSS/JS page for GitHub Pages. Bundles the Phase 1 library for browser execution. Parses URL parameters, fetches registry, runs verification, displays dignified success/failure UI. Mobile-first (primary use: phone scanning QR).
+Static HTML/CSS/JS page for GitHub Pages at `verify/`. The Phase 1 library is bundled via esbuild into a single IIFE (39KB minified). The page parses URL parameters (`?p=<payload>&s=<signature>`), fetches the key registry, runs Ed25519 verification client-side, and renders a dignified success/failure/error UI. Mobile-first design (primary use: phone scanning QR). All DOM text via `textContent` for XSS prevention. WCAG AA accessible (color + icon + text label for all states).
 
 ### Phase 3: Signing Server
 

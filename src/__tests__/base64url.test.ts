@@ -4,6 +4,8 @@ import {
   base64Decode,
   base64urlDecode,
   base64urlEncode,
+  MAX_B64URL_INPUT,
+  MAX_B64_INPUT,
 } from "../base64url.js";
 
 describe("base64url", () => {
@@ -122,6 +124,40 @@ describe("base64url", () => {
     it('rejects "AAAAA" (length 5, remainder 1)', () => {
       expect(() => base64urlDecode("AAAAA")).toThrow(
         "base64urlDecode: invalid Base64URL input — invalid length",
+      );
+    });
+  });
+
+  // Pre-decode length limit checks
+  describe("pre-decode length limits", () => {
+    it("base64urlDecode throws when input exceeds MAX_B64URL_INPUT", () => {
+      const longStr = "A".repeat(MAX_B64URL_INPUT + 1);
+      expect(() => base64urlDecode(longStr)).toThrow(
+        "input exceeds maximum length",
+      );
+    });
+
+    it("base64urlDecode accepts input at exactly MAX_B64URL_INPUT length", () => {
+      // Build a valid base64url string of exactly MAX_B64URL_INPUT chars
+      // This will be valid base64url (all 'A's decode fine)
+      const str = "A".repeat(MAX_B64URL_INPUT);
+      // Should not throw the length error (may throw for other reasons but not length)
+      expect(() => base64urlDecode(str)).not.toThrow(
+        "input exceeds maximum length",
+      );
+    });
+
+    it("base64Decode throws when input exceeds MAX_B64_INPUT", () => {
+      const longStr = "A".repeat(MAX_B64_INPUT + 1);
+      expect(() => base64Decode(longStr)).toThrow(
+        "input exceeds maximum length",
+      );
+    });
+
+    it("base64Decode accepts input at exactly MAX_B64_INPUT length", () => {
+      const str = "A".repeat(MAX_B64_INPUT);
+      expect(() => base64Decode(str)).not.toThrow(
+        "input exceeds maximum length",
       );
     });
   });

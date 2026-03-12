@@ -10,8 +10,8 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 
 ```
 ┌──────────────┐     ┌─────────────┐     ┌──────────────────┐
-│  Credential  │────▶│  QR Code on │────▶│  Public Verify    │
-│  + Signature │     │  Diploma    │     │  Page (GH Pages)  │
+│  Credential  │───▶│  QR Code on │────▶│  Public Verify   │
+│  + Signature │     │  Diploma    │     │  Page (GH Pages) │
 └──────────────┘     └─────────────┘     └──────────────────┘
        ▲                                          │
        │                                          ▼
@@ -26,7 +26,7 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Core crypto & data library | **Complete** (170 tests) |
-| 2 | Public verification page | Not started |
+| 2 | Public verification page | **Complete** (34 tests) |
 | 3 | Local signing server (YubiKey) | Not started |
 | 4 | Issuer interface (form + QR) | Not started |
 | 5 | Issuance log & history | Not started |
@@ -36,7 +36,7 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 
 ```bash
 npm install
-npm test          # 170 tests
+npm test          # 204 tests
 npm run lint      # tsc --noEmit
 npm run build     # TypeScript → dist/
 ```
@@ -55,6 +55,8 @@ Requires Node.js 20+.
 | [`@noble/curves`](https://github.com/paulmillr/noble-curves) | Audited Ed25519 implementation | Runtime |
 | `typescript` | Type checking and compilation | Dev |
 | `vitest` | Test runner | Dev |
+| `esbuild` | Bundle TypeScript for browser | Dev |
+| `happy-dom` | Lightweight DOM for verification page tests | Dev |
 
 ## License
 

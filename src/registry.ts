@@ -33,7 +33,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 function sanitizeForError(s: string): string {
-  return s.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+  return s.replace(/[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '');
 }
 
 function isLeapYear(year: number): boolean {
@@ -47,6 +47,7 @@ function isValidDate(value: string): boolean {
   const month = parseInt(value.slice(5, 7), 10);
   const day = parseInt(value.slice(8, 10), 10);
 
+  if (year < 1) return false;
   if (month < 1 || month > 12) return false;
 
   let maxDay = DAYS_IN_MONTH[month - 1];
@@ -107,6 +108,10 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
     if (!isValidDate(record.to)) {
       throw new Error(`keys[${index}]: invalid date for to: ${sanitizeForError(record.to as string)}`);
     }
+  }
+
+  if (typeof record.to === 'string' && record.to < record.from) {
+    throw new Error(`keys[${index}]: invalid date range: from (${sanitizeForError(record.from as string)}) is after to (${sanitizeForError(record.to as string)})`);
   }
 
   // algorithm: exactly 'Ed25519'.
@@ -201,6 +206,7 @@ export function findKeysByAuthority(
  * `from` is inclusive, `to` is inclusive.  `to: null` means no upper bound.
  */
 export function isDateInRange(credentialDate: string, key: KeyEntry): boolean {
+  if (!DATE_RE.test(credentialDate)) return false;
   if (credentialDate < key.from) return false;
   if (key.to !== null && credentialDate > key.to) return false;
   return true;

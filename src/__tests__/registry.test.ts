@@ -252,6 +252,39 @@ describe('validateRegistry', () => {
           'keys[0]: invalid date for to: 2026-04-31',
         );
       });
+
+      it('rejects year 0000 for from', () => {
+        const entry = makeEntry({ from: '0000-01-01' });
+        expect(() => validateRegistry({ keys: [entry] })).toThrow(
+          'keys[0]: invalid date for from: 0000-01-01',
+        );
+      });
+
+      it('rejects year 0000 for to', () => {
+        const entry = makeEntry({ to: '0000-06-15' });
+        expect(() => validateRegistry({ keys: [entry] })).toThrow(
+          'keys[0]: invalid date for to: 0000-06-15',
+        );
+      });
+
+      it('rejects from after to (invalid date range)', () => {
+        const entry = makeEntry({ from: '2025-06-01', to: '2025-01-01' });
+        expect(() => validateRegistry({ keys: [entry] })).toThrow(
+          'invalid date range',
+        );
+      });
+
+      it('sanitizes bidi override characters in date error messages', () => {
+        const entry = makeEntry({ from: '2025-01-01\u202E\u200F\u061C' });
+        try {
+          validateRegistry({ keys: [entry] });
+        } catch (e) {
+          const msg = (e as Error).message;
+          expect(msg).not.toMatch(/\u202E/);
+          expect(msg).not.toMatch(/\u200F/);
+          expect(msg).not.toMatch(/\u061C/);
+        }
+      });
     });
 
     it('sanitizes control characters in from date error messages', () => {
@@ -366,6 +399,16 @@ describe('isDateInRange', () => {
   it('returns false when to is null but date is before from', () => {
     const openKey = makeEntry({ from: '2025-01-01', to: null });
     expect(isDateInRange('2024-12-31', openKey)).toBe(false);
+  });
+
+  it('returns false for non-ISO-format date string', () => {
+    const key = makeEntry({ from: '2025-01-01', to: '2025-12-31' });
+    expect(isDateInRange('not-a-date', key)).toBe(false);
+  });
+
+  it('returns false for partial date string', () => {
+    const key = makeEntry({ from: '2025-01-01', to: '2025-12-31' });
+    expect(isDateInRange('2025-06', key)).toBe(false);
   });
 
   it('handles overlapping key periods — boundary date matches both', () => {

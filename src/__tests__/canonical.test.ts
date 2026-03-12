@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalize } from '../canonical.js';
+import { canonicalize, MAX_DEPTH } from '../canonical.js';
 import type { JsonObject } from '../canonical.js';
 
 const decoder = new TextDecoder();
@@ -119,6 +119,71 @@ describe('canonicalize', () => {
     expect(toJson({})).toBe('{}');
     expect(toJson({ a: [] })).toBe('{"a":[]}');
     expect(toJson({ a: {} })).toBe('{"a":{}}');
+  });
+
+  describe('depth cap', () => {
+    it('exports MAX_DEPTH as 4', () => {
+      expect(MAX_DEPTH).toBe(4);
+    });
+
+    it('passes shallow object { a: 1 } (max depth 0)', () => {
+      expect(() => canonicalize({ a: 1 })).not.toThrow();
+    });
+
+    it('passes one level of nesting { a: { b: 1 } } (max depth 1)', () => {
+      expect(() => canonicalize({ a: { b: 1 } })).not.toThrow();
+    });
+
+    it('passes object nested inside array { a: [{ b: 1 }] } (max depth 2)', () => {
+      expect(() => canonicalize({ a: [{ b: 1 }] })).not.toThrow();
+    });
+
+    it('passes three levels of nesting { a: { b: { c: { d: 1 } } } } (max depth 3)', () => {
+      expect(() => canonicalize({ a: { b: { c: { d: 1 } } } })).not.toThrow();
+    });
+
+    it('throws at four levels of nesting { a: { b: { c: { d: { e: 1 } } } } } (depth 4 >= MAX_DEPTH)', () => {
+      expect(() =>
+        canonicalize({ a: { b: { c: { d: { e: 1 } } } } }),
+      ).toThrow('object exceeds maximum nesting depth');
+    });
+
+    it('throws for mixed object/array nesting that reaches depth 4', () => {
+      // root=0, array=1, inner obj=2, inner array=3, c obj=4 → throws
+      expect(() =>
+        canonicalize({ a: [{ b: [{ c: 1 }] }] }),
+      ).toThrow('object exceeds maximum nesting depth');
+    });
+
+    it('passes nested arrays up to depth 3 { a: [[[]]] }', () => {
+      // root=0, array=1, array=2, array=3 → max depth 3, passes
+      expect(() => canonicalize({ a: [[[]]] })).not.toThrow();
+    });
+
+    it('throws for nested arrays reaching depth 4 { a: [[[[]]]] }', () => {
+      // root=0, array depths 1,2,3,4 → depth 4 >= MAX_DEPTH → throws
+      expect(() => canonicalize({ a: [[[[]]]] })).toThrow(
+        'object exceeds maximum nesting depth',
+      );
+    });
+
+    it('passes flat V1 credential (regression test)', () => {
+      const credential: JsonObject = {
+        authority: 'HRH Prince Davit Bagrationi',
+        date: '2026-03-11',
+        honor: 'Knight Commander of the Royal Order of Georgia',
+        recipient: 'John Quincy Doe',
+        version: 1,
+      };
+      // root=0, all values are scalars → max depth 0
+      expect(() => canonicalize(credential)).not.toThrow();
+    });
+
+    it('includes descriptive message in depth error', () => {
+      expect(() =>
+        canonicalize({ a: { b: { c: { d: { e: 1 } } } } }),
+      ).toThrow(/object exceeds maximum nesting depth/);
+    });
   });
 
   describe('prototype pollution protection', () => {

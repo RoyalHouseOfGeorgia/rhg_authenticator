@@ -19,8 +19,12 @@ export function base64urlEncode(bytes: Uint8Array): string {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/** Maximum Base64URL input length, derived from MAX_PAYLOAD_BYTES (2048): ceil(2048 * 4/3) rounded up with margin. */
+export const MAX_B64URL_INPUT = 2800;
+
 /** Decode a Base64URL string (padded or unpadded) to a Uint8Array. */
 export function base64urlDecode(str: string): Uint8Array {
+  if (str.length > MAX_B64URL_INPUT) throw new Error('input exceeds maximum length');
   // Convert URL-safe alphabet back to standard Base64
   let b64 = str.replace(/-/g, "+").replace(/_/g, "/");
 
@@ -45,8 +49,12 @@ export function base64urlDecode(str: string): Uint8Array {
   return Uint8Array.from(binStr, (c) => c.charCodeAt(0));
 }
 
+/** Maximum standard Base64 input length — generous limit for Ed25519 SPKI keys (valid keys are <=60 chars). */
+export const MAX_B64_INPUT = 256;
+
 /** Decode a standard Base64 string (padded) to a Uint8Array. */
 export function base64Decode(str: string): Uint8Array {
+  if (str.length > MAX_B64_INPUT) throw new Error('input exceeds maximum length');
   let binStr: string;
   try {
     binStr = atob(str);

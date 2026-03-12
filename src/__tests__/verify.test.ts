@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { verifyCredential, MAX_PAYLOAD_BYTES } from "../verify.js";
 import type { VerificationSuccess, VerificationFailure } from "../verify.js";
@@ -57,7 +57,8 @@ function validCredentialObj(
   return {
     authority: "Test Authority",
     date: "2024-06-15",
-    honor: "summa cum laude",
+    detail: "Test Detail",
+    honor: "Test Honor",
     recipient: "Jane Doe",
     version: 1,
     ...overrides,
@@ -263,7 +264,7 @@ describe("verifyCredential", () => {
     const result = verifyCredential(payload, fakeSig, registry);
 
     expect(result.valid).toBe(false);
-    expect((result as VerificationFailure).reason).toContain(
+    expect((result as VerificationFailure).reason).toBe(
       "credential validation failed",
     );
   });
@@ -277,7 +278,8 @@ describe("verifyCredential", () => {
     const payload = encodeCredential({
       authority: "Test Authority",
       date: "2024-06-15",
-      honor: "summa cum laude",
+      detail: "Test Detail",
+      honor: "Test Honor",
       recipient: "Jane Doe",
       version: 99,
     });
@@ -330,6 +332,72 @@ describe("verifyCredential", () => {
     const result = verifyCredential(payload, signature, registry);
     expect(result.valid).toBe(true);
     expect((result as VerificationSuccess).key).toBe(goodEntry);
+  });
+
+  // 13b. Console.warn on corrupted registry key
+  it("logs console.warn with key index when encountering a malformed key", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+
+    const corruptedEntry: KeyEntry = {
+      authority: "Test Authority",
+      from: "2020-01-01",
+      to: null,
+      algorithm: "Ed25519",
+      public_key: btoa("short"),
+      note: "corrupted",
+    };
+    const goodEntry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(corruptedEntry, goodEntry);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = verifyCredential(payload, signature, registry);
+      expect(result.valid).toBe(true);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "Skipping malformed registry key at index",
+        0,
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // 13c. Console.warn on corrupted key in second pass (date-ineligible key)
+  it("logs console.warn for malformed key encountered in second pass", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj({ date: "2024-06-15" });
+    const payload = encodeCredential(cred);
+    const fakeSig = new Uint8Array(64);
+
+    // Key at index 0: date-eligible, valid — will be tried in pass 1
+    const goodEntry = makeKeyEntry(publicKey, {
+      from: "2020-01-01",
+      to: null,
+    });
+    // Key at index 1: date-ineligible, corrupted — will be tried in pass 2
+    const corruptedEntry: KeyEntry = {
+      authority: "Test Authority",
+      from: "2000-01-01",
+      to: "2000-12-31",
+      algorithm: "Ed25519",
+      public_key: btoa("short"),
+      note: "corrupted",
+    };
+    const registry = makeRegistry(goodEntry, corruptedEntry);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      verifyCredential(payload, fakeSig, registry);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "Skipping malformed registry key at index",
+        1,
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   // 14. End-to-end round-trip: canonicalize → sign → base64url → decode → verify
@@ -447,6 +515,7 @@ describe("verifyCredential", () => {
     const credential = {
       authority: "თბილისის უნივერსიტეტი",
       date: "2024-12-31",
+      detail: "დეტალი",
       honor: "წარჩინებით",
       recipient: "გიორგი მა",
       version: 1 as const,
@@ -470,7 +539,7 @@ describe("verifyCredential", () => {
 
     // Build a realistic URL
     const url = `https://example.edu/verify?p=${payloadB64}&s=${signatureB64}`;
-    expect(url.length).toBeLessThanOrEqual(394);
-    expect(payloadB64.length).toBeLessThanOrEqual(261);
+    expect(url.length).toBeLessThanOrEqual(420);
+    expect(payloadB64.length).toBeLessThanOrEqual(300);
   });
 });

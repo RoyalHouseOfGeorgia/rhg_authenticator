@@ -1,0 +1,354 @@
+/* ==========================================================================
+   Royal House of Georgia — Credential Verification
+   Mobile-first, formal aesthetic. No external dependencies.
+   ========================================================================== */
+
+/* --- Design Tokens --- */
+:root {
+  --color-burgundy: #800020;
+  --color-burgundy-dark: #5c0017;
+  --color-gold: #C5A355;
+  --color-gold-light: #d4b96e;
+  --color-cream: #FAF8F0;
+  --color-white: #ffffff;
+  --color-text: #2c2c2c;
+  --color-text-muted: #5a5a5a;
+  --color-valid: #1a6b3c;
+  --color-valid-border: #1a6b3c;
+  --color-valid-bg: #f0f9f3;
+  --color-invalid: #a82020;
+  --color-invalid-border: #a82020;
+  --color-invalid-bg: #fdf2f2;
+  --color-error: #b8860b;
+  --color-error-border: #b8860b;
+  --color-error-bg: #fdf8ed;
+
+  --font-serif: Georgia, "Times New Roman", "Palatino Linotype", serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --max-width: 600px;
+  --padding-mobile: 16px;
+  --padding-desktop: 32px;
+  --radius: 4px;
+}
+
+/* --- Reset & Base --- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background-color: var(--color-cream);
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: var(--padding-mobile);
+}
+
+/* --- Header --- */
+header {
+  text-align: center;
+  padding: 32px 0 24px;
+}
+
+.header-crest {
+  display: block;
+  margin: 0 auto 16px;
+  width: 120px;
+  height: 120px;
+}
+
+.header-georgian {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-burgundy);
+  letter-spacing: 0.02em;
+  margin-bottom: 2px;
+}
+
+.header-english {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-burgundy);
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+}
+
+.subtitle {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* --- Main Result Area --- */
+main {
+  flex: 1;
+  width: 100%;
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+/* --- Loading State --- */
+.loading {
+  text-align: center;
+  padding: 48px 16px;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  color: var(--color-text-muted);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* --- Result States --- */
+.result-valid,
+.result-invalid,
+.result-error,
+.result-info {
+  background: var(--color-white);
+  border-radius: var(--radius);
+  padding: 24px 20px;
+  border-left: 5px solid transparent;
+}
+
+.result-valid {
+  border-left-color: var(--color-valid-border);
+}
+
+.result-invalid {
+  border-left-color: var(--color-invalid-border);
+}
+
+.result-error {
+  border-left-color: var(--color-error-border);
+}
+
+/* --- Status Banner --- */
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 20px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #e8e4dc;
+  font-family: var(--font-serif);
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.result-valid .status-banner {
+  color: var(--color-valid);
+}
+
+.result-invalid .status-banner {
+  color: var(--color-invalid);
+}
+
+.result-error .status-banner {
+  color: var(--color-error);
+}
+
+/* Status banner icons (set via JS text content or ::before) */
+.status-banner::before {
+  font-size: 1.4rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.result-valid .status-banner::before {
+  content: "\2713"; /* ✓ */
+}
+
+.result-invalid .status-banner::before {
+  content: "\2717"; /* ✗ */
+}
+
+.result-error .status-banner::before {
+  content: "\26A0"; /* ⚠ */
+}
+
+/* --- Credential Fields --- */
+.credential-field {
+  padding: 10px 0;
+}
+
+.credential-field + .credential-field {
+  border-top: 1px solid #f0ece4;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  margin-bottom: 2px;
+}
+
+.field-value {
+  display: block;
+  font-size: 1rem;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+/* --- Result Text (reason / message / hint) --- */
+.result-detail {
+  font-size: 1rem;
+  color: var(--color-text);
+  line-height: 1.5;
+  padding: 8px 0;
+}
+
+.result-hint {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  padding-top: 8px;
+}
+
+/* --- Info Page --- */
+.info-heading {
+  font-family: var(--font-serif);
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--color-burgundy);
+  margin-bottom: 12px;
+}
+
+.info-text {
+  font-size: 1rem;
+  color: var(--color-text);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.info-link {
+  color: var(--color-burgundy);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.info-link:hover {
+  text-decoration: underline;
+}
+
+/* --- Contact Info --- */
+.contact-info {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  padding-top: 12px;
+  line-height: 1.5;
+}
+
+.contact-link {
+  color: var(--color-burgundy);
+  text-decoration: none;
+}
+
+.contact-link:hover {
+  text-decoration: underline;
+}
+
+/* --- Noscript Error Banner --- */
+noscript .error-banner {
+  background: var(--color-error-bg);
+  border-left: 5px solid var(--color-error-border);
+  border-radius: var(--radius);
+  padding: 24px 20px;
+  max-width: var(--max-width);
+  margin: 24px auto;
+  text-align: center;
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+/* --- Footer --- */
+footer {
+  text-align: center;
+  padding: 32px 0 16px;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+footer a {
+  color: inherit;
+  text-decoration: none;
+}
+footer a:hover {
+  text-decoration: underline;
+}
+
+/* --- Dev-mode Warning Banner --- */
+.dev-warning {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: var(--radius);
+  color: #856404;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  max-width: var(--max-width);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ==========================================================================
+   Desktop breakpoint (≥640px)
+   ========================================================================== */
+@media (min-width: 640px) {
+  body {
+    padding: var(--padding-desktop);
+  }
+
+  .header-georgian {
+    font-size: 1.875rem;
+  }
+
+  .header-english {
+    font-size: 1.875rem;
+  }
+
+  .subtitle {
+    font-size: 0.9375rem;
+  }
+
+  .result-valid,
+  .result-invalid,
+  .result-error,
+  .result-info {
+    padding: 32px 28px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    border-radius: 6px;
+  }
+
+  .status-banner {
+    font-size: 1.35rem;
+  }
+
+  .field-value {
+    font-size: 1.05rem;
+  }
+}

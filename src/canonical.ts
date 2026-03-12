@@ -2,11 +2,14 @@
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
 
+/** Maximum allowed nesting depth for canonicalized objects. */
+export const MAX_DEPTH = 4;
+
 /**
  * Recursively sort object keys and normalize values for deterministic
  * JSON serialization.
  */
-function sortAndNormalize(value: JsonValue): JsonValue {
+function sortAndNormalize(value: JsonValue, depth: number): JsonValue {
   if (value === undefined) {
     throw new TypeError('undefined is not a valid JSON value');
   }
@@ -32,8 +35,11 @@ function sortAndNormalize(value: JsonValue): JsonValue {
       return value.normalize('NFC');
 
     case 'object': {
+      if (depth >= MAX_DEPTH) {
+        throw new Error('object exceeds maximum nesting depth');
+      }
       if (Array.isArray(value)) {
-        return value.map((el) => sortAndNormalize(el));
+        return value.map((el) => sortAndNormalize(el, depth + 1));
       }
       // Plain object — sort keys and recurse.
       const sorted = Object.create(null) as JsonObject;
@@ -47,7 +53,7 @@ function sortAndNormalize(value: JsonValue): JsonValue {
             `undefined value at key "${key}" is not valid JSON`,
           );
         }
-        sorted[key] = sortAndNormalize(v);
+        sorted[key] = sortAndNormalize(v, depth + 1);
       }
       return sorted;
     }
@@ -65,7 +71,7 @@ const encoder = new TextEncoder();
  * and the output contains no extraneous whitespace.
  */
 export function canonicalize(obj: JsonObject): Uint8Array {
-  const normalized = sortAndNormalize(obj) as JsonObject;
+  const normalized = sortAndNormalize(obj, 0) as JsonObject;
   const json = JSON.stringify(normalized);
   return encoder.encode(json);
 }
