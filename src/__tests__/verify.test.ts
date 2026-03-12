@@ -1,0 +1,476 @@
+import { describe, expect, it } from "vitest";
+
+import { verifyCredential, MAX_PAYLOAD_BYTES } from "../verify.js";
+import type { VerificationSuccess, VerificationFailure } from "../verify.js";
+import { sign, getPublicKey } from "../crypto.js";
+import { canonicalize } from "../canonical.js";
+import { base64urlEncode, base64urlDecode } from "../base64url.js";
+import type { KeyEntry, Registry } from "../registry.js";
+
+/** Generate a deterministic Ed25519 keypair from a seed byte. */
+function makeKeypair(seed = 0) {
+  const secretKey = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) secretKey[i] = (seed + i * 7) & 0xff;
+  const publicKey = getPublicKey(secretKey);
+  return { secretKey, publicKey };
+}
+
+/** Encode raw 32-byte public key as standard base64. */
+function toBase64(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes));
+}
+
+/** Build a KeyEntry for tests. */
+function makeKeyEntry(
+  publicKey: Uint8Array,
+  opts: {
+    authority?: string;
+    from?: string;
+    to?: string | null;
+    note?: string;
+  } = {},
+): KeyEntry {
+  return {
+    authority: opts.authority ?? "Test Authority",
+    from: opts.from ?? "2020-01-01",
+    to: opts.to !== undefined ? opts.to : null,
+    algorithm: "Ed25519",
+    public_key: toBase64(publicKey),
+    note: opts.note ?? "",
+  };
+}
+
+/** Build a Registry from key entries. */
+function makeRegistry(...keys: KeyEntry[]): Registry {
+  return { keys };
+}
+
+/** Encode a credential object to UTF-8 bytes (canonical JSON). */
+function encodeCredential(cred: Record<string, unknown>): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(cred));
+}
+
+/** Default valid credential fields. */
+function validCredentialObj(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    authority: "Test Authority",
+    date: "2024-06-15",
+    honor: "summa cum laude",
+    recipient: "Jane Doe",
+    version: 1,
+    ...overrides,
+  };
+}
+
+describe("verifyCredential", () => {
+  // 1. Happy path
+  it("returns valid with matching key for a correctly signed credential", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const result = verifyCredential(payload, signature, registry);
+
+    expect(result.valid).toBe(true);
+    expect((result as VerificationSuccess).key).toBe(entry);
+  });
+
+  // 2. Unknown authority
+  it("returns failure when authority is not in registry", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj({ authority: "Unknown Authority" });
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey, { authority: "Other Authority" });
+    const registry = makeRegistry(entry);
+
+    const result = verifyCredential(payload, signature, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain("authority");
+  });
+
+  // 3. Tampered payload
+  it("rejects a tampered payload", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const payload = encodeCredential(validCredentialObj());
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    // Tamper: change the payload after signing
+    const tampered = encodeCredential(
+      validCredentialObj({ recipient: "Evil Eve" }),
+    );
+    const result = verifyCredential(tampered, signature, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain(
+      "no matching key produced a valid signature",
+    );
+  });
+
+  // 4. Tampered signature
+  it("rejects a tampered signature", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const payload = encodeCredential(validCredentialObj());
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const badSig = new Uint8Array(signature);
+    badSig[0] ^= 0xff;
+    const result = verifyCredential(payload, badSig, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain(
+      "no matching key produced a valid signature",
+    );
+  });
+
+  // 5. Date before key's from
+  it("returns date-mismatch failure when credential date is before key's from", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj({ date: "2019-06-15" });
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey, { from: "2020-01-01", to: null });
+    const registry = makeRegistry(entry);
+
+    const result = verifyCredential(payload, signature, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain(
+      "credential date outside key validity period",
+    );
+  });
+
+  // 6. Date after key's to
+  it("returns date-mismatch failure when credential date is after key's to", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj({ date: "2025-06-15" });
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey, {
+      from: "2020-01-01",
+      to: "2024-12-31",
+    });
+    const registry = makeRegistry(entry);
+
+    const result = verifyCredential(payload, signature, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain(
+      "credential date outside key validity period",
+    );
+  });
+
+  // 7. Key rotation: two keys, credentials in each period validate correctly
+  it("handles key rotation — validates against correct era key", () => {
+    const pair1 = makeKeypair(1);
+    const pair2 = makeKeypair(2);
+
+    const key1 = makeKeyEntry(pair1.publicKey, {
+      from: "2020-01-01",
+      to: "2023-12-31",
+    });
+    const key2 = makeKeyEntry(pair2.publicKey, {
+      from: "2024-01-01",
+      to: null,
+    });
+    const registry = makeRegistry(key1, key2);
+
+    // Credential in era 1
+    const cred1 = validCredentialObj({ date: "2022-06-15" });
+    const payload1 = encodeCredential(cred1);
+    const sig1 = sign(payload1, pair1.secretKey);
+    const result1 = verifyCredential(payload1, sig1, registry);
+    expect(result1.valid).toBe(true);
+    expect((result1 as VerificationSuccess).key).toBe(key1);
+
+    // Credential in era 2
+    const cred2 = validCredentialObj({ date: "2024-06-15" });
+    const payload2 = encodeCredential(cred2);
+    const sig2 = sign(payload2, pair2.secretKey);
+    const result2 = verifyCredential(payload2, sig2, registry);
+    expect(result2.valid).toBe(true);
+    expect((result2 as VerificationSuccess).key).toBe(key2);
+  });
+
+  // 8. No short-circuit: key A invalid sig, key B valid sig + wrong date, key C valid sig + right date → success with key C
+  it("does not short-circuit — finds the correct key among multiple candidates", () => {
+    const pairA = makeKeypair(10);
+    const pairB = makeKeypair(20);
+    const pairC = makeKeypair(30);
+
+    const cred = validCredentialObj({ date: "2024-06-15" });
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, pairC.secretKey);
+
+    // Key A: right date range, wrong key (doesn't match signature)
+    const keyA = makeKeyEntry(pairA.publicKey, {
+      from: "2020-01-01",
+      to: null,
+    });
+    // Key B: wrong date range, correct key (matches signature but date out)
+    const keyB = makeKeyEntry(pairC.publicKey, {
+      from: "2020-01-01",
+      to: "2023-12-31",
+      note: "keyB uses pairC pubkey but restricted dates",
+    });
+    // Key C: right date range, correct key
+    const keyC = makeKeyEntry(pairC.publicKey, {
+      from: "2024-01-01",
+      to: null,
+      note: "keyC correct",
+    });
+    const registry = makeRegistry(keyA, keyB, keyC);
+
+    const result = verifyCredential(payload, signature, registry);
+    expect(result.valid).toBe(true);
+    expect((result as VerificationSuccess).key).toBe(keyC);
+  });
+
+  // 9. Invalid payload (not valid JSON)
+  it("returns failure for invalid UTF-8 / bad JSON payload", () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const badPayload = new Uint8Array([0xff, 0xfe, 0x00, 0x01]);
+    const fakeSig = new Uint8Array(64);
+
+    const result = verifyCredential(badPayload, fakeSig, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain("JSON");
+  });
+
+  // 10. Malformed credential (missing fields)
+  it("returns failure for credential with missing fields", () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const payload = encodeCredential({ version: 1, authority: "Test" });
+    const fakeSig = new Uint8Array(64);
+
+    const result = verifyCredential(payload, fakeSig, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain(
+      "credential validation failed",
+    );
+  });
+
+  // 11. Unrecognized version
+  it("returns specific failure for unsupported credential version", () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const payload = encodeCredential({
+      authority: "Test Authority",
+      date: "2024-06-15",
+      honor: "summa cum laude",
+      recipient: "Jane Doe",
+      version: 99,
+    });
+    const fakeSig = new Uint8Array(64);
+
+    const result = verifyCredential(payload, fakeSig, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain(
+      "version not supported",
+    );
+  });
+
+  // 12. JSON primitive payload (string, number, array)
+  it("returns failure for JSON primitive payloads", () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+    const fakeSig = new Uint8Array(64);
+
+    for (const primitive of ['"hello"', "42", "[1,2,3]", "null", "true"]) {
+      const payload = new TextEncoder().encode(primitive);
+      const result = verifyCredential(payload, fakeSig, registry);
+      expect(result.valid).toBe(false);
+      expect((result as VerificationFailure).reason).toContain(
+        "must be a JSON object",
+      );
+    }
+  });
+
+  // 13. Corrupted registry key — skips bad key, continues to valid one
+  it("skips corrupted registry key and continues to valid key", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+
+    // Corrupted key entry (invalid base64 that decodes to wrong length)
+    const corruptedEntry: KeyEntry = {
+      authority: "Test Authority",
+      from: "2020-01-01",
+      to: null,
+      algorithm: "Ed25519",
+      public_key: btoa("short"), // 5 bytes, neither 32 nor 44
+      note: "corrupted",
+    };
+    const goodEntry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(corruptedEntry, goodEntry);
+
+    const result = verifyCredential(payload, signature, registry);
+    expect(result.valid).toBe(true);
+    expect((result as VerificationSuccess).key).toBe(goodEntry);
+  });
+
+  // 14. End-to-end round-trip: canonicalize → sign → base64url → decode → verify
+  it("end-to-end round-trip: canonicalize → sign → encode → decode → verify", () => {
+    const { secretKey, publicKey } = makeKeypair(42);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const credential = validCredentialObj();
+    const payloadBytes = canonicalize(
+      credential as Record<string, string | number>,
+    );
+    const signatureBytes = sign(payloadBytes, secretKey);
+
+    // Simulate URL transport: base64url encode then decode
+    const payloadB64 = base64urlEncode(payloadBytes);
+    const signatureB64 = base64urlEncode(signatureBytes);
+
+    const decodedPayload = base64urlDecode(payloadB64);
+    const decodedSignature = base64urlDecode(signatureB64);
+
+    const result = verifyCredential(decodedPayload, decodedSignature, registry);
+    expect(result.valid).toBe(true);
+    expect((result as VerificationSuccess).key).toBe(entry);
+  });
+
+  // 15. Payload exceeds maximum size
+  it("rejects payload exceeding MAX_PAYLOAD_BYTES", () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+    const fakeSig = new Uint8Array(64);
+
+    const oversized = new Uint8Array(MAX_PAYLOAD_BYTES + 1);
+    const result = verifyCredential(oversized, fakeSig, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain("maximum size");
+  });
+
+  // 16. Payload of exactly MAX_PAYLOAD_BYTES proceeds to normal validation
+  it("accepts payload of exactly MAX_PAYLOAD_BYTES (size check does not fire)", () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+    const fakeSig = new Uint8Array(64);
+
+    // Build a JSON object padded with trailing spaces to exactly MAX_PAYLOAD_BYTES.
+    const base = '{"version":1}';
+    const padding = " ".repeat(MAX_PAYLOAD_BYTES - base.length);
+    const padded = base + padding;
+    expect(padded.length).toBe(MAX_PAYLOAD_BYTES);
+
+    const payload = new TextEncoder().encode(padded);
+    const result = verifyCredential(payload, fakeSig, registry);
+
+    expect(result.valid).toBe(false);
+    // Should fail on credential validation, NOT on size.
+    expect((result as VerificationFailure).reason).not.toContain("maximum size");
+  });
+
+  // 17. Oversized non-object payload — size check fires before type check
+  it("rejects oversized non-object payload with size error, not type error", () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+    const fakeSig = new Uint8Array(64);
+
+    // A JSON string that exceeds the size limit.
+    const jsonString = '"' + "a".repeat(2047) + '"';
+    const payload = new TextEncoder().encode(jsonString);
+    expect(payload.length).toBeGreaterThan(MAX_PAYLOAD_BYTES);
+
+    const result = verifyCredential(payload, fakeSig, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toContain("maximum size");
+    expect((result as VerificationFailure).reason).not.toContain(
+      "must be a JSON object",
+    );
+  });
+
+  // 18. Invalid curve point key (32 zero bytes) — first-pass try/catch handles it
+  it("skips key with invalid curve point (32 zero bytes) and verifies with good key", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+
+    // 32 zero bytes: valid length so decodePublicKey accepts it, but invalid curve point
+    const zeroKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(32)));
+    const badEntry: KeyEntry = {
+      authority: "Test Authority",
+      from: "2020-01-01",
+      to: null,
+      algorithm: "Ed25519",
+      public_key: zeroKeyBase64,
+      note: "invalid curve point",
+    };
+    const goodEntry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(badEntry, goodEntry);
+
+    const result = verifyCredential(payload, signature, registry);
+    expect(result.valid).toBe(true);
+    expect((result as VerificationSuccess).key).toBe(goodEntry);
+  });
+
+  // 19. URL byte-budget test
+  it("max-length realistic credential fits within URL byte budget", () => {
+    const { secretKey, publicKey } = makeKeypair(99);
+    const entry = makeKeyEntry(publicKey, { authority: "თბილისის უნივერსიტეტი" });
+    const registry = makeRegistry(entry);
+
+    // Georgian names sized to approach but stay within the byte budget
+    const credential = {
+      authority: "თბილისის უნივერსიტეტი",
+      date: "2024-12-31",
+      honor: "წარჩინებით",
+      recipient: "გიორგი მა",
+      version: 1 as const,
+    };
+
+    const payloadBytes = canonicalize(
+      credential as unknown as Record<string, string | number>,
+    );
+    const signatureBytes = sign(payloadBytes, secretKey);
+
+    const payloadB64 = base64urlEncode(payloadBytes);
+    const signatureB64 = base64urlEncode(signatureBytes);
+
+    // Verify it actually verifies
+    const result = verifyCredential(
+      base64urlDecode(payloadB64),
+      base64urlDecode(signatureB64),
+      registry,
+    );
+    expect(result.valid).toBe(true);
+
+    // Build a realistic URL
+    const url = `https://example.edu/verify?p=${payloadB64}&s=${signatureB64}`;
+    expect(url.length).toBeLessThanOrEqual(394);
+    expect(payloadB64.length).toBeLessThanOrEqual(261);
+  });
+});

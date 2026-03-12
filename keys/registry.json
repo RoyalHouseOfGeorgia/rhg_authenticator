@@ -1,0 +1,12 @@
+{
+  "keys": [
+    {
+      "authority": "TEST AUTHORITY — NOT REAL",
+      "from": "2025-01-01",
+      "to": null,
+      "algorithm": "Ed25519",
+      "public_key": "MCowBQYDK2VwAyEAGb1gauf9XRYSbnD0HkeUN5GNVMnFP+MYBmWBSAxPOVQ=",
+      "note": "Placeholder key for development. Replace with real YubiKey-exported public key."
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+# Project-specific
+.reqs/
+
+# Secrets and credentials
+.env*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+service-account*.json
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE / editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# AI/LLM tool directories
+.claude/
+.cursor/
+.aider*
+.continue/
+.copilot/
+.codeium/
+.windsurf/
