@@ -11,17 +11,21 @@
 *.keystore
 credentials.json
 service-account*.json
+*.crt
+*.gpg
 
 # Dependencies
 node_modules/
 
 # Build output
 dist/
+build/
 
 # OS artifacts
 .DS_Store
 Thumbs.db
 Desktop.ini
+._*
 
 # IDE / editor state
 .idea/
@@ -29,6 +33,12 @@ Desktop.ini
 *.swp
 *.swo
 *~
+
+# Infrastructure state
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+.terraform/
 
 # AI/LLM tool directories
 .claude/
@@ -38,3 +48,5 @@ Desktop.ini
 .copilot/
 .codeium/
 .windsurf/
+.tabnine/
+.sourcegraph/

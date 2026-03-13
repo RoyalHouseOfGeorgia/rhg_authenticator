@@ -1,0 +1,50 @@
+digraph verification_flow {
+    rankdir=TB;
+    bgcolor="transparent";
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box, fillcolor="#f8f9fa", color="#495057", penwidth=1.2];
+    edge [fontname="Helvetica", fontsize=9, color="#6c757d"];
+
+    // Entry
+    qr [label="QR Code\non Diploma", shape=note, fillcolor="#ffe3e3"];
+    scan [label="Scan → open URL", fillcolor="#dbe4ff"];
+
+    // Verification steps
+    subgraph cluster_browser {
+        label="Verification Page (client-side, GitHub Pages)";
+        labeljust=l;
+        style="dashed,rounded";
+        color="#868e96";
+        fontname="Helvetica";
+        fontsize=10;
+        fontcolor="#495057";
+
+        parse [label="1. Parse URL params\n?p=...&s=..."];
+        decode [label="2. Base64URL decode\n→ payload + signature bytes"];
+        fetch_reg [label="3. Fetch\n/keys/registry.json"];
+        parse_cred [label="4. Parse + validate\ncredential JSON"];
+        find_keys [label="5. Find keys\nby authority"];
+        verify_sig [label="6. Verify Ed25519\nsignature"];
+        check_date [label="7. Check credential date\nvs key validity range"];
+        render [label="8. Render result"];
+    }
+
+    registry [label="Key Registry\n(registry.json)", shape=cylinder, fillcolor="#d3f9d8"];
+
+    // Success/failure
+    success [label="Verified\n(credential details)", fillcolor="#b2f2bb", shape=oval];
+    failure [label="Rejected\n(reason displayed)", fillcolor="#ffc9c9", shape=oval];
+
+    // Edges
+    qr -> scan;
+    scan -> parse;
+    parse -> decode;
+    decode -> fetch_reg;
+    fetch_reg -> registry [style=dashed, dir=both, label="HTTPS"];
+    fetch_reg -> parse_cred;
+    parse_cred -> find_keys;
+    find_keys -> verify_sig;
+    verify_sig -> check_date;
+    check_date -> render;
+    render -> success [label="valid"];
+    render -> failure [label="invalid"];
+}

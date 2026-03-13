@@ -14,9 +14,10 @@ import {
 } from './registry.js';
 import { verify as ed25519Verify } from './crypto.js';
 
+import type { Credential } from './credential.js';
 import type { KeyEntry, Registry } from './registry.js';
 
-export type VerificationSuccess = { valid: true; key: KeyEntry };
+export type VerificationSuccess = { valid: true; key: KeyEntry; credential: Credential };
 export type VerificationFailure = { valid: false; reason: string };
 export type VerificationResult = VerificationSuccess | VerificationFailure;
 
@@ -79,37 +80,10 @@ export function verifyCredential(
     return { valid: false, reason: 'authority not found in registry' };
   }
 
-  // Step 4: First pass — date-eligible keys.
-  const triedKeys = new Set<KeyEntry>();
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[i];
-    if (!isDateInRange(credential.date, key)) continue;
-    triedKeys.add(key);
-
-    let publicKey: Uint8Array;
-    try {
-      publicKey = decodePublicKey(key);
-    } catch {
-      if (typeof console !== 'undefined')
-        console.warn('Skipping malformed registry key at index', i);
-      continue;
-    }
-
-    try {
-      if (ed25519Verify(signatureBytes, payloadBytes, publicKey)) {
-        return { valid: true, key };
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  // Step 5: Second pass — remaining keys (for diagnostics).
+  // Single-pass: verify signature then check date range.
   let dateMismatch = false;
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
-    if (triedKeys.has(key)) continue;
-
     let publicKey: Uint8Array;
     try {
       publicKey = decodePublicKey(key);
@@ -121,6 +95,9 @@ export function verifyCredential(
 
     try {
       if (ed25519Verify(signatureBytes, payloadBytes, publicKey)) {
+        if (isDateInRange(credential.date, key)) {
+          return { valid: true, key, credential };
+        }
         dateMismatch = true;
       }
     } catch {
@@ -128,14 +105,11 @@ export function verifyCredential(
     }
   }
 
-  // Step 6: Date mismatch diagnostic.
   if (dateMismatch) {
     return {
       valid: false,
       reason: 'signature valid but credential date outside key validity period',
     };
   }
-
-  // Step 7: No match.
   return { valid: false, reason: 'no matching key produced a valid signature' };
 }

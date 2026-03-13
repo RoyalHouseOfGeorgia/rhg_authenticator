@@ -5,6 +5,8 @@
  * without relying on the Date constructor (which silently rolls invalid dates).
  */
 
+import { isValidDate } from './validation.js';
+
 export type CredentialV1 = {
   authority: string;
   date: string;
@@ -16,7 +18,8 @@ export type CredentialV1 = {
 
 export type Credential = CredentialV1;
 
-function sanitizeForError(s: string): string {
+/** Strips C0/C1 control characters and bidi overrides. Does not handle zero-width joiners or length limits — callers are responsible for truncation. */
+export function sanitizeForError(s: string): string {
   return s.replace(/[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '');
 }
 
@@ -30,29 +33,6 @@ export class UnsupportedVersionError extends Error {
 
 const STRING_FIELDS = ['authority', 'date', 'detail', 'honor', 'recipient'] as const;
 const ALL_FIELDS = new Set<string>([...STRING_FIELDS, 'version']);
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-function isLeapYear(year: number): boolean {
-  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-}
-
-function isValidDate(value: string): boolean {
-  if (!DATE_RE.test(value)) return false;
-
-  const year = parseInt(value.slice(0, 4), 10);
-  const month = parseInt(value.slice(5, 7), 10);
-  const day = parseInt(value.slice(8, 10), 10);
-
-  if (year < 1) return false;
-  if (month < 1 || month > 12) return false;
-
-  let maxDay = DAYS_IN_MONTH[month - 1];
-  if (month === 2 && isLeapYear(year)) maxDay = 29;
-
-  return day >= 1 && day <= maxDay;
-}
 
 /** Validate an unknown value as a v1 Credential, throwing on any violation. */
 export function validateCredential(obj: unknown): Credential {

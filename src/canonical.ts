@@ -10,10 +10,6 @@ export const MAX_DEPTH = 4;
  * JSON serialization.
  */
 function sortAndNormalize(value: JsonValue, depth: number): JsonValue {
-  if (value === undefined) {
-    throw new TypeError('undefined is not a valid JSON value');
-  }
-
   if (value === null) {
     return null;
   }

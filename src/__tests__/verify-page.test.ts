@@ -10,63 +10,18 @@ import {
   renderResult,
   initVerifyPage,
 } from '../verify-page.js';
-import { sign, getPublicKey } from '../crypto.js';
+import { sign } from '../crypto.js';
 import { canonicalize } from '../canonical.js';
 import { base64urlEncode } from '../base64url.js';
 
 import type { PageParams, VerifyPageResult } from '../verify-page.js';
-import type { KeyEntry, Registry } from '../registry.js';
-
-/** Generate a deterministic Ed25519 keypair from a seed byte. */
-function makeKeypair(seed = 0) {
-  const secretKey = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) secretKey[i] = (seed + i * 7) & 0xff;
-  const publicKey = getPublicKey(secretKey);
-  return { secretKey, publicKey };
-}
-
-/** Encode raw 32-byte public key as standard base64. */
-function toBase64(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes));
-}
-
-/** Build a KeyEntry for tests. */
-function makeKeyEntry(
-  publicKey: Uint8Array,
-  opts: {
-    authority?: string;
-    from?: string;
-    to?: string | null;
-    note?: string;
-  } = {},
-): KeyEntry {
-  return {
-    authority: opts.authority ?? 'Test Authority',
-    from: opts.from ?? '2020-01-01',
-    to: opts.to !== undefined ? opts.to : null,
-    algorithm: 'Ed25519',
-    public_key: toBase64(publicKey),
-    note: opts.note ?? '',
-  };
-}
-
-/** Build a Registry from key entries. */
-function makeRegistry(...keys: KeyEntry[]): Registry {
-  return { keys };
-}
-
-/** Default credential object. */
-function validCredentialObj(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    authority: 'Test Authority',
-    date: '2024-06-15',
-    detail: 'Test Detail',
-    honor: 'Test Honor',
-    recipient: 'Jane Doe',
-    version: 1,
-    ...overrides,
-  };
-}
+import type { Registry } from '../registry.js';
+import {
+  makeKeypair,
+  makeKeyEntry,
+  makeRegistry,
+  validCredentialObj,
+} from './helpers.js';
 
 /** Create a signed credential as base64url-encoded PageParams. */
 function makeSignedParams(

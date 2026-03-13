@@ -22,6 +22,9 @@ npm install
 | `npm run lint` | Type-check without emitting (`tsc --noEmit`) |
 | `npm run build` | Compile TypeScript to `dist/` |
 | `npm run build:verify` | Bundle verification page JS (`verify/verify.js`) |
+| `npm run start:server` | Start signing server (`src/server/cli.ts`) |
+| `npm run check:registry` | Verify no test keys in `keys/registry.json` |
+| `npm run audit:deps` | Run `npm audit` on production dependencies |
 
 ## Project Structure
 
@@ -29,20 +32,45 @@ npm install
 src/
 ├── canonical.ts          # Deterministic JSON serializer
 ├── base64url.ts          # Base64URL + standard Base64 codecs
-├── credential.ts         # Credential v1 schema validation
+├── credential.ts         # Credential v1 schema validation + sanitizeForError
 ├── crypto.ts             # Ed25519 sign/verify/getPublicKey
 ├── registry.ts           # Key registry schema, lookup, decoding
+├── validation.ts         # Shared date validation utilities
 ├── verify.ts             # Verification orchestrator
 ├── verify-page.ts        # Verification page logic (URL parsing, fetch, render)
 ├── index.ts              # Barrel export
+├── server/
+│   ├── types.ts          # Shared types: SigningAdapter, ServerConfig, IssuanceRecord
+│   ├── cli.ts            # CLI entry point + argument parsing
+│   ├── main.ts           # Server startup orchestrator
+│   ├── http.ts           # HTTP request handler, static file serving, CORS, rate limiting
+│   ├── sign.ts           # Signing orchestrator (validate → canonicalize → sign → verify → log)
+│   ├── signature.ts      # Ed25519 signature length validation
+│   ├── registry-fetch.ts # Registry fetch with SSRF protection + local fallback
+│   ├── key-match.ts      # Public key ↔ registry entry matching
+│   ├── log.ts            # Atomic append-only issuance log
+│   └── yubikey.ts        # YubiKey PIV adapter (yubico-piv-tool)
 └── __tests__/
+    ├── helpers.ts         # Shared test utilities
     ├── canonical.test.ts
     ├── base64url.test.ts
     ├── credential.test.ts
     ├── crypto.test.ts
     ├── registry.test.ts
+    ├── validation.test.ts
     ├── verify.test.ts
-    └── verify-page.test.ts  # Uses happy-dom environment
+    ├── verify-page.test.ts
+    └── server/
+        ├── cli.test.ts
+        ├── http.test.ts
+        ├── key-match.test.ts
+        ├── log.test.ts
+        ├── main.test.ts
+        ├── registry-fetch.test.ts
+        ├── sign.test.ts
+        ├── sign-verify-throw.test.ts
+        ├── signature.test.ts
+        └── yubikey.test.ts
 verify/
 ├── index.html            # Static verification page shell
 ├── styles.css            # Mobile-first CSS
@@ -145,6 +173,59 @@ Failure reasons:
 - `'signature valid but credential date outside key validity period'`
 - `'no matching key produced a valid signature'`
 
+### Signing Server
+
+```typescript
+startServer(options?: {
+  config?: Partial<ServerConfig>;
+  adapter?: SigningAdapter;
+  now?: Date;
+}): Promise<{ server: http.Server; port: number; token: string; close: () => void }>
+```
+
+Starts the localhost signing server. Generates a random bearer token, exports the YubiKey public key, fetches and validates the registry, resolves the authority name from the key, and starts an HTTP server with background registry refresh (60s interval).
+
+**`ServerConfig` fields:**
+- `port` (default `3141`), `host` (default `'127.0.0.1'`)
+- `registryUrl` — remote registry URL (HTTPS required, SSRF-validated)
+- `localRegistryPath` — fallback local registry file
+- `logPath` — path to `issuances.json`
+- `issuerDir` — directory for static issuer HTML (`null` = placeholder)
+- `authority` — resolved at startup from registry match
+
+**HTTP Endpoints:**
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | No | Health check → `{ "status": "ok" }` |
+| `POST` | `/sign` | Bearer token + Origin header | Sign a credential → `{ signature, payload, url }` |
+| `GET` | `/*` | No | Serve static files from `issuerDir` |
+
+**POST /sign** request body:
+```json
+{ "recipient": "...", "honor": "...", "detail": "...", "date": "YYYY-MM-DD" }
+```
+
+**Security features:**
+- Bearer token auth with SHA-256 timing-safe comparison
+- Origin header required on POST /sign (localhost origins only)
+- Auth-failure rate limiting with exponential backoff (5 failures → backoff, max 30s)
+- 64KB body size limit, 5s body read timeout
+- Signing queue depth limit (5 concurrent)
+- SSRF protection on registry URL (HTTPS-only, blocks localhost/private IPs)
+- TOCTOU-safe static file serving via fd-based reads
+- CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy headers
+- Token fingerprint (SHA-256) in startup banner — raw token never logged
+
+### CLI
+
+```bash
+npx tsx src/server/cli.ts [--port <number>] [--help]
+# Or: npm run start:server
+```
+
+Port can also be set via `RHG_PORT` environment variable. Handles SIGTERM and SIGINT for clean shutdown.
+
 ## Usage Example
 
 ### Signing (test/CI only — production uses YubiKey)
@@ -212,14 +293,18 @@ npx http-server . -p 8080              # serve from project root
 
 ## Testing Conventions
 
-- Tests live in `src/__tests__/` alongside source modules
+- Tests live in `src/__tests__/` (core) and `src/__tests__/server/` (server modules)
+- Shared test utilities in `src/__tests__/helpers.ts`
 - Use `describe`/`it` blocks with descriptive names
 - Test both happy paths and error cases
 - Credential test data uses realistic but fictional values
 - Crypto tests use the RFC 8032 empty-message test vector (`d75a980182b10ab7...`)
 - No mocking of internal modules — tests exercise the real code paths
 - Verification page tests use `// @vitest-environment happy-dom` per-file directive
-- `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page tests only
+- `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page and registry-fetch tests
+- Server tests use mock `SigningAdapter` implementations — no YubiKey required
+- HTTP tests use Node's `http.request` against a real in-process server instance
+- 517 tests total (18 test files)
 
 ## Key Registry Format
 

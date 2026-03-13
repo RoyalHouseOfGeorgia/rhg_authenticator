@@ -1,0 +1,86 @@
+digraph module_architecture {
+    rankdir=TB;
+    bgcolor="transparent";
+    node [fontname="Helvetica", fontsize=10, style="filled,rounded", shape=box, penwidth=1.2];
+    edge [color="#868e96", penwidth=0.8];
+    compound=true;
+
+    // Core library
+    subgraph cluster_core {
+        label="Core Library";
+        labeljust=l;
+        style="dashed,rounded";
+        color="#4263eb";
+        fontname="Helvetica";
+        fontsize=10;
+        fontcolor="#4263eb";
+
+        index [label="index.ts\n(barrel export)", fillcolor="#dbe4ff", color="#4263eb"];
+        verify [label="verify.ts\n(orchestrator)", fillcolor="#dbe4ff", color="#4263eb"];
+        verify_page [label="verify-page.ts\n(browser UI)", fillcolor="#dbe4ff", color="#4263eb"];
+        credential [label="credential.ts\n(schema + sanitize)", fillcolor="#dbe4ff", color="#4263eb"];
+        crypto [label="crypto.ts\n(Ed25519)", fillcolor="#dbe4ff", color="#4263eb"];
+        registry [label="registry.ts\n(key registry)", fillcolor="#dbe4ff", color="#4263eb"];
+        validation [label="validation.ts\n(date utils)", fillcolor="#dbe4ff", color="#4263eb"];
+        base64url [label="base64url.ts\n(encoding)", fillcolor="#dbe4ff", color="#4263eb"];
+        canonical [label="canonical.ts\n(JSON serializer)", fillcolor="#dbe4ff", color="#4263eb"];
+    }
+
+    // Server
+    subgraph cluster_server {
+        label="Signing Server";
+        labeljust=l;
+        style="dashed,rounded";
+        color="#e67700";
+        fontname="Helvetica";
+        fontsize=10;
+        fontcolor="#e67700";
+
+        cli [label="cli.ts\n(entry point)", fillcolor="#fff3bf", color="#e67700"];
+        main [label="main.ts\n(startup)", fillcolor="#fff3bf", color="#e67700"];
+        http [label="http.ts\n(request handler)", fillcolor="#fff3bf", color="#e67700"];
+        sign [label="sign.ts\n(sign orchestrator)", fillcolor="#fff3bf", color="#e67700"];
+        reg_fetch [label="registry-fetch.ts\n(fetch + SSRF)", fillcolor="#fff3bf", color="#e67700"];
+        key_match [label="key-match.ts\n(key lookup)", fillcolor="#fff3bf", color="#e67700"];
+        yubikey [label="yubikey.ts\n(YubiKey PIV)", fillcolor="#fff3bf", color="#e67700"];
+        signature [label="signature.ts\n(sig validation)", fillcolor="#fff3bf", color="#e67700"];
+        log [label="log.ts\n(issuance log)", fillcolor="#fff3bf", color="#e67700"];
+        types [label="types.ts\n(shared types)", fillcolor="#fff3bf", color="#e67700"];
+    }
+
+    // External
+    noble [label="@noble/curves\n(Ed25519)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
+    yubikey_hw [label="yubico-piv-tool\n(YubiKey CLI)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
+
+    // Core deps
+    verify -> credential;
+    verify -> crypto;
+    verify -> registry;
+    verify_page -> verify;
+    verify_page -> base64url;
+    verify_page -> registry;
+    credential -> validation;
+    registry -> base64url;
+    registry -> validation;
+    crypto -> noble;
+
+    // Server deps
+    cli -> main;
+    main -> http;
+    main -> yubikey;
+    main -> reg_fetch;
+    main -> key_match;
+    http -> sign;
+    http -> key_match;
+    sign -> canonical [lhead=cluster_core];
+    sign -> signature;
+    sign -> log;
+    sign -> credential [style=dashed];
+    sign -> crypto [style=dashed];
+    reg_fetch -> registry [style=dashed];
+    reg_fetch -> credential [style=dashed, label="sanitize"];
+    key_match -> registry [style=dashed];
+    yubikey -> yubikey_hw;
+    yubikey -> signature;
+    yubikey -> registry [style=dashed, label="SPKI prefix"];
+}

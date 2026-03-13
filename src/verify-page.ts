@@ -11,7 +11,6 @@ import { verifyCredential } from './verify.js';
 import { validateRegistry } from './registry.js';
 
 import type { Registry } from './registry.js';
-import type { VerificationSuccess, VerificationFailure } from './verify.js';
 
 export type PageParams = {
   payload: string;
@@ -147,35 +146,31 @@ export function runVerification(params: PageParams, registry: Registry): VerifyP
   const result = verifyCredential(payloadBytes, signatureBytes, registry);
 
   if (result.valid) {
-    const successResult = result as VerificationSuccess;
-    const decoder = new TextDecoder();
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(decoder.decode(payloadBytes)) as Record<string, unknown>;
-    } catch {
-      return { status: 'error', message: 'Invalid credential data' };
-    }
-    if (typeof parsed !== 'object' || parsed === null) {
-      return { status: 'error', message: 'Invalid credential data' };
-    }
-    const fields = ['recipient', 'honor', 'detail', 'date'] as const;
-    for (const f of fields) {
-      if (typeof parsed[f] !== 'string') {
-        return { status: 'error', message: 'Invalid credential data' };
-      }
-    }
     return {
       status: 'valid',
-      recipient: parsed.recipient as string,
-      honor: parsed.honor as string,
-      detail: parsed.detail as string,
-      date: parsed.date as string,
-      authority: successResult.key.authority,
+      recipient: result.credential.recipient,
+      honor: result.credential.honor,
+      detail: result.credential.detail,
+      date: result.credential.date,
+      authority: result.key.authority,
     };
   }
 
-  const failureResult = result as VerificationFailure;
-  return { status: 'invalid', reason: failureResult.reason };
+  return { status: 'invalid', reason: result.reason };
+}
+
+/** Build the contact-info paragraph with mailto link used in error/invalid states. */
+function createContactParagraph(): HTMLParagraphElement {
+  const contact = document.createElement('p');
+  contact.className = 'contact-info';
+  contact.appendChild(document.createTextNode('If you believe this is in error, please contact the Office of the Secretary of the Royal House of Georgia at '));
+  const mailto = document.createElement('a');
+  mailto.className = 'contact-link';
+  mailto.textContent = 'secretary@royalhouseofgeorgia.ge';
+  mailto.setAttribute('href', 'mailto:secretary@royalhouseofgeorgia.ge');
+  contact.appendChild(mailto);
+  contact.appendChild(document.createTextNode('.'));
+  return contact;
 }
 
 /**
@@ -257,16 +252,7 @@ export function renderResult(result: VerifyPageResult, container: Element): void
       detail.textContent = 'This credential could not be verified. It may be invalid, tampered with, or not issued by the Royal House of Georgia.';
       wrapper.appendChild(detail);
 
-      const contact = document.createElement('p');
-      contact.className = 'contact-info';
-      contact.appendChild(document.createTextNode('If you believe this is in error, please contact the Office of the Secretary of the Royal House of Georgia at '));
-      const mailto = document.createElement('a');
-      mailto.className = 'contact-link';
-      mailto.textContent = 'secretary@royalhouseofgeorgia.ge';
-      mailto.setAttribute('href', 'mailto:secretary@royalhouseofgeorgia.ge');
-      contact.appendChild(mailto);
-      contact.appendChild(document.createTextNode('.'));
-      wrapper.appendChild(contact);
+      wrapper.appendChild(createContactParagraph());
       break;
     }
 
@@ -283,16 +269,7 @@ export function renderResult(result: VerifyPageResult, container: Element): void
       detail.textContent = 'We were unable to complete the verification. This may be due to a temporary issue or an invalid verification link.';
       wrapper.appendChild(detail);
 
-      const contact = document.createElement('p');
-      contact.className = 'contact-info';
-      contact.appendChild(document.createTextNode('If you believe this is in error, please contact the Office of the Secretary of the Royal House of Georgia at '));
-      const mailto = document.createElement('a');
-      mailto.className = 'contact-link';
-      mailto.textContent = 'secretary@royalhouseofgeorgia.ge';
-      mailto.setAttribute('href', 'mailto:secretary@royalhouseofgeorgia.ge');
-      contact.appendChild(mailto);
-      contact.appendChild(document.createTextNode('.'));
-      wrapper.appendChild(contact);
+      wrapper.appendChild(createContactParagraph());
       break;
     }
 

@@ -14,75 +14,30 @@ No blockchain, no third-party verification services. Trust is rooted in Ed25519 
 
 - **Trust anchor**: The YubiKey hardware token. Private key never leaves the device.
 - **Public registry**: `keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls.
-- **No server-side state**: Verification is entirely client-side. The verification page fetches the registry and performs all crypto in the browser.
+- **Verification is client-side**: The public verification page fetches the registry and performs all crypto in the browser — no server round-trip.
+- **Signing server is localhost-only**: The signing server binds to `127.0.0.1` and is single-user. Network threats are out of scope.
 - **QR as transport**: The QR code is a URL containing the full signed credential. No database lookup required.
 
 ### Accepted Risks
 
-- **Timing side channel in two-pass verification**: The second diagnostic pass reveals whether a valid signature exists outside the date range. This is intentional UX — the registry is public anyway.
-- **Verbose validation errors**: Schema validation returns structured error details. The Phase 3 server will decide what to expose to end users.
+- **Timing side channel in verification diagnostics**: Date-mismatch diagnostics reveal whether a valid signature exists outside the date range. This is intentional UX — the registry is public anyway.
 - **Public key registry is public**: By design. The security property is that only the holder of the YubiKey private key can produce valid signatures.
+- **SSRF string-based validation**: DNS rebinding and expanded IPv6 forms can bypass the IP blocklist. Accepted because the registry URL is operator-set config, not untrusted input.
+- **PIN in `/proc/PID/cmdline`**: `yubico-piv-tool` requires literal `-P <pin>` on the command line. Visible to same-UID processes for milliseconds during signing. Accepted for single-user localhost.
 
 ## Data Flow
 
-### Issuance Flow (Phase 3-4)
+### Issuance Flow
 
-```
-┌─────────────┐   credential JSON    ┌─────────────────┐
-│ Issuer Form │────────────────────▶│ Signing Server  │
-│ (browser)   │                      │ (localhost)     │
-└─────────────┘                      └────────┬────────┘
-                                              │ canonical JSON bytes
-                                              ▼
-                                     ┌─────────────────┐
-                                     │ YubiKey PIV 9c  │
-                                     │ Ed25519 sign    │
-                                     └────────┬────────┘
-                                              │ 64-byte signature
-                                              ▼
-                                     ┌─────────────────┐
-                                     │ Base64URL encode│
-                                     │ → QR code URL   │
-                                     └─────────────────┘
-```
+![Issuance Flow](docs/issuance-flow.svg)
 
-### Verification Flow (Phase 2)
+### Verification Flow
 
-```
-┌────────────┐   scan    ┌─────────────────────────────────────────┐
-│ QR Code    │──────────▶│ https://verify.../  ?p=...&s=...       │
-└────────────┘           └────────────────────┬────────────────────┘
-                                              │
-                         ┌────────────────────▼────────────────────┐
-                         │ 1. Parse URL params (p, s)              │
-                         │ 2. Base64URL decode → bytes             │
-                         │ 3. Fetch /keys/registry.json            │
-                         │ 4. Parse + validate credential JSON     │
-                         │ 5. Find keys by authority               │
-                         │ 6. Verify Ed25519 signature             │
-                         │ 7. Check date range                     │
-                         │ 8. Display result                       │
-                         └─────────────────────────────────────────┘
-```
+![Verification Flow](docs/verification-flow.svg)
 
 ## Module Architecture
 
-```
-                        ┌─────────────┐
-                        │  verify.ts  │  Orchestrator
-                        └──────┬──────┘
-                   ┌───────────┼───────────┐
-                   ▼           ▼           ▼
-            ┌─────────────┐ ┌──────────┐ ┌───────────┐
-            │credential.ts│ │crypto.ts │ │registry.ts│
-            └─────────────┘ └──────────┘ └─────┬─────┘
-                                               │
-                   ┌───────────────────────────┘
-                   ▼           ▼
-            ┌────────────┐ ┌──────────────┐
-            │base64url.ts│ │canonical.ts  │
-            └────────────┘ └──────────────┘
-```
+![Module Architecture](docs/module-architecture.svg)
 
 ### Module Responsibilities
 
@@ -90,12 +45,23 @@ No blockchain, no third-party verification services. Trust is rooted in Ed25519 
 |--------|---------------|---------------|
 | `canonical.ts` | Deterministic JSON serialization (key-sort, NFC, no whitespace) | None |
 | `base64url.ts` | Base64URL encode/decode, standard Base64 decode | None (uses `btoa`/`atob`) |
-| `credential.ts` | Credential v1 schema validation, arithmetic date checking | None |
+| `credential.ts` | Credential v1 schema validation, arithmetic date checking, `sanitizeForError` | `validation.ts` |
 | `crypto.ts` | Ed25519 sign, verify (`zip215: false`), getPublicKey | `@noble/curves` |
-| `registry.ts` | Registry schema validation, authority lookup, SPKI key decoding | `base64url.ts` |
-| `verify.ts` | Two-pass verification orchestrator | `credential.ts`, `crypto.ts`, `registry.ts` |
-| `index.ts` | Barrel export | All modules |
+| `registry.ts` | Registry schema validation, authority lookup, SPKI key decoding | `base64url.ts`, `validation.ts` |
+| `validation.ts` | Shared date validation (calendar-correct, no `Date` constructor) | None |
+| `verify.ts` | Single-pass verification orchestrator | `credential.ts`, `crypto.ts`, `registry.ts` |
+| `index.ts` | Barrel export | All core modules |
 | `verify-page.ts` | Browser verification page: URL parsing, registry fetch, DOM rendering | `verify.ts`, `base64url.ts`, `registry.ts` |
+| `server/types.ts` | Shared types: `SigningAdapter`, `ServerConfig`, `IssuanceRecord` | None |
+| `server/cli.ts` | CLI entry point, argument parsing, signal handling | `server/main.ts` |
+| `server/main.ts` | Server startup: token gen, key export, registry fetch, HTTP server | `server/http.ts`, `server/yubikey.ts`, `server/registry-fetch.ts`, `server/key-match.ts` |
+| `server/http.ts` | Request handler: routing, CORS, auth, rate limiting, static files | `server/sign.ts`, `server/key-match.ts` |
+| `server/sign.ts` | Signing orchestrator: validate → canonicalize → sign → verify → log | `server/signature.ts`, `server/log.ts`, core library |
+| `server/signature.ts` | Ed25519 signature length validation (64 bytes) | None |
+| `server/registry-fetch.ts` | Remote registry fetch with SSRF validation + local fallback | `credential.ts`, `registry.ts` |
+| `server/key-match.ts` | Match public key against registry entries by date | `registry.ts` |
+| `server/log.ts` | Atomic append-only issuance log (tmp + rename) | None |
+| `server/yubikey.ts` | YubiKey PIV adapter via `yubico-piv-tool` CLI | `registry.ts`, `server/signature.ts` |
 
 ## Credential Format
 
@@ -199,43 +165,76 @@ Verification operates on the original payload bytes, not a re-canonicalized form
 
 ## Security Hardening
 
-### Implemented Defenses
+Six rounds of security hardening applied across Phases 1–3.
+
+### Core Library Defenses
 
 | Defense | Module | Description |
 |---------|--------|-------------|
 | Prototype pollution | `canonical.ts` | `Object.create(null)` for sorted objects; `__proto__` key rejected |
 | Payload size limit | `verify.ts` | `MAX_PAYLOAD_BYTES = 2048` enforced before JSON parsing |
-| Log injection | `credential.ts`, `registry.ts` | `sanitizeForError` strips C0/C1 control characters |
+| Log injection | `credential.ts` | `sanitizeForError` strips C0/C1 control characters; used across all modules |
 | Base64 length validation | `base64url.ts` | Rejects remainder-1 inputs (never valid Base64) |
 | Extra field rejection | `credential.ts`, `registry.ts` | No unexpected fields pass validation |
 | Strict crypto inputs | `crypto.ts` | Length validation on all key/signature/message inputs |
 | SPKI prefix verification | `registry.ts` | Byte-by-byte comparison of 12-byte DER header |
+
+### Server Security Defenses
+
+| Defense | Module | Description |
+|---------|--------|-------------|
+| Bearer token auth | `http.ts` | SHA-256 hashed timing-safe comparison via `timingSafeEqual` |
+| Token fingerprint logging | `main.ts` | SHA-256 fingerprint in banner; raw token never logged |
+| Origin enforcement | `http.ts` | POST /sign requires Origin header; only localhost origins accepted |
+| Auth-failure rate limiting | `http.ts` | Exponential backoff after 5 failures (1s–30s), monotonic clock |
+| Body size limit | `http.ts` | 64KB max body, 5s read timeout, socket destroyed on violation |
+| Signing queue depth | `http.ts` | Max 5 concurrent sign operations (429 overflow) |
+| CORS rejection | `http.ts` | Cross-origin requests rejected; no CORS headers exposed |
+| CSP headers | `http.ts` | `default-src 'self'`; `script-src 'self'`; `style-src 'self'`; `base-uri 'self'`; `form-action 'self'`; `frame-ancestors 'none'` |
+| Security headers | `http.ts` | X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy, Cache-Control |
+| TOCTOU-safe static files | `http.ts` | fd-based stat + read on same file descriptor |
+| Path traversal protection | `http.ts` | `realpath` resolution + prefix check against `issuerDir` |
+| SSRF protection | `registry-fetch.ts` | HTTPS-only, reject localhost/loopback/private IPv4 ranges |
+| Registry size limit | `registry-fetch.ts` | 1MB max response (Content-Length pre-check + body byte count) |
+| Atomic log writes | `log.ts` | Write to `.tmp.<random>` then rename; 0o600 permissions |
+| Random tmp paths | `yubikey.ts` | `fs.mkdtemp` for signing temp files; cleaned in `finally` block |
+| Process timeout | `yubikey.ts` | SIGTERM → 2s → SIGKILL for hung child processes |
+| PIN validation | `yubikey.ts` | 6–8 printable ASCII only; non-printable rejected |
+| Error sanitization | All server modules | `sanitizeForError` on all logged/returned error details |
 
 ### Design Decisions
 
 - **Sync API**: All crypto operations are synchronous. `@noble/curves` is pure JS — no Web Crypto async overhead.
 - **No key_id field**: The registry is too small for O(n) lookup to matter. Signature verification is the real authentication gate.
 - **Arithmetic date validation**: Uses manual month/day/leap-year checks instead of `Date` constructor, which silently rolls invalid dates (e.g., Feb 30 → Mar 2).
-- **Two-pass verification**: Date-eligible keys first for correctness, then remaining keys for diagnostics. Intentional timing trade-off for better UX.
+- **Single-pass verification**: Verify signature against all authority-matching keys, with date-mismatch diagnostics for valid-but-expired matches.
+- **Global rate limiter**: Localhost single-user tool — per-IP tracking is unnecessary. Valid auth always succeeds (no attacker-triggered lockout).
+- **SSRF residual risk accepted**: DNS rebinding and expanded IPv6 can bypass string-based IP checks. Accepted because registry URL is operator-set config, not untrusted input.
 
-## Planned Phases
+## Completed Phases
+
+### Phase 1: Core Crypto & Data Layer (Complete)
+
+Foundational data structures and cryptographic operations. Credential v1 schema validation, deterministic canonical JSON serialization (key-sort, NFC, no whitespace), Ed25519 sign/verify via `@noble/curves`, public key registry with SPKI DER support, and a two-pass verification orchestrator.
 
 ### Phase 2: Verification Page (Complete)
 
-Static HTML/CSS/JS page for GitHub Pages at `verify/`. The Phase 1 library is bundled via esbuild into a single IIFE (39KB minified). The page parses URL parameters (`?p=<payload>&s=<signature>`), fetches the key registry, runs Ed25519 verification client-side, and renders a dignified success/failure/error UI. Mobile-first design (primary use: phone scanning QR). All DOM text via `textContent` for XSS prevention. WCAG AA accessible (color + icon + text label for all states).
+Static HTML/CSS/JS page for GitHub Pages at `verify/`. The Phase 1 library is bundled via esbuild into a single IIFE. The page parses URL parameters (`?p=<payload>&s=<signature>`), fetches the key registry, runs Ed25519 verification client-side, and renders a dignified success/failure/error UI. Mobile-first design (primary use: phone scanning QR). All DOM text via `textContent` for XSS prevention. WCAG AA accessible (color + icon + text label for all states).
 
-### Phase 3: Signing Server
+### Phase 3: Signing Server (Complete)
 
-Localhost Node.js server interfacing with YubiKey. Fetches registry from GitHub for pre-sign validation. Bearer token auth. Atomic log append.
+Localhost Node.js server interfacing with YubiKey PIV slot 9c. Startup: generate bearer token, export YubiKey public key, fetch and validate registry, match key to authority. HTTP server with `POST /sign` (validate → canonicalize → sign → verify round-trip → log) and `GET /health`. Background registry refresh every 60s. Atomic issuance log with crash-safe tmp+rename writes. Six rounds of security hardening including SSRF protection, CORS/Origin enforcement, auth rate limiting, CSP headers, TOCTOU-safe file serving, and process timeouts.
+
+## Planned Phases
 
 ### Phase 4: Issuer Interface
 
 Browser-based form served by the signing server. NFC-normalizes inputs, builds canonical JSON, posts to signing server, generates QR code. Validates URL length against QR capacity limit.
 
-### Phase 5: Issuance Log
+### Phase 5: Issuance Log & History
 
-Append-only JSON log written by the signing server. Searchable history view in the issuer interface.
+Searchable history view in the issuer interface for browsing the append-only issuance log.
 
 ### Phase 6: Packaging
 
-Platform-specific launcher script, setup guide, GitHub Pages configuration, credential v1 formal specification, README.
+Platform-specific launcher script, setup guide, GitHub Pages configuration, credential v1 formal specification.

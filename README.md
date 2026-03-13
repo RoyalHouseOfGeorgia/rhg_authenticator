@@ -8,40 +8,33 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 2. **Encoding**: The signed credential is encoded into a QR code printed on the physical diploma
 3. **Verification**: Anyone scans the QR code, opening a public page that checks the signature against a key registry
 
-```
-┌──────────────┐     ┌─────────────┐     ┌──────────────────┐
-│  Credential  │───▶│  QR Code on │────▶│  Public Verify   │
-│  + Signature │     │  Diploma    │     │  Page (GH Pages) │
-└──────────────┘     └─────────────┘     └──────────────────┘
-       ▲                                          │
-       │                                          ▼
-┌──────────────┐                        ┌──────────────────┐
-│  YubiKey     │                        │  Key Registry    │
-│  Ed25519     │                        │  (registry.json) │
-└──────────────┘                        └──────────────────┘
-```
+![Issuance Flow](docs/issuance-flow.svg)
 
 ## Project Status
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Core crypto & data library | **Complete** (170 tests) |
-| 2 | Public verification page | **Complete** (34 tests) |
-| 3 | Local signing server (YubiKey) | Not started |
+| 1 | Core crypto & data library | **Complete** |
+| 2 | Public verification page | **Complete** |
+| 3 | Local signing server (YubiKey) | **Complete** |
 | 4 | Issuer interface (form + QR) | Not started |
 | 5 | Issuance log & history | Not started |
 | 6 | Packaging & deployment | Not started |
+
+517 tests passing. Six rounds of security hardening applied to Phases 1–3.
 
 ## Quick Start
 
 ```bash
 npm install
-npm test          # 204 tests
-npm run lint      # tsc --noEmit
-npm run build     # TypeScript → dist/
+npm test              # 517 tests
+npm run lint          # tsc --noEmit
+npm run build         # TypeScript → dist/
+npm run build:verify  # Bundle verification page JS
+npm run start:server  # Start signing server (requires YubiKey)
 ```
 
-Requires Node.js 20+.
+Requires Node.js 20+. The signing server requires `yubico-piv-tool` and a YubiKey with Ed25519 key in PIV slot 9c.
 
 ## Documentation
 
@@ -57,6 +50,8 @@ Requires Node.js 20+.
 | `vitest` | Test runner | Dev |
 | `esbuild` | Bundle TypeScript for browser | Dev |
 | `happy-dom` | Lightweight DOM for verification page tests | Dev |
+| `tsx` | TypeScript execution for CLI entry point | Dev |
+| `@types/node` | Node.js type definitions | Dev |
 
 ## License
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   validateCredential,
   UnsupportedVersionError,
+  sanitizeForError,
 } from '../credential.js';
 import type { Credential } from '../credential.js';
 
@@ -240,7 +241,7 @@ describe('validateCredential', () => {
   });
 
   describe('empty string fields', () => {
-    for (const field of ['authority', 'date', 'honor', 'recipient'] as const) {
+    for (const field of ['authority', 'date', 'detail', 'honor', 'recipient'] as const) {
       it(`rejects empty ${field}`, () => {
         const cred = { ...validCredential, [field]: '' };
         expect(() => validateCredential(cred)).toThrow(
@@ -281,7 +282,7 @@ describe('validateCredential', () => {
   });
 
   describe('wrong types for string fields', () => {
-    for (const field of ['authority', 'date', 'honor', 'recipient'] as const) {
+    for (const field of ['authority', 'date', 'detail', 'honor', 'recipient'] as const) {
       it(`rejects ${field} as a number`, () => {
         const cred = { ...validCredential, [field]: 123 };
         expect(() => validateCredential(cred)).toThrow(
@@ -301,5 +302,44 @@ describe('validateCredential', () => {
       const cred = { ...validCredential, aaa: 1, zzz: 2 };
       expect(() => validateCredential(cred)).toThrow(/unexpected field:/);
     });
+  });
+});
+
+describe('sanitizeForError', () => {
+  it('strips C0 control characters', () => {
+    expect(sanitizeForError('\x00hello\nworld\r\t!')).toBe('helloworld!');
+  });
+
+  it('strips C1 control characters', () => {
+    expect(sanitizeForError('a\x80b\x9fc')).toBe('abc');
+  });
+
+  it('strips bidi override characters', () => {
+    expect(sanitizeForError('a\u202Ab\u2069c\u200Ed\u200Fe\u061Cf')).toBe(
+      'abcdef',
+    );
+  });
+
+  it('preserves normal ASCII text and spaces', () => {
+    const input = 'Hello, World! 123 @#$%^&*()';
+    expect(sanitizeForError(input)).toBe(input);
+  });
+
+  it('preserves non-Latin characters', () => {
+    const georgian = 'ქართველი';
+    expect(sanitizeForError(georgian)).toBe(georgian);
+  });
+
+  it('handles 1MB+ string without crashing', () => {
+    const big = 'a'.repeat(1_100_000);
+    expect(sanitizeForError(big)).toBe(big);
+  });
+
+  it('returns empty string when input is empty', () => {
+    expect(sanitizeForError('')).toBe('');
+  });
+
+  it('returns empty string when input is entirely control characters', () => {
+    expect(sanitizeForError('\x00\x01\x1f\x7f\x80\x9f')).toBe('');
   });
 });

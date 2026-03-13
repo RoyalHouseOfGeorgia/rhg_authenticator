@@ -6,6 +6,8 @@
  */
 
 import { base64Decode } from './base64url.js';
+import { sanitizeForError } from './credential.js';
+import { DATE_RE, isValidDate } from './validation.js';
 
 export type KeyEntry = {
   authority: string;
@@ -29,35 +31,8 @@ const ENTRY_FIELDS = new Set<string>([
   'note',
 ]);
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-function sanitizeForError(s: string): string {
-  return s.replace(/[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '');
-}
-
-function isLeapYear(year: number): boolean {
-  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-}
-
-function isValidDate(value: string): boolean {
-  if (!DATE_RE.test(value)) return false;
-
-  const year = parseInt(value.slice(0, 4), 10);
-  const month = parseInt(value.slice(5, 7), 10);
-  const day = parseInt(value.slice(8, 10), 10);
-
-  if (year < 1) return false;
-  if (month < 1 || month > 12) return false;
-
-  let maxDay = DAYS_IN_MONTH[month - 1];
-  if (month === 2 && isLeapYear(year)) maxDay = 29;
-
-  return day >= 1 && day <= maxDay;
-}
-
 /** Ed25519 SPKI DER prefix (12 bytes): OID 1.3.101.112 wrapped in SubjectPublicKeyInfo. */
-const ED25519_SPKI_PREFIX = new Uint8Array([
+export const ED25519_SPKI_PREFIX = new Uint8Array([
   0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
 ]);
 

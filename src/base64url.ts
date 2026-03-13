@@ -8,19 +8,12 @@
 /** Encode a Uint8Array to a Base64URL string (no padding). */
 export function base64urlEncode(bytes: Uint8Array): string {
   const binStr = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
-  let b64: string;
-  try {
-    b64 = btoa(binStr);
-  } catch (e) {
-    throw new Error(
-      `base64urlEncode: failed to encode bytes — ${(e as Error).message}`,
-    );
-  }
+  const b64 = btoa(binStr);
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** Maximum Base64URL input length, derived from MAX_PAYLOAD_BYTES (2048): ceil(2048 * 4/3) rounded up with margin. */
-export const MAX_B64URL_INPUT = 2800;
+/** Max base64url input length. Derived: ceil(MAX_PAYLOAD_BYTES × 4/3) = ceil(2730.67) = 2731. */
+export const MAX_B64URL_INPUT = 2731;
 
 /** Decode a Base64URL string (padded or unpadded) to a Uint8Array. */
 export function base64urlDecode(str: string): Uint8Array {
