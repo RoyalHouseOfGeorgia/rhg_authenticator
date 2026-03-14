@@ -1,11 +1,11 @@
 module github.com/royalhouseofgeorgia/rhg-authenticator
 
-go 1.25.0
+go 1.24
 
 require (
 	github.com/go-piv/piv-go/v2 v2.5.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
-	golang.org/x/text v0.35.0
+	golang.org/x/text v0.24.0
 )
 
 require (
