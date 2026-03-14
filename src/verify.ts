@@ -82,12 +82,14 @@ export function verifyCredential(
 
   // Single-pass: verify signature then check date range.
   let signatureMatchedButDateInvalid = false;
+  let decodeFailures = 0;
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     let publicKey: Uint8Array;
     try {
       publicKey = decodePublicKey(key);
     } catch {
+      decodeFailures++;
       console.warn('Skipping malformed registry key at index', i);
       continue;
     }
@@ -109,6 +111,9 @@ export function verifyCredential(
       valid: false,
       reason: 'signature valid but credential date outside key validity period',
     };
+  }
+  if (decodeFailures === keys.length) {
+    return { valid: false, reason: 'all registry keys for this authority failed to decode' };
   }
   return { valid: false, reason: 'no matching key produced a valid signature' };
 }

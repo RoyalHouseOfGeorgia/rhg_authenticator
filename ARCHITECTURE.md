@@ -10,60 +10,60 @@ The RHG Authenticator is a credential verification system with three principals:
 
 No blockchain, no third-party verification services. Trust is rooted in Ed25519 public key cryptography and a public key registry hosted alongside the verification page.
 
+## Components
+
+The system has two independent components:
+
+1. **Verification library + page (TypeScript)** — core crypto, credential validation, key registry, and the public-facing verification page on GitHub Pages. This is what the world sees.
+2. **Signing app (Go)** — self-contained desktop application with Fyne GUI. Talks directly to YubiKey via PCSC (`piv-go`), signs credentials, generates QR codes (SVG/PNG). Single binary, no external tools required. See [go/README.md](go/README.md) for details.
+
 ## Threat Model
 
 - **Trust anchor**: The YubiKey hardware token. Private key never leaves the device.
 - **Public registry**: `keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls.
 - **Verification is client-side**: The public verification page fetches the registry and performs all crypto in the browser — no server round-trip.
-- **Signing server is localhost-only**: The signing server binds to `127.0.0.1` and is single-user. Network threats are out of scope.
+- **PIN security**: The Go signing app uses `piv-go` to talk directly to the YubiKey via PCSC. PIN is handled entirely in-process — never on the command line, never in a file, never visible in `/proc`.
 - **QR as transport**: The QR code is a URL containing the full signed credential. No database lookup required.
 
 ### Accepted Risks
 
 - **Timing side channel in verification diagnostics**: Date-mismatch diagnostics reveal whether a valid signature exists outside the date range. This is intentional UX — the registry is public anyway.
 - **Public key registry is public**: By design. The security property is that only the holder of the YubiKey private key can produce valid signatures.
-- **SSRF DNS rebinding residual**: Pre-fetch DNS resolution check narrows the window, but DNS rebinding can still return a safe IP for our lookup and a private IP for Node's `fetch()`. Accepted because the registry URL is operator-set config, not untrusted input.
-- **PIN in `/proc/PID/cmdline`**: `yubico-piv-tool` requires literal `-P <pin>` on the command line. Visible to same-UID processes for milliseconds during signing. Accepted for single-user localhost.
 
 ## Data Flow
 
 ### Issuance Flow
 
-![Issuance Flow](docs/issuance-flow.svg)
+1. Operator opens the signing app (Go desktop binary)
+2. App detects YubiKey via PCSC, reads certificate from PIV slot 9c
+3. App fetches registry, matches YubiKey public key to authority
+4. Operator fills in credential form (recipient, honor, detail, date)
+5. Operator clicks "Sign" → app prompts for YubiKey PIN via GUI dialog
+6. App canonicalizes credential → signs via YubiKey → verifies round-trip → logs
+7. App generates QR code (SVG for print, PNG for preview)
+8. Operator saves SVG, gives to diploma designer for printing
 
 ### Verification Flow
 
-![Verification Flow](docs/verification-flow.svg)
+1. Anyone scans QR code on diploma with phone camera
+2. Phone opens `https://verify.royalhouseofgeorgia.ge/?p=<payload>&s=<signature>`
+3. Verification page fetches key registry
+4. Ed25519 signature verified client-side in browser
+5. Result displayed: valid credential details or rejection reason
 
-## Module Architecture
-
-![Module Architecture](docs/module-architecture.svg)
-
-### Module Responsibilities
+## Module Architecture (TypeScript — Verification Library)
 
 | Module | Responsibility | External Deps |
 |--------|---------------|---------------|
 | `canonical.ts` | Deterministic JSON serialization (key-sort, NFC, no whitespace) | None |
 | `base64url.ts` | Base64URL encode/decode, standard Base64 decode | None (uses `btoa`/`atob`) |
-| `credential.ts` | Credential v1 schema validation, arithmetic date checking, `sanitizeForError` | `validation.ts` |
+| `credential.ts` | Credential v1 schema validation, control char rejection, field length limits, `sanitizeForError` | `validation.ts` |
 | `crypto.ts` | Ed25519 sign, verify (`zip215: false`), getPublicKey | `@noble/curves` |
 | `registry.ts` | Registry schema validation, authority lookup, SPKI key decoding | `base64url.ts`, `validation.ts` |
 | `validation.ts` | Shared date validation (calendar-correct, no `Date` constructor) | None |
 | `verify.ts` | Single-pass verification orchestrator | `credential.ts`, `crypto.ts`, `registry.ts` |
 | `index.ts` | Barrel export | All core modules |
 | `verify-page.ts` | Browser verification page: URL parsing, registry fetch, DOM rendering | `verify.ts`, `base64url.ts`, `registry.ts` |
-| `issuer.ts` | Pure issuer logic: QR/URL constants, form validation, URL length estimation, error formatting | `canonical.ts`, `base64url.ts`, `validation.ts` |
-| `issuer-page.ts` | Browser issuer page: auth, form, QR rendering, download/copy actions | `issuer.ts`, `qrcode` |
-| `server/types.ts` | Shared types: `SigningAdapter`, `ServerConfig`, `IssuanceRecord` | None |
-| `server/cli.ts` | CLI entry point, argument parsing, signal handling | `server/main.ts` |
-| `server/main.ts` | Server startup: token gen, key export, registry fetch, HTTP server | `server/http.ts`, `server/yubikey.ts`, `server/registry-fetch.ts`, `server/key-match.ts` |
-| `server/http.ts` | Request handler: routing, CORS, auth, rate limiting, static files | `server/sign.ts`, `server/key-match.ts` |
-| `server/sign.ts` | Signing orchestrator: validate → canonicalize → sign → verify → log | `server/signature.ts`, `server/log.ts`, core library |
-| `server/signature.ts` | Ed25519 signature length validation (64 bytes) | None |
-| `server/registry-fetch.ts` | Remote registry fetch with SSRF validation + local fallback | `credential.ts`, `registry.ts` |
-| `server/key-match.ts` | Match public key against registry entries by date | `registry.ts` |
-| `server/log.ts` | Atomic append-only issuance log (tmp + rename) | None |
-| `server/yubikey.ts` | YubiKey PIV adapter via `yubico-piv-tool` CLI | `registry.ts`, `server/signature.ts` |
 
 ## Credential Format
 
@@ -80,16 +80,16 @@ type CredentialV1 = {
 };
 ```
 
-All six fields are required. No extra fields allowed. Strings must be non-empty with no leading/trailing whitespace.
+All six fields are required. No extra fields allowed. Strings must be non-empty with no leading/trailing whitespace, no control characters (C0/C1/bidi), and within per-field length limits (authority: 200, recipient: 500, honor: 200, detail: 2000, date: 10).
 
 ### Canonical Form
 
 Before signing, the credential is serialized to canonical JSON:
 
 1. Object keys sorted lexicographically at all levels
-2. Strings NFC-normalized (Unicode normalization)
+2. Strings NFC-normalized (Unicode normalization) — both keys and values
 3. No whitespace between tokens
-4. Standard JSON escaping
+4. Standard JSON escaping per RFC 8259 §7 (including U+2028/U+2029)
 
 The canonical bytes are what gets signed and included in the URL (not a re-serialization).
 
@@ -102,18 +102,15 @@ https://verify.royalhouseofgeorgia.ge/?p=<payload>&s=<signature>
 - `p` = Base64URL(canonical JSON bytes)
 - `s` = Base64URL(64-byte Ed25519 signature)
 
-Total URL must fit within QR Version 24-Q capacity. Conservative limit is 625 chars (true V24-Q byte-mode capacity is 661). Fixed overhead is ~132 chars, leaving ~493 chars for the base64url-encoded payload.
+Maximum URL length: 625 chars (conservative limit within QR error correction Q capacity).
 
-### QR Code Specification
+### QR Code
 
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Version | 24 (fixed) | 113×113 modules; fits credentials up to 625 chars |
-| Error correction | Q (25%) | Tolerates moderate damage to printed diplomas |
-| Max URL length | 625 chars | Conservative limit (true capacity 661) |
-| Render width | 2048px | High-res PNG for print (minimum 6.1×6.1 cm) |
-| Preview width | 512px | Screen preview in issuer UI |
-| Quiet zone | 4 modules | Per QR spec |
+The Go signing app generates QR codes as:
+- **SVG** (primary) — vector format, scales to any print size without quality loss. The diploma designer imports the SVG and scales to fit.
+- **PNG** (preview) — 512px for on-screen display, 2048px for download.
+
+Error correction level Q (25% recovery, `qrcode.High` in the `skip2/go-qrcode` library). Version auto-selected (smallest that fits the URL). Minimum recommended print size: 3×3 cm (encoded in the default SVG filename as `min3cm`).
 
 ## Key Registry
 
@@ -134,18 +131,7 @@ type Registry = { keys: KeyEntry[] };
 
 ### Key Rotation
 
-The registry supports multiple keys per authority with non-overlapping date ranges:
-
-```json
-{
-  "keys": [
-    { "authority": "Prince", "from": "2025-01-01", "to": "2025-12-31", "public_key": "..." },
-    { "authority": "Prince", "from": "2026-01-01", "to": null, "public_key": "..." }
-  ]
-}
-```
-
-Verification first tries date-eligible keys. If no match, tries remaining keys and reports a date-mismatch diagnostic if a signature validates outside its key's date range.
+The registry supports multiple keys per authority with non-overlapping date ranges. Verification tries all matching keys in a single pass, with date-mismatch diagnostics for valid-but-expired signatures.
 
 ### SPKI DER Format
 
@@ -163,108 +149,42 @@ Offset  Length  Content
 
 Ed25519 via `@noble/curves` with `zip215: false` for strict RFC 8032 verification. This rejects non-canonical signatures that some implementations accept.
 
-`@noble/curves` was chosen over `@noble/ed25519` because v2 of the latter removed the `zip215: false` option.
+### Signing (Go app)
 
-### Signing
+YubiKey PIV slot 9c via `go-piv/piv-go` v2 — direct PCSC access, Ed25519 (algorithm 0xE0, requires firmware >= 5.7). PIN handled entirely in-process via `crypto.Signer` interface — never on the command line, never in a file, never visible in `/proc`. The signing tool produces a raw 64-byte signature (R || S). No DER wrapping.
 
-- **Production**: YubiKey PIV slot 9c via `yubico-piv-tool` (requires PIN + touch)
-- **Test/CI**: `@noble/curves` in-memory signing with test keypairs
+### PIN Security
 
-The signing tool produces a raw 64-byte signature (R ‖ S). No DER wrapping.
+- PIN is prompted via a GUI dialog on each sign operation (default)
+- Opt-in caching: PIN stored in `mlock`'d memory (non-swappable), protected by `sync.Mutex`, auto-zeroed after 5 minutes of inactivity or app close
+- Platform-specific mlock: `syscall.Mlock` on macOS/Linux, `VirtualLock` via `kernel32.dll` on Windows
+- YubiKey's built-in 3-attempt PIN retry counter is enforced by the hardware
 
-### Verification
+### Verification (TypeScript)
 
 Verification operates on the original payload bytes, not a re-canonicalized form. This prevents any normalization differences between signing and verification from causing false rejections.
 
-## Security Hardening
-
-Eight rounds of security hardening and two code review rounds applied across Phases 1–4.
-
-### Core Library Defenses
+## Security — Core Library
 
 | Defense | Module | Description |
 |---------|--------|-------------|
 | Prototype pollution | `canonical.ts` | `Object.create(null)` for sorted objects; `__proto__` key rejected |
 | Payload size limit | `verify.ts` | `MAX_PAYLOAD_BYTES = 2048` enforced before JSON parsing |
-| Log injection | `credential.ts` | `sanitizeForError` strips C0/C1 control characters; used across all modules |
+| Log injection | `credential.ts` | `sanitizeForError` strips C0/C1 control characters and bidi overrides |
 | Base64 length validation | `base64url.ts` | Rejects remainder-1 inputs (never valid Base64) |
 | Control character rejection | `credential.ts` | C0/C1 control characters and bidi overrides rejected in all credential string fields |
-| Per-field length limits | `credential.ts` | authority: 200, recipient: 500, honor: 200, detail: 2000, date: 10 — compile-time enforced via `satisfies` |
+| Per-field length limits | `credential.ts` | Compile-time enforced via `satisfies` |
 | Extra field rejection | `credential.ts`, `registry.ts` | No unexpected fields pass validation |
 | Strict crypto inputs | `crypto.ts` | Length validation on all key/signature/message inputs |
 | SPKI prefix verification | `registry.ts` | Byte-by-byte comparison of 12-byte DER header |
 
-### Server Security Defenses
-
-| Defense | Module | Description |
-|---------|--------|-------------|
-| Bearer token auth | `http.ts` | SHA-256 hashed timing-safe comparison via `timingSafeEqual` |
-| Token fingerprint logging | `main.ts` | SHA-256 fingerprint in banner; raw token never logged |
-| Origin enforcement | `http.ts` | All POST requests require Origin header; only localhost origins accepted |
-| Auth-failure rate limiting | `http.ts` | Exponential backoff after 5 failures (1s–30s), monotonic clock |
-| Body size limit | `http.ts` | 64KB max body, 5s read timeout, socket destroyed on violation |
-| Signing queue depth | `http.ts` | Max 5 concurrent sign operations (429 overflow) |
-| CORS rejection | `http.ts` | Cross-origin requests rejected; no CORS headers exposed |
-| CSP headers | `http.ts` | `default-src 'self'`; `script-src 'self'`; `style-src 'self'`; `img-src 'self' data:`; `connect-src 'self'`; `base-uri 'none'`; `form-action 'none'`; `frame-ancestors 'none'` |
-| Security headers | `http.ts` | X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy, Cache-Control |
-| TOCTOU-safe static files | `http.ts` | fd-based stat + read on same file descriptor |
-| Path traversal protection | `http.ts` | `realpath` resolution + prefix check against `issuerDir` |
-| SSRF protection | `registry-fetch.ts` | HTTPS-only, hostname blocklist, pre-fetch DNS resolution with IPv4/IPv6 private range detection |
-| Extra-key rejection | `http.ts` | Sign request body rejects unexpected fields beyond the 4 required |
-| Stderr cap | `yubikey.ts` | `spawnAsync` limits stderr accumulation to 64KB to prevent unbounded memory growth |
-| Token file option | `cli.ts`, `main.ts` | `--token-file <path>` writes bearer token to file with `0o600` permissions for operators who redirect stderr |
-| Authority refresh check | `main.ts` | Background registry refresh re-validates YubiKey key is still active; logs warning if revoked |
-| Registry size limit | `registry-fetch.ts` | 1MB max response (Content-Length pre-check + body byte count) |
-| Atomic log writes | `log.ts` | Write to `.tmp.<random>` then rename; 0o600 permissions |
-| Random tmp paths | `yubikey.ts` | `fs.mkdtemp` for signing temp files; cleaned in `finally` block |
-| Process timeout | `yubikey.ts` | SIGTERM → 2s → SIGKILL for hung child processes |
-| PIN validation | `yubikey.ts` | 6–8 printable ASCII only; non-printable rejected |
-| Error sanitization | All server modules | `sanitizeForError` on all logged/returned error details |
-
-### Design Decisions
+## Design Decisions
 
 - **Sync API**: All crypto operations are synchronous. `@noble/curves` is pure JS — no Web Crypto async overhead.
 - **No key_id field**: The registry is too small for O(n) lookup to matter. Signature verification is the real authentication gate.
 - **Arithmetic date validation**: Uses manual month/day/leap-year checks instead of `Date` constructor, which silently rolls invalid dates (e.g., Feb 30 → Mar 2).
 - **Single-pass verification**: Verify signature against all authority-matching keys, with date-mismatch diagnostics for valid-but-expired matches.
-- **Global rate limiter**: Localhost single-user tool — per-IP tracking is unnecessary. Valid auth always succeeds (no attacker-triggered lockout).
-- **SSRF residual risk accepted**: DNS rebinding can bypass pre-fetch DNS resolution check. Accepted because registry URL is operator-set config, not untrusted input. Pre-fetch check narrows the window significantly.
-- **Token in module-scoped closure**: Bearer token stored in a JS variable (not `sessionStorage`) to reduce XSS read surface. Cleared only on page unload or 401 re-auth.
-
-## Completed Phases
-
-### Phase 1: Core Crypto & Data Layer (Complete)
-
-Foundational data structures and cryptographic operations. Credential v1 schema validation, deterministic canonical JSON serialization (key-sort, NFC, no whitespace), Ed25519 sign/verify via `@noble/curves`, public key registry with SPKI DER support, and a two-pass verification orchestrator.
-
-### Phase 2: Verification Page (Complete)
-
-Static HTML/CSS/JS page for GitHub Pages at `verify/`. The Phase 1 library is bundled via esbuild into a single IIFE. The page parses URL parameters (`?p=<payload>&s=<signature>`), fetches the key registry, runs Ed25519 verification client-side, and renders a dignified success/failure/error UI. Mobile-first design (primary use: phone scanning QR). All DOM text via `textContent` for XSS prevention. WCAG AA accessible (color + icon + text label for all states).
-
-### Phase 3: Signing Server (Complete)
-
-Localhost Node.js server interfacing with YubiKey PIV slot 9c. Startup: generate bearer token, export YubiKey public key, fetch and validate registry, match key to authority. HTTP server with `POST /sign` (validate → canonicalize → sign → verify round-trip → log) and `GET /health`. Background registry refresh every 60s. Atomic issuance log with crash-safe tmp+rename writes. Six rounds of security hardening including SSRF protection, CORS/Origin enforcement, auth rate limiting, CSP headers, TOCTOU-safe file serving, and process timeouts.
-
-### Phase 4: Issuer Interface (Complete)
-
-Browser-based credential issuance form served by the signing server. Two-layer architecture: `issuer.ts` (pure logic — QR/URL constants, form validation, URL length estimation, error formatting) and `issuer-page.ts` (browser entry point — DOM construction, auth flow, QR rendering, download/copy).
-
-Key features:
-- Token authentication via module-scoped closure (not `sessionStorage`) — XSS-resistant
-- Form validation matching server-side rules (honor titles, date format, field lengths)
-- Pre-submit URL length check against QR V24-Q capacity (625 chars conservative limit)
-- QR code generation via `qrcode` library with forced version 24, error correction Q
-- High-resolution PNG download (2048×2048) with SHA-256 content hash in filename
-- Clipboard copy with graceful fallback for non-HTTPS contexts
-- Print size advisory (minimum 6.1×6.1 cm, recommended 7.3×7.3 cm)
-- All DOM text via `textContent` (zero `innerHTML` — XSS-safe)
-
-## Planned Phases
-
-### Phase 5: Desktop App (Electron)
-
-Self-contained desktop application wrapping the signing server and issuer UI. Target: non-technical users who double-click to open, plug in YubiKey, and sign credentials without terminal access.
-
-### Phase 6: Packaging & Deployment
-
-Platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage/.deb), GitHub Pages configuration for verification page, credential v1 formal specification.
+- **Go for signing app**: Single binary, `piv-go` for direct YubiKey access (PIN in-process), `crypto/ed25519` in stdlib, Fyne for cross-platform GUI. Rust was evaluated but its `yubikey` crate lacks Ed25519 PIV support (issue #602, no progress). CGO required on macOS/Linux for PCSC; pure Go on Windows.
+- **SVG as primary QR output**: Vector format scales perfectly for print. No pixel density concerns, no forced QR version needed.
+- **Registry fallback chain**: remote (10s timeout) → cached file → embedded (go:embed). Corrupted cache falls through to embedded without terminating.
+- **Cross-language compatibility**: Go `core/` package produces byte-identical canonical JSON to TypeScript. Verified by test vectors (ASCII, Georgian, NFC edge cases).

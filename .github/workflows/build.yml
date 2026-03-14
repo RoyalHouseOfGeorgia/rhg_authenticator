@@ -1,0 +1,118 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test-typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run check:registry
+      - run: npm audit --audit-level=high
+
+  test-go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
+        with:
+          go-version: '1.24'
+      - run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libgl1-mesa-dev xorg-dev
+      - working-directory: go
+        run: go mod verify
+      - working-directory: go
+        run: go vet ./...
+      - working-directory: go
+        run: go test ./... -count=1
+      - working-directory: go
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: github/codeql-action/init@820e3160e279568db735cee8ed8f8e77a6da7818  # v3.32.6
+        with:
+          languages: go, javascript
+      - uses: github/codeql-action/autobuild@820e3160e279568db735cee8ed8f8e77a6da7818  # v3.32.6
+      - uses: github/codeql-action/analyze@820e3160e279568db735cee8ed8f8e77a6da7818  # v3.32.6
+
+  build:
+    needs: [test-typescript, test-go, security]
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+            ext: .exe
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
+        with:
+          go-version: '1.24'
+      - if: matrix.goos == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libgl1-mesa-dev xorg-dev
+      - working-directory: go
+        run: make build
+      - run: mv go/release/rhg-authenticator${{ matrix.ext }} go/release/rhg-authenticator-${{ matrix.suffix }}${{ matrix.ext }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: rhg-authenticator-${{ matrix.suffix }}
+          path: go/release/rhg-authenticator-${{ matrix.suffix }}${{ matrix.ext }}
+          retention-days: 7
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          path: release
+          merge-multiple: true
+      - run: cd release && shasum -a 256 rhg-authenticator-* > SHA256SUMS.txt
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2.4.0
+        with:
+          subject-path: 'release/rhg-authenticator-*'
+      - uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
+        with:
+          files: release/*
+          generate_release_notes: true

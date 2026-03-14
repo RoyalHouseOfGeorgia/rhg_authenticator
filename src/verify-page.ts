@@ -324,4 +324,4 @@ export async function initVerifyPage(): Promise<void> {
   renderResult(result, container);
 }
 
-document.addEventListener('DOMContentLoaded', initVerifyPage);
+document.addEventListener('DOMContentLoaded', () => initVerifyPage().catch(console.error));

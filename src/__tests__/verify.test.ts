@@ -487,7 +487,45 @@ describe("verifyCredential", () => {
     expect(success.credential.recipient).toBe("Jane Doe");
   });
 
-  // 19. URL byte-budget test
+  // 19. All registry keys fail to decode
+  it("returns specific failure when all registry keys fail to decode", () => {
+    const { secretKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+
+    const badEntry1: KeyEntry = {
+      authority: "Test Authority",
+      from: "2020-01-01",
+      to: null,
+      algorithm: "Ed25519",
+      public_key: "not-valid-base64!@#$",
+      note: "corrupted key 1",
+    };
+    const badEntry2: KeyEntry = {
+      authority: "Test Authority",
+      from: "2020-01-01",
+      to: null,
+      algorithm: "Ed25519",
+      public_key: "also-not-valid!@#$%^",
+      note: "corrupted key 2",
+    };
+    const registry = makeRegistry(badEntry1, badEntry2);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = verifyCredential(payload, signature, registry);
+      expect(result.valid).toBe(false);
+      expect((result as VerificationFailure).reason).toBe(
+        "all registry keys for this authority failed to decode",
+      );
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // 20. URL byte-budget test
   it("max-length realistic credential fits within URL byte budget", () => {
     const { secretKey, publicKey } = makeKeypair(99);
     const entry = makeKeyEntry(publicKey, { authority: "თბილისის უნივერსიტეტი" });

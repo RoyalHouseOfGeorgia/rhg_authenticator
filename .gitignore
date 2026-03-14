@@ -19,6 +19,7 @@ node_modules/
 
 # Build output
 dist/
+go/release/
 build/
 
 # OS artifacts

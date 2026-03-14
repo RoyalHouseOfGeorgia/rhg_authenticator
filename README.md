@@ -4,55 +4,88 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 
 ## How It Works
 
-1. **Issuance**: The Prince signs a credential (recipient, honor, date) with his YubiKey (Ed25519, PIV slot 9c)
-2. **Encoding**: The signed credential is encoded into a QR code printed on the physical diploma
+1. **Issuance**: The operator opens the RHG Authenticator desktop app, fills in the credential form, and signs with a YubiKey
+2. **Encoding**: The signed credential is encoded into a QR code (SVG for print, PNG for preview)
 3. **Verification**: Anyone scans the QR code, opening a public page that checks the signature against a key registry
 
-![Issuance Flow](docs/issuance-flow.svg)
+## Components
 
-## Project Status
+| Component | Language | Status | Description |
+|-----------|----------|--------|-------------|
+| **Desktop signing app** | Go | **Complete** | Self-contained binary with Fyne GUI, direct YubiKey access via PCSC |
+| **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
+| **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1 | Core crypto & data library | **Complete** |
-| 2 | Public verification page | **Complete** |
-| 3 | Local signing server (YubiKey) | **Complete** |
-| 4 | Issuer interface (form + QR) | **Complete** |
-| 5 | Desktop app (Electron) | Planned |
-| 6 | Packaging & deployment | Planned |
+620 tests passing (318 Go + 302 TypeScript).
 
-656 tests passing. Eight rounds of security hardening and two code review rounds applied.
+## Quick Start — Signing App (Go)
 
-## Quick Start
+**Requirements**: Go 1.24+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
+
+```bash
+cd go
+make build          # → release/rhg-authenticator
+./release/rhg-authenticator
+```
+
+**Platform-specific build dependencies:**
+- macOS: none (PCSC framework + OpenGL built-in)
+- Windows: none (WinSCard + OpenGL built-in)
+- Linux: `sudo apt install libpcsclite-dev libgl1-mesa-dev xorg-dev pcscd`
+
+See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
+
+## Quick Start — Verification Library (TypeScript)
 
 ```bash
 npm install
-npm test              # 656 tests
+npm test              # 302 tests
 npm run lint          # tsc --noEmit
-npm run build:all     # TypeScript + verification + issuer bundles
-npm run start:server  # Start signing server (requires YubiKey)
+npm run build:verify  # Bundle verification page JS
 ```
 
-Requires Node.js 20+. The signing server requires `yubico-piv-tool` and a YubiKey with Ed25519 key in PIV slot 9c.
+Requires Node.js 20+.
 
 ## Documentation
 
-- **[DEVELOPER.md](DEVELOPER.md)** — Setup, testing, API reference, coding conventions
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — System design, module structure, security model, data flows
+- **[go/README.md](go/README.md)** — Go signing app: build, usage, YubiKey setup, platform notes
+- **[DEVELOPER.md](DEVELOPER.md)** — TypeScript library: setup, API reference, testing conventions
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — System design, security model, data flows
+
+## Binary Integrity
+
+Release binaries are published with SHA-256 checksums (`SHA256SUMS.txt`).
+
+**Verify on macOS/Linux:**
+```bash
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+**Verify on Windows:**
+```
+certutil -hashfile rhg-authenticator-windows-amd64.exe SHA256
+```
+
+Compare the output with the hash in `SHA256SUMS.txt`.
 
 ## Dependencies
+
+### Go (signing app)
+
+| Dependency | Purpose |
+|-----------|---------|
+| [`go-piv/piv-go/v2`](https://github.com/go-piv/piv-go) | YubiKey PIV access (Ed25519, PCSC, PIN in-process) |
+| [`fyne.io/fyne/v2`](https://fyne.io) | Cross-platform GUI |
+| [`skip2/go-qrcode`](https://github.com/skip2/go-qrcode) | QR code generation (SVG + PNG) |
+| `golang.org/x/text` | NFC Unicode normalization |
+| Go stdlib | `crypto/ed25519`, `crypto/sha256`, `encoding/json`, `encoding/base64` |
+
+### TypeScript (verification library)
 
 | Dependency | Purpose | Type |
 |-----------|---------|------|
 | [`@noble/curves`](https://github.com/paulmillr/noble-curves) | Audited Ed25519 implementation | Runtime |
-| [`qrcode`](https://github.com/soldair/node-qrcode) | QR code generation (issuer page) | Dev (bundled) |
-| `typescript` | Type checking and compilation | Dev |
-| `vitest` | Test runner | Dev |
-| `esbuild` | Bundle TypeScript for browser | Dev |
-| `happy-dom` | Lightweight DOM for issuer/verification page tests | Dev |
-| `tsx` | TypeScript execution for CLI entry point | Dev |
-| `canvas`, `jsqr` | QR encode/decode round-trip testing | Dev |
-| `@types/node`, `@types/qrcode` | Type definitions | Dev |
+| `typescript`, `vitest`, `esbuild`, `happy-dom` | Build + test toolchain | Dev |
 
 ## License
 
