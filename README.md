@@ -89,4 +89,6 @@ Compare the output with the hash in `SHA256SUMS.txt`.
 
 ## License
 
-Private. Royal House of Georgia.
+Copyright 2026 Royal House of Georgia. All rights reserved.
+
+This software is proprietary. No license is granted to use, copy, modify, or distribute this software without explicit written permission from the Royal House of Georgia.
