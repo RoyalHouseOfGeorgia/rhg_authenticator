@@ -31,6 +31,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
         with:
           go-version: '1.25.8'
+          cache-dependency-path: go/go.sum
       - run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libgl1-mesa-dev xorg-dev
       - working-directory: go
         run: go mod verify
@@ -63,21 +64,10 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            goos: darwin
-            goarch: arm64
             suffix: darwin-arm64
-          - os: macos-13
-            goos: darwin
-            goarch: amd64
-            suffix: darwin-amd64
           - os: windows-latest
-            goos: windows
-            goarch: amd64
             suffix: windows-amd64
-            ext: .exe
           - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
             suffix: linux-amd64
     runs-on: ${{ matrix.os }}
     steps:
@@ -85,15 +75,19 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
         with:
           go-version: '1.25.8'
-      - if: matrix.goos == 'linux'
+          cache-dependency-path: go/go.sum
+      - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libgl1-mesa-dev xorg-dev
       - working-directory: go
-        run: make build
-      - run: mv go/release/rhg-authenticator${{ matrix.ext }} go/release/rhg-authenticator-${{ matrix.suffix }}${{ matrix.ext }}
+        run: go build -trimpath -ldflags "-s -w" -o ../release/rhg-authenticator-${{ matrix.suffix }}${{ runner.os == 'Windows' && '.exe' || '' }} .
+      - if: runner.os == 'Windows'
+        run: dir release
+      - if: runner.os != 'Windows'
+        run: ls -la release/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: rhg-authenticator-${{ matrix.suffix }}
-          path: go/release/rhg-authenticator-${{ matrix.suffix }}${{ matrix.ext }}
+          path: release/rhg-authenticator-${{ matrix.suffix }}*
           retention-days: 7
 
   release:
