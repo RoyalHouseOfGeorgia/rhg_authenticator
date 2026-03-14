@@ -1,0 +1,4 @@
+# RFC 8032 Ed25519 test vectors — public, not secrets
+# https://www.rfc-editor.org/rfc/rfc8032#section-7.1
+c80ff4194d5b825c8198c3749787b490df7b468b:src/__tests__/crypto.test.ts:generic-api-key:67
+c80ff4194d5b825c8198c3749787b490df7b468b:src/__tests__/crypto.test.ts:generic-api-key:68
