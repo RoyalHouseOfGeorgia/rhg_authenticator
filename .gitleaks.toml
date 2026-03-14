@@ -1,0 +1,9 @@
+[extend]
+# Use default gitleaks rules, with path-based allowlist below.
+
+[allowlist]
+description = "Known false positives"
+paths = [
+  # RFC 8032 Ed25519 test vectors — public specification, not secrets.
+  '''src/__tests__/crypto\.test\.ts''',
+]
