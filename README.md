@@ -17,20 +17,19 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 | 1 | Core crypto & data library | **Complete** |
 | 2 | Public verification page | **Complete** |
 | 3 | Local signing server (YubiKey) | **Complete** |
-| 4 | Issuer interface (form + QR) | Not started |
-| 5 | Issuance log & history | Not started |
-| 6 | Packaging & deployment | Not started |
+| 4 | Issuer interface (form + QR) | **Complete** |
+| 5 | Desktop app (Electron) | Planned |
+| 6 | Packaging & deployment | Planned |
 
-517 tests passing. Six rounds of security hardening applied to Phases 1–3.
+656 tests passing. Eight rounds of security hardening and two code review rounds applied.
 
 ## Quick Start
 
 ```bash
 npm install
-npm test              # 517 tests
+npm test              # 656 tests
 npm run lint          # tsc --noEmit
-npm run build         # TypeScript → dist/
-npm run build:verify  # Bundle verification page JS
+npm run build:all     # TypeScript + verification + issuer bundles
 npm run start:server  # Start signing server (requires YubiKey)
 ```
 
@@ -46,12 +45,14 @@ Requires Node.js 20+. The signing server requires `yubico-piv-tool` and a YubiKe
 | Dependency | Purpose | Type |
 |-----------|---------|------|
 | [`@noble/curves`](https://github.com/paulmillr/noble-curves) | Audited Ed25519 implementation | Runtime |
+| [`qrcode`](https://github.com/soldair/node-qrcode) | QR code generation (issuer page) | Dev (bundled) |
 | `typescript` | Type checking and compilation | Dev |
 | `vitest` | Test runner | Dev |
 | `esbuild` | Bundle TypeScript for browser | Dev |
-| `happy-dom` | Lightweight DOM for verification page tests | Dev |
+| `happy-dom` | Lightweight DOM for issuer/verification page tests | Dev |
 | `tsx` | TypeScript execution for CLI entry point | Dev |
-| `@types/node` | Node.js type definitions | Dev |
+| `canvas`, `jsqr` | QR encode/decode round-trip testing | Dev |
+| `@types/node`, `@types/qrcode` | Type definitions | Dev |
 
 ## License
 

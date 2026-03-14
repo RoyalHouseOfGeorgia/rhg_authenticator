@@ -81,15 +81,14 @@ export function verifyCredential(
   }
 
   // Single-pass: verify signature then check date range.
-  let dateMismatch = false;
+  let signatureMatchedButDateInvalid = false;
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     let publicKey: Uint8Array;
     try {
       publicKey = decodePublicKey(key);
     } catch {
-      if (typeof console !== 'undefined')
-        console.warn('Skipping malformed registry key at index', i);
+      console.warn('Skipping malformed registry key at index', i);
       continue;
     }
 
@@ -98,14 +97,14 @@ export function verifyCredential(
         if (isDateInRange(credential.date, key)) {
           return { valid: true, key, credential };
         }
-        dateMismatch = true;
+        signatureMatchedButDateInvalid = true;
       }
     } catch {
       continue;
     }
   }
 
-  if (dateMismatch) {
+  if (signatureMatchedButDateInvalid) {
     return {
       valid: false,
       reason: 'signature valid but credential date outside key validity period',

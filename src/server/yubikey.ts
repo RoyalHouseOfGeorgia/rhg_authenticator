@@ -29,6 +29,8 @@ type SpawnResult = {
   code: number;
 };
 
+const MAX_STDERR_BYTES = 65_536;
+
 /** Spawn a child process and collect stdout/stderr. Never rejects on non-zero exit. Rejects with timeout error if process exceeds timeoutMs. */
 export function spawnAsync(command: string, args: string[], timeoutMs = 30_000): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
@@ -59,8 +61,14 @@ export function spawnAsync(command: string, args: string[], timeoutMs = 30_000):
       stdoutChunks.push(chunk);
     });
 
+    let stderrBytes = 0;
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderrBytes += chunk.length;
+      if (stderrBytes <= MAX_STDERR_BYTES) {
+        stderr += chunk.toString();
+      } else if (!stderr.endsWith('[truncated]')) {
+        stderr += '\n[truncated]';
+      }
     });
 
     child.on('error', (err) => {

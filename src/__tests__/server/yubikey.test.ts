@@ -631,4 +631,28 @@ describe('spawnAsync timeout', () => {
 
     vi.useRealTimers();
   });
+
+  it('truncates stderr when output exceeds 64KB', async () => {
+    const proc = new EventEmitter() as ChildProcess;
+    const stdoutEmitter = new EventEmitter();
+    const stderrEmitter = new EventEmitter();
+    (proc as unknown as Record<string, unknown>).stdout = stdoutEmitter;
+    (proc as unknown as Record<string, unknown>).stderr = stderrEmitter;
+    mockSpawn.mockReturnValue(proc);
+
+    const promise = spawnAsync('test-cmd', ['arg'], 10_000);
+
+    // Emit >64KB of stderr in chunks
+    const chunkSize = 16_384;
+    const totalChunks = 6; // 6 * 16KB = 96KB > 64KB
+    for (let i = 0; i < totalChunks; i++) {
+      stderrEmitter.emit('data', Buffer.alloc(chunkSize, 0x41 + i));
+    }
+    proc.emit('close', 0);
+
+    const result = await promise;
+    expect(result.stderr.endsWith('[truncated]')).toBe(true);
+    // Should have captured the first 64KB worth of data plus truncation marker
+    expect(result.stderr.length).toBeLessThan(96 * 1024 + 20);
+  });
 });

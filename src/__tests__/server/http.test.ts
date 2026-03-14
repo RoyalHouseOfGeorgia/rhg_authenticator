@@ -166,6 +166,48 @@ function request(
   });
 }
 
+function rawRequest(
+  port: number,
+  method: string,
+  urlPath: string,
+  options?: {
+    headers?: Record<string, string>;
+    token?: string;
+  },
+): Promise<{ status: number; rawHeaders: string[]; headers: http.IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    const headers: Record<string, string> = { ...options?.headers };
+    if (options?.token) {
+      headers['Authorization'] = `Bearer ${options.token}`;
+    }
+
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: urlPath,
+        method,
+        headers,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            rawHeaders: res.rawHeaders,
+            headers: res.headers,
+            body: Buffer.concat(chunks).toString('utf-8'),
+          });
+        });
+      },
+    );
+
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 describe('HTTP server', () => {
   let ctx: TestContext | null = null;
 
@@ -268,6 +310,27 @@ describe('HTTP server', () => {
     const res = await request(ctx.port, 'POST', '/sign', {
       body: validSignBody(),
       headers: { 'Content-Type': 'text/plain' },
+      token: ctx.token,
+    });
+    expect(res.status).toBe(415);
+  });
+
+  it('POST /sign with Content-Type application/json; charset=utf-8 is accepted', async () => {
+    ctx = await startTestServer();
+    const res = await request(ctx.port, 'POST', '/sign', {
+      body: validSignBody(),
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      token: ctx.token,
+    });
+    // Should pass Content-Type check — status 200 means sign succeeded.
+    expect(res.status).toBe(200);
+  });
+
+  it('POST /sign with Content-Type application/jsonlines is rejected with 415', async () => {
+    ctx = await startTestServer();
+    const res = await request(ctx.port, 'POST', '/sign', {
+      body: validSignBody(),
+      headers: { 'Content-Type': 'application/jsonlines' },
       token: ctx.token,
     });
     expect(res.status).toBe(415);
@@ -619,8 +682,22 @@ describe('HTTP server', () => {
     expect(res.headers['x-frame-options']).toBe('DENY');
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.headers['content-security-policy']).toBe(
-      "default-src 'self'; script-src 'self'; style-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     );
+  });
+
+  it('HTML CSP contains base-uri none and form-action none', async () => {
+    const issuerDir = join(testDir, 'issuer');
+    await mkdir(issuerDir, { recursive: true });
+    await writeFile(join(issuerDir, 'index.html'), '<html>test</html>');
+
+    ctx = await startTestServer({ config: { issuerDir } });
+    const res = await request(ctx.port, 'GET', '/');
+    const csp = res.headers['content-security-policy'] as string;
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("form-action 'none'");
+    expect(csp).not.toContain("base-uri 'self'");
+    expect(csp).not.toContain("form-action 'self'");
   });
 
   it('static CSS files get CSP default-src none', async () => {
@@ -993,24 +1070,23 @@ describe('HTTP server', () => {
       expect(JSON.parse(res.body).error).toBe('Invalid request body');
     });
 
-    it('valid request with extra fields succeeds and strips extras', async () => {
+    it('extra key in sign request returns 400', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
       ctx = await startTestServer();
       const body = JSON.stringify({
         recipient: 'John Doe',
         honor: 'Knight Commander',
         detail: 'For distinguished service',
         date: '2026-03-12',
-        extraField: 'should be ignored',
-        anotherExtra: 999,
+        extraField: 'should be rejected',
       });
       const res = await request(ctx.port, 'POST', '/sign', {
         body,
         headers: { 'Content-Type': 'application/json' },
         token: ctx.token,
       });
-      expect(res.status).toBe(200);
-      const parsed = JSON.parse(res.body);
-      expect(parsed.signature).toBeTruthy();
+      expect(res.status).toBe(400);
+      expect(JSON.parse(res.body).error).toBe('Invalid request body');
     });
   });
 
@@ -1083,6 +1159,18 @@ describe('HTTP server', () => {
       });
       expect(res.status).toBe(403);
       expect(JSON.parse(res.body).error).toBe('Cross-origin request denied');
+    });
+
+    it('POST to unknown path without Origin returns 403 with "Origin header required"', async () => {
+      ctx = await startTestServer();
+      const res = await request(ctx.port, 'POST', '/unknown', {
+        body: '{}',
+        headers: { 'Content-Type': 'application/json' },
+        token: ctx.token,
+        skipAutoOrigin: true,
+      });
+      expect(res.status).toBe(403);
+      expect(JSON.parse(res.body).error).toBe('Origin header required');
     });
   });
 
@@ -1194,6 +1282,105 @@ describe('HTTP server', () => {
       const retryAfter = Number(res.headers['retry-after']);
       expect(retryAfter).toBeLessThanOrEqual(30);
       expect(retryAfter).toBeGreaterThan(0);
+    });
+  });
+
+  describe('/health endpoint with auth', () => {
+    it('GET /health without auth returns no authority field', async () => {
+      ctx = await startTestServer();
+      const res = await request(ctx.port, 'GET', '/health');
+      expect(res.status).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.status).toBe('ok');
+      expect(body).not.toHaveProperty('authority');
+    });
+
+    it('GET /health with valid Bearer returns authenticated: true and authority', async () => {
+      ctx = await startTestServer();
+      const res = await request(ctx.port, 'GET', '/health', {
+        token: TOKEN,
+      });
+      expect(res.status).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body).toEqual({
+        status: 'ok',
+        authority: AUTHORITY,
+        authenticated: true,
+      });
+    });
+
+    it('GET /health with invalid Bearer returns 401', async () => {
+      ctx = await startTestServer();
+      const res = await request(ctx.port, 'GET', '/health', {
+        token: 'wrong-token',
+      });
+      expect(res.status).toBe(401);
+      const body = JSON.parse(res.body);
+      expect(body).toEqual({ error: 'Invalid token' });
+    });
+
+    it('GET /health without Bearer returns no authenticated or authority field', async () => {
+      ctx = await startTestServer();
+      const res = await request(ctx.port, 'GET', '/health');
+      expect(res.status).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body).not.toHaveProperty('authenticated');
+      expect(body).not.toHaveProperty('authority');
+    });
+
+    it('repeated /health auth failures do NOT trigger 429 on /sign', async () => {
+      ctx = await startTestServer();
+
+      // Send 12 invalid-token /health requests.
+      for (let i = 0; i < 12; i++) {
+        const healthRes = await request(ctx.port, 'GET', '/health', {
+          token: 'bad-token',
+        });
+        expect(healthRes.status).toBe(401);
+      }
+
+      // A valid /sign request should succeed (not 429).
+      const signRes = await request(ctx.port, 'POST', '/sign', {
+        body: validSignBody(),
+        headers: { 'Content-Type': 'application/json' },
+        token: ctx.token,
+      });
+      expect(signRes.status).toBe(200);
+    });
+  });
+
+  describe('CSP headers for issuer HTML', () => {
+    it('CSP header on HTML responses contains img-src and connect-src directives', async () => {
+      const issuerDir = join(testDir, 'issuer');
+      await mkdir(issuerDir, { recursive: true });
+      await writeFile(join(issuerDir, 'index.html'), '<html><body>test</body></html>');
+
+      ctx = await startTestServer({ config: { issuerDir } });
+      const res = await request(ctx.port, 'GET', '/');
+      expect(res.status).toBe(200);
+      const csp = res.headers['content-security-policy'];
+      expect(csp).toBeDefined();
+      expect(csp).toContain("img-src 'self' data:");
+      expect(csp).toContain("connect-src 'self'");
+    });
+
+    it('CSP header appears exactly once on HTML responses', async () => {
+      const issuerDir = join(testDir, 'issuer');
+      await mkdir(issuerDir, { recursive: true });
+      await writeFile(join(issuerDir, 'index.html'), '<html><body>test</body></html>');
+
+      ctx = await startTestServer({ config: { issuerDir } });
+      const res = await rawRequest(ctx.port, 'GET', '/');
+      expect(res.status).toBe(200);
+
+      // rawHeaders is [name, value, name, value, ...] — count occurrences of Content-Security-Policy.
+      let cspCount = 0;
+      for (let i = 0; i < res.rawHeaders.length; i += 2) {
+        if (res.rawHeaders[i].toLowerCase() === 'content-security-policy') {
+          cspCount++;
+        }
+      }
+      expect(cspCount).toBe(1);
     });
   });
 

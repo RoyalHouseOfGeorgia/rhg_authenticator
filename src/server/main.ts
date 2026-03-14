@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
+import path from 'node:path';
 import { base64urlEncode } from '../base64url.js';
 import { sanitizeForError } from '../credential.js';
 import { fetchAndValidateRegistry } from './registry-fetch.js';
@@ -20,6 +21,7 @@ export async function startServer(options?: {
   config?: Partial<ServerConfig>;
   adapter?: SigningAdapter;
   now?: Date;
+  tokenFilePath?: string;
 }): Promise<{ server: http.Server; port: number; token: string; close: () => void }> {
   const token = crypto.randomBytes(32).toString('hex');
 
@@ -66,6 +68,11 @@ export async function startServer(options?: {
     try {
       const refreshResult = await fetchAndValidateRegistry(config.registryUrl, config.localRegistryPath);
       registryRef.current = refreshResult.registry;
+      const todayDate = new Date().toISOString().slice(0, 10);
+      const stillActive = findMatchingAuthority(refreshResult.registry, adapterKey, todayDate);
+      if (stillActive === undefined) {
+        console.error('WARNING: YubiKey public key no longer active in refreshed registry — new signing requests will be rejected');
+      }
       if (refreshResult.warning) console.error(`Registry refresh warning: ${sanitizeForError(refreshResult.warning)}`);
     } catch (err) {
       console.error(`Registry refresh failed: ${sanitizeForError(err instanceof Error ? err.message : String(err))}`);
@@ -77,15 +84,32 @@ export async function startServer(options?: {
     server.once('error', reject);
     server.listen(config.port, config.host, () => {
       server.removeListener('error', reject);
-      portRef.current = (server.address() as AddressInfo).port;
+      const addr = server.address();
+      if (!addr || typeof addr === 'string') throw new Error('Failed to determine listening port');
+      portRef.current = addr.port;
       resolve();
     });
   });
 
+  const tokenFilePath = options?.tokenFilePath;
+  if (tokenFilePath !== undefined) {
+    const parentDir = path.dirname(tokenFilePath);
+    try {
+      fs.accessSync(parentDir, fs.constants.W_OK);
+    } catch {
+      throw new Error(`Cannot write token file: parent directory does not exist or is not writable: ${parentDir}`);
+    }
+    fs.writeFileSync(tokenFilePath, token + '\n', { mode: 0o600 });
+  }
+
   const keyB64url = base64urlEncode(adapterKey);
+  const tokenLine = tokenFilePath !== undefined
+    ? `Bearer token written to: ${tokenFilePath}`
+    : `Bearer token: ${token}`;
   const banner = [
     `RHG Signing Server running on http://${config.host}:${portRef.current}`,
-    `Bearer token fingerprint: ${crypto.createHash('sha256').update(token).digest('hex').slice(0, 16)}`,
+    tokenLine,
+    `Token fingerprint: ${crypto.createHash('sha256').update(token).digest('hex').slice(0, 16)}`,
     `YubiKey key: ${keyB64url} (matched: ${config.authority})`,
     `Registry: ${result.source}${result.warning ? ` [${result.warning}]` : ''}`,
   ].join('\n');

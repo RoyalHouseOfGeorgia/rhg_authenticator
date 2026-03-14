@@ -3,6 +3,7 @@ import {
   validateCredential,
   UnsupportedVersionError,
   sanitizeForError,
+  CONTROL_CHAR_PATTERN,
 } from '../credential.js';
 import type { Credential } from '../credential.js';
 
@@ -162,10 +163,8 @@ describe('validateCredential', () => {
     });
 
     it('rejects wrong format (natural language)', () => {
-      const cred = { ...validCredential, date: 'March 11, 2026' };
-      expect(() => validateCredential(cred)).toThrow(
-        'invalid date: March 11, 2026',
-      );
+      const cred = { ...validCredential, date: 'Mar11,2026' };
+      expect(() => validateCredential(cred)).toThrow(/invalid date/);
     });
 
     it('rejects month 0', () => {
@@ -190,12 +189,7 @@ describe('validateCredential', () => {
 
     it('sanitizes control characters in date error messages', () => {
       const cred = { ...validCredential, date: '2026-99-99\nINFO: fake' };
-      expect(() => validateCredential(cred)).toThrow(/invalid date/);
-      try {
-        validateCredential(cred);
-      } catch (e) {
-        expect((e as Error).message).not.toMatch(/\n/);
-      }
+      expect(() => validateCredential(cred)).toThrow('date contains invalid control characters');
     });
 
     it('sanitizes bidi override characters in date error messages', () => {
@@ -290,6 +284,106 @@ describe('validateCredential', () => {
         );
       });
     }
+  });
+
+  describe('control character rejection', () => {
+    it('rejects null byte (\\x00) in recipient', () => {
+      const cred = { ...validCredential, recipient: 'John\x00Doe' };
+      expect(() => validateCredential(cred)).toThrow(
+        'recipient contains invalid control characters',
+      );
+    });
+
+    it('rejects bidi override (\\u202e) in honor', () => {
+      const cred = { ...validCredential, honor: 'Test\u202eHonor' };
+      expect(() => validateCredential(cred)).toThrow(
+        'honor contains invalid control characters',
+      );
+    });
+
+    it('rejects tab (\\t) in detail', () => {
+      const cred = { ...validCredential, detail: 'Test\tDetail' };
+      expect(() => validateCredential(cred)).toThrow(
+        'detail contains invalid control characters',
+      );
+    });
+
+    it('rejects control characters in authority', () => {
+      const cred = { ...validCredential, authority: 'Auth\x1fority' };
+      expect(() => validateCredential(cred)).toThrow(
+        'authority contains invalid control characters',
+      );
+    });
+
+    it('rejects control characters in date', () => {
+      const cred = { ...validCredential, date: '2026\x00-03-11' };
+      expect(() => validateCredential(cred)).toThrow(
+        'date contains invalid control characters',
+      );
+    });
+  });
+
+  describe('field max length limits', () => {
+    it('accepts authority at max length (200)', () => {
+      const cred = { ...validCredential, authority: 'A'.repeat(200) };
+      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
+    });
+
+    it('rejects authority one char over max (201)', () => {
+      const cred = { ...validCredential, authority: 'A'.repeat(201) };
+      expect(() => validateCredential(cred)).toThrow(
+        'authority exceeds maximum length of 200',
+      );
+    });
+
+    it('accepts recipient at max length (500)', () => {
+      const cred = { ...validCredential, recipient: 'R'.repeat(500) };
+      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
+    });
+
+    it('rejects recipient one char over max (501)', () => {
+      const cred = { ...validCredential, recipient: 'R'.repeat(501) };
+      expect(() => validateCredential(cred)).toThrow(
+        'recipient exceeds maximum length of 500',
+      );
+    });
+
+    it('accepts honor at max length (200)', () => {
+      const cred = { ...validCredential, honor: 'H'.repeat(200) };
+      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
+    });
+
+    it('rejects honor one char over max (201)', () => {
+      const cred = { ...validCredential, honor: 'H'.repeat(201) };
+      expect(() => validateCredential(cred)).toThrow(
+        'honor exceeds maximum length of 200',
+      );
+    });
+
+    it('accepts detail at max length (2000)', () => {
+      const cred = { ...validCredential, detail: 'D'.repeat(2000) };
+      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
+    });
+
+    it('rejects detail one char over max (2001)', () => {
+      const cred = { ...validCredential, detail: 'D'.repeat(2001) };
+      expect(() => validateCredential(cred)).toThrow(
+        'detail exceeds maximum length of 2000',
+      );
+    });
+
+    it('accepts date at max length (10)', () => {
+      const cred = { ...validCredential, date: '2026-03-11' };
+      expect(cred.date.length).toBe(10);
+      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
+    });
+
+    it('rejects date one char over max (11)', () => {
+      const cred = { ...validCredential, date: '2026-03-111' };
+      expect(() => validateCredential(cred)).toThrow(
+        'date exceeds maximum length of 10',
+      );
+    });
   });
 
   describe('extra fields', () => {

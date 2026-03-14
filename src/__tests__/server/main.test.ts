@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import type { SigningAdapter } from '../../server/types.js';
@@ -228,6 +231,37 @@ describe('startServer', () => {
     vi.useRealTimers();
   });
 
+  it('registry refresh logs warning when key is no longer active', async () => {
+    vi.useFakeTimers();
+    const port = getPort();
+    setMockRegistry(makeRegistry());
+
+    const result = await startServer({
+      config: { port },
+      adapter: createMockAdapter(),
+      now: new Date('2025-06-01T00:00:00Z'),
+    });
+    closeFn = result.close;
+
+    // After startup, mock refresh to return a registry where the key is revoked (to date in the past).
+    mockFetch.mockReset();
+    const revokedRegistry = makeRegistry([{ to: '2024-01-01' }]);
+    setMockRegistry(revokedRegistry);
+
+    const consoleSpy = vi.mocked(console.error);
+    consoleSpy.mockClear();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const call = consoleSpy.mock.calls.find(
+      (c) => typeof c[0] === 'string' && (c[0] as string).includes('no longer active'),
+    );
+    expect(call).toBeDefined();
+    expect(call![0]).toContain('WARNING: YubiKey public key no longer active');
+
+    vi.useRealTimers();
+  });
+
   it('registry refresh warning log is sanitized (control chars stripped)', async () => {
     vi.useFakeTimers();
     const port = getPort();
@@ -289,8 +323,8 @@ describe('startServer', () => {
     expect(result.server.listening).toBe(false);
   });
 
-  describe('token fingerprint in startup banner', () => {
-    it('does not print the full token in the banner', async () => {
+  describe('token in startup banner', () => {
+    it('prints the full bearer token in the banner', async () => {
       const port = getPort();
       setMockRegistry(makeRegistry());
 
@@ -305,13 +339,13 @@ describe('startServer', () => {
 
       const errorCalls = vi.mocked(console.error).mock.calls;
       const bannerCall = errorCalls.find(
-        (c) => typeof c[0] === 'string' && c[0].includes('Bearer token fingerprint:'),
+        (c) => typeof c[0] === 'string' && c[0].includes('Bearer token:'),
       );
       expect(bannerCall).toBeDefined();
-      expect(bannerCall![0]).not.toContain(result.token);
+      expect(bannerCall![0]).toContain(`Bearer token: ${result.token}`);
     });
 
-    it('prints SHA-256 fingerprint matching the token', async () => {
+    it('prints SHA-256 fingerprint on a separate line matching the token', async () => {
       const port = getPort();
       setMockRegistry(makeRegistry());
 
@@ -327,13 +361,13 @@ describe('startServer', () => {
 
       const errorCalls = vi.mocked(console.error).mock.calls;
       const bannerCall = errorCalls.find(
-        (c) => typeof c[0] === 'string' && c[0].includes('Bearer token fingerprint:'),
+        (c) => typeof c[0] === 'string' && c[0].includes('Token fingerprint:'),
       );
       expect(bannerCall).toBeDefined();
-      expect(bannerCall![0]).toContain(expectedFingerprint);
+      expect(bannerCall![0]).toContain(`Token fingerprint: ${expectedFingerprint}`);
     });
 
-    it('does not print ...[redacted] (replaced by fingerprint)', async () => {
+    it('banner contains both bearer token and fingerprint lines', async () => {
       const port = getPort();
       setMockRegistry(makeRegistry());
 
@@ -346,32 +380,10 @@ describe('startServer', () => {
 
       const errorCalls = vi.mocked(console.error).mock.calls;
       const bannerCall = errorCalls.find(
-        (c) => typeof c[0] === 'string' && c[0].includes('Bearer token fingerprint:'),
+        (c) => typeof c[0] === 'string' && c[0].includes('Bearer token:'),
       );
       expect(bannerCall).toBeDefined();
-      expect(bannerCall![0]).not.toContain('...[redacted]');
-    });
-
-    it('does not print the raw token prefix in the banner', async () => {
-      const port = getPort();
-      setMockRegistry(makeRegistry());
-
-      const result = await startServer({
-        config: { port },
-        adapter: createMockAdapter(),
-        now: new Date('2025-06-01T00:00:00Z'),
-      });
-      closeFn = result.close;
-
-      const rawPrefix = result.token.slice(0, 8);
-      const errorCalls = vi.mocked(console.error).mock.calls;
-      const bannerCall = errorCalls.find(
-        (c) => typeof c[0] === 'string' && c[0].includes('Bearer token fingerprint:'),
-      );
-      expect(bannerCall).toBeDefined();
-      // The fingerprint is a SHA-256 hash, so the raw prefix should not appear
-      // (unless by coincidence, which is astronomically unlikely with random tokens).
-      expect(bannerCall![0]).not.toContain(`Bearer token: ${rawPrefix}`);
+      expect(bannerCall![0]).toContain('Token fingerprint:');
     });
   });
 
@@ -395,6 +407,88 @@ describe('startServer', () => {
     expect(bannerCall).toBeDefined();
     expect(bannerCall![0]).not.toContain(':0');
     expect(bannerCall![0]).toContain(`:${result.port}`);
+  });
+
+  describe('tokenFilePath option', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rhg-test-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('writes token to file with 0o600 permissions and omits raw token from banner', async () => {
+      const port = getPort();
+      setMockRegistry(makeRegistry());
+      const tokenFilePath = path.join(tmpDir, 'token');
+
+      const result = await startServer({
+        config: { port },
+        adapter: createMockAdapter(),
+        now: new Date('2025-06-01T00:00:00Z'),
+        tokenFilePath,
+      });
+      closeFn = result.close;
+
+      // Verify file content
+      const fileContent = fs.readFileSync(tokenFilePath, 'utf-8');
+      expect(fileContent).toBe(result.token + '\n');
+
+      // Verify file permissions (owner read+write only)
+      const stat = fs.statSync(tokenFilePath);
+      expect(stat.mode & 0o777).toBe(0o600);
+
+      // Verify banner omits raw token but includes "written to" message
+      const errorCalls = vi.mocked(console.error).mock.calls;
+      const bannerCall = errorCalls.find(
+        (c) => typeof c[0] === 'string' && c[0].includes('RHG Signing Server'),
+      );
+      expect(bannerCall).toBeDefined();
+      expect(bannerCall![0]).toContain(`Bearer token written to: ${tokenFilePath}`);
+      expect(bannerCall![0]).not.toContain(`Bearer token: ${result.token}`);
+    });
+
+    it('still includes fingerprint in banner when tokenFilePath is set', async () => {
+      const port = getPort();
+      setMockRegistry(makeRegistry());
+      const tokenFilePath = path.join(tmpDir, 'token');
+
+      const result = await startServer({
+        config: { port },
+        adapter: createMockAdapter(),
+        now: new Date('2025-06-01T00:00:00Z'),
+        tokenFilePath,
+      });
+      closeFn = result.close;
+
+      const { createHash } = await import('node:crypto');
+      const expectedFingerprint = createHash('sha256').update(result.token).digest('hex').slice(0, 16);
+
+      const errorCalls = vi.mocked(console.error).mock.calls;
+      const bannerCall = errorCalls.find(
+        (c) => typeof c[0] === 'string' && c[0].includes('Token fingerprint:'),
+      );
+      expect(bannerCall).toBeDefined();
+      expect(bannerCall![0]).toContain(`Token fingerprint: ${expectedFingerprint}`);
+    });
+
+    it('fails fast with clear error when parent directory does not exist', async () => {
+      const port = getPort();
+      setMockRegistry(makeRegistry());
+      const tokenFilePath = path.join(tmpDir, 'nonexistent', 'subdir', 'token');
+
+      await expect(
+        startServer({
+          config: { port },
+          adapter: createMockAdapter(),
+          now: new Date('2025-06-01T00:00:00Z'),
+          tokenFilePath,
+        }),
+      ).rejects.toThrow(/Cannot write token file: parent directory does not exist or is not writable/);
+    });
   });
 
   it('NFC-normalizes the authority from the matched entry', async () => {

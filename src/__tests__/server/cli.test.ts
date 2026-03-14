@@ -90,4 +90,28 @@ describe('parseArgs', () => {
       expect(msg).not.toMatch(/\u061C/);
     }
   });
+
+  it('returns tokenFile for --token-file flag', () => {
+    const result = parseArgs(['--token-file', '/tmp/tok']);
+    expect(result).toEqual({ tokenFile: '/tmp/tok', help: false });
+  });
+
+  it('throws when --token-file has no value', () => {
+    expect(() => parseArgs(['--token-file'])).toThrow('--token-file requires a value');
+  });
+
+  it('parses --port and --token-file together', () => {
+    const result = parseArgs(['--port', '4000', '--token-file', '/tmp/tok']);
+    expect(result).toEqual({ port: 4000, tokenFile: '/tmp/tok', help: false });
+  });
+
+  it('parses --token-file and --port in reverse order', () => {
+    const result = parseArgs(['--token-file', '/tmp/tok', '--port', '4000']);
+    expect(result).toEqual({ port: 4000, tokenFile: '/tmp/tok', help: false });
+  });
+
+  it('returns help: true for --help even with other flags before it', () => {
+    const result = parseArgs(['--port', '4000', '--help']);
+    expect(result).toEqual({ help: true });
+  });
 });

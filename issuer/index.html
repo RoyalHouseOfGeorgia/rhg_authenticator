@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- No <meta> CSP — rely solely on the server's HTTP CSP header (single source of truth) -->
+  <meta name="referrer" content="no-referrer">
+  <title>Royal House of Georgia — Credential Issuance</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <img src="royal-arms-120.png" alt="Royal Arms of Georgia" class="header-crest" width="120" height="120">
+    <h1 class="header-georgian" lang="ka">საქართველოს სამეფო სახლი</h1>
+    <p class="header-english">Royal House of Georgia</p>
+    <p class="subtitle">Credential Issuance</p>
+  </header>
+  <main id="app">
+    <noscript>
+      <div class="error-banner">
+        <p>JavaScript is required for credential issuance.</p>
+      </div>
+    </noscript>
+  </main>
+  <footer>
+    <p>&copy; 2026 <a href="https://royalhouseofgeorgia.ge">Royal House of Georgia</a></p>
+  </footer>
+  <script src="issuer.js"></script>
+</body>
+</html>

@@ -50,3 +50,7 @@ terraform.tfstate.backup
 .windsurf/
 .tabnine/
 .sourcegraph/
+
+# Runtime data
+issuances.json
+issuances.json.tmp.*

@@ -14,6 +14,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "build:verify": "esbuild src/verify-page.ts --bundle --outfile=verify/verify.js --format=iife --target=es2020 --minify",
+    "build:issuer": "esbuild src/issuer-page.ts --bundle --outfile=issuer/issuer.js --format=iife --platform=browser --target=es2020 --minify",
+    "build:all": "npm run build && npm run build:verify && npm run build:issuer",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
@@ -26,10 +28,14 @@
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
+    "canvas": "^3.2.1",
     "esbuild": "^0.25.0",
     "happy-dom": "^20.8.3",
-    "typescript": "^5.7.0",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
     "tsx": "^4.0.0",
+    "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
 }

@@ -32,6 +32,11 @@ function validateSignRequest(parsed: unknown): SignRequest {
     }
     result[field] = obj[field] as string;
   }
+  for (const key of Object.keys(obj)) {
+    if (!(SIGN_REQUEST_FIELDS as readonly string[]).includes(key)) {
+      throw new Error(`Unexpected field: "${key}"`);
+    }
+  }
   return result as SignRequest;
 }
 
@@ -39,8 +44,10 @@ export type ServerDeps = {
   adapter: SigningAdapter;
   config: ServerConfig;
   cachedPublicKey: Uint8Array;
-  registryRef: { current: Registry }; // mutable ref, updated by background refresh
-  listeningPort: { current: number }; // mutable ref — updated after server.listen resolves when port is 0 (ephemeral)
+  /** Mutable ref — updated by background registry refresh (every 60s) in startServer. */
+  registryRef: { current: Registry };
+  /** Mutable ref — set after server.listen resolves when port is 0 (ephemeral). */
+  listeningPort: { current: number };
 };
 
 const MAX_BODY_BYTES = 64 * 1024; // 64KB
@@ -217,7 +224,7 @@ async function serveStaticFile(
     const ext = path.extname(resolvedFile).toLowerCase();
     const contentType = MIME_MAP[ext] ?? 'application/octet-stream';
     const csp = ext === '.html'
-      ? "default-src 'self'; script-src 'self'; style-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+      ? "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
       : "default-src 'none'";
     res.writeHead(200, {
       ...SECURITY_HEADERS,
@@ -259,8 +266,8 @@ export function createRequestHandler(
       // Built per-request from mutable ref so ephemeral port (0) is correct
       // after server.listen resolves. The set is tiny (3 entries), negligible cost.
       const origin = req.headers['origin'];
-      if (method === 'POST' && pathname === '/sign') {
-        // POST /sign requires Origin (defense-in-depth against non-browser CSRF).
+      if (method === 'POST') {
+        // All POST requests require Origin (defense-in-depth against non-browser CSRF).
         // Non-browser clients (curl, scripts) must send Origin explicitly.
         const port = deps.listeningPort.current;
         if (
@@ -288,6 +295,20 @@ export function createRequestHandler(
           jsonResponse(res, 405, { error: 'Method not allowed' }, { Allow: 'GET' });
           return;
         }
+        // Optional auth validation — separate from /sign rate-limiter.
+        // If Bearer header present, verify it. If invalid, return 401.
+        // Intentionally NOT touching authFailCount or authFailBackoffUntil.
+        // Safe without rate limiting because server binds to loopback only (127.0.0.1).
+        const token = extractBearerToken(req);
+        if (token !== null) {
+          if (!verifyToken(token, bearerToken)) {
+            jsonResponse(res, 401, { error: 'Invalid token' });
+            return;
+          }
+          jsonResponse(res, 200, { status: 'ok', authority: deps.config.authority, authenticated: true });
+          return;
+        }
+        // No auth header — minimal response.
         jsonResponse(res, 200, { status: 'ok' });
         return;
       }
@@ -321,7 +342,8 @@ export function createRequestHandler(
         authFailBackoffUntil = 0;
 
         // Content-Type check.
-        if (!req.headers['content-type']?.startsWith('application/json')) {
+        const ct = req.headers['content-type'];
+        if (!ct || ct.split(';')[0].trim() !== 'application/json') {
           jsonResponse(res, 415, { error: 'Unsupported media type' });
           return;
         }

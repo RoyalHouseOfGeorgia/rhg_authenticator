@@ -18,9 +18,21 @@ export type CredentialV1 = {
 
 export type Credential = CredentialV1;
 
-/** Strips C0/C1 control characters and bidi overrides. Does not handle zero-width joiners or length limits — callers are responsible for truncation. */
+/** Pattern matching C0/C1 control characters and bidi overrides. Exported as a string constant (not a RegExp with `g`) to avoid `lastIndex` statefulness. */
+export const CONTROL_CHAR_PATTERN = '[\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]';
+
+/** Cached test-only regex (no `g` flag, safe to reuse — no `lastIndex` state). */
+const CONTROL_CHAR_RE = new RegExp(CONTROL_CHAR_PATTERN);
+
+/**
+ * Strips C0/C1 control characters and bidi overrides. Does not handle
+ * zero-width joiners or length limits — callers are responsible for truncation.
+ *
+ * Note: creates a new RegExp per call because the `g` flag carries `lastIndex`
+ * state that would make a shared instance unsafe across calls.
+ */
 export function sanitizeForError(s: string): string {
-  return s.replace(/[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '');
+  return s.replace(new RegExp(CONTROL_CHAR_PATTERN, 'g'), '');
 }
 
 export class UnsupportedVersionError extends Error {
@@ -33,6 +45,14 @@ export class UnsupportedVersionError extends Error {
 
 const STRING_FIELDS = ['authority', 'date', 'detail', 'honor', 'recipient'] as const;
 const ALL_FIELDS = new Set<string>([...STRING_FIELDS, 'version']);
+
+const FIELD_MAX_LENGTHS = {
+  authority: 200,
+  recipient: 500,
+  honor: 200,
+  detail: 2000,
+  date: 10,
+} as const satisfies Record<(typeof STRING_FIELDS)[number], number>;
 
 /** Validate an unknown value as a v1 Credential, throwing on any violation. */
 export function validateCredential(obj: unknown): Credential {
@@ -65,8 +85,14 @@ export function validateCredential(obj: unknown): Credential {
     if (value !== value.trim()) {
       throw new Error(`${field} must not have leading or trailing whitespace`);
     }
+    if (CONTROL_CHAR_RE.test(value)) {
+      throw new Error(`${field} contains invalid control characters`);
+    }
     if (value.length === 0) {
       throw new Error(`${field} must not be empty`);
+    }
+    if (value.length > FIELD_MAX_LENGTHS[field]) {
+      throw new Error(`${field} exceeds maximum length of ${FIELD_MAX_LENGTHS[field]}`);
     }
   }
 

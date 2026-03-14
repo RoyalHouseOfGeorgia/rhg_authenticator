@@ -1,8 +1,9 @@
-import { describe, expect, it, afterEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fetchAndValidateRegistry, MAX_REGISTRY_BYTES } from '../../server/registry-fetch.js';
+import dns from 'node:dns';
+import { fetchAndValidateRegistry, MAX_REGISTRY_BYTES, validateResolvedIp } from '../../server/registry-fetch.js';
 
 const VALID_REGISTRY = {
   keys: [
@@ -35,7 +36,13 @@ async function writeLocalRegistry(
   return filePath;
 }
 
+// Default: DNS resolves to a public IP so existing tests pass the SSRF DNS check.
+beforeEach(() => {
+  vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '93.184.216.34', family: 4 });
+});
+
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (tmpDir) {
     await fs.rm(tmpDir, { recursive: true, force: true });
     tmpDir = undefined;
@@ -113,35 +120,39 @@ describe('URL validation (SSRF prevention)', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('rejects private IP 10.x.x.x', async () => {
+  it('rejects private IP 10.x.x.x (via DNS resolution)', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '10.0.1.5', family: 4 });
     const fetchFn = vi.fn();
     await expect(
       fetchAndValidateRegistry('https://10.0.1.5/registry.json', '/nonexistent', fetchFn),
-    ).rejects.toThrow(/must not target private IP range/);
+    ).rejects.toThrow(/resolved to private IP/);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('rejects private IP 172.16.x.x', async () => {
+  it('rejects private IP 172.16.x.x (via DNS resolution)', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '172.16.0.1', family: 4 });
     const fetchFn = vi.fn();
     await expect(
       fetchAndValidateRegistry('https://172.16.0.1/registry.json', '/nonexistent', fetchFn),
-    ).rejects.toThrow(/must not target private IP range/);
+    ).rejects.toThrow(/resolved to private IP/);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('rejects private IP 192.168.x.x', async () => {
+  it('rejects private IP 192.168.x.x (via DNS resolution)', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '192.168.1.1', family: 4 });
     const fetchFn = vi.fn();
     await expect(
       fetchAndValidateRegistry('https://192.168.1.1/registry.json', '/nonexistent', fetchFn),
-    ).rejects.toThrow(/must not target private IP range/);
+    ).rejects.toThrow(/resolved to private IP/);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('rejects link-local 169.254.x.x', async () => {
+  it('rejects link-local 169.254.x.x (via DNS resolution)', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '169.254.169.254', family: 4 });
     const fetchFn = vi.fn();
     await expect(
       fetchAndValidateRegistry('https://169.254.169.254/registry.json', '/nonexistent', fetchFn),
-    ).rejects.toThrow(/must not target private IP range/);
+    ).rejects.toThrow(/resolved to private IP/);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
@@ -566,5 +577,105 @@ describe('fetchAndValidateRegistry', () => {
         expect(detailPart.length).toBeLessThanOrEqual(200);
       }
     }
+  });
+});
+
+describe('validateResolvedIp (DNS-based SSRF prevention)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('throws when DNS resolves to private IPv4 127.0.0.1', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '127.0.0.1', family: 4 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: 127.0.0.1',
+    );
+  });
+
+  it('throws when DNS resolves to private IPv4 10.x', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '10.0.0.1', family: 4 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: 10.0.0.1',
+    );
+  });
+
+  it('throws when DNS resolves to private IPv4 192.168.x', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '192.168.1.1', family: 4 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: 192.168.1.1',
+    );
+  });
+
+  it('throws when DNS resolves to private IPv4 172.16.x', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '172.16.0.1', family: 4 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: 172.16.0.1',
+    );
+  });
+
+  it('throws when DNS resolves to link-local 169.254.x', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '169.254.169.254', family: 4 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: 169.254.169.254',
+    );
+  });
+
+  it('throws when DNS resolves to 0.0.0.0', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '0.0.0.0', family: 4 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: 0.0.0.0',
+    );
+  });
+
+  it('throws when DNS resolves to IPv6 ::1', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '::1', family: 6 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: ::1',
+    );
+  });
+
+  it('throws when DNS resolves to IPv6 fd00::1 (unique local)', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: 'fd00::1', family: 6 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: fd00::1',
+    );
+  });
+
+  it('throws when DNS resolves to IPv6 fc00::1 (unique local)', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: 'fc00::1', family: 6 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: fc00::1',
+    );
+  });
+
+  it('throws when DNS resolves to IPv6 fe80:: (link-local)', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: 'fe80::1', family: 6 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: fe80::1',
+    );
+  });
+
+  it('throws when DNS resolves to IPv6 :: (unspecified)', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '::', family: 6 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: ::',
+    );
+  });
+
+  it('throws when DNS resolves to IPv4-mapped IPv6 ::ffff:127.0.0.1', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '::ffff:127.0.0.1', family: 6 });
+    await expect(validateResolvedIp('evil.example.com')).rejects.toThrow(
+      'Registry hostname resolved to private IP: ::ffff:127.0.0.1',
+    );
+  });
+
+  it('does not throw when DNS resolves to public IPv4', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    await expect(validateResolvedIp('example.com')).resolves.toBeUndefined();
+  });
+
+  it('does not throw when DNS resolves to public IPv6', async () => {
+    vi.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 });
+    await expect(validateResolvedIp('example.com')).resolves.toBeUndefined();
   });
 });

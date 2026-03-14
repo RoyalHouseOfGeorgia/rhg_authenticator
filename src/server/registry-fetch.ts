@@ -1,3 +1,4 @@
+import dns from 'node:dns';
 import fs from 'node:fs/promises';
 import { sanitizeForError } from '../credential.js';
 import { validateRegistry } from '../registry.js';
@@ -35,25 +36,42 @@ function validateRegistryUrl(url: string): void {
     throw new Error(`Registry URL must not target localhost: ${sanitizeForError(url).slice(0, 200)}`);
   }
 
-  // Reject private IPv4 ranges.
-  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
-    if (
-      a === 10 ||                           // 10.0.0.0/8
-      (a === 172 && b >= 16 && b <= 31) ||  // 172.16.0.0/12
-      (a === 192 && b === 168) ||           // 192.168.0.0/16
-      (a === 169 && b === 254)              // 169.254.0.0/16
-    ) {
-      throw new Error(`Registry URL must not target private IP range: ${sanitizeForError(url).slice(0, 200)}`);
-    }
-  }
 
-  // Residual risk (documented): DNS rebinding can resolve a public hostname to a
-  // private IP after this string check. Expanded IPv6 forms ([::ffff:127.0.0.1],
-  // [0:0:0:0:0:0:0:1]) also bypass this blocklist. Both are accepted because:
-  // (a) the registry URL is set by the operator in config, not by untrusted input,
-  // (b) Node's fetch doesn't expose a pre-connect IP check hook.
+}
+
+function isPrivateIp(ip: string): boolean {
+  // IPv4
+  const v4 = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [, a, b] = v4.map(Number);
+    return (
+      a === 127 ||
+      a === 10 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254) ||
+      a === 0
+    );
+  }
+  // IPv6
+  const lower = ip.toLowerCase();
+  return (
+    lower === '::1' ||
+    lower === '::' ||
+    lower.startsWith('fe80:') ||
+    lower.startsWith('fc') || lower.startsWith('fd') ||  // fc00::/7 unique local
+    lower.startsWith('::ffff:127.') ||
+    lower.startsWith('::ffff:10.') ||
+    lower.startsWith('::ffff:192.168.') ||
+    lower.startsWith('::ffff:172.') // simplified; could be more precise
+  );
+}
+
+export async function validateResolvedIp(hostname: string): Promise<void> {
+  const { address } = await dns.promises.lookup(hostname);
+  if (isPrivateIp(address)) {
+    throw new Error(`Registry hostname resolved to private IP: ${address}`);
+  }
 }
 
 export async function fetchAndValidateRegistry(
@@ -62,6 +80,8 @@ export async function fetchAndValidateRegistry(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<RegistryFetchResult> {
   validateRegistryUrl(remoteUrl);
+  const hostname = new URL(remoteUrl).hostname.replace(/^\[|\]$/g, '');
+  await validateResolvedIp(hostname);
   const doFetch = fetchFn ?? globalThis.fetch;
 
   let response: Response;

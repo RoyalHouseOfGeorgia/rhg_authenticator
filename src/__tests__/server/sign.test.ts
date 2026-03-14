@@ -262,18 +262,18 @@ describe('handleSign', () => {
     }
   });
 
-  it('returns VALIDATION_FAILED when payload exceeds MAX_PAYLOAD_BYTES', async () => {
+  it('returns VALIDATION_FAILED when detail exceeds field max length', async () => {
     const adapter = createMockAdapter(SECRET_KEY);
-    // Create a request with an extremely long detail to exceed 2048 bytes.
+    // detail field max length is 2000 — exceeding it triggers credential validation error.
     const req = validRequest();
-    req.detail = 'A'.repeat(3000);
+    req.detail = 'A'.repeat(2001);
 
     const result = await handleSign(req, adapter, PUBLIC_KEY, AUTHORITY, logPath);
 
     expect(isSignError(result)).toBe(true);
     const err = result as SignError;
     expect(err.code).toBe('VALIDATION_FAILED');
-    expect(err.error).toBe('Payload exceeds maximum size');
+    expect(err.error).toBe('Invalid credential data');
   });
 
   it('returns VALIDATION_FAILED for multi-byte Unicode exceeding byte limit despite short char count', async () => {
