@@ -69,6 +69,10 @@ yubico-piv-tool -s 9c -a import-certificate -i cert.pem
 
 ### Export Public Key for Registry
 
+The easiest way is to use the **Registry Manager** tool (`rhg-regmgr`), which can import `.crt`/`.pem` certificate files directly and extract the Ed25519 public key automatically. See [Registry Manager](#registry-manager) below.
+
+Alternatively, using command-line tools:
+
 ```bash
 yubico-piv-tool -a read-certificate -s 9c | \
   openssl x509 -pubkey -noout | \
@@ -76,7 +80,34 @@ yubico-piv-tool -a read-certificate -s 9c | \
   base64
 ```
 
-Add the Base64 string as `public_key` in `keys/registry.json`.
+Or using **YubiKey Manager** (`ykman`):
+```bash
+ykman piv certificates export 9c cert.crt
+```
+Then import `cert.crt` into the Registry Manager.
+
+## Registry Manager
+
+The **Registry Manager** (`rhg-regmgr`) is a standalone GUI tool for managing the key registry. Build and run:
+
+```bash
+go build -o release/rhg-regmgr ./cmd/regmgr
+./release/rhg-regmgr
+```
+
+Features:
+- **Auto-fetches** the live registry from the server on startup
+- **Import certificates** (`.crt`/`.pem`) — extracts Ed25519 public keys automatically
+- **Add/Edit/Remove** registry entries with full validation
+- **Calendar date pickers** for key validity ranges
+- **Save** to local JSON file for committing to the repository
+
+Workflow:
+1. Launch `rhg-regmgr` — it fetches the current production registry
+2. Add/edit/remove entries as needed
+3. Save → produces a `registry.json` file
+4. Copy to `go/keys/registry.json` and commit to the repository
+5. Deploy (the verification page and signing app both fetch from the hosted registry)
 
 ## Key Registry
 
@@ -107,10 +138,18 @@ go/
 │   ├── registry.go      # Key registry schema + lookup
 │   ├── date.go          # Calendar-correct date validation
 │   └── sign.go          # Signing orchestrator
-├── gui/                 # Fyne GUI
+├── gui/                 # Fyne GUI (signing app)
 │   ├── sign_tab.go      # Credential form + QR display
+│   ├── signflow.go      # Extracted signing workflow (testable)
 │   ├── history_tab.go   # Issuance log browser
 │   └── pindialog.go     # PIN entry dialog (goroutine-safe)
+├── cmd/regmgr/          # Registry Manager entry point
+│   └── main.go          # Fyne app, theme, window
+├── regmgr/              # Registry Manager logic
+│   ├── app.go           # Main UI: toolbar, table, state management
+│   ├── form.go          # Add/Edit entry dialogs (cert import, calendar)
+│   ├── certparse.go     # X.509 → Ed25519 key extraction
+│   └── fileio.go        # Registry fetch, read, atomic write
 ├── yubikey/             # YubiKey hardware adapter
 │   ├── adapter.go       # piv-go PIV signing
 │   ├── pincache.go      # Secure PIN cache (mlock + mutex)
@@ -124,7 +163,7 @@ go/
 │   └── fetch.go         # Remote → cache → embedded fallback
 ├── keys/                # Embedded registry (go:embed)
 │   └── registry.json
-├── testdata/            # Cross-language test vectors
+├── testdata/            # Cross-language test vectors + cert fixtures
 │   └── vectors.json
 ├── Makefile
 ├── go.mod

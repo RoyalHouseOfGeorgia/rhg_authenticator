@@ -41,10 +41,13 @@ src/
 ├── verify-page.ts        # Verification page logic (URL parsing, fetch, render)
 ├── index.ts              # Barrel export
 └── __tests__/
-    ├── helpers.ts         # Shared test utilities (makeKeypair, makeKeyEntry, makeRegistry)
+    ├── helpers.ts              # Shared test utilities (makeKeypair, makeKeyEntry, makeRegistry)
+    ├── fixtures/
+    │   └── vectors.json        # Cross-language test vectors (synced with go/testdata/)
     ├── canonical.test.ts
     ├── base64url.test.ts
     ├── credential.test.ts
+    ├── cross-language.test.ts  # Verifies canonical output + signatures match Go
     ├── crypto.test.ts
     ├── registry.test.ts
     ├── validation.test.ts
@@ -196,14 +199,14 @@ if (result.valid) {
 - No mocking of internal modules — tests exercise the real code paths
 - Verification page tests use `// @vitest-environment happy-dom` per-file directive
 - `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page tests
-- 302 tests total (8 test files)
+- 316 tests total (9 test files)
 
 ## Key Registry Format
 
 The `keys/registry.json` file currently contains a placeholder entry. For production:
 
 1. Generate an Ed25519 key on YubiKey PIV slot 9c
-2. Export the public key: `yubico-piv-tool -a read-certificate -s 9c | openssl x509 -pubkey -noout | openssl pkey -pubin -outform DER | base64`
-3. Add the Base64 string as `public_key` in a new registry entry
-4. Set `authority` to the Prince's formal title
-5. Set `from` to the key activation date, `to` to `null` for an active key
+2. Export the certificate from the YubiKey (`.crt` or `.pem` file)
+3. Use the **Registry Manager** (`rhg-regmgr`) to import the certificate and add the entry — or manually: `yubico-piv-tool -a read-certificate -s 9c | openssl x509 -pubkey -noout | openssl pkey -pubin -outform DER | base64`
+4. Set `authority` to the formal title, `from` to the activation date, `to` to `null` for an active key
+5. Save and commit the updated `keys/registry.json`

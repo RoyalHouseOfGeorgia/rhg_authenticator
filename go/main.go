@@ -1,8 +1,9 @@
 package main
 
 import (
-	"embed"
+	_ "embed"
 	"fmt"
+	"image/color"
 	"os"
 	"path/filepath"
 
@@ -12,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
@@ -23,11 +25,17 @@ import (
 //go:embed keys/registry.json
 var embeddedRegistry []byte
 
+//go:embed icon.png
+var appIconData []byte
+
 var version = "dev"
 
 func main() {
 	// 1. Create Fyne app and window.
 	a := app.NewWithID("ge.royalhouseofgeorgia.rhg-authenticator")
+	appIcon := fyne.NewStaticResource("icon.png", appIconData)
+	a.SetIcon(appIcon)
+	a.Settings().SetTheme(&rhgTheme{})
 	window := a.NewWindow("RHG Authenticator")
 	window.Resize(fyne.NewSize(800, 600))
 
@@ -61,6 +69,7 @@ func main() {
 	signContent := gui.NewSignTab(gui.SignTabConfig{
 		Registry: reg,
 		LogPath:  logPath,
+		DataDir:  dataDir,
 	}, window)
 	historyContent := gui.NewHistoryTab(logPath, window)
 
@@ -78,7 +87,7 @@ func main() {
 		result := update.Check("royalhouseofgeorgia", "rhg-authenticator", version)
 		if result.UpdateAvailable {
 			u, err := url.Parse(result.DownloadURL)
-			if err != nil || u.Scheme == "" {
+			if err != nil || u.Scheme != "https" {
 				return
 			}
 			fyne.Do(func() {
@@ -103,5 +112,32 @@ func fatalDialog(window fyne.Window, message string) {
 	window.ShowAndRun()
 }
 
-// Ensure embed import is used (for go:embed directive).
-var _ embed.FS
+// rhgTheme implements fyne.Theme with a burgundy/cream color scheme.
+type rhgTheme struct{}
+
+func (t *rhgTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	switch name {
+	case theme.ColorNamePrimary:
+		return color.NRGBA{R: 0x80, G: 0x00, B: 0x20, A: 0xFF} // #800020 burgundy
+	case theme.ColorNameButton:
+		return color.NRGBA{R: 0x80, G: 0x00, B: 0x20, A: 0xFF}
+	case theme.ColorNameBackground:
+		return color.NRGBA{R: 0xFA, G: 0xF8, B: 0xF0, A: 0xFF} // #FAF8F0 cream
+	case theme.ColorNameForeground:
+		return color.NRGBA{R: 0x2C, G: 0x2C, B: 0x2C, A: 0xFF} // #2c2c2c
+	default:
+		return theme.DefaultTheme().Color(name, variant)
+	}
+}
+
+func (t *rhgTheme) Font(style fyne.TextStyle) fyne.Resource {
+	return theme.DefaultTheme().Font(style)
+}
+
+func (t *rhgTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
+	return theme.DefaultTheme().Icon(name)
+}
+
+func (t *rhgTheme) Size(name fyne.ThemeSizeName) float32 {
+	return theme.DefaultTheme().Size(name)
+}

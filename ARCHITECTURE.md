@@ -12,15 +12,16 @@ No blockchain, no third-party verification services. Trust is rooted in Ed25519 
 
 ## Components
 
-The system has two independent components:
+The system has three independent components:
 
 1. **Verification library + page (TypeScript)** — core crypto, credential validation, key registry, and the public-facing verification page on GitHub Pages. This is what the world sees.
 2. **Signing app (Go)** — self-contained desktop application with Fyne GUI. Talks directly to YubiKey via PCSC (`piv-go`), signs credentials, generates QR codes (SVG/PNG). Single binary, no external tools required. See [go/README.md](go/README.md) for details.
+3. **Registry manager (Go)** — standalone GUI tool for managing the key registry. Imports Ed25519 public keys from `.crt`/`.pem` certificate files, supports add/edit/remove of registry entries with date pickers, fetches the live registry from the server on startup, and saves to a local JSON file for committing.
 
 ## Threat Model
 
 - **Trust anchor**: The YubiKey hardware token. Private key never leaves the device.
-- **Public registry**: `keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls.
+- **Public registry**: `keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls. Managed via the Registry Manager tool (`rhg-regmgr`).
 - **Verification is client-side**: The public verification page fetches the registry and performs all crypto in the browser — no server round-trip.
 - **PIN security**: The Go signing app uses `piv-go` to talk directly to the YubiKey via PCSC. PIN is handled entirely in-process — never on the command line, never in a file, never visible in `/proc`.
 - **QR as transport**: The QR code is a URL containing the full signed credential. No database lookup required.

@@ -13,10 +13,11 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 | Component | Language | Status | Description |
 |-----------|----------|--------|-------------|
 | **Desktop signing app** | Go | **Complete** | Self-contained binary with Fyne GUI, direct YubiKey access via PCSC |
+| **Registry manager** | Go | **Complete** | Standalone tool for managing the key registry (import certs, add/edit/remove entries) |
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-620 tests passing (318 Go + 302 TypeScript).
+775 tests passing (459 Go + 316 TypeScript).
 
 ## Quick Start — Signing App (Go)
 
@@ -26,6 +27,10 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 cd go
 make build          # → release/rhg-authenticator
 ./release/rhg-authenticator
+
+# Registry manager (separate tool)
+go build -o release/rhg-regmgr ./cmd/regmgr
+./release/rhg-regmgr
 ```
 
 **Platform-specific build dependencies:**
@@ -39,7 +44,7 @@ See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
 ```bash
 npm install
-npm test              # 302 tests
+npm test              # 316 tests
 npm run lint          # tsc --noEmit
 npm run build:verify  # Bundle verification page JS
 ```
