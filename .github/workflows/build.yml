@@ -119,7 +119,7 @@ jobs:
           path: release
           merge-multiple: true
       - run: cd release && shasum -a 256 rhg-authenticator-* > SHA256SUMS.txt
-      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2.4.0
+      - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
         with:
           subject-path: 'release/rhg-authenticator-*'
       - uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
