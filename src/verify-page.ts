@@ -152,10 +152,7 @@ export function runVerification(params: PageParams, registry: Registry): VerifyP
     return { status: 'error', message: 'Invalid signature encoding' };
   }
 
-  if (signatureBytes.length !== 64) {
-    return { status: 'error', message: 'Invalid signature length' };
-  }
-
+  // Signature length validated by verifyCredential.
   const result = verifyCredential(payloadBytes, signatureBytes, registry);
 
   if (result.valid) {
@@ -329,7 +326,8 @@ export async function initVerifyPage(): Promise<void> {
     const url = getRegistryUrl();
     registry = await fetchRegistry(url);
   } catch (err) {
-    renderResult({ status: 'error', message: (err as Error).message }, container);
+    console.error('Registry fetch error:', err);
+    renderResult({ status: 'error', message: 'Unable to verify — please try again' }, container);
     return;
   }
 

@@ -1,14 +1,14 @@
 /**
  * Credential verification against a key registry.
  *
- * Parses a signed credential payload, looks up the authority's keys in the
- * registry, and verifies the Ed25519 signature. Returns a typed result
+ * Parses a signed credential payload, iterates all keys in the registry,
+ * and verifies the Ed25519 signature. The authority is determined by which
+ * registry key successfully verifies the signature. Returns a typed result
  * indicating success (with the matching key) or failure (with a reason).
  */
 
 import { validateCredential, UnsupportedVersionError } from './credential.js';
 import {
-  findKeysByAuthority,
   isDateInRange,
   decodePublicKey,
 } from './registry.js';
@@ -29,13 +29,15 @@ export const MAX_PAYLOAD_BYTES = 2048;
 /**
  * Verify a signed credential against a key registry.
  *
- * Parses `payloadBytes` as JSON, validates it as a credential, looks up keys
- * for the credential's authority, and checks the Ed25519 signature. Verification
- * is performed against the original `payloadBytes`, not a re-canonicalized form.
+ * Parses `payloadBytes` as JSON, validates it as a credential, then iterates
+ * all keys in the registry to find one whose Ed25519 signature matches.
+ * Verification is performed against the original `payloadBytes`, not a
+ * re-canonicalized form. The authority is derived from the matching registry
+ * key, not from the credential payload.
  *
  * @param payloadBytes   - UTF-8 encoded JSON credential.
  * @param signatureBytes - 64-byte Ed25519 signature.
- * @param registry       - Key registry to look up authority keys.
+ * @param registry       - Key registry to verify against.
  * @returns A result indicating success with the matching key, or failure with a reason.
  */
 export function verifyCredential(
@@ -74,13 +76,13 @@ export function verifyCredential(
     };
   }
 
-  // Step 3: Look up authority keys.
-  const keys = findKeysByAuthority(registry, credential.authority);
-  if (keys.length === 0) {
-    return { valid: false, reason: 'authority not found in registry' };
+  // Step 3: Validate signature length.
+  if (signatureBytes.length !== 64) {
+    return { valid: false, reason: 'invalid signature length' };
   }
 
-  // Single-pass: verify signature then check date range.
+  // Step 4: Iterate all registry keys — the authority is determined by which key verifies.
+  const keys = registry.keys;
   let signatureMatchedButDateInvalid = false;
   let decodeFailures = 0;
   for (let i = 0; i < keys.length; i++) {
@@ -90,7 +92,6 @@ export function verifyCredential(
       publicKey = decodePublicKey(key);
     } catch {
       decodeFailures++;
-      console.warn('Skipping malformed registry key at index', i);
       continue;
     }
 
@@ -113,7 +114,7 @@ export function verifyCredential(
     };
   }
   if (decodeFailures === keys.length) {
-    return { valid: false, reason: 'all registry keys for this authority failed to decode' };
+    return { valid: false, reason: 'all registry keys failed to decode' };
   }
   return { valid: false, reason: 'no matching key produced a valid signature' };
 }

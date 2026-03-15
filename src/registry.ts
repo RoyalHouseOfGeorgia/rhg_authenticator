@@ -6,7 +6,7 @@
  */
 
 import { base64Decode } from './base64url.js';
-import { sanitizeForError } from './credential.js';
+import { CONTROL_CHAR_RE, sanitizeForError } from './credential.js';
 import { DATE_RE, isValidDate } from './validation.js';
 
 export type KeyEntry = {
@@ -62,8 +62,8 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
   if (record.authority.length === 0) {
     throw new Error(`keys[${index}]: authority must not be empty`);
   }
-  // NFC-normalize authority during validation so lookups can use plain comparison.
-  record.authority = record.authority.normalize('NFC');
+  // NFC-normalize authority so lookups can use plain comparison.
+  const normalizedAuthority = record.authority.normalize('NFC');
 
   // from: valid date string.
   if (!('from' in record)) {
@@ -119,8 +119,18 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
   if (typeof record.note !== 'string') {
     throw new Error(`keys[${index}]: note must be a string`);
   }
+  if (CONTROL_CHAR_RE.test(record.note)) {
+    throw new Error(`keys[${index}]: note contains invalid control characters`);
+  }
 
-  return entry as KeyEntry;
+  return {
+    authority: normalizedAuthority,
+    from: record.from as string,
+    to: record.to as string | null,
+    algorithm: record.algorithm as 'Ed25519',
+    public_key: record.public_key as string,
+    note: record.note as string,
+  };
 }
 
 /** Validate an unknown value as a Registry, throwing on any violation. */
@@ -160,26 +170,6 @@ export function validateRegistry(obj: unknown): Registry {
   }
 
   return { keys: entries };
-}
-
-/**
- * Find all key entries for a given authority.
- *
- * Both the query and each entry's authority are NFC-normalized before
- * comparison.  Comparison is case-sensitive (intentional — authorities are
- * formal names that should match exactly).
- *
- * Results are returned in registry array order.
- */
-export function findKeysByAuthority(
-  registry: Registry,
-  authority: string,
-): KeyEntry[] {
-  const normalizedQuery = authority.normalize('NFC');
-  // entry.authority is already NFC-normalized during validation.
-  return registry.keys.filter(
-    (entry) => entry.authority === normalizedQuery,
-  );
 }
 
 /**

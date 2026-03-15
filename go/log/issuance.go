@@ -16,7 +16,6 @@ type IssuanceRecord struct {
 	Honor         string `json:"honor"`
 	Detail        string `json:"detail"`
 	Date          string `json:"date"`
-	Authority     string `json:"authority"`
 	PayloadSHA256 string `json:"payload_sha256"`  // lowercase hex
 	SignatureB64URL string `json:"signature_b64url"`
 }
@@ -46,7 +45,7 @@ func AppendRecord(logPath string, record IssuanceRecord) error {
 	}
 	data = append(data, '\n')
 
-	suffix, err := randomHex(8)
+	suffix, err := randomHex(16)
 	if err != nil {
 		return fmt.Errorf("generating tmp suffix: %w", err)
 	}

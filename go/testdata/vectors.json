@@ -2,49 +2,46 @@
   {
     "name": "ascii_only",
     "credential": {
-      "version": 1,
-      "authority": "Test Authority",
-      "recipient": "John Doe",
-      "honor": "Test Honor",
+      "date": "2026-03-13",
       "detail": "For service",
-      "date": "2026-03-13"
+      "honor": "Test Honor",
+      "recipient": "John Doe",
+      "version": 1
     },
-    "canonical_hex": "7b22617574686f72697479223a225465737420417574686f72697479222c2264617465223a22323032362d30332d3133222c2264657461696c223a22466f722073657276696365222c22686f6e6f72223a225465737420486f6e6f72222c22726563697069656e74223a224a6f686e20446f65222c2276657273696f6e223a317d",
-    "payload_b64url": "eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoiRm9yIHNlcnZpY2UiLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiJKb2huIERvZSIsInZlcnNpb24iOjF9",
-    "signature_b64url": "hSxvD8MQMdEXZ5RK49wAjAyJR8XnAZxigplusWLQDzHMytqh-d6JkyX6PqcLY7utky3atUARp0C_21HFZfBlAA",
-    "url": "https://verify.royalhouseofgeorgia.ge/?p=eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoiRm9yIHNlcnZpY2UiLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiJKb2huIERvZSIsInZlcnNpb24iOjF9&s=hSxvD8MQMdEXZ5RK49wAjAyJR8XnAZxigplusWLQDzHMytqh-d6JkyX6PqcLY7utky3atUARp0C_21HFZfBlAA",
+    "canonical_hex": "7b2264617465223a22323032362d30332d3133222c2264657461696c223a22466f722073657276696365222c22686f6e6f72223a225465737420486f6e6f72222c22726563697069656e74223a224a6f686e20446f65222c2276657273696f6e223a317d",
+    "payload_b64url": "eyJkYXRlIjoiMjAyNi0wMy0xMyIsImRldGFpbCI6IkZvciBzZXJ2aWNlIiwiaG9ub3IiOiJUZXN0IEhvbm9yIiwicmVjaXBpZW50IjoiSm9obiBEb2UiLCJ2ZXJzaW9uIjoxfQ",
+    "signature_b64url": "WQ_pz3VjnSi3l5S0AnFNWPlPeHSl39Xj4g6DJ4RmtWJCy1qf09FvrxSA-6O6NFTe6GMSUObDxZFNvNGCkRapCw",
+    "url": "https://verify.royalhouseofgeorgia.ge/?p=eyJkYXRlIjoiMjAyNi0wMy0xMyIsImRldGFpbCI6IkZvciBzZXJ2aWNlIiwiaG9ub3IiOiJUZXN0IEhvbm9yIiwicmVjaXBpZW50IjoiSm9obiBEb2UiLCJ2ZXJzaW9uIjoxfQ&s=WQ_pz3VjnSi3l5S0AnFNWPlPeHSl39Xj4g6DJ4RmtWJCy1qf09FvrxSA-6O6NFTe6GMSUObDxZFNvNGCkRapCw",
     "public_key_hex": "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc"
   },
   {
     "name": "georgian_text",
     "credential": {
-      "version": 1,
-      "authority": "Test Authority",
-      "recipient": "ქართველი",
-      "honor": "Test Honor",
+      "date": "2026-03-13",
       "detail": "საქართველოს სამეფო",
-      "date": "2026-03-13"
+      "honor": "Test Honor",
+      "recipient": "ქართველი",
+      "version": 1
     },
-    "canonical_hex": "7b22617574686f72697479223a225465737420417574686f72697479222c2264617465223a22323032362d30332d3133222c2264657461696c223a22e183a1e18390e183a5e18390e183a0e18397e18395e18394e1839ae1839de183a120e183a1e18390e1839be18394e183a4e1839d222c22686f6e6f72223a225465737420486f6e6f72222c22726563697069656e74223a22e183a5e18390e183a0e18397e18395e18394e1839ae18398222c2276657273696f6e223a317d",
-    "payload_b64url": "eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoi4YOh4YOQ4YOl4YOQ4YOg4YOX4YOV4YOU4YOa4YOd4YOhIOGDoeGDkOGDm-GDlOGDpOGDnSIsImhvbm9yIjoiVGVzdCBIb25vciIsInJlY2lwaWVudCI6IuGDpeGDkOGDoOGDl-GDleGDlOGDmuGDmCIsInZlcnNpb24iOjF9",
-    "signature_b64url": "hc2Rnyps__zApVDZhm2LuwkAHF86fucbcsYd3V0lNO6ZiIoQ19BVWYkLWdL7SM7421CpALb5-BLyZOWWGGzxCA",
-    "url": "https://verify.royalhouseofgeorgia.ge/?p=eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoi4YOh4YOQ4YOl4YOQ4YOg4YOX4YOV4YOU4YOa4YOd4YOhIOGDoeGDkOGDm-GDlOGDpOGDnSIsImhvbm9yIjoiVGVzdCBIb25vciIsInJlY2lwaWVudCI6IuGDpeGDkOGDoOGDl-GDleGDlOGDmuGDmCIsInZlcnNpb24iOjF9&s=hc2Rnyps__zApVDZhm2LuwkAHF86fucbcsYd3V0lNO6ZiIoQ19BVWYkLWdL7SM7421CpALb5-BLyZOWWGGzxCA",
+    "canonical_hex": "7b2264617465223a22323032362d30332d3133222c2264657461696c223a22e183a1e18390e183a5e18390e183a0e18397e18395e18394e1839ae1839de183a120e183a1e18390e1839be18394e183a4e1839d222c22686f6e6f72223a225465737420486f6e6f72222c22726563697069656e74223a22e183a5e18390e183a0e18397e18395e18394e1839ae18398222c2276657273696f6e223a317d",
+    "payload_b64url": "eyJkYXRlIjoiMjAyNi0wMy0xMyIsImRldGFpbCI6IuGDoeGDkOGDpeGDkOGDoOGDl-GDleGDlOGDmuGDneGDoSDhg6Hhg5Dhg5vhg5Thg6Thg50iLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiLhg6Xhg5Dhg6Dhg5fhg5Xhg5Thg5rhg5giLCJ2ZXJzaW9uIjoxfQ",
+    "signature_b64url": "ObElpZ1GUC_Fj9_ArLM56SbQl99-t56T3z5g7u0z5tU4ExHzJ5x72Tw6sR4zsyjKQ4pe7rRAB8lDbDQTPCQcCA",
+    "url": "https://verify.royalhouseofgeorgia.ge/?p=eyJkYXRlIjoiMjAyNi0wMy0xMyIsImRldGFpbCI6IuGDoeGDkOGDpeGDkOGDoOGDl-GDleGDlOGDmuGDneGDoSDhg6Hhg5Dhg5vhg5Thg6Thg50iLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiLhg6Xhg5Dhg6Dhg5fhg5Xhg5Thg5rhg5giLCJ2ZXJzaW9uIjoxfQ&s=ObElpZ1GUC_Fj9_ArLM56SbQl99-t56T3z5g7u0z5tU4ExHzJ5x72Tw6sR4zsyjKQ4pe7rRAB8lDbDQTPCQcCA",
     "public_key_hex": "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc"
   },
   {
     "name": "nfc_edge_case",
     "credential": {
-      "version": 1,
-      "authority": "Test Authority",
-      "recipient": "Café",
+      "date": "2026-03-13",
+      "detail": "résumé",
       "honor": "Test Honor",
-      "detail": "résumé",
-      "date": "2026-03-13"
+      "recipient": "Café",
+      "version": 1
     },
-    "canonical_hex": "7b22617574686f72697479223a225465737420417574686f72697479222c2264617465223a22323032362d30332d3133222c2264657461696c223a2272c3a973756dc3a9222c22686f6e6f72223a225465737420486f6e6f72222c22726563697069656e74223a22436166c3a9222c2276657273696f6e223a317d",
-    "payload_b64url": "eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoicsOpc3Vtw6kiLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiJDYWbDqSIsInZlcnNpb24iOjF9",
-    "signature_b64url": "FwS2C9T37895FVI-1TWfs-RM1YWD_cCguKV2jTyVDEP97WKTPqc1AzISxOmdxWrr2vti4w9eSuvXQf2wz6zIDQ",
-    "url": "https://verify.royalhouseofgeorgia.ge/?p=eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoicsOpc3Vtw6kiLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiJDYWbDqSIsInZlcnNpb24iOjF9&s=FwS2C9T37895FVI-1TWfs-RM1YWD_cCguKV2jTyVDEP97WKTPqc1AzISxOmdxWrr2vti4w9eSuvXQf2wz6zIDQ",
+    "canonical_hex": "7b2264617465223a22323032362d30332d3133222c2264657461696c223a2272c3a973756dc3a9222c22686f6e6f72223a225465737420486f6e6f72222c22726563697069656e74223a22436166c3a9222c2276657273696f6e223a317d",
+    "payload_b64url": "eyJkYXRlIjoiMjAyNi0wMy0xMyIsImRldGFpbCI6InLDqXN1bcOpIiwiaG9ub3IiOiJUZXN0IEhvbm9yIiwicmVjaXBpZW50IjoiQ2Fmw6kiLCJ2ZXJzaW9uIjoxfQ",
+    "signature_b64url": "Wmbu7Oi3Y2RA8UsrYfFAFqyz1wvnG4mgMBDPbJoReHXxkMyWzgH4ZWGaXv1_qq5JUVPfqz237RKfhBXTBqnOCw",
+    "url": "https://verify.royalhouseofgeorgia.ge/?p=eyJkYXRlIjoiMjAyNi0wMy0xMyIsImRldGFpbCI6InLDqXN1bcOpIiwiaG9ub3IiOiJUZXN0IEhvbm9yIiwicmVjaXBpZW50IjoiQ2Fmw6kiLCJ2ZXJzaW9uIjoxfQ&s=Wmbu7Oi3Y2RA8UsrYfFAFqyz1wvnG4mgMBDPbJoReHXxkMyWzgH4ZWGaXv1_qq5JUVPfqz237RKfhBXTBqnOCw",
     "public_key_hex": "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc"
   }
 ]

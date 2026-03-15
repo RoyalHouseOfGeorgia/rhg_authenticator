@@ -1,12 +1,16 @@
 package yubikey
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
 
 // PinCacheTimeout is the duration after which a cached PIN is automatically cleared.
 const PinCacheTimeout = 5 * time.Minute
+
+// mlockFunc is the mlock implementation. Overridable in tests (not parallel-safe).
+var mlockFunc = mlockBuffer
 
 // PinCache provides opt-in secure PIN caching.
 // PIN is stored in mlock'd memory, protected by mutex, auto-zeroed on timeout.
@@ -68,31 +72,35 @@ func (c *PinCache) Get() (string, bool) {
 
 // Set stores a PIN in the cache (if caching is enabled).
 // Locks the buffer in RAM via mlock. Resets the timeout.
-func (c *PinCache) Set(pin string) {
+// On mlock failure the new buffer is zeroed and the old cached PIN (if any) is preserved.
+func (c *PinCache) Set(pin string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.enabled {
-		return
+		return nil
+	}
+	if len(pin) == 0 {
+		return nil
 	}
 
-	// Zero any existing buffer before replacing.
+	buf := make([]byte, len(pin))
+	copy(buf, pin)
+	if err := mlockFunc(buf); err != nil {
+		zeroBytes(buf)
+		return fmt.Errorf("cannot secure memory: %w", err)
+	}
+
+	// Success — zero old buffer and replace.
 	if c.pin != nil {
 		zeroBytes(c.pin)
 	}
-
-	// Allocate new buffer, copy, and mlock.
-	buf := make([]byte, len(pin))
-	copy(buf, pin)
-	mlockBuffer(buf)
-
 	c.pin = buf
 	c.valid = true
-
-	// Reset or create the expiry timer.
 	if c.timer != nil {
 		c.timer.Stop()
 	}
 	c.timer = time.AfterFunc(c.timeout, c.Clear)
+	return nil
 }
 
 // Clear zeroes and invalidates the cached PIN.

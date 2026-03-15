@@ -9,6 +9,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
@@ -32,7 +33,10 @@ func NewHistoryTab(logPath string, window fyne.Window) *fyne.Container {
 			return widget.NewLabel("template")
 		},
 		func(id widget.ListItemID, obj fyne.CanvasObject) {
-			label := obj.(*widget.Label)
+			label, ok := obj.(*widget.Label)
+			if !ok {
+				return
+			}
 			if id < 0 || id >= len(filtered) {
 				return
 			}
@@ -108,14 +112,14 @@ func truncateHonor(honor string, maxLen int) string {
 
 // formatRecordSummary returns a one-line summary for the history list.
 func formatRecordSummary(rec log.IssuanceRecord) string {
-	return fmt.Sprintf("%s | %s | %s", rec.Date, rec.Recipient, truncateHonor(rec.Honor, maxHonorDisplay))
+	return fmt.Sprintf("%s | %s | %s", core.FormatDateDisplay(rec.Date), rec.Recipient, truncateHonor(rec.Honor, maxHonorDisplay))
 }
 
 // formatRecordDetail returns a multi-line detail string for the record dialog.
 func formatRecordDetail(rec log.IssuanceRecord) string {
 	return fmt.Sprintf(
-		"Timestamp: %s\nRecipient: %s\nHonor: %s\nDetail: %s\nDate: %s\nAuthority: %s\nPayload SHA-256: %s\nSignature: %s",
-		rec.Timestamp, rec.Recipient, rec.Honor, rec.Detail, rec.Date,
-		rec.Authority, rec.PayloadSHA256, rec.SignatureB64URL,
+		"Timestamp: %s\nRecipient: %s\nHonor: %s\nDetail: %s\nDate: %s\nPayload SHA-256: %s\nSignature: %s",
+		rec.Timestamp, rec.Recipient, rec.Honor, rec.Detail, core.FormatDateDisplay(rec.Date),
+		rec.PayloadSHA256, rec.SignatureB64URL,
 	)
 }

@@ -1,6 +1,7 @@
 package yubikey
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -24,7 +25,9 @@ func TestPinCache_SetAndGet(t *testing.T) {
 	defer c.Close()
 
 	c.SetEnabled(true)
-	c.Set("123456")
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
 
 	pin, ok := c.Get()
 	if !ok {
@@ -40,7 +43,9 @@ func TestPinCache_DisableClearsPIN(t *testing.T) {
 	defer c.Close()
 
 	c.SetEnabled(true)
-	c.Set("123456")
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
 
 	c.SetEnabled(false)
 
@@ -55,7 +60,9 @@ func TestPinCache_Clear(t *testing.T) {
 	defer c.Close()
 
 	c.SetEnabled(true)
-	c.Set("123456")
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
 	c.Clear()
 
 	pin, ok := c.Get()
@@ -69,7 +76,9 @@ func TestPinCache_Timeout(t *testing.T) {
 	defer c.Close()
 
 	c.SetEnabled(true)
-	c.Set("123456")
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Wait for timeout to fire.
 	time.Sleep(100 * time.Millisecond)
@@ -86,11 +95,15 @@ func TestPinCache_TimeoutResetsOnSet(t *testing.T) {
 	defer c.Close()
 
 	c.SetEnabled(true)
-	c.Set("first")
+	if err := c.Set("first"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Wait 60ms (more than half the timeout), then set again.
 	time.Sleep(60 * time.Millisecond)
-	c.Set("second")
+	if err := c.Set("second"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Wait another 60ms — total 120ms since first Set, but only 60ms since second Set.
 	time.Sleep(60 * time.Millisecond)
@@ -122,7 +135,7 @@ func TestPinCache_ConcurrentAccess(t *testing.T) {
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			c.Set("pin123")
+			_ = c.Set("pin123")
 		}()
 		go func() {
 			defer wg.Done()
@@ -141,7 +154,9 @@ func TestPinCache_SetDisabledIsNoop(t *testing.T) {
 	defer c.Close()
 
 	// Cache is disabled by default; Set should be a no-op.
-	c.Set("123456")
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
 
 	pin, ok := c.Get()
 	if ok || pin != "" {
@@ -152,7 +167,9 @@ func TestPinCache_SetDisabledIsNoop(t *testing.T) {
 func TestPinCache_Close(t *testing.T) {
 	c := NewPinCache()
 	c.SetEnabled(true)
-	c.Set("123456")
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
 
 	c.Close()
 
@@ -165,7 +182,9 @@ func TestPinCache_Close(t *testing.T) {
 func TestPinCache_DoubleClose(t *testing.T) {
 	c := NewPinCache()
 	c.SetEnabled(true)
-	c.Set("123456")
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Double Close should not panic.
 	c.Close()
@@ -177,8 +196,12 @@ func TestPinCache_SetOverwritesExisting(t *testing.T) {
 	defer c.Close()
 	c.SetEnabled(true)
 
-	c.Set("first")
-	c.Set("second")
+	if err := c.Set("first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("second"); err != nil {
+		t.Fatal(err)
+	}
 
 	pin, ok := c.Get()
 	if !ok {
@@ -194,7 +217,9 @@ func TestPinCache_EnableDisableEnable(t *testing.T) {
 	defer c.Close()
 
 	c.SetEnabled(true)
-	c.Set("123456")
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
 	c.SetEnabled(false)
 	c.SetEnabled(true)
 
@@ -205,7 +230,9 @@ func TestPinCache_EnableDisableEnable(t *testing.T) {
 	}
 
 	// But new Set should work.
-	c.Set("654321")
+	if err := c.Set("654321"); err != nil {
+		t.Fatal(err)
+	}
 	pin, ok = c.Get()
 	if !ok || pin != "654321" {
 		t.Errorf("expected PIN %q after re-enable Set, got %q, %v", "654321", pin, ok)
@@ -246,4 +273,81 @@ func TestZeroBytes_Empty(t *testing.T) {
 	// Should not panic on empty slice.
 	zeroBytes([]byte{})
 	zeroBytes(nil)
+}
+
+func TestPinCache_SetMlockFailure(t *testing.T) {
+	// Do NOT use t.Parallel() — mlockFunc is a package-level variable.
+	origFunc := mlockFunc
+	t.Cleanup(func() { mlockFunc = origFunc })
+
+	mlockFunc = func(buf []byte) error {
+		return fmt.Errorf("mlock: operation not permitted")
+	}
+
+	c := NewPinCache()
+	defer c.Close()
+	c.SetEnabled(true)
+
+	err := c.Set("secret")
+	if err == nil {
+		t.Fatal("expected error from Set when mlock fails")
+	}
+	if got := err.Error(); got != "cannot secure memory: mlock: operation not permitted" {
+		t.Errorf("unexpected error message: %s", got)
+	}
+
+	pin, ok := c.Get()
+	if ok || pin != "" {
+		t.Errorf("expected no cached PIN after mlock failure, got %q, %v", pin, ok)
+	}
+}
+
+func TestPinCache_SetMlockFailure_PreservesOldCache(t *testing.T) {
+	// Do NOT use t.Parallel() — mlockFunc is a package-level variable.
+	origFunc := mlockFunc
+	t.Cleanup(func() { mlockFunc = origFunc })
+
+	c := NewPinCache()
+	defer c.Close()
+	c.SetEnabled(true)
+
+	// Successfully cache a PIN first.
+	if err := c.Set("original"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now make mlock fail.
+	mlockFunc = func(buf []byte) error {
+		return fmt.Errorf("mlock: operation not permitted")
+	}
+
+	err := c.Set("replacement")
+	if err == nil {
+		t.Fatal("expected error from Set when mlock fails")
+	}
+
+	// Old cached PIN should still be available.
+	pin, ok := c.Get()
+	if !ok {
+		t.Fatal("expected old cached PIN to still be valid")
+	}
+	if pin != "original" {
+		t.Errorf("expected old PIN %q, got %q", "original", pin)
+	}
+}
+
+func TestPinCache_SetEmptyPin(t *testing.T) {
+	c := NewPinCache()
+	defer c.Close()
+	c.SetEnabled(true)
+
+	err := c.Set("")
+	if err != nil {
+		t.Fatalf("Set empty PIN should return nil, got %v", err)
+	}
+
+	pin, ok := c.Get()
+	if ok || pin != "" {
+		t.Errorf("expected no cached PIN after empty Set, got %q, %v", pin, ok)
+	}
 }

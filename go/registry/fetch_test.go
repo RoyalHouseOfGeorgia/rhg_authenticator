@@ -2,11 +2,8 @@ package registry
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,6 +52,8 @@ func validRegistryJSONWithDates(from, to string) []byte {
 	}`)
 }
 
+// --- FetchRegistry tests (remote only, no fallback) ---
+
 func TestFetchRegistry_RemoteSuccess(t *testing.T) {
 	body := validRegistryJSON()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,15 +62,9 @@ func TestFetchRegistry_RemoteSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	reg, source, err := FetchRegistry(srv.URL, cachePath, nil)
+	reg, err := FetchRegistry(srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if source != "remote" {
-		t.Errorf("expected source 'remote', got %q", source)
 	}
 	if len(reg.Keys) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(reg.Keys))
@@ -81,179 +74,106 @@ func TestFetchRegistry_RemoteSuccess(t *testing.T) {
 	}
 }
 
-func TestFetchRegistry_RemoteSuccess_CacheWritten(t *testing.T) {
-	body := validRegistryJSON()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
-	}))
-	defer srv.Close()
-
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	_, _, err := FetchRegistry(srv.URL, cachePath, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify cache file was written.
-	cached, err := os.ReadFile(cachePath)
-	if err != nil {
-		t.Fatalf("cache file not written: %v", err)
-	}
-
-	// Verify cached content is valid registry JSON.
-	var reg core.Registry
-	if err := json.Unmarshal(cached, &reg); err != nil {
-		t.Fatalf("cached file is not valid JSON: %v", err)
-	}
-	if len(reg.Keys) != 1 {
-		t.Errorf("cached registry should have 1 key, got %d", len(reg.Keys))
-	}
-}
-
-func TestFetchRegistry_RemoteFail_CacheHit(t *testing.T) {
-	// No server running — remote will fail.
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	// Pre-populate cache.
-	if err := os.WriteFile(cachePath, validRegistryJSON(), 0o600); err != nil {
-		t.Fatalf("writing cache: %v", err)
-	}
-
-	reg, source, err := FetchRegistry("http://127.0.0.1:1/nonexistent", cachePath, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if source != "cache" {
-		t.Errorf("expected source 'cache', got %q", source)
-	}
-	if len(reg.Keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(reg.Keys))
-	}
-}
-
-func TestFetchRegistry_RemoteFail_CacheMiss_Embedded(t *testing.T) {
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-	// No cache file, no server.
-
-	reg, source, err := FetchRegistry("http://127.0.0.1:1/nonexistent", cachePath, validRegistryJSON())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if source != "embedded" {
-		t.Errorf("expected source 'embedded', got %q", source)
-	}
-	if len(reg.Keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(reg.Keys))
-	}
-}
-
-func TestFetchRegistry_RemoteFail_CorruptedCache_Embedded(t *testing.T) {
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	// Write corrupted cache.
-	if err := os.WriteFile(cachePath, []byte("not json"), 0o600); err != nil {
-		t.Fatalf("writing cache: %v", err)
-	}
-
-	reg, source, err := FetchRegistry("http://127.0.0.1:1/nonexistent", cachePath, validRegistryJSON())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if source != "embedded" {
-		t.Errorf("expected source 'embedded', got %q", source)
-	}
-	if len(reg.Keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(reg.Keys))
-	}
-}
-
-func TestFetchRegistry_AllFail(t *testing.T) {
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	_, _, err := FetchRegistry("http://127.0.0.1:1/nonexistent", cachePath, []byte("bad"))
+func TestFetchRegistry_NetworkError(t *testing.T) {
+	_, err := FetchRegistry("http://127.0.0.1:1/nonexistent")
 	if err == nil {
-		t.Fatal("expected error when all sources fail")
-	}
-	if !strings.Contains(err.Error(), "all registry sources failed") {
-		t.Errorf("unexpected error message: %v", err)
+		t.Fatal("expected error for unreachable server")
 	}
 }
 
-func TestFetchRegistry_RemoteInvalidJSON_FallsToCache(t *testing.T) {
+func TestFetchRegistry_HTTP404(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("not valid json"))
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	// Pre-populate cache.
-	if err := os.WriteFile(cachePath, validRegistryJSON(), 0o600); err != nil {
-		t.Fatalf("writing cache: %v", err)
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for 404")
 	}
-
-	reg, source, err := FetchRegistry(srv.URL, cachePath, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if source != "cache" {
-		t.Errorf("expected source 'cache', got %q", source)
-	}
-	if len(reg.Keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(reg.Keys))
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("error should contain '404', got: %v", err)
 	}
 }
 
-func TestFetchRegistry_RemoteHTTPError_FallsThrough(t *testing.T) {
+func TestFetchRegistry_HTTP500(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	reg, source, err := FetchRegistry(srv.URL, cachePath, validRegistryJSON())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if source != "embedded" {
-		t.Errorf("expected source 'embedded', got %q", source)
-	}
-	if len(reg.Keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(reg.Keys))
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for 500")
 	}
 }
 
-func TestFetchRegistry_RemoteInvalidRegistry_NoCacheWritten(t *testing.T) {
-	// Remote returns valid JSON but invalid registry (empty keys).
+func TestFetchRegistry_InvalidJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"keys": []}`))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("not json {{"))
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	_, source, err := FetchRegistry(srv.URL, cachePath, validRegistryJSON())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
 	}
-	if source != "embedded" {
-		t.Errorf("expected source 'embedded', got %q", source)
-	}
+}
 
-	// Cache should NOT have been written since remote was invalid.
-	if _, err := os.Stat(cachePath); err == nil {
-		t.Error("cache file should not exist for invalid remote registry")
+func TestFetchRegistry_WrongContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(validRegistryJSON())
+	}))
+	defer srv.Close()
+
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for wrong Content-Type")
+	}
+	if !strings.Contains(err.Error(), "Content-Type") {
+		t.Errorf("error should mention Content-Type, got: %v", err)
+	}
+}
+
+func TestFetchRegistry_MissingContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(validRegistryJSON())
+	}))
+	defer srv.Close()
+
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for missing Content-Type")
+	}
+}
+
+func TestFetchRegistry_InvalidRegistrySchema(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"keys": []}`)) // empty keys — invalid
+	}))
+	defer srv.Close()
+
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for invalid registry schema")
+	}
+	if !strings.Contains(err.Error(), "validation failed") {
+		t.Errorf("error should mention validation, got: %v", err)
+	}
+}
+
+func TestFetchRegistry_DefaultRegistryURL(t *testing.T) {
+	if DefaultRegistryURL != "https://verify.royalhouseofgeorgia.ge/keys/registry.json" {
+		t.Errorf("unexpected default URL: %s", DefaultRegistryURL)
+	}
+}
+
+func TestFetchRegistry_FetchTimeout(t *testing.T) {
+	if FetchTimeout.Seconds() != 10 {
+		t.Errorf("expected 10s timeout, got %v", FetchTimeout)
 	}
 }
 
@@ -296,13 +216,9 @@ func TestFindMatchingAuthorityAt_Expired(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	// Date is after the "to" field.
 	_, err = FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14")
 	if err == nil {
 		t.Fatal("expected error for expired key")
-	}
-	if !strings.Contains(err.Error(), "no active registry entry") {
-		t.Errorf("unexpected error: %v", err)
 	}
 }
 
@@ -316,13 +232,9 @@ func TestFindMatchingAuthorityAt_NotYetValid(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for not-yet-valid key")
 	}
-	if !strings.Contains(err.Error(), "no active registry entry") {
-		t.Errorf("unexpected error: %v", err)
-	}
 }
 
 func TestFindMatchingAuthorityAt_SkipsDecodeError(t *testing.T) {
-	// Registry with a bad public key entry followed by a good one.
 	data := []byte(`{
 		"keys": [
 			{
@@ -393,8 +305,6 @@ func TestFindMatchingAuthorityAt_MultipleKeys_FirstActiveMatch(t *testing.T) {
 }
 
 func TestFindMatchingAuthority_UsesToday(t *testing.T) {
-	// This test just verifies FindMatchingAuthority doesn't panic and uses time.Now.
-	// We use a key with from=2020-01-01 and to=null so it should always match.
 	reg, err := core.ValidateRegistry(validRegistryJSON())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
@@ -420,13 +330,9 @@ func TestFindMatchingAuthority_NoMatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-matching key")
 	}
-	if !strings.Contains(err.Error(), "no active registry entry") {
-		t.Errorf("unexpected error: %v", err)
-	}
 }
 
 func TestFindMatchingAuthority_SkipsDecodeError(t *testing.T) {
-	// Registry with only a bad public_key entry — should return error.
 	data := []byte(`{
 		"keys": [{
 			"authority": "Bad",
@@ -448,74 +354,41 @@ func TestFindMatchingAuthority_SkipsDecodeError(t *testing.T) {
 	}
 }
 
-func TestFetchRegistry_RemoteMalformedJSON_NoCacheWritten(t *testing.T) {
-	// Remote returns malformed JSON (not valid JSON at all).
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{this is not valid json"))
-	}))
-	defer srv.Close()
+// --- FindMatchingEntryAt tests ---
 
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	_, _, err := FetchRegistry(srv.URL, cachePath, validRegistryJSON())
+func TestFindMatchingEntryAt_Found(t *testing.T) {
+	reg, err := core.ValidateRegistry(validRegistryJSON())
 	if err != nil {
-		t.Fatalf("unexpected error (should fall back to embedded): %v", err)
+		t.Fatalf("setup: %v", err)
 	}
-
-	// Cache file must NOT exist — malformed response should never be cached.
-	if _, statErr := os.Stat(cachePath); statErr == nil {
-		t.Error("cache file should not exist when remote returns malformed JSON")
+	entry := FindMatchingEntryAt(reg, testPubKey, "2026-03-15")
+	if entry == nil {
+		t.Fatal("expected matching entry, got nil")
 	}
-}
-
-func TestFetchRegistry_DefaultRegistryURL(t *testing.T) {
-	if DefaultRegistryURL != "https://verify.royalhouseofgeorgia.ge/keys/registry.json" {
-		t.Errorf("unexpected default URL: %s", DefaultRegistryURL)
+	if entry.Authority != "Test Authority" {
+		t.Errorf("authority = %q, want %q", entry.Authority, "Test Authority")
 	}
 }
 
-func TestFetchRegistry_FetchTimeout(t *testing.T) {
-	if FetchTimeout.Seconds() != 10 {
-		t.Errorf("expected 10s timeout, got %v", FetchTimeout)
-	}
-}
-
-func TestFetchRegistry_WrongContentType_FallsThrough(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write(validRegistryJSON())
-	}))
-	defer srv.Close()
-
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	_, source, err := FetchRegistry(srv.URL, cachePath, validRegistryJSON())
+func TestFindMatchingEntryAt_NotFound(t *testing.T) {
+	reg, err := core.ValidateRegistry(validRegistryJSON())
 	if err != nil {
-		t.Fatalf("should fall back to embedded: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
-	if source != "embedded" {
-		t.Errorf("expected source 'embedded', got %q", source)
+	wrongKey := [32]byte{0x01, 0x02, 0x03}
+	entry := FindMatchingEntryAt(reg, wrongKey, "2026-03-15")
+	if entry != nil {
+		t.Errorf("expected nil for non-matching key, got: %+v", entry)
 	}
 }
 
-func TestFetchRegistry_MissingContentType_FallsThrough(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// No Content-Type header set.
-		w.Write(validRegistryJSON())
-	}))
-	defer srv.Close()
-
-	dir := t.TempDir()
-	cachePath := filepath.Join(dir, "registry.cache.json")
-
-	_, source, err := FetchRegistry(srv.URL, cachePath, validRegistryJSON())
+func TestFindMatchingEntryAt_Expired(t *testing.T) {
+	reg, err := core.ValidateRegistry(validRegistryJSONWithDates("2025-01-01", "2025-12-31"))
 	if err != nil {
-		t.Fatalf("should fall back to embedded: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
-	if source != "embedded" {
-		t.Errorf("expected source 'embedded', got %q", source)
+	entry := FindMatchingEntryAt(reg, testPubKey, "2026-03-15")
+	if entry != nil {
+		t.Errorf("expected nil for expired entry, got: %+v", entry)
 	}
 }

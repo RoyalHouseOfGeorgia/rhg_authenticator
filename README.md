@@ -1,6 +1,15 @@
-# Royal House of Georgia — Digital Honor Authenticator
+<p align="center">
+  <img src="royal-arms.png" alt="Royal Arms of Georgia" width="120" height="120">
+</p>
 
-Cryptographically verifiable credential system for the Royal House of Georgia. Ed25519 signatures via YubiKey, QR codes on physical diplomas, public verification via GitHub Pages.
+<h1 align="center">Royal House of Georgia — Digital Honor Authenticator</h1>
+
+<p align="center">
+  Cryptographically verifiable credential system for the Royal House of Georgia.<br>
+  Ed25519 signatures via YubiKey, QR codes on physical diplomas, public verification via GitHub Pages.
+</p>
+
+---
 
 ## How It Works
 
@@ -12,12 +21,11 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 
 | Component | Language | Status | Description |
 |-----------|----------|--------|-------------|
-| **Desktop signing app** | Go | **Complete** | Self-contained binary with Fyne GUI, direct YubiKey access via PCSC |
-| **Registry manager** | Go | **Complete** | Standalone tool for managing the key registry (import certs, add/edit/remove entries) |
+| **Desktop app** | Go | **Complete** | Self-contained binary with Fyne GUI — 5 tabs: Sign, History, Registry, Audit, YubiKey |
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-775 tests passing (459 Go + 316 TypeScript).
+743 tests passing (438 Go + 305 TypeScript).
 
 ## Quick Start — Signing App (Go)
 
@@ -27,11 +35,14 @@ Cryptographically verifiable credential system for the Royal House of Georgia. E
 cd go
 make build          # → release/rhg-authenticator
 ./release/rhg-authenticator
-
-# Registry manager (separate tool)
-go build -o release/rhg-regmgr ./cmd/regmgr
-./release/rhg-regmgr
 ```
+
+The app has five tabs:
+- **Sign** — fill in credential form, sign with YubiKey, generate QR code
+- **History** — browse previously issued credentials, search by recipient
+- **Registry** — manage the key registry (import from YubiKey or .crt/.pem, add/edit entries, save JSON)
+- **Audit** — view GitHub commit history of the registry file (tamper detection)
+- **YubiKey** — check if the inserted YubiKey is authorized in the registry
 
 **Platform-specific build dependencies:**
 - macOS: none (PCSC framework + OpenGL built-in)
@@ -44,7 +55,7 @@ See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
 ```bash
 npm install
-npm test              # 316 tests
+npm test              # 305 tests
 npm run lint          # tsc --noEmit
 npm run build:verify  # Bundle verification page JS
 ```
@@ -59,7 +70,7 @@ Requires Node.js 20+.
 
 ## Binary Integrity
 
-Release binaries are published with SHA-256 checksums (`SHA256SUMS.txt`).
+Release binaries are published with SHA-256 checksums (`SHA256SUMS.txt`) and SLSA build provenance attestations.
 
 **Verify on macOS/Linux:**
 ```bash

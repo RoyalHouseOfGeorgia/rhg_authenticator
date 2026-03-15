@@ -35,7 +35,6 @@ describe("verifyCredential", () => {
     expect(success.key).toBe(entry);
     expect(success.credential).toEqual({
       version: 1,
-      authority: "Test Authority",
       recipient: "Jane Doe",
       honor: "Test Honor",
       detail: "Test Detail",
@@ -43,22 +42,7 @@ describe("verifyCredential", () => {
     });
   });
 
-  // 2. Unknown authority
-  it("returns failure when authority is not in registry", () => {
-    const { secretKey, publicKey } = makeKeypair();
-    const cred = validCredentialObj({ authority: "Unknown Authority" });
-    const payload = encodeCredential(cred);
-    const signature = sign(payload, secretKey);
-    const entry = makeKeyEntry(publicKey, { authority: "Other Authority" });
-    const registry = makeRegistry(entry);
-
-    const result = verifyCredential(payload, signature, registry);
-
-    expect(result.valid).toBe(false);
-    expect((result as VerificationFailure).reason).toContain("authority");
-  });
-
-  // 3. Tampered payload
+  // 2. Tampered payload
   it("rejects a tampered payload", () => {
     const { secretKey, publicKey } = makeKeypair();
     const payload = encodeCredential(validCredentialObj());
@@ -227,7 +211,7 @@ describe("verifyCredential", () => {
     const entry = makeKeyEntry(publicKey);
     const registry = makeRegistry(entry);
 
-    const payload = encodeCredential({ version: 1, authority: "Test" });
+    const payload = encodeCredential({ version: 1 });
     const fakeSig = new Uint8Array(64);
 
     const result = verifyCredential(payload, fakeSig, registry);
@@ -245,7 +229,6 @@ describe("verifyCredential", () => {
     const registry = makeRegistry(entry);
 
     const payload = encodeCredential({
-      authority: "Test Authority",
       date: "2024-06-15",
       detail: "Test Detail",
       honor: "Test Honor",
@@ -305,8 +288,8 @@ describe("verifyCredential", () => {
     expect(success.credential.recipient).toBe("Jane Doe");
   });
 
-  // 13b. Console.warn on corrupted registry key
-  it("logs console.warn with key index when encountering a malformed key", () => {
+  // 13b. No console.warn on corrupted registry key (decodeFailures counter tracks it silently)
+  it("does not emit console.warn when encountering a malformed key", () => {
     const { secretKey, publicKey } = makeKeypair();
     const cred = validCredentialObj();
     const payload = encodeCredential(cred);
@@ -327,17 +310,14 @@ describe("verifyCredential", () => {
     try {
       const result = verifyCredential(payload, signature, registry);
       expect(result.valid).toBe(true);
-      expect(warnSpy).toHaveBeenCalledWith(
-        "Skipping malformed registry key at index",
-        0,
-      );
+      expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
     }
   });
 
-  // 13c. Console.warn on malformed key at any position in single pass
-  it("logs console.warn for malformed key regardless of date eligibility", () => {
+  // 13c. No console.warn on malformed key at any position in single pass
+  it("does not emit console.warn for malformed key regardless of position", () => {
     const { publicKey } = makeKeypair();
     const cred = validCredentialObj({ date: "2024-06-15" });
     const payload = encodeCredential(cred);
@@ -362,10 +342,7 @@ describe("verifyCredential", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       verifyCredential(payload, fakeSig, registry);
-      expect(warnSpy).toHaveBeenCalledWith(
-        "Skipping malformed registry key at index",
-        1,
-      );
+      expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
     }
@@ -396,7 +373,6 @@ describe("verifyCredential", () => {
     expect(success.key).toBe(entry);
     expect(success.credential).toEqual({
       version: 1,
-      authority: "Test Authority",
       recipient: "Jane Doe",
       honor: "Test Honor",
       detail: "Test Detail",
@@ -512,17 +488,11 @@ describe("verifyCredential", () => {
     };
     const registry = makeRegistry(badEntry1, badEntry2);
 
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const result = verifyCredential(payload, signature, registry);
-      expect(result.valid).toBe(false);
-      expect((result as VerificationFailure).reason).toBe(
-        "all registry keys for this authority failed to decode",
-      );
-      expect(warnSpy).toHaveBeenCalledTimes(2);
-    } finally {
-      warnSpy.mockRestore();
-    }
+    const result = verifyCredential(payload, signature, registry);
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toBe(
+      "all registry keys failed to decode",
+    );
   });
 
   // 20. URL byte-budget test
@@ -533,7 +503,6 @@ describe("verifyCredential", () => {
 
     // Georgian names sized to approach but stay within the byte budget
     const credential = {
-      authority: "თბილისის უნივერსიტეტი",
       date: "2024-12-31",
       detail: "დეტალი",
       honor: "წარჩინებით",
@@ -561,5 +530,16 @@ describe("verifyCredential", () => {
     const url = `https://example.edu/verify?p=${payloadB64}&s=${signatureB64}`;
     expect(url.length).toBeLessThanOrEqual(420);
     expect(payloadB64.length).toBeLessThanOrEqual(300);
+  });
+
+  it('rejects invalid signature length (32 bytes instead of 64)', () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const reg = makeRegistry(entry);
+    const payload = canonicalize(validCredentialObj() as Record<string, string | number>);
+    const shortSig = new Uint8Array(32);
+    const result = verifyCredential(payload, shortSig, reg);
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toBe('invalid signature length');
   });
 });

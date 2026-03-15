@@ -347,6 +347,41 @@ func TestDecodePublicKey_TooLongInput(t *testing.T) {
 	}
 }
 
+// --- KeyFingerprint tests ---
+
+func TestKeyFingerprint_Valid(t *testing.T) {
+	// Use a known 32-byte raw key.
+	raw := make([]byte, 32)
+	raw[0] = 0x01
+	entry := KeyEntry{PublicKey: base64.StdEncoding.EncodeToString(raw)}
+	fp, err := KeyFingerprint(entry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fp) != 64 {
+		t.Errorf("fingerprint length = %d, want 64 hex chars", len(fp))
+	}
+}
+
+func TestKeyFingerprint_Deterministic(t *testing.T) {
+	raw := make([]byte, 32)
+	raw[0] = 0x42
+	entry := KeyEntry{PublicKey: base64.StdEncoding.EncodeToString(raw)}
+	fp1, _ := KeyFingerprint(entry)
+	fp2, _ := KeyFingerprint(entry)
+	if fp1 != fp2 {
+		t.Errorf("fingerprint not deterministic: %q != %q", fp1, fp2)
+	}
+}
+
+func TestKeyFingerprint_InvalidKey(t *testing.T) {
+	entry := KeyEntry{PublicKey: "!!!invalid!!!"}
+	_, err := KeyFingerprint(entry)
+	if err == nil {
+		t.Error("expected error for invalid base64 key")
+	}
+}
+
 // --- FindKeysByAuthority tests ---
 
 func TestFindKeysByAuthority_Match(t *testing.T) {
@@ -531,6 +566,24 @@ func TestValidateRegistry_MaxKeysExceedsLimit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "1001") {
 		t.Errorf("error should mention the actual count 1001: %v", err)
+	}
+}
+
+func TestValidateRegistry_NoteWithControlCharacters(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	data := `{"keys": [{"authority":"A","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"` + key + `","note":"bad\u0001note"}]}`
+	_, err := ValidateRegistry([]byte(data))
+	if err == nil || !strings.Contains(err.Error(), "note contains invalid control characters") {
+		t.Fatalf("expected control char error, got %v", err)
+	}
+}
+
+func TestValidateRegistry_NoteWithBidiOverride(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	data := `{"keys": [{"authority":"A","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"` + key + `","note":"bidi` + "\u202e" + `override"}]}`
+	_, err := ValidateRegistry([]byte(data))
+	if err == nil || !strings.Contains(err.Error(), "note contains invalid control characters") {
+		t.Fatalf("expected control char error, got %v", err)
 	}
 }
 

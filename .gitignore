@@ -12,6 +12,7 @@
 credentials.json
 service-account*.json
 *.crt
+!go/testdata/*.crt
 *.gpg
 
 # Dependencies
@@ -55,3 +56,4 @@ terraform.tfstate.backup
 # Runtime data
 issuances.json
 issuances.json.tmp.*
+**/debug.log

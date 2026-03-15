@@ -2,7 +2,6 @@ package regmgr
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -24,33 +23,14 @@ type appState struct {
 }
 
 // tableColumns defines the column headers for the registry table.
-var tableColumns = []string{"#", "Authority", "From", "To", "Note", "Key"}
+var tableColumns = []string{"#", "Authority", "From", "To", "Note", "Fingerprint"}
 
 // tableColumnWidths defines the minimum widths for each table column.
-var tableColumnWidths = []float32{40, 200, 100, 100, 200, 150}
-
-// buildTitle returns the window title string based on file path and dirty state.
-func buildTitle(filePath string, dirty bool) string {
-	title := "RHG Registry Manager"
-	if filePath != "" {
-		title += " \u2014 " + filepath.Base(filePath)
-	}
-	if dirty {
-		title += " *"
-	}
-	return title
-}
+var tableColumnWidths = []float32{40, 200, 100, 100, 200, 450}
 
 // canSave returns whether the registry has entries that can be saved.
 func canSave(reg core.Registry) bool {
 	return len(reg.Keys) > 0
-}
-
-// removeEntry removes the entry at index from the registry keys slice.
-// Returns the modified registry. Panics if index is out of range.
-func removeEntry(reg core.Registry, index int) core.Registry {
-	reg.Keys = append(reg.Keys[:index], reg.Keys[index+1:]...)
-	return reg
 }
 
 // formatKeyColumn returns a truncated display of a public key string.
@@ -61,14 +41,64 @@ func formatKeyColumn(key string) string {
 	return key[:12] + "..."
 }
 
-// NewApp creates the full registry manager UI and returns it as a CanvasObject.
-// It sets up the close intercept on the provided window.
-func NewApp(window fyne.Window) fyne.CanvasObject {
+// RegistryTab holds the registry manager UI and its state.
+type RegistryTab struct {
+	Content     fyne.CanvasObject
+	state          *appState
+	table          *widget.Table
+	statusLabel    *widget.Label
+	window         fyne.Window
+	rebuildCache   func()
+}
+
+// IsDirty returns whether the registry has unsaved changes.
+func (rt *RegistryTab) IsDirty() bool {
+	return rt.state.dirty
+}
+
+// Fetch fetches the registry from the remote server asynchronously.
+func (rt *RegistryTab) Fetch() {
+	rt.statusLabel.SetText("Fetching...")
+	go func() {
+		reg, err := registry.FetchRegistry(registry.DefaultRegistryURL)
+		fyne.Do(func() {
+			if err != nil {
+				rt.statusLabel.SetText("Failed to load: " + err.Error())
+				return
+			}
+			rt.state.registry = reg
+			rt.state.filePath = ""
+			rt.state.dirty = false
+			rt.state.selected = -1
+			rt.table.UnselectAll()
+			if rt.rebuildCache != nil {
+				rt.rebuildCache()
+			}
+			rt.table.Refresh()
+			rt.statusLabel.SetText("Loaded from registry server")
+		})
+	}()
+}
+
+// NewRegistryTab creates the registry manager UI as a tab.
+// The caller owns the window — this does not set close intercepts or change the window title.
+func NewRegistryTab(window fyne.Window) *RegistryTab {
 	state := &appState{
 		selected: -1,
 	}
 
-	statusLabel := widget.NewLabel("Loading...")
+	statusLabel := widget.NewLabel("")
+	fingerprintCache := make(map[int]string)
+
+	// rebuildFingerprintCache populates the fingerprint cache from registry keys.
+	rebuildFingerprintCache := func() {
+		fingerprintCache = make(map[int]string, len(state.registry.Keys))
+		for i, key := range state.registry.Keys {
+			if fp, err := core.KeyFingerprint(key); err == nil {
+				fingerprintCache[i] = fp
+			}
+		}
+	}
 
 	// Build the table.
 	table := widget.NewTable(
@@ -79,7 +109,10 @@ func NewApp(window fyne.Window) fyne.CanvasObject {
 			return widget.NewLabel("placeholder")
 		},
 		func(id widget.TableCellID, o fyne.CanvasObject) {
-			label := o.(*widget.Label)
+			label, ok := o.(*widget.Label)
+			if !ok {
+				return
+			}
 			if id.Row == 0 {
 				// Header row.
 				label.SetText(tableColumns[id.Col])
@@ -94,17 +127,21 @@ func NewApp(window fyne.Window) fyne.CanvasObject {
 			case 1:
 				label.SetText(entry.Authority)
 			case 2:
-				label.SetText(entry.From)
+				label.SetText(core.FormatDateDisplay(entry.From))
 			case 3:
 				if entry.To != nil {
-					label.SetText(*entry.To)
+					label.SetText(core.FormatDateDisplay(*entry.To))
 				} else {
 					label.SetText("(none)")
 				}
 			case 4:
 				label.SetText(entry.Note)
 			case 5:
-				label.SetText(formatKeyColumn(entry.PublicKey))
+				if fp, ok := fingerprintCache[id.Row-1]; ok {
+					label.SetText(fp)
+				} else {
+					label.SetText("(invalid key)")
+				}
 			}
 		},
 	)
@@ -125,8 +162,8 @@ func NewApp(window fyne.Window) fyne.CanvasObject {
 
 	// Helper to refresh UI after state changes.
 	refreshUI := func() {
+		rebuildFingerprintCache()
 		table.Refresh()
-		window.SetTitle(buildTitle(state.filePath, state.dirty))
 	}
 
 	// Save function (writes to state.filePath).
@@ -159,6 +196,14 @@ func NewApp(window fyne.Window) fyne.CanvasObject {
 		d.Show()
 	}
 
+	rt := &RegistryTab{
+		state:        state,
+		table:        table,
+		statusLabel:  statusLabel,
+		window:       window,
+		rebuildCache: rebuildFingerprintCache,
+	}
+
 	// Toolbar buttons.
 	fetchBtn := widget.NewButton("Fetch from Server", func() {
 		if state.dirty {
@@ -168,11 +213,11 @@ func NewApp(window fyne.Window) fyne.CanvasObject {
 					if !ok {
 						return
 					}
-					doFetch(window, state, table, statusLabel, refreshUI)
+					rt.Fetch()
 				}, window)
 			return
 		}
-		doFetch(window, state, table, statusLabel, refreshUI)
+		rt.Fetch()
 	})
 
 	openBtn := widget.NewButton("Open", func() {
@@ -248,76 +293,11 @@ func NewApp(window fyne.Window) fyne.CanvasObject {
 		})
 	})
 
-	removeBtn := widget.NewButton("Remove Entry", func() {
-		if state.selected < 0 || state.selected >= len(state.registry.Keys) {
-			dialog.ShowInformation("Remove Entry", "No entry selected", window)
-			return
-		}
-		entry := state.registry.Keys[state.selected]
-		msg := fmt.Sprintf("Remove %s (from %s)?", entry.Authority, entry.From)
-		dialog.ShowConfirm("Remove Entry", msg, func(ok bool) {
-			if !ok {
-				return
-			}
-			state.registry = removeEntry(state.registry, state.selected)
-			state.selected = -1
-			state.dirty = true
-			table.UnselectAll()
-			refreshUI()
-		}, window)
-	})
+	// No Remove button — the registry is a system of record.
+	// To revoke a key, edit the entry and set an expiry date.
 
-	actionBar := container.NewHBox(addBtn, editBtn, removeBtn)
+	actionBar := container.NewHBox(addBtn, editBtn)
 
-	// Close intercept for unsaved changes.
-	window.SetCloseIntercept(func() {
-		if !state.dirty {
-			window.Close()
-			return
-		}
-		dialog.ShowConfirm("Unsaved Changes", "You have unsaved changes. Discard?", func(ok bool) {
-			if ok {
-				window.Close()
-			}
-		}, window)
-	})
-
-	// Auto-fetch on startup.
-	go func() {
-		reg, err := FetchRegistry(registry.DefaultRegistryURL)
-		fyne.Do(func() {
-			if err != nil {
-				statusLabel.SetText("Failed to load: " + err.Error())
-				return
-			}
-			state.registry = reg
-			state.selected = -1
-			refreshUI()
-			statusLabel.SetText("Loaded from registry server")
-		})
-	}()
-
-	return container.NewBorder(toolbar, actionBar, nil, nil, table)
-}
-
-// doFetch performs the remote registry fetch and updates state on success.
-func doFetch(window fyne.Window, state *appState, table *widget.Table, statusLabel *widget.Label, refreshUI func()) {
-	statusLabel.SetText("Fetching...")
-	go func() {
-		reg, err := FetchRegistry(registry.DefaultRegistryURL)
-		fyne.Do(func() {
-			if err != nil {
-				statusLabel.SetText("Fetch failed: " + err.Error())
-				dialog.ShowError(fmt.Errorf("fetch failed: %w", err), window)
-				return
-			}
-			state.registry = reg
-			state.filePath = ""
-			state.dirty = false
-			state.selected = -1
-			table.UnselectAll()
-			refreshUI()
-			statusLabel.SetText("Loaded from registry server")
-		})
-	}()
+	rt.Content = container.NewBorder(toolbar, actionBar, nil, nil, table)
+	return rt
 }

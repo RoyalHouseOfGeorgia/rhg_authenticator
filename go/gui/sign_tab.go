@@ -34,9 +34,8 @@ var honorTitles = []string{
 
 // SignTabConfig holds the dependencies for the sign tab.
 type SignTabConfig struct {
-	Registry core.Registry
-	LogPath  string
-	DataDir  string
+	LogPath string
+	DataDir string
 }
 
 // QR code output sizes.
@@ -63,8 +62,10 @@ func (d *debugLogger) log(msg string) {
 	fmt.Fprintf(f, "[%s] %s\n", time.Now().UTC().Format(time.RFC3339), msg)
 }
 
-// NewSignTab creates the credential signing tab UI.
-func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
+// NewSignTab creates the credential signing tab UI. The returned cleanup
+// function must be called on application shutdown to securely clear the
+// PIN cache.
+func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func()) {
 	logger := &debugLogger{path: filepath.Join(config.DataDir, "debug.log")}
 	pinCache := yubikey.NewPinCache()
 
@@ -78,7 +79,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 	detailEntry.SetPlaceHolder("Specific distinction or rank")
 
 	dateEntry := widget.NewEntry()
-	dateEntry.SetText(time.Now().Format("2006-01-02"))
+	dateEntry.SetText(time.Now().UTC().Format("2006-01-02"))
 	dateEntry.Disable() // read-only — date set via calendar
 
 	calButton := widget.NewButton("\U0001F4C5", func() {
@@ -128,7 +129,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 				return a, a, nil
 			}
 
-			result, err := executeSignFlow(req, config.Registry, config.LogPath, openAdapter, MakePinReader(window, pinCache), logger)
+			result, err := executeSignFlow(req, config.LogPath, openAdapter, MakePinReader(window, pinCache), logger)
 			if err != nil {
 				fyne.Do(func() {
 					statusLabel.SetText(signFlowErrorMessage(err, logger))
@@ -215,7 +216,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 		resultContainer,
 	)
 
-	return form
+	return form, func() { pinCache.Close() }
 }
 
 // validateSignForm checks that all required sign form fields are filled and valid.
@@ -241,31 +242,31 @@ func sanitizeError(prefix string, err error) string {
 	if err == nil {
 		return prefix + ": unknown error"
 	}
-	msg := err.Error()
-	lower := strings.ToLower(msg)
-	switch {
-	case strings.Contains(lower, "pcsc") || strings.Contains(lower, "scard"):
+	switch classifyHardwareError(err) {
+	case hwErrSmartcard:
 		return prefix + ": smart card service error"
-	case strings.Contains(lower, "pin"):
+	case hwErrPIN:
 		return prefix + ": PIN error"
-	case strings.Contains(lower, "yubikey") || strings.Contains(lower, "card"):
+	case hwErrHardware:
 		return prefix + ": hardware device error"
 	default:
-		return prefix + ": " + msg
+		return prefix + ": unexpected error"
 	}
 }
 
 // friendlyYubiKeyError returns a user-friendly error message for YubiKey
 // connection failures.
 func friendlyYubiKeyError(err error, logger *debugLogger) string {
-	lower := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(lower, "pcsc") || strings.Contains(lower, "scard"):
+	if err == nil {
+		return "Unknown YubiKey error"
+	}
+	switch classifyHardwareError(err) {
+	case hwErrSmartcard:
 		return "Smart card service not available. On Linux: sudo apt install pcscd"
-	case strings.Contains(lower, "yubikey") || strings.Contains(lower, "card"):
+	case hwErrHardware:
 		return "Please plug in your YubiKey and try again"
 	default:
-		logger.log(sanitizeError("YubiKey", err))
+		logger.log("YubiKey: " + err.Error())
 		return "Failed to connect to YubiKey. Check debug.log for details."
 	}
 }
@@ -277,15 +278,13 @@ func signFlowErrorMessage(err error, logger *debugLogger) string {
 	switch {
 	case strings.HasPrefix(msg, "export public key:"):
 		return "Failed to read YubiKey. Check debug.log for details."
-	case strings.Contains(msg, "no active registry entry"):
-		logger.log("key not found: " + msg)
-		return "YubiKey public key not found in registry"
 	case strings.HasPrefix(msg, "QR generation:"):
 		return "QR generation failed. Check debug.log for details."
+	case strings.HasPrefix(msg, "sign:"):
+		logger.log(msg)
+		return "Signing failed. Check debug.log for details."
 	default:
-		lower := strings.ToLower(msg)
-		if strings.Contains(lower, "pcsc") || strings.Contains(lower, "scard") ||
-			strings.Contains(lower, "yubikey") || strings.Contains(lower, "card") {
+		if classifyHardwareError(err) != "" {
 			return friendlyYubiKeyError(err, logger)
 		}
 		logger.log("sign flow: " + msg)

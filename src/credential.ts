@@ -8,7 +8,6 @@
 import { isValidDate } from './validation.js';
 
 export type CredentialV1 = {
-  authority: string;
   date: string;
   detail: string;
   honor: string;
@@ -22,7 +21,7 @@ export type Credential = CredentialV1;
 export const CONTROL_CHAR_PATTERN = '[\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]';
 
 /** Cached test-only regex (no `g` flag, safe to reuse — no `lastIndex` state). */
-const CONTROL_CHAR_RE = new RegExp(CONTROL_CHAR_PATTERN);
+export const CONTROL_CHAR_RE = new RegExp(CONTROL_CHAR_PATTERN);
 
 /**
  * Strips C0/C1 control characters and bidi overrides. Does not handle
@@ -43,11 +42,10 @@ export class UnsupportedVersionError extends Error {
   }
 }
 
-const STRING_FIELDS = ['authority', 'date', 'detail', 'honor', 'recipient'] as const;
+const STRING_FIELDS = ['date', 'detail', 'honor', 'recipient'] as const;
 const ALL_FIELDS = new Set<string>([...STRING_FIELDS, 'version']);
 
 const FIELD_MAX_LENGTHS = {
-  authority: 200,
   recipient: 500,
   honor: 200,
   detail: 2000,

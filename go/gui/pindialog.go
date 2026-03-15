@@ -35,7 +35,11 @@ func MakePinReader(window fyne.Window, cache *yubikey.PinCache) func() (string, 
 			if pin == "" {
 				return "", fmt.Errorf("signing cancelled")
 			}
-			cache.Set(pin)
+			if cache.Enabled() {
+				if err := cache.Set(pin); err != nil {
+					return "", fmt.Errorf("cannot secure PIN in memory — please restart the app")
+				}
+			}
 			return pin, nil
 		case err := <-errCh:
 			return "", err

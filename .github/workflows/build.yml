@@ -24,11 +24,12 @@ jobs:
         run: diff go/testdata/vectors.json src/__tests__/fixtures/vectors.json
       - run: npm run lint
       - run: npm test
-      - name: Check verify.js is up to date
+      - name: Verify verify.js SRI hash
         run: |
           npm run build:verify
-          git diff --exit-code verify/verify.js
-      - run: npm audit --audit-level=high
+          HASH=$(cat verify/verify.js | openssl dgst -sha384 -binary | openssl base64 -A)
+          grep -q "sha384-$HASH" verify/index.html || (echo "SRI hash mismatch — rebuild verify.js and update index.html" && exit 1)
+      - run: npm audit --audit-level=moderate
 
   test-go:
     runs-on: ubuntu-latest
@@ -46,7 +47,7 @@ jobs:
       - working-directory: go
         run: go test ./... -count=1
       - working-directory: go
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck ./...
       - name: Run gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
 
@@ -90,22 +91,18 @@ jobs:
       - if: runner.os != 'Windows'
         working-directory: go
         run: go build -trimpath -ldflags "-s -w" -o ../release/rhg-authenticator-${{ matrix.suffix }} .
-      - if: runner.os == 'Windows'
-        working-directory: go
-        run: go build -trimpath -ldflags "-s -w -H windowsgui" -o ../release/rhg-regmgr-${{ matrix.suffix }}.exe ./cmd/regmgr
-      - if: runner.os != 'Windows'
-        working-directory: go
-        run: go build -trimpath -ldflags "-s -w" -o ../release/rhg-regmgr-${{ matrix.suffix }} ./cmd/regmgr
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: rhg-authenticator-${{ matrix.suffix }}
-          path: release/rhg-*-${{ matrix.suffix }}*
+          path: release/rhg-authenticator-${{ matrix.suffix }}*
           retention-days: 7
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    # id-token and attestations needed only by attest-build-provenance step,
+    # but GitHub Actions requires job-level permissions. All actions are SHA-pinned.
     permissions:
       contents: write
       id-token: write
@@ -116,15 +113,15 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci && npm run check:registry
+      - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           path: release
           merge-multiple: true
-      - run: cd release && shasum -a 256 rhg-* > SHA256SUMS.txt
+      - run: cd release && shasum -a 256 rhg-authenticator-* > SHA256SUMS.txt
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2.4.0
         with:
-          subject-path: 'release/rhg-*'
+          subject-path: 'release/rhg-authenticator-*'
       - uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
         with:
           files: release/*

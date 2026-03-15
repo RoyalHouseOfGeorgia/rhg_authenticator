@@ -9,20 +9,24 @@ import (
 )
 
 // QRMaxURLLength is the maximum URL length accepted for QR code generation.
-// At error correction level Q (25%), 625 bytes is within the capacity of a
+// At error correction level H (30%), 625 bytes is within the capacity of a
 // version 20 QR code, keeping the module count reasonable for print.
 const QRMaxURLLength = 625
 
+// newQR validates the URL length and creates a QR code at High error correction.
+func newQR(url string) (*qrcode.QRCode, error) {
+	if len(url) > QRMaxURLLength {
+		return nil, fmt.Errorf("URL exceeds maximum length (%d > %d)", len(url), QRMaxURLLength)
+	}
+	return qrcode.New(url, qrcode.High)
+}
+
 // GenerateSVG generates a QR code as SVG bytes (vector format, scales to any print size).
-// Error correction level Q (25%). Version auto-selected.
+// Error correction level H (30%). Version auto-selected.
 // SVG is manually rendered: header + rect per dark module + 4-module quiet zone.
 // viewBox="0 0 {N+8} {N+8}" where N = number of modules.
 func GenerateSVG(url string) ([]byte, error) {
-	if len(url) > QRMaxURLLength {
-		return nil, fmt.Errorf("URL length %d exceeds maximum %d", len(url), QRMaxURLLength)
-	}
-
-	qr, err := qrcode.New(url, qrcode.High)
+	qr, err := newQR(url)
 	if err != nil {
 		return nil, fmt.Errorf("creating QR code: %w", err)
 	}
@@ -55,13 +59,9 @@ func GenerateSVG(url string) ([]byte, error) {
 }
 
 // GeneratePNG generates a QR code as PNG bytes for screen preview.
-// Error correction level Q (25%). Version auto-selected.
+// Error correction level H (30%). Version auto-selected.
 func GeneratePNG(url string, width int) ([]byte, error) {
-	if len(url) > QRMaxURLLength {
-		return nil, fmt.Errorf("URL length %d exceeds maximum %d", len(url), QRMaxURLLength)
-	}
-
-	qr, err := qrcode.New(url, qrcode.High)
+	qr, err := newQR(url)
 	if err != nil {
 		return nil, fmt.Errorf("creating QR code: %w", err)
 	}

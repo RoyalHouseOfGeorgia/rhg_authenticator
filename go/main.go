@@ -16,14 +16,13 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/regmgr"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/update"
 )
-
-//go:embed keys/registry.json
-var embeddedRegistry []byte
 
 //go:embed icon.png
 var appIconData []byte
@@ -57,32 +56,60 @@ func main() {
 		fmt.Fprintf(os.Stderr, "warning: log cleanup failed: %v\n", err)
 	}
 
-	// 4. Fetch registry (remote -> cache -> embedded).
-	cachePath := filepath.Join(dataDir, "registry.cache.json")
-	reg, _, err := registry.FetchRegistry(registry.DefaultRegistryURL, cachePath, embeddedRegistry)
-	if err != nil {
-		fatalDialog(window, fmt.Sprintf("Failed to load key registry: %v", err))
-		return
+	// 4. Fetch registry (remote only — no cache or embedded fallback).
+	reg, err := registry.FetchRegistry(registry.DefaultRegistryURL)
+	regOnline := err == nil
+	if !regOnline {
+		fmt.Fprintf(os.Stderr, "warning: registry fetch failed: %v\n", err)
+		reg = core.Registry{}
 	}
 
 	// 5. Build tabs.
-	signContent := gui.NewSignTab(gui.SignTabConfig{
-		Registry: reg,
-		LogPath:  logPath,
-		DataDir:  dataDir,
+	signContent, signCleanup := gui.NewSignTab(gui.SignTabConfig{
+		LogPath: logPath,
+		DataDir: dataDir,
 	}, window)
 	historyContent := gui.NewHistoryTab(logPath, window)
+	regTab := regmgr.NewRegistryTab(window)
+	auditContent := gui.NewAuditTab(window)
+	yubiKeyContent := gui.NewYubiKeyTab(reg, regOnline, window)
 
 	signTab := container.NewTabItem("Sign", signContent)
 	historyTab := container.NewTabItem("History", historyContent)
+	registryTab := container.NewTabItem("Registry", regTab.Content)
+	auditTab := container.NewTabItem("Audit", auditContent)
+	yubiKeyTab := container.NewTabItem("YubiKey", yubiKeyContent)
 
 	// 6. Set content.
-	tabs := container.NewAppTabs(signTab, historyTab)
+	tabs := container.NewAppTabs(signTab, historyTab, registryTab, auditTab, yubiKeyTab)
+	statusBar := gui.NewStatusBar(reg, regOnline)
 	updateBanner := container.NewVBox()
-	windowContent := container.NewBorder(updateBanner, nil, nil, nil, tabs)
+	windowContent := container.NewBorder(updateBanner, statusBar, nil, nil, tabs)
 	window.SetContent(windowContent)
 
-	// 7. Non-blocking version check.
+	// 7. Close intercept for unsaved registry changes + PIN cache cleanup.
+	window.SetCloseIntercept(func() {
+		if regTab.IsDirty() {
+			dialog.ShowConfirm("Unsaved Changes",
+				"The registry has unsaved changes. Exit anyway?",
+				func(ok bool) {
+					if ok {
+						signCleanup()
+						a.Quit()
+					}
+				}, window)
+		} else {
+			signCleanup()
+			a.Quit()
+		}
+	})
+
+	// 8. Non-blocking registry tab fetch.
+	go func() {
+		regTab.Fetch()
+	}()
+
+	// 9. Non-blocking version check.
 	go func() {
 		result := update.Check("royalhouseofgeorgia", "rhg-authenticator", version)
 		if result.UpdateAvailable {

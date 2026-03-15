@@ -2,19 +2,12 @@
 
 package yubikey
 
-import (
-	"log"
-	"syscall"
-)
+import "syscall"
 
 // mlockBuffer locks a byte slice into physical RAM to prevent swapping.
-// If mlock fails (e.g., insufficient permissions), a warning is logged
-// but execution continues — the PIN remains in-process memory.
-func mlockBuffer(buf []byte) {
+func mlockBuffer(buf []byte) error {
 	if len(buf) == 0 {
-		return
+		return nil
 	}
-	if err := syscall.Mlock(buf); err != nil {
-		log.Printf("warning: failed to lock sensitive memory: %v", err)
-	}
+	return syscall.Mlock(buf)
 }
