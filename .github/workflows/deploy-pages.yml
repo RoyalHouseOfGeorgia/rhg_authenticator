@@ -3,7 +3,7 @@ name: Deploy Verification Page
 on:
   push:
     branches: [main]
-    paths: [verify/**, keys/registry.json]
+    paths: [verify/**]
 
 permissions:
   contents: read
@@ -23,8 +23,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - name: Copy registry into verify site
-        run: mkdir -p verify/keys && cp keys/registry.json verify/keys/registry.json
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3
         with:
           path: verify

@@ -21,7 +21,7 @@ The system has three independent components:
 ## Threat Model
 
 - **Trust anchor**: The YubiKey hardware token. Private key never leaves the device.
-- **Public registry**: `keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls. Managed via the Registry Manager tool (`rhg-regmgr`).
+- **Public registry**: `verify/keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls. Managed via the Registry tab in the signing app.
 - **Verification is client-side**: The public verification page fetches the registry and performs all crypto in the browser — no server round-trip.
 - **PIN security**: The Go signing app uses `piv-go` to talk directly to the YubiKey via PCSC. PIN is handled entirely in-process — never on the command line, never in a file, never visible in `/proc`.
 - **QR as transport**: The QR code is a URL containing the full signed credential. No database lookup required.

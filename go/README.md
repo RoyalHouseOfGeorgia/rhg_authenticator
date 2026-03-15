@@ -106,7 +106,7 @@ Workflow:
 1. Open the **Registry** tab — it fetches the current production registry automatically
 2. Add/edit entries as needed (entries cannot be deleted — revoke by setting an expiry date)
 3. Save → produces a `registry.json` file
-4. Copy to `keys/registry.json` (repo root) and commit to the repository
+4. Copy to `verify/keys/registry.json` and commit to the repository
 5. Deploy (the verification page and signing app both fetch from the hosted registry)
 
 ## Key Registry
