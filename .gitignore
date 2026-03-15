@@ -12,6 +12,7 @@
 credentials.json
 service-account*.json
 *.crt
+!go/testdata/*.crt
 *.gpg
 
 # Dependencies

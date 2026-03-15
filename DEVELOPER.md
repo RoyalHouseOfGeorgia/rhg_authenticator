@@ -57,11 +57,11 @@ verify/
 ├── styles.css            # Mobile-first CSS
 ├── verify.js             # esbuild IIFE bundle (built artifact)
 ├── favicon.ico           # Site favicon
-└── royal-arms-120.png    # Royal arms crest (120x120)
+├── royal-arms-120.png    # Royal arms crest (120x120)
+└── keys/
+    └── registry.json     # Public key registry (development + maintenance key)
 scripts/
 └── generate-test-url.ts  # Generate signed test URLs for UI preview
-keys/
-└── registry.json         # Public key registry (development + maintenance key)
 ```
 
 ## API Reference
@@ -200,10 +200,10 @@ if (result.valid) {
 
 ## Key Registry Format
 
-The `keys/registry.json` file contains the development/maintenance key. To add a production key:
+The `verify/keys/registry.json` file contains the development/maintenance key. To add a production key:
 
 1. Generate an Ed25519 key on YubiKey PIV slot 9c (see [go/README.md](go/README.md#yubikey-setup))
 2. Open the **Registry** tab in the signing app
 3. Click **"Import from YubiKey"** (or import a `.crt`/`.pem` file via **"Import Certificate"**)
 4. Set `authority` to the formal title, `from` to the activation date, `to` to `null` for an active key
-5. Save and commit the updated `keys/registry.json`
+5. Save and commit the updated `verify/keys/registry.json`
