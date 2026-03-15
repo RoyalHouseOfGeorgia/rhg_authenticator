@@ -60,7 +60,7 @@ console.log(base);
 console.log();
 
 console.log('=== Registry Entry ===');
-console.log('To make the valid URL work, update keys/registry.json with:');
+console.log('To make the valid URL work, update verify/keys/registry.json with:');
 console.log(JSON.stringify({
   keys: [{
     authority: 'Test Authority',
