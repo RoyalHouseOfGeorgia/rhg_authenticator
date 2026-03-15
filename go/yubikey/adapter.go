@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -131,4 +132,22 @@ func (a *YubiKeyAdapter) SignBytes(data []byte) ([]byte, error) {
 // Close releases the connection to the YubiKey.
 func (a *YubiKeyAdapter) Close() error {
 	return a.yk.Close()
+}
+
+// ReadPublicKey opens a YubiKey, reads the Ed25519 public key from PIV slot 9c,
+// and returns it as a base64-encoded string suitable for a registry entry's
+// public_key field. No PIN required — only reads the certificate.
+func ReadPublicKey() (string, error) {
+	adapter, err := NewYubiKeyAdapter(func() (string, error) { return "", nil })
+	if err != nil {
+		return "", err
+	}
+	defer adapter.Close()
+
+	pubKey, err := adapter.ExportPublicKey()
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(pubKey[:]), nil
 }

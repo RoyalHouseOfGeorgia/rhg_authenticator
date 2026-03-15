@@ -275,6 +275,49 @@ func TestGeneratePNGEmptyURL(t *testing.T) {
 	}
 }
 
+func TestNewQRValid(t *testing.T) {
+	qr, err := newQR(testURL)
+	if err != nil {
+		t.Fatalf("newQR error: %v", err)
+	}
+	if qr == nil {
+		t.Fatal("newQR returned nil QRCode")
+	}
+}
+
+func TestNewQRExactLimit(t *testing.T) {
+	url := "https://example.com/" + strings.Repeat("x", QRMaxURLLength-len("https://example.com/"))
+	if len(url) != QRMaxURLLength {
+		t.Fatalf("test setup: URL length is %d, want %d", len(url), QRMaxURLLength)
+	}
+	qr, err := newQR(url)
+	if err != nil {
+		t.Fatalf("newQR should succeed at exactly %d chars: %v", QRMaxURLLength, err)
+	}
+	if qr == nil {
+		t.Fatal("newQR returned nil QRCode")
+	}
+}
+
+func TestNewQROverLimit(t *testing.T) {
+	url := strings.Repeat("x", QRMaxURLLength+1)
+	_, err := newQR(url)
+	if err == nil {
+		t.Fatal("expected error for URL exceeding max length")
+	}
+	expected := fmt.Sprintf("URL exceeds maximum length (%d > %d)", QRMaxURLLength+1, QRMaxURLLength)
+	if err.Error() != expected {
+		t.Errorf("error = %q, want %q", err.Error(), expected)
+	}
+}
+
+func TestNewQREmpty(t *testing.T) {
+	_, err := newQR("")
+	if err == nil {
+		t.Fatal("expected error for empty URL")
+	}
+}
+
 func TestQRMaxURLLengthConstant(t *testing.T) {
 	if QRMaxURLLength != 625 {
 		t.Errorf("QRMaxURLLength = %d, want 625", QRMaxURLLength)

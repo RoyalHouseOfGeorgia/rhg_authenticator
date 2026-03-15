@@ -8,7 +8,6 @@ import (
 // validObj returns a valid v1 credential map for testing.
 func validObj() map[string]any {
 	return map[string]any{
-		"authority": "Royal House of Georgia",
 		"date":      "2025-03-12",
 		"detail":    "Awarded for distinguished service",
 		"honor":     "Order of the Golden Fleece",
@@ -21,9 +20,6 @@ func TestValidateCredential_Valid(t *testing.T) {
 	cred, err := ValidateCredential(validObj())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if cred.Authority != "Royal House of Georgia" {
-		t.Errorf("authority = %q, want %q", cred.Authority, "Royal House of Georgia")
 	}
 	if cred.Date != "2025-03-12" {
 		t.Errorf("date = %q, want %q", cred.Date, "2025-03-12")
@@ -102,9 +98,9 @@ func TestValidateCredential_WrongTypes(t *testing.T) {
 
 func TestValidateCredential_LeadingWhitespace(t *testing.T) {
 	obj := validObj()
-	obj["authority"] = " Royal House"
+	obj["recipient"] = " John Doe"
 	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "authority must not have leading or trailing whitespace" {
+	if err == nil || err.Error() != "recipient must not have leading or trailing whitespace" {
 		t.Fatalf("expected whitespace error, got %v", err)
 	}
 }
@@ -138,9 +134,9 @@ func TestValidateCredential_ControlChars_Tab(t *testing.T) {
 
 func TestValidateCredential_ControlChars_Bidi(t *testing.T) {
 	obj := validObj()
-	obj["authority"] = "Authority\u202aOverride"
+	obj["honor"] = "Honor\u202aOverride"
 	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "authority contains invalid control characters" {
+	if err == nil || err.Error() != "honor contains invalid control characters" {
 		t.Fatalf("expected control char error, got %v", err)
 	}
 }
@@ -163,7 +159,7 @@ func TestValidateCredential_EmptyFields(t *testing.T) {
 func TestValidateCredential_MaxLengthBoundary(t *testing.T) {
 	// Exactly at max — should pass.
 	obj := validObj()
-	obj["authority"] = strings.Repeat("A", 200)
+	obj["honor"] = strings.Repeat("A", 200)
 	_, err := ValidateCredential(obj)
 	if err != nil {
 		t.Fatalf("expected no error at max length, got %v", err)
@@ -172,27 +168,27 @@ func TestValidateCredential_MaxLengthBoundary(t *testing.T) {
 
 func TestValidateCredential_MaxLengthExceeded(t *testing.T) {
 	obj := validObj()
-	obj["authority"] = strings.Repeat("A", 201)
+	obj["honor"] = strings.Repeat("A", 201)
 	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "authority exceeds maximum length of 200" {
+	if err == nil || err.Error() != "honor exceeds maximum length of 200" {
 		t.Fatalf("expected max length error, got %v", err)
 	}
 }
 
 func TestValidateCredential_MaxLengthGeorgianText(t *testing.T) {
 	// Georgian characters are multi-byte but each is 1 rune.
-	// 200 Georgian characters should pass for authority (max 200 runes).
+	// 200 Georgian characters should pass for honor (max 200 runes).
 	obj := validObj()
-	obj["authority"] = strings.Repeat("ა", 200) // Georgian letter "a"
+	obj["honor"] = strings.Repeat("ა", 200) // Georgian letter "a"
 	_, err := ValidateCredential(obj)
 	if err != nil {
 		t.Fatalf("expected no error with 200 Georgian runes, got %v", err)
 	}
 
 	// 201 Georgian characters should fail.
-	obj["authority"] = strings.Repeat("ა", 201)
+	obj["honor"] = strings.Repeat("ა", 201)
 	_, err = ValidateCredential(obj)
-	if err == nil || err.Error() != "authority exceeds maximum length of 200" {
+	if err == nil || err.Error() != "honor exceeds maximum length of 200" {
 		t.Fatalf("expected max length error for 201 Georgian runes, got %v", err)
 	}
 }
@@ -262,26 +258,26 @@ func TestValidateCredential_ValidationOrder(t *testing.T) {
 		t.Fatalf("expected version type error first, got %v", err)
 	}
 
-	// Verify that missing field comes before wrong type.
+	// Verify that the first missing string field is reported (stringFields order: date, detail, honor, recipient).
 	obj = map[string]any{
 		"version": float64(1),
 	}
 	_, err = ValidateCredential(obj)
-	if err == nil || err.Error() != "missing required field: authority" {
-		t.Fatalf("expected missing authority first, got %v", err)
+	if err == nil || err.Error() != "missing required field: date" {
+		t.Fatalf("expected missing date first, got %v", err)
 	}
 }
 
 func TestValidateCredential_FieldValidationOrder(t *testing.T) {
-	// Fields should be validated in order: authority, date, detail, honor, recipient.
-	// If authority is valid but date is missing, we should get date error.
+	// Fields validated in stringFields order: date, detail, honor, recipient.
+	// If date is present but detail is missing, we should get detail error.
 	obj := map[string]any{
-		"version":   float64(1),
-		"authority": "Valid Authority",
+		"version": float64(1),
+		"date":    "2025-03-12",
 	}
 	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "missing required field: date" {
-		t.Fatalf("expected missing date, got %v", err)
+	if err == nil || err.Error() != "missing required field: detail" {
+		t.Fatalf("expected missing detail, got %v", err)
 	}
 }
 

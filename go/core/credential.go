@@ -9,7 +9,6 @@ import (
 
 // CredentialV1 represents a validated v1 credential.
 type CredentialV1 struct {
-	Authority string `json:"authority"`
 	Date      string `json:"date"`
 	Detail    string `json:"detail"`
 	Honor     string `json:"honor"`
@@ -28,11 +27,12 @@ func SanitizeForError(s string) string {
 }
 
 // stringFields defines the required string fields in validation order.
-var stringFields = []string{"authority", "date", "detail", "honor", "recipient"}
+// Do not reorder — ValidateCredential validates fields in this sequence
+// and error messages reflect the first invalid field encountered.
+var stringFields = []string{"date", "detail", "honor", "recipient"}
 
 // allFields is the complete set of allowed fields.
 var allFields = map[string]bool{
-	"authority": true,
 	"date":      true,
 	"detail":    true,
 	"honor":     true,
@@ -42,7 +42,6 @@ var allFields = map[string]bool{
 
 // fieldMaxLengths defines the maximum rune count for each string field.
 var fieldMaxLengths = map[string]int{
-	"authority": 200,
 	"date":      10,
 	"detail":    2000,
 	"honor":     200,
@@ -109,7 +108,6 @@ func ValidateCredential(obj map[string]any) (CredentialV1, error) {
 	}
 
 	return CredentialV1{
-		Authority: values["authority"],
 		Date:      values["date"],
 		Detail:    values["detail"],
 		Honor:     values["honor"],

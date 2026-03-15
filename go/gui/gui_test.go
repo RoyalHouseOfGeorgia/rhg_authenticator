@@ -259,8 +259,8 @@ func TestFormatRecordSummary(t *testing.T) {
 		Honor:     "Order of the Crown of Georgia",
 	}
 	got := formatRecordSummary(rec)
-	if !strings.Contains(got, "2026-03-14") {
-		t.Error("summary should contain date")
+	if !strings.Contains(got, "2026-Mar-14") {
+		t.Error("summary should contain formatted date")
 	}
 	if !strings.Contains(got, "John Doe") {
 		t.Error("summary should contain recipient")
@@ -286,20 +286,19 @@ func TestFormatRecordSummary_LongHonor(t *testing.T) {
 
 func TestFormatRecordDetail(t *testing.T) {
 	rec := log.IssuanceRecord{
-		Timestamp:     "2026-03-14T10:30:00Z",
-		Recipient:     "John Doe",
-		Honor:         "Test Honor",
-		Detail:        "Test Detail",
-		Date:          "2026-03-14",
-		Authority:     "Test Authority",
-		PayloadSHA256: "abcdef1234567890",
-		SignatureB64URL:  "dummysig",
+		Timestamp:       "2026-03-14T10:30:00Z",
+		Recipient:       "John Doe",
+		Honor:           "Test Honor",
+		Detail:          "Test Detail",
+		Date:            "2026-03-14",
+		PayloadSHA256:   "abcdef1234567890",
+		SignatureB64URL: "dummysig",
 	}
 	got := formatRecordDetail(rec)
 
 	for _, field := range []string{
 		rec.Timestamp, rec.Recipient, rec.Honor, rec.Detail,
-		rec.Date, rec.Authority, rec.PayloadSHA256, rec.SignatureB64URL,
+		rec.Date, rec.PayloadSHA256, rec.SignatureB64URL,
 	} {
 		if !strings.Contains(got, field) {
 			t.Errorf("detail should contain %q", field)
@@ -404,9 +403,16 @@ func TestSanitizeError_Card(t *testing.T) {
 	}
 }
 
+func TestSanitizeError_CardNoFalsePositive(t *testing.T) {
+	got := sanitizeError("test", fmt.Errorf("discard data"))
+	if got != "test: unexpected error" {
+		t.Errorf("got %q, want %q", got, "test: unexpected error")
+	}
+}
+
 func TestSanitizeError_Generic(t *testing.T) {
 	got := sanitizeError("test", fmt.Errorf("unexpected failure"))
-	if got != "test: unexpected failure" {
+	if got != "test: unexpected error" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -418,7 +424,21 @@ func TestSanitizeError_Nil(t *testing.T) {
 	}
 }
 
+func TestSanitizeError_EmptyMessage(t *testing.T) {
+	got := sanitizeError("test", fmt.Errorf(""))
+	if got != "test: unexpected error" {
+		t.Errorf("got %q, want %q", got, "test: unexpected error")
+	}
+}
+
 // --- friendlyYubiKeyError tests ---
+
+func TestFriendlyYubiKeyError_Nil(t *testing.T) {
+	got := friendlyYubiKeyError(nil, nil)
+	if got != "Unknown YubiKey error" {
+		t.Errorf("got %q, want %q", got, "Unknown YubiKey error")
+	}
+}
 
 func TestFriendlyYubiKeyError_YubiKeyError(t *testing.T) {
 	got := friendlyYubiKeyError(fmt.Errorf("no YubiKey detected"), nil)
@@ -457,6 +477,27 @@ func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 	}
 	if !strings.Contains(got, "debug.log") {
 		t.Errorf("expected debug.log reference in message, got: %q", got)
+	}
+}
+
+func TestFriendlyYubiKeyError_GenericError_RawLog(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "debug.log")
+	logger := &debugLogger{path: logPath}
+
+	friendlyYubiKeyError(fmt.Errorf("unexpected failure"), logger)
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("debug log file not created: %v", err)
+	}
+	content := string(data)
+	// The debug log must contain the RAW error string, not sanitized to "unexpected error".
+	if !strings.Contains(content, "unexpected failure") {
+		t.Errorf("debug log should contain raw error 'unexpected failure', got: %q", content)
+	}
+	if strings.Contains(content, "unexpected error") {
+		t.Errorf("debug log should NOT contain sanitized 'unexpected error', got: %q", content)
 	}
 }
 
@@ -556,13 +597,6 @@ func TestSignFlowErrorMessage_ExportPublicKey(t *testing.T) {
 	}
 }
 
-func TestSignFlowErrorMessage_NoRegistryEntry(t *testing.T) {
-	got := signFlowErrorMessage(fmt.Errorf("no active registry entry matches the YubiKey public key"), nil)
-	if !strings.Contains(got, "not found in registry") {
-		t.Errorf("expected registry not found message, got: %q", got)
-	}
-}
-
 func TestSignFlowErrorMessage_QRGeneration(t *testing.T) {
 	got := signFlowErrorMessage(fmt.Errorf("QR generation: encode failed"), nil)
 	if !strings.Contains(got, "QR generation failed") {
@@ -577,6 +611,38 @@ func TestSignFlowErrorMessage_YubiKeyAdapter(t *testing.T) {
 	}
 }
 
+func TestSignFlowErrorMessage_SignError(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	got := signFlowErrorMessage(fmt.Errorf("sign: hardware fault"), logger)
+	if !strings.Contains(got, "Signing failed") {
+		t.Errorf("expected 'Signing failed' message, got: %q", got)
+	}
+	// Verify the raw error is logged.
+	data, err := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
+	if err != nil {
+		t.Fatalf("debug log not created: %v", err)
+	}
+	if !strings.Contains(string(data), "sign: hardware fault") {
+		t.Errorf("debug log should contain raw error, got: %q", string(data))
+	}
+}
+
+func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	signFlowErrorMessage(fmt.Errorf("sign: some error"), logger)
+	data, err := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
+	if err != nil {
+		t.Fatalf("debug log not created: %v", err)
+	}
+	content := string(data)
+	// Should NOT have "sign flow: sign:" double prefix.
+	if strings.Contains(content, "sign flow:") {
+		t.Errorf("should not have 'sign flow:' prefix for sign: errors, got: %q", content)
+	}
+}
+
 func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
@@ -585,3 +651,4 @@ func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 		t.Errorf("expected signing failed message, got: %q", got)
 	}
 }
+

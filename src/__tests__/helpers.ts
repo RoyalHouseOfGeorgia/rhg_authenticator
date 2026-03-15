@@ -44,7 +44,6 @@ export function validCredentialObj(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    authority: "Test Authority",
     date: "2024-06-15",
     detail: "Test Detail",
     honor: "Test Honor",

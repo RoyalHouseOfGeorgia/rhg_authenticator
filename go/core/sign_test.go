@@ -134,7 +134,6 @@ func TestCrossLanguageVectors(t *testing.T) {
 			}
 
 			// Full HandleSign and check URL.
-			authority, _ := cred["authority"].(string)
 			recipient, _ := cred["recipient"].(string)
 			honor, _ := cred["honor"].(string)
 			detail, _ := cred["detail"].(string)
@@ -145,7 +144,7 @@ func TestCrossLanguageVectors(t *testing.T) {
 				Honor:     honor,
 				Detail:    detail,
 				Date:      date,
-			}, adapter, pubKey, authority, "")
+			}, adapter, pubKey, "")
 			if err != nil {
 				t.Fatalf("HandleSign error: %v", err)
 			}
@@ -172,7 +171,7 @@ func TestHandleSign_ValidationError(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "Test Detail",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", "")
+	}, adapter, pubKey, "")
 
 	if err == nil {
 		t.Fatal("expected error for empty recipient")
@@ -195,7 +194,7 @@ func TestHandleSign_PayloadTooLarge(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    hugeDetail,
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", "")
+	}, adapter, pubKey, "")
 
 	if err == nil {
 		t.Fatal("expected error for oversized payload")
@@ -215,7 +214,7 @@ func TestHandleSign_SignatureWrongLength(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", "")
+	}, adapter, pubKey, "")
 
 	if err == nil {
 		t.Fatal("expected error for wrong signature length")
@@ -235,7 +234,7 @@ func TestHandleSign_PostSignVerifyFailure(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", "")
+	}, adapter, pubKey, "")
 
 	if err == nil {
 		t.Fatal("expected error for post-sign verification failure")
@@ -256,7 +255,7 @@ func TestHandleSign_NFCNormalization(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "re\u0301sume\u0301", // NFD
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", "")
+	}, adapter, pubKey, "")
 	if err != nil {
 		t.Fatalf("HandleSign error: %v", err)
 	}
@@ -289,7 +288,7 @@ func TestHandleSign_SigningAdapterError(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", "")
+	}, adapter, pubKey, "")
 
 	if err == nil {
 		t.Fatal("expected error from adapter")
@@ -309,7 +308,7 @@ func TestHandleSign_InvalidDate(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "not-a-date",
-	}, adapter, pubKey, "Test Authority", "")
+	}, adapter, pubKey, "")
 
 	if err == nil {
 		t.Fatal("expected error for invalid date")
@@ -332,7 +331,7 @@ func TestHandleSign_LogFileWritten(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", logPath)
+	}, adapter, pubKey, logPath)
 	if err != nil {
 		t.Fatalf("HandleSign error: %v", err)
 	}
@@ -365,9 +364,6 @@ func TestHandleSign_LogFileWritten(t *testing.T) {
 	if records[0].Date != "2026-03-13" {
 		t.Errorf("Date = %q, want %q", records[0].Date, "2026-03-13")
 	}
-	if records[0].Authority != "Test Authority" {
-		t.Errorf("Authority = %q, want %q", records[0].Authority, "Test Authority")
-	}
 	if records[0].PayloadSHA256 == "" {
 		t.Error("PayloadSHA256 should not be empty")
 	}
@@ -393,7 +389,7 @@ func TestHandleSign_NoLogWhenPathEmpty(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", "")
+	}, adapter, pubKey, "")
 	if err != nil {
 		t.Fatalf("HandleSign error: %v", err)
 	}
@@ -414,7 +410,7 @@ func TestHandleSign_PayloadSHA256MatchesCanonical(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", "")
+	}, adapter, pubKey, "")
 	if err != nil {
 		t.Fatalf("HandleSign error: %v", err)
 	}
@@ -439,7 +435,7 @@ func TestHandleSign_PayloadSHA256MatchesCanonical(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "Test Authority", logPath)
+	}, adapter, pubKey, logPath)
 	if err != nil {
 		t.Fatalf("HandleSign error: %v", err)
 	}

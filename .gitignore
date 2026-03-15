@@ -55,3 +55,4 @@ terraform.tfstate.backup
 # Runtime data
 issuances.json
 issuances.json.tmp.*
+**/debug.log

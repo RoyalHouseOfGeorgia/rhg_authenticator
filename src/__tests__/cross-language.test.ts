@@ -17,6 +17,10 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 describe('cross-language test vectors', () => {
+  it('has at least 3 test vectors', () => {
+    expect(vectors.length).toBeGreaterThanOrEqual(3);
+  });
+
   for (const vector of vectors) {
     describe(`vector: ${vector.name}`, () => {
       it('canonicalizes to the expected hex', () => {

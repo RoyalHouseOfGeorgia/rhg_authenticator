@@ -45,11 +45,10 @@ type SignResponse struct {
 }
 
 // HandleSign validates, signs, and produces a verification URL for a credential.
-func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte, authority string, logPath string) (SignResponse, error) {
+func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte, logPath string) (SignResponse, error) {
 	// 1. Construct credential with NFC-normalized fields.
 	credObj := map[string]any{
 		"version":   float64(1),
-		"authority": norm.NFC.String(authority),
 		"recipient": norm.NFC.String(req.Recipient),
 		"honor":     norm.NFC.String(req.Honor),
 		"detail":    norm.NFC.String(req.Detail),
@@ -94,13 +93,12 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte, author
 	// 8. Append issuance log record (non-fatal — signing already succeeded).
 	sha256sum := sha256.Sum256(payloadBytes)
 	record := issuancelog.IssuanceRecord{
-		Timestamp:      time.Now().UTC().Format(time.RFC3339),
-		Recipient:      credObj["recipient"].(string),
-		Honor:          credObj["honor"].(string),
-		Detail:         credObj["detail"].(string),
-		Date:           credObj["date"].(string),
-		Authority:      credObj["authority"].(string),
-		PayloadSHA256:  hex.EncodeToString(sha256sum[:]),
+		Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		Recipient:       credObj["recipient"].(string),
+		Honor:           credObj["honor"].(string),
+		Detail:          credObj["detail"].(string),
+		Date:            credObj["date"].(string),
+		PayloadSHA256:   hex.EncodeToString(sha256sum[:]),
 		SignatureB64URL: sigB64,
 	}
 	// Fields guaranteed present as strings by ValidateCredential above.

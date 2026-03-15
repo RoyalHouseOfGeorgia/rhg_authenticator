@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,7 +18,6 @@ func sampleRecord() IssuanceRecord {
 		Honor:         "Order of the Golden Fleece",
 		Detail:        "Awarded for distinguished service",
 		Date:          "2026-03-13",
-		Authority:     "Royal House of Georgia",
 		PayloadSHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 		SignatureB64URL:  "c2lnbmF0dXJl",
 	}
@@ -219,7 +219,6 @@ func TestIssuanceRecord_JSONKeys(t *testing.T) {
 		Honor:         "Medal",
 		Detail:        "For valor",
 		Date:          "2026-03-13",
-		Authority:     "Crown",
 		PayloadSHA256: "aabbccdd",
 		SignatureB64URL:  "c2ln",
 	}
@@ -236,7 +235,7 @@ func TestIssuanceRecord_JSONKeys(t *testing.T) {
 
 	expectedKeys := []string{
 		"timestamp", "recipient", "honor", "detail",
-		"date", "authority", "payload_sha256", "signature_b64url",
+		"date", "payload_sha256", "signature_b64url",
 	}
 	for _, key := range expectedKeys {
 		if _, ok := m[key]; !ok {
@@ -334,19 +333,9 @@ func TestAppendRecord_JSONFormatPrettyPrinted(t *testing.T) {
 		t.Errorf("expected pretty-printed JSON, got: %.40s...", content)
 	}
 	// Should contain 2-space indentation.
-	if !contains(content, "  \"timestamp\"") {
+	if !strings.Contains(content, "  \"timestamp\"") {
 		t.Errorf("expected 2-space indented fields in JSON output")
 	}
-}
-
-// contains is a simple helper to avoid importing strings in tests.
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestReadLog_PermissionDenied(t *testing.T) {

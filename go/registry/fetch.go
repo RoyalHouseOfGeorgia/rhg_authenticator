@@ -1,12 +1,9 @@
 package registry
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -24,43 +21,18 @@ const (
 	maxRegistryBytes = 1 << 20 // 1 MiB
 )
 
-// FetchRegistry fetches the registry with fallback chain: remote -> cache -> embedded.
-// cachePath is where to cache the remote result (e.g., <dataDir>/registry.cache.json).
-// embedded is the go:embed'd registry bytes.
-// Returns the registry, the source name ("remote", "cache", or "embedded"), and any error.
-func FetchRegistry(remoteURL, cachePath string, embedded []byte) (core.Registry, string, error) {
-	// 1. Try remote fetch.
-	// Intentional: validate BEFORE caching so only valid registries are persisted.
-	if body, err := fetchRemote(remoteURL); err == nil {
-		if parsed, err := core.ValidateRegistry(body); err == nil {
-			// Cache the validated result (best-effort, atomic via temp+rename).
-			if suffix, err := randomCacheSuffix(); err == nil {
-				tmpPath := cachePath + ".tmp." + suffix
-				if err := os.WriteFile(tmpPath, body, 0o600); err == nil {
-					_ = os.Rename(tmpPath, cachePath)
-				} else {
-					_ = os.Remove(tmpPath)
-				}
-			}
-			return parsed, "remote", nil
-		}
-		// Remote returned invalid registry — fall through.
+// FetchRegistry fetches the registry from the remote server only.
+// Returns error if the fetch fails — no fallback to cache or embedded.
+func FetchRegistry(remoteURL string) (core.Registry, error) {
+	body, err := fetchRemote(remoteURL)
+	if err != nil {
+		return core.Registry{}, fmt.Errorf("registry fetch failed: %w", err)
 	}
-
-	// 2. Try cached file.
-	if data, err := os.ReadFile(cachePath); err == nil {
-		if parsed, err := core.ValidateRegistry(data); err == nil {
-			return parsed, "cache", nil
-		}
-		// Corrupted cache — fall through to embedded.
+	reg, err := core.ValidateRegistry(body)
+	if err != nil {
+		return core.Registry{}, fmt.Errorf("registry validation failed: %w", err)
 	}
-
-	// 3. Try embedded.
-	if parsed, err := core.ValidateRegistry(embedded); err == nil {
-		return parsed, "embedded", nil
-	}
-
-	return core.Registry{}, "", fmt.Errorf("all registry sources failed")
+	return reg, nil
 }
 
 // fetchRemote does an HTTP GET with timeout and body size limit.
@@ -93,33 +65,34 @@ func fetchRemote(url string) ([]byte, error) {
 // FindMatchingAuthority finds the authority name for a given public key in the registry.
 // Checks date range against today's date.
 func FindMatchingAuthority(reg core.Registry, pubKey [32]byte) (string, error) {
-	return FindMatchingAuthorityAt(reg, pubKey, time.Now().Format("2006-01-02"))
+	return FindMatchingAuthorityAt(reg, pubKey, time.Now().UTC().Format("2006-01-02"))
 }
 
-// FindMatchingAuthorityAt is like FindMatchingAuthority but uses a specific date
-// instead of time.Now(). Useful for testing.
-func FindMatchingAuthorityAt(reg core.Registry, pubKey [32]byte, date string) (string, error) {
-	for _, entry := range reg.Keys {
-		decoded, err := core.DecodePublicKey(entry)
+// FindMatchingEntryAt returns the full KeyEntry for a matching public key and date.
+// Returns nil if no match found.
+func FindMatchingEntryAt(reg core.Registry, pubKey [32]byte, date string) *core.KeyEntry {
+	for i := range reg.Keys {
+		decoded, err := core.DecodePublicKey(reg.Keys[i])
 		if err != nil {
 			continue
 		}
 		if decoded != pubKey {
 			continue
 		}
-		if !core.IsDateInRange(date, entry) {
+		if !core.IsDateInRange(date, reg.Keys[i]) {
 			continue
 		}
-		return entry.Authority, nil
+		return &reg.Keys[i]
 	}
-
-	return "", fmt.Errorf("no active registry entry matches the YubiKey public key")
+	return nil
 }
 
-func randomCacheSuffix() (string, error) {
-	b := make([]byte, 4)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
+// FindMatchingAuthorityAt is like FindMatchingAuthority but uses a specific date
+// instead of time.Now(). Useful for testing.
+func FindMatchingAuthorityAt(reg core.Registry, pubKey [32]byte, date string) (string, error) {
+	entry := FindMatchingEntryAt(reg, pubKey, date)
+	if entry == nil {
+		return "", fmt.Errorf("no active registry entry matches the YubiKey public key")
 	}
-	return hex.EncodeToString(b), nil
+	return entry.Authority, nil
 }

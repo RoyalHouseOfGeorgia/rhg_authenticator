@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/go-piv/piv-go/v2/piv"
@@ -154,7 +155,7 @@ func TestNewAdapterFromHandle_CertError(t *testing.T) {
 		t.Error("expected YubiKey to be closed on error")
 	}
 	want := "failed to read certificate from slot 9c"
-	if got := err.Error(); !containsStr(got, want) {
+	if got := err.Error(); !strings.Contains(got, want) {
 		t.Errorf("error %q does not contain %q", got, want)
 	}
 }
@@ -171,7 +172,7 @@ func TestNewAdapterFromHandle_NotEd25519(t *testing.T) {
 		t.Error("expected YubiKey to be closed on error")
 	}
 	want := "certificate does not contain an Ed25519 public key"
-	if got := err.Error(); !containsStr(got, want) {
+	if got := err.Error(); !strings.Contains(got, want) {
 		t.Errorf("error %q does not contain %q", got, want)
 	}
 }
@@ -261,7 +262,7 @@ func TestSignBytes_PrivateKeyError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !containsStr(err.Error(), "failed to get private key handle") {
+	if !strings.Contains(err.Error(), "failed to get private key handle") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -283,7 +284,7 @@ func TestSignBytes_NotCryptoSigner(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !containsStr(err.Error(), "does not implement crypto.Signer") {
+	if !strings.Contains(err.Error(), "does not implement crypto.Signer") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -305,7 +306,7 @@ func TestSignBytes_WrongSignatureLength(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrong signature length")
 	}
-	if !containsStr(err.Error(), "expected 64-byte Ed25519 signature") {
+	if !strings.Contains(err.Error(), "expected 64-byte Ed25519 signature") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -327,7 +328,7 @@ func TestSignBytes_SignError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !containsStr(err.Error(), "signing failed") {
+	if !strings.Contains(err.Error(), "signing failed") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -399,7 +400,7 @@ func TestNewYubiKeyAdapter_CardsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !containsStr(err.Error(), "failed to list smart cards") {
+	if !strings.Contains(err.Error(), "failed to list smart cards") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -416,7 +417,7 @@ func TestNewYubiKeyAdapter_NoYubiKeyFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !containsStr(err.Error(), "no YubiKey found") {
+	if !strings.Contains(err.Error(), "no YubiKey found") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -440,7 +441,7 @@ func TestNewYubiKeyAdapter_OpenError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !containsStr(err.Error(), "failed to open YubiKey") {
+	if !strings.Contains(err.Error(), "failed to open YubiKey") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -457,7 +458,7 @@ func TestNewYubiKeyAdapter_EmptyCardList(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !containsStr(err.Error(), "no YubiKey found among 0") {
+	if !strings.Contains(err.Error(), "no YubiKey found among 0") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -512,15 +513,3 @@ func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 	}
 }
 
-// containsStr checks if s contains substr.
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		func() bool {
-			for i := 0; i <= len(s)-len(substr); i++ {
-				if s[i:i+len(substr)] == substr {
-					return true
-				}
-			}
-			return false
-		}())
-}

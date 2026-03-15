@@ -13,7 +13,8 @@ import (
 func ExtractEd25519Key(certData []byte) (string, error) {
 	var derBytes []byte
 
-	// Try PEM decode first.
+	// pem.Decode returns nil block if the data is not PEM-encoded.
+	// This is expected — fall through to try raw DER parsing.
 	block, _ := pem.Decode(certData)
 	if block != nil {
 		derBytes = block.Bytes

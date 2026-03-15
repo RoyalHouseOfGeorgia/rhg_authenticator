@@ -3,7 +3,7 @@
 package yubikey
 
 import (
-	"log"
+	"fmt"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -15,14 +15,14 @@ var (
 )
 
 // mlockBuffer locks a byte slice into physical RAM to prevent swapping.
-// If VirtualLock fails, a warning is logged but execution continues.
-func mlockBuffer(buf []byte) {
+func mlockBuffer(buf []byte) error {
 	if len(buf) == 0 {
-		return
+		return nil
 	}
 	ret, _, err := virtualLock.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
 	runtime.KeepAlive(buf)
 	if ret == 0 {
-		log.Printf("warning: failed to lock sensitive memory: %v", err)
+		return fmt.Errorf("VirtualLock: %w", err)
 	}
+	return nil
 }

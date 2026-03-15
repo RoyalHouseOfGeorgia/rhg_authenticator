@@ -30,7 +30,7 @@ The binary embeds the version from `git describe --tags`.
 ## Usage
 
 1. Run `./release/rhg-authenticator`
-2. The app opens immediately with two tabs: **Sign** and **History** (no YubiKey needed yet)
+2. The app opens immediately with five tabs: **Sign**, **History**, **Registry**, **Audit**, and **YubiKey** (no YubiKey needed yet)
 
 ### Sign Tab
 
@@ -98,26 +98,20 @@ go build -o release/rhg-regmgr ./cmd/regmgr
 Features:
 - **Auto-fetches** the live registry from the server on startup
 - **Import certificates** (`.crt`/`.pem`) — extracts Ed25519 public keys automatically
-- **Add/Edit/Remove** registry entries with full validation
+- **Add/Edit** registry entries with full validation (entries cannot be deleted — revoke by setting an expiry date)
 - **Calendar date pickers** for key validity ranges
 - **Save** to local JSON file for committing to the repository
 
 Workflow:
-1. Launch `rhg-regmgr` — it fetches the current production registry
-2. Add/edit/remove entries as needed
+1. Open the **Registry** tab — it fetches the current production registry automatically
+2. Add/edit entries as needed (entries cannot be deleted — revoke by setting an expiry date)
 3. Save → produces a `registry.json` file
-4. Copy to `go/keys/registry.json` and commit to the repository
+4. Copy to `keys/registry.json` (repo root) and commit to the repository
 5. Deploy (the verification page and signing app both fetch from the hosted registry)
 
 ## Key Registry
 
-The app fetches the key registry from `https://verify.royalhouseofgeorgia.ge/keys/registry.json` on startup. Fallback chain:
-
-1. **Remote** (10s timeout, single attempt)
-2. **Cached** (`~/.rhg-authenticator/registry.cache.json` on macOS/Linux, `%AppData%\rhg-authenticator\` on Windows)
-3. **Embedded** (bundled at build time from `go/keys/registry.json`)
-
-If all sources fail, the app shows an error and exits.
+The app fetches the key registry from `https://verify.royalhouseofgeorgia.ge/keys/registry.json` on startup. **Remote only** — no cache or embedded fallback (a local copy could be tampered with). If the server is unreachable, the app opens in offline mode (signing still works, but YubiKey registry check is unavailable). Restart the app to retry.
 
 ## Security
 
@@ -135,21 +129,24 @@ go/
 │   ├── canonical.go     # Deterministic JSON (key-sort, NFC, no whitespace)
 │   ├── base64url.go     # Base64URL encode/decode
 │   ├── credential.go    # Credential v1 validation
-│   ├── registry.go      # Key registry schema + lookup
 │   ├── date.go          # Calendar-correct date validation
+│   ├── format.go        # Date display formatting (YYYY-Mon-DD)
+│   ├── registry.go      # Key registry schema, lookup, fingerprint
 │   └── sign.go          # Signing orchestrator
 ├── gui/                 # Fyne GUI (signing app)
+│   ├── audit_tab.go     # Registry audit (GitHub commit history, ETag caching)
+│   ├── errors.go        # Hardware error classification
+│   ├── history_tab.go   # Issuance log browser
+│   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display
 │   ├── signflow.go      # Extracted signing workflow (testable)
-│   ├── history_tab.go   # Issuance log browser
-│   └── pindialog.go     # PIN entry dialog (goroutine-safe)
-├── cmd/regmgr/          # Registry Manager entry point
-│   └── main.go          # Fyne app, theme, window
-├── regmgr/              # Registry Manager logic
+│   ├── statusbar.go     # Bottom status bar (key stats, online status)
+│   └── yubikey_tab.go   # YubiKey registry check (no PIN)
+├── regmgr/              # Registry Manager (tab in main app)
 │   ├── app.go           # Main UI: toolbar, table, state management
 │   ├── form.go          # Add/Edit entry dialogs (cert import, calendar)
 │   ├── certparse.go     # X.509 → Ed25519 key extraction
-│   └── fileio.go        # Registry fetch, read, atomic write
+│   └── fileio.go        # Registry read + atomic write
 ├── yubikey/             # YubiKey hardware adapter
 │   ├── adapter.go       # piv-go PIV signing
 │   ├── pincache.go      # Secure PIN cache (mlock + mutex)
@@ -160,10 +157,11 @@ go/
 ├── log/                 # Issuance log
 │   └── issuance.go      # Atomic append-only JSON log
 ├── registry/            # Registry fetch
-│   └── fetch.go         # Remote → cache → embedded fallback
-├── keys/                # Embedded registry (go:embed)
-│   └── registry.json
+│   └── fetch.go         # Remote-only registry fetch
+├── update/              # Version check
+│   └── check.go         # GitHub releases version check
 ├── testdata/            # Cross-language test vectors + cert fixtures
+│   ├── gen_vectors.go   # Vector generator (//go:build ignore)
 │   └── vectors.json
 ├── Makefile
 ├── go.mod

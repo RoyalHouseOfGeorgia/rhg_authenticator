@@ -19,7 +19,6 @@ export type { Credential, CredentialV1 } from './credential.js';
 // Key registry schema, lookup, and decoding.
 export {
   validateRegistry,
-  findKeysByAuthority,
   isDateInRange,
   decodePublicKey,
 } from './registry.js';
