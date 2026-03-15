@@ -8,7 +8,6 @@ import {
 import type { Credential } from '../credential.js';
 
 const validCredential = {
-  authority: 'Test Authority',
   date: '2026-03-11',
   detail: 'Test Detail',
   honor: 'Test Honor',
@@ -60,13 +59,6 @@ describe('validateCredential', () => {
       const { version: _, ...rest } = validCredential;
       expect(() => validateCredential(rest)).toThrow(
         'missing required field: version',
-      );
-    });
-
-    it('throws when authority is missing', () => {
-      const { authority: _, ...rest } = validCredential;
-      expect(() => validateCredential(rest)).toThrow(
-        'missing required field: authority',
       );
     });
 
@@ -235,7 +227,7 @@ describe('validateCredential', () => {
   });
 
   describe('empty string fields', () => {
-    for (const field of ['authority', 'date', 'detail', 'honor', 'recipient'] as const) {
+    for (const field of ['date', 'detail', 'honor', 'recipient'] as const) {
       it(`rejects empty ${field}`, () => {
         const cred = { ...validCredential, [field]: '' };
         expect(() => validateCredential(cred)).toThrow(
@@ -267,16 +259,10 @@ describe('validateCredential', () => {
       );
     });
 
-    it('rejects whitespace in authority', () => {
-      const cred = { ...validCredential, authority: ' HRH' };
-      expect(() => validateCredential(cred)).toThrow(
-        'authority must not have leading or trailing whitespace',
-      );
-    });
   });
 
   describe('wrong types for string fields', () => {
-    for (const field of ['authority', 'date', 'detail', 'honor', 'recipient'] as const) {
+    for (const field of ['date', 'detail', 'honor', 'recipient'] as const) {
       it(`rejects ${field} as a number`, () => {
         const cred = { ...validCredential, [field]: 123 };
         expect(() => validateCredential(cred)).toThrow(
@@ -308,13 +294,6 @@ describe('validateCredential', () => {
       );
     });
 
-    it('rejects control characters in authority', () => {
-      const cred = { ...validCredential, authority: 'Auth\x1fority' };
-      expect(() => validateCredential(cred)).toThrow(
-        'authority contains invalid control characters',
-      );
-    });
-
     it('rejects control characters in date', () => {
       const cred = { ...validCredential, date: '2026\x00-03-11' };
       expect(() => validateCredential(cred)).toThrow(
@@ -324,18 +303,6 @@ describe('validateCredential', () => {
   });
 
   describe('field max length limits', () => {
-    it('accepts authority at max length (200)', () => {
-      const cred = { ...validCredential, authority: 'A'.repeat(200) };
-      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
-    });
-
-    it('rejects authority one char over max (201)', () => {
-      const cred = { ...validCredential, authority: 'A'.repeat(201) };
-      expect(() => validateCredential(cred)).toThrow(
-        'authority exceeds maximum length of 200',
-      );
-    });
-
     it('accepts recipient at max length (500)', () => {
       const cred = { ...validCredential, recipient: 'R'.repeat(500) };
       expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
@@ -385,25 +352,6 @@ describe('validateCredential', () => {
       );
     });
 
-    it('accepts authority with emoji near boundary (199 BMP + 1 emoji = 200 code points)', () => {
-      // 199 BMP chars + 1 emoji (U+1F600, 2 UTF-16 code units) = .length 201 but [...s].length 200
-      const value = 'A'.repeat(199) + '\u{1F600}';
-      expect(value.length).toBe(201); // UTF-16 length
-      expect([...value].length).toBe(200); // code point length
-      const cred = { ...validCredential, authority: value };
-      expect(() => validateCredential(cred)).not.toThrow();
-    });
-
-    it('rejects authority with emoji over boundary (200 BMP + 1 emoji = 201 code points)', () => {
-      // 200 BMP chars + 1 emoji (U+1F600, 2 UTF-16 code units) = .length 202 but [...s].length 201
-      const value = 'A'.repeat(200) + '\u{1F600}';
-      expect(value.length).toBe(202); // UTF-16 length
-      expect([...value].length).toBe(201); // code point length
-      const cred = { ...validCredential, authority: value };
-      expect(() => validateCredential(cred)).toThrow(
-        'authority exceeds maximum length of 200',
-      );
-    });
   });
 
   describe('extra fields', () => {

@@ -2,8 +2,6 @@ package regmgr
 
 import (
 	"io/fs"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,105 +33,6 @@ func validRegistry() core.Registry {
 			PublicKey:  "/PjT+j342wWZypb0m/4MSBsFhHrrqzpoTe2rZ9hf0XU=",
 			Note:      "Test key",
 		}},
-	}
-}
-
-// --- FetchRegistry tests ---
-
-func TestFetchRegistry_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(validRegistryJSON())
-	}))
-	defer srv.Close()
-
-	reg, err := FetchRegistry(srv.URL)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(reg.Keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(reg.Keys))
-	}
-	if reg.Keys[0].Authority != "Test Authority" {
-		t.Errorf("authority = %q, want %q", reg.Keys[0].Authority, "Test Authority")
-	}
-}
-
-func TestFetchRegistry_HTTP404(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	_, err := FetchRegistry(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for HTTP 404")
-	}
-	if !strings.Contains(err.Error(), "HTTP 404") {
-		t.Errorf("error = %v, want containing %q", err, "HTTP 404")
-	}
-}
-
-func TestFetchRegistry_HTTP500(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	_, err := FetchRegistry(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for HTTP 500")
-	}
-	if !strings.Contains(err.Error(), "HTTP 500") {
-		t.Errorf("error = %v, want containing %q", err, "HTTP 500")
-	}
-}
-
-func TestFetchRegistry_MissingContentType(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// No Content-Type header set explicitly.
-		// Go's default is text/plain for small bodies.
-		w.Header().Del("Content-Type")
-		w.WriteHeader(http.StatusOK)
-		w.Write(validRegistryJSON())
-	}))
-	defer srv.Close()
-
-	_, err := FetchRegistry(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for missing Content-Type")
-	}
-	if !strings.Contains(err.Error(), "Content-Type") {
-		t.Errorf("error = %v, want containing %q", err, "Content-Type")
-	}
-}
-
-func TestFetchRegistry_WrongContentType(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write(validRegistryJSON())
-	}))
-	defer srv.Close()
-
-	_, err := FetchRegistry(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for wrong Content-Type")
-	}
-	if !strings.Contains(err.Error(), "Content-Type") {
-		t.Errorf("error = %v, want containing %q", err, "Content-Type")
-	}
-}
-
-func TestFetchRegistry_InvalidJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{not valid json"))
-	}))
-	defer srv.Close()
-
-	_, err := FetchRegistry(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
 	}
 }
 

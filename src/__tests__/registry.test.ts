@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   validateRegistry,
-  findKeysByAuthority,
   isDateInRange,
   decodePublicKey,
   MAX_REGISTRY_KEYS,
@@ -323,6 +322,20 @@ describe('validateRegistry', () => {
       }
     });
 
+    it('rejects note with null byte control character', () => {
+      const entry = makeEntry({ note: 'bad\u0000note' });
+      expect(() => validateRegistry({ keys: [entry] })).toThrow(
+        'keys[0]: note contains invalid control characters',
+      );
+    });
+
+    it('rejects note with bidi override control character', () => {
+      const entry = makeEntry({ note: 'bidi\u202eoverride' });
+      expect(() => validateRegistry({ keys: [entry] })).toThrow(
+        'keys[0]: note contains invalid control characters',
+      );
+    });
+
     it('reports the correct index for the second entry', () => {
       const good = makeEntry();
       const bad = { ...makeEntry(), algorithm: 'RSA' };
@@ -330,47 +343,6 @@ describe('validateRegistry', () => {
         "keys[1]: algorithm must be 'Ed25519'",
       );
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// findKeysByAuthority
-// ---------------------------------------------------------------------------
-
-describe('findKeysByAuthority', () => {
-  const keyA1 = makeEntry({ authority: 'Alpha', from: '2025-01-01' });
-  const keyA2 = makeEntry({ authority: 'Alpha', from: '2026-01-01' });
-  const keyB = makeEntry({ authority: 'Beta' });
-  const registry: Registry = { keys: [keyA1, keyA2, keyB] };
-
-  it('returns matching entries in registry order', () => {
-    const result = findKeysByAuthority(registry, 'Alpha');
-    expect(result).toEqual([keyA1, keyA2]);
-  });
-
-  it('returns empty array for unknown authority', () => {
-    const result = findKeysByAuthority(registry, 'Gamma');
-    expect(result).toEqual([]);
-  });
-
-  it('is case-sensitive', () => {
-    const result = findKeysByAuthority(registry, 'alpha');
-    expect(result).toEqual([]);
-  });
-
-  it('NFC-normalizes the query to match pre-normalized entries', () => {
-    // Entry authority is NFC-normalized during validation.
-    // Query with decomposed form should still match.
-    const precomposed = 'Caf\u00e9';
-    const decomposed = 'Cafe\u0301';
-    // Simulate a validated entry (authority already NFC-normalized).
-    const entry = makeEntry({ authority: precomposed });
-    const reg: Registry = { keys: [entry] };
-
-    // Query with decomposed form — findKeysByAuthority normalizes the query.
-    const result = findKeysByAuthority(reg, decomposed);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toBe(entry);
   });
 });
 

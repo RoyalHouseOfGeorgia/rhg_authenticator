@@ -46,15 +46,15 @@ describe('canonicalize', () => {
 
   it('matches golden-test v1 credential fixture', () => {
     const credential: JsonObject = {
-      authority: 'HRH Prince Davit Bagrationi',
       date: '2026-03-11',
+      detail: 'Awarded for exceptional service',
       honor: 'Knight Commander of the Royal Order of Georgia',
       recipient: 'John Quincy Doe',
       version: 1,
     };
 
     const expectedJson =
-      '{"authority":"HRH Prince Davit Bagrationi","date":"2026-03-11","honor":"Knight Commander of the Royal Order of Georgia","recipient":"John Quincy Doe","version":1}';
+      '{"date":"2026-03-11","detail":"Awarded for exceptional service","honor":"Knight Commander of the Royal Order of Georgia","recipient":"John Quincy Doe","version":1}';
     const expectedBytes = new TextEncoder().encode(expectedJson);
 
     const result = canonicalize(credential);
@@ -169,8 +169,8 @@ describe('canonicalize', () => {
 
     it('passes flat V1 credential (regression test)', () => {
       const credential: JsonObject = {
-        authority: 'HRH Prince Davit Bagrationi',
         date: '2026-03-11',
+        detail: 'Awarded for exceptional service',
         honor: 'Knight Commander of the Royal Order of Georgia',
         recipient: 'John Quincy Doe',
         version: 1,

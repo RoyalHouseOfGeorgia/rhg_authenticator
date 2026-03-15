@@ -24,7 +24,6 @@ npm install
 | `npm run lint` | Type-check without emitting (`tsc --noEmit`) |
 | `npm run build` | Compile TypeScript to `dist/` |
 | `npm run build:verify` | Bundle verification page JS (`verify/verify.js`) |
-| `npm run check:registry` | Verify no test keys in `keys/registry.json` |
 | `npm run audit:deps` | Run `npm audit` on production dependencies |
 
 ## Project Structure
@@ -58,11 +57,11 @@ verify/
 ├── styles.css            # Mobile-first CSS
 ├── verify.js             # esbuild IIFE bundle (built artifact)
 ├── favicon.ico           # Site favicon
-└── royal-arms-120.png    # Royal arms crest (120x120)
+├── royal-arms-120.png    # Royal arms crest (120x120)
+└── keys/
+    └── registry.json     # Public key registry (development + maintenance key)
 scripts/
 └── generate-test-url.ts  # Generate signed test URLs for UI preview
-keys/
-└── registry.json         # Public key registry (test key)
 ```
 
 ## API Reference
@@ -92,10 +91,10 @@ validateCredential(obj: unknown): Credential
 ```
 
 Validates and type-narrows an unknown value as a v1 credential. Checks:
-- Required fields: `version`, `authority`, `date`, `detail`, `honor`, `recipient`
+- Required fields: `version`, `date`, `detail`, `honor`, `recipient`
 - `version` must be `1` (throws `UnsupportedVersionError` for other numbers)
 - String fields: non-empty, no leading/trailing whitespace, no control characters (C0/C1/bidi)
-- Per-field length limits: authority (200), recipient (500), honor (200), detail (2000), date (10)
+- Per-field length limits: recipient (500), honor (200), detail (2000), date (10)
 - Date: arithmetic validation (leap years, month lengths) — not `Date` constructor
 - No extra fields
 
@@ -113,13 +112,11 @@ Thin wrappers around `@noble/curves/ed25519`. Verify uses strict RFC 8032 mode (
 
 ```typescript
 validateRegistry(obj: unknown): Registry
-findKeysByAuthority(registry: Registry, authority: string): KeyEntry[]
 isDateInRange(credentialDate: string, key: KeyEntry): boolean
 decodePublicKey(entry: KeyEntry): Uint8Array   // SPKI DER or raw → 32 bytes
 ```
 
 - `validateRegistry` rejects extra fields at both top-level and entry-level
-- `findKeysByAuthority` NFC-normalizes both sides; case-sensitive
 - `decodePublicKey` accepts 44-byte SPKI DER (strips 12-byte prefix) or 32-byte raw keys
 
 ### Verification Orchestrator
@@ -139,8 +136,8 @@ type VerificationResult =
 Full verification pipeline:
 1. Enforce payload size limit (`MAX_PAYLOAD_BYTES = 2048`)
 2. Parse JSON, validate credential schema
-3. Look up authority keys in registry
-4. Single-pass: verify signature against all matching keys; track date-mismatch diagnostics
+3. Try all registry keys; authority derived from matching key
+4. Single-pass: verify signature against all keys; track date-mismatch diagnostics
 5. Return typed result with matching key or failure reason
 
 ### Verification Page
@@ -199,14 +196,14 @@ if (result.valid) {
 - No mocking of internal modules — tests exercise the real code paths
 - Verification page tests use `// @vitest-environment happy-dom` per-file directive
 - `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page tests
-- 316 tests total (9 test files)
+- 305 tests total (9 test files)
 
 ## Key Registry Format
 
-The `keys/registry.json` file currently contains a placeholder entry. For production:
+The `verify/keys/registry.json` file contains the development/maintenance key. To add a production key:
 
-1. Generate an Ed25519 key on YubiKey PIV slot 9c
-2. Export the certificate from the YubiKey (`.crt` or `.pem` file)
-3. Use the **Registry Manager** (`rhg-regmgr`) to import the certificate and add the entry — or manually: `yubico-piv-tool -a read-certificate -s 9c | openssl x509 -pubkey -noout | openssl pkey -pubin -outform DER | base64`
+1. Generate an Ed25519 key on YubiKey PIV slot 9c (see [go/README.md](go/README.md#yubikey-setup))
+2. Open the **Registry** tab in the signing app
+3. Click **"Import from YubiKey"** (or import a `.crt`/`.pem` file via **"Import Certificate"**)
 4. Set `authority` to the formal title, `from` to the activation date, `to` to `null` for an active key
-5. Save and commit the updated `keys/registry.json`
+5. Save and commit the updated `verify/keys/registry.json`

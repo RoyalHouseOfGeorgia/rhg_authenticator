@@ -309,7 +309,7 @@ describe('runVerification', () => {
     expect(result).toEqual({ status: 'error', message: 'Invalid signature encoding' });
   });
 
-  it('returns error for signature not exactly 64 bytes', () => {
+  it('returns invalid for signature not exactly 64 bytes', () => {
     const params = makeSignedParams(secretKey);
     // Create a valid base64url string that decodes to 32 bytes instead of 64
     const shortSig = base64urlEncode(new Uint8Array(32));
@@ -317,16 +317,8 @@ describe('runVerification', () => {
       { payload: params.payload, signature: shortSig },
       registry,
     );
-    expect(result).toEqual({ status: 'error', message: 'Invalid signature length' });
-  });
-
-  it('returns invalid with reason for unknown authority', () => {
-    const otherEntry = makeKeyEntry(publicKey, { authority: 'Other Authority' });
-    const otherRegistry = makeRegistry(otherEntry);
-    const params = makeSignedParams(secretKey);
-    const result = runVerification(params, otherRegistry);
-    expect(result.status).toBe('invalid');
-    expect((result as { status: 'invalid'; reason: string }).reason).toContain('authority');
+    // Signature length validated by verifyCredential, returns invalid (not error).
+    expect(result).toEqual({ status: 'invalid', reason: 'invalid signature length' });
   });
 
   it('returns invalid with date-mismatch reason', () => {
@@ -368,17 +360,12 @@ describe('runVerification', () => {
   });
 
   it('valid result authority comes from registry key, not credential payload', () => {
-    // Create credential with one authority name, but registry key has a different one
-    // The key still needs to match, so we use the same keypair but the credential
-    // authority must match for verifyCredential to find the key.
-    // Instead: registry has authority "Registry Authority Name", credential also has it
-    // (required for lookup), but we verify the result uses the registry value.
+    // Credential has no authority field — authority is derived from the matching
+    // registry key entry.  Use a custom authority on the registry key and verify
+    // the result surfaces that value.
     const customEntry = makeKeyEntry(publicKey, { authority: 'Registry Authority Name' });
     const customRegistry = makeRegistry(customEntry);
-    const params = makeSignedParams(
-      secretKey,
-      validCredentialObj({ authority: 'Registry Authority Name' }),
-    );
+    const params = makeSignedParams(secretKey);
     const result = runVerification(params, customRegistry);
     expect(result.status).toBe('valid');
     expect((result as { status: 'valid'; authority: string }).authority).toBe(

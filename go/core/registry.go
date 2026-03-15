@@ -1,7 +1,9 @@
 package core
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -26,6 +28,9 @@ type Registry struct {
 // MaxRegistryKeys is the maximum number of key entries allowed in a registry.
 // This prevents resource exhaustion from excessively large registries.
 const MaxRegistryKeys = 1000
+
+// SupportedAlgorithm is the only supported key algorithm.
+const SupportedAlgorithm = "Ed25519"
 
 // ED25519SpkiPrefix is the 12-byte DER/SPKI header for Ed25519 public keys.
 var ED25519SpkiPrefix = []byte{
@@ -158,8 +163,8 @@ func validateEntry(data json.RawMessage, index int) (KeyEntry, error) {
 		return KeyEntry{}, fmt.Errorf("keys[%d]: missing required field: algorithm", index)
 	}
 	var algorithm string
-	if err := json.Unmarshal(raw["algorithm"], &algorithm); err != nil || algorithm != "Ed25519" {
-		return KeyEntry{}, fmt.Errorf("keys[%d]: algorithm must be 'Ed25519'", index)
+	if err := json.Unmarshal(raw["algorithm"], &algorithm); err != nil || algorithm != SupportedAlgorithm {
+		return KeyEntry{}, fmt.Errorf("keys[%d]: algorithm must be '%s'", index, SupportedAlgorithm)
 	}
 
 	// public_key: non-empty string.
@@ -181,6 +186,9 @@ func validateEntry(data json.RawMessage, index int) (KeyEntry, error) {
 	var note string
 	if err := json.Unmarshal(raw["note"], &note); err != nil {
 		return KeyEntry{}, fmt.Errorf("keys[%d]: note must be a string", index)
+	}
+	if controlCharRE.MatchString(note) {
+		return KeyEntry{}, fmt.Errorf("keys[%d]: note contains invalid control characters", index)
 	}
 
 	return KeyEntry{
@@ -223,6 +231,17 @@ func DecodePublicKey(entry KeyEntry) ([32]byte, error) {
 	}
 
 	return result, fmt.Errorf("decodePublicKey: unexpected key length %d bytes (expected 32 or 44)", len(bytes))
+}
+
+// KeyFingerprint returns the SHA-256 fingerprint of a key entry's public key
+// as a hex string. Returns an error if the key cannot be decoded.
+func KeyFingerprint(entry KeyEntry) (string, error) {
+	raw, err := DecodePublicKey(entry)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(raw[:])
+	return hex.EncodeToString(hash[:]), nil
 }
 
 // FindKeysByAuthority returns all key entries matching the given authority.

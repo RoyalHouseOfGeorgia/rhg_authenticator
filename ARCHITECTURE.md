@@ -16,12 +16,12 @@ The system has three independent components:
 
 1. **Verification library + page (TypeScript)** — core crypto, credential validation, key registry, and the public-facing verification page on GitHub Pages. This is what the world sees.
 2. **Signing app (Go)** — self-contained desktop application with Fyne GUI. Talks directly to YubiKey via PCSC (`piv-go`), signs credentials, generates QR codes (SVG/PNG). Single binary, no external tools required. See [go/README.md](go/README.md) for details.
-3. **Registry manager (Go)** — standalone GUI tool for managing the key registry. Imports Ed25519 public keys from `.crt`/`.pem` certificate files, supports add/edit/remove of registry entries with date pickers, fetches the live registry from the server on startup, and saves to a local JSON file for committing.
+3. **Registry manager (Go, tab in signing app)** — integrated tab for managing the key registry. Imports Ed25519 public keys directly from an inserted YubiKey or from `.crt`/`.pem` certificate files, supports add/edit of registry entries with date pickers (entries cannot be deleted — revoke by setting an expiry date), fetches the live registry from the server, and saves to a local JSON file for committing.
 
 ## Threat Model
 
 - **Trust anchor**: The YubiKey hardware token. Private key never leaves the device.
-- **Public registry**: `keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls. Managed via the Registry Manager tool (`rhg-regmgr`).
+- **Public registry**: `verify/keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls. Managed via the Registry tab in the signing app.
 - **Verification is client-side**: The public verification page fetches the registry and performs all crypto in the browser — no server round-trip.
 - **PIN security**: The Go signing app uses `piv-go` to talk directly to the YubiKey via PCSC. PIN is handled entirely in-process — never on the command line, never in a file, never visible in `/proc`.
 - **QR as transport**: The QR code is a URL containing the full signed credential. No database lookup required.
@@ -37,7 +37,7 @@ The system has three independent components:
 
 1. Operator opens the signing app (Go desktop binary)
 2. App detects YubiKey via PCSC, reads certificate from PIV slot 9c
-3. App fetches registry, matches YubiKey public key to authority
+3. Operator plugs in YubiKey (signing does not require registry; works offline)
 4. Operator fills in credential form (recipient, honor, detail, date)
 5. Operator clicks "Sign" → app prompts for YubiKey PIN via GUI dialog
 6. App canonicalizes credential → signs via YubiKey → verifies round-trip → logs
@@ -60,7 +60,7 @@ The system has three independent components:
 | `base64url.ts` | Base64URL encode/decode, standard Base64 decode | None (uses `btoa`/`atob`) |
 | `credential.ts` | Credential v1 schema validation, control char rejection, field length limits, `sanitizeForError` | `validation.ts` |
 | `crypto.ts` | Ed25519 sign, verify (`zip215: false`), getPublicKey | `@noble/curves` |
-| `registry.ts` | Registry schema validation, authority lookup, SPKI key decoding | `base64url.ts`, `validation.ts` |
+| `registry.ts` | Registry schema validation, key lookup, SPKI key decoding | `base64url.ts`, `validation.ts` |
 | `validation.ts` | Shared date validation (calendar-correct, no `Date` constructor) | None |
 | `verify.ts` | Single-pass verification orchestrator | `credential.ts`, `crypto.ts`, `registry.ts` |
 | `index.ts` | Barrel export | All core modules |
@@ -72,7 +72,6 @@ The system has three independent components:
 
 ```typescript
 type CredentialV1 = {
-  authority: string;   // Formal title of the signer
   date: string;        // ISO 8601 date (YYYY-MM-DD)
   detail: string;      // Specific distinction or rank
   honor: string;       // Title of the honor bestowed
@@ -81,7 +80,7 @@ type CredentialV1 = {
 };
 ```
 
-All six fields are required. No extra fields allowed. Strings must be non-empty with no leading/trailing whitespace, no control characters (C0/C1/bidi), and within per-field length limits (authority: 200, recipient: 500, honor: 200, detail: 2000, date: 10).
+All five fields are required. No extra fields allowed. Strings must be non-empty with no leading/trailing whitespace, no control characters (C0/C1/bidi), and within per-field length limits (recipient: 500, honor: 200, detail: 2000, date: 10). Authority is not stored in the credential; it is derived during verification from the registry key whose signature matches.
 
 ### Canonical Form
 
@@ -119,7 +118,7 @@ Error correction level Q (25% recovery, `qrcode.High` in the `skip2/go-qrcode` l
 
 ```typescript
 type KeyEntry = {
-  authority: string;        // Must match credential's authority field
+  authority: string;        // Authority attributed when this key's signature verifies
   from: string;             // Start of validity (YYYY-MM-DD, inclusive)
   to: string | null;        // End of validity (inclusive) or null (no expiration)
   algorithm: 'Ed25519';     // Only Ed25519 supported
@@ -132,7 +131,7 @@ type Registry = { keys: KeyEntry[] };
 
 ### Key Rotation
 
-The registry supports multiple keys per authority with non-overlapping date ranges. Verification tries all matching keys in a single pass, with date-mismatch diagnostics for valid-but-expired signatures.
+The registry supports multiple keys per authority with non-overlapping date ranges. Verification tries all registry keys in a single pass, with date-mismatch diagnostics for valid-but-expired signatures.
 
 ### SPKI DER Format
 
@@ -184,7 +183,7 @@ Verification operates on the original payload bytes, not a re-canonicalized form
 - **Sync API**: All crypto operations are synchronous. `@noble/curves` is pure JS — no Web Crypto async overhead.
 - **No key_id field**: The registry is too small for O(n) lookup to matter. Signature verification is the real authentication gate.
 - **Arithmetic date validation**: Uses manual month/day/leap-year checks instead of `Date` constructor, which silently rolls invalid dates (e.g., Feb 30 → Mar 2).
-- **Single-pass verification**: Verify signature against all authority-matching keys, with date-mismatch diagnostics for valid-but-expired matches.
+- **Single-pass verification**: Verify signature against all registry keys; authority is derived from the matching key. Date-mismatch diagnostics reported for valid-but-expired matches.
 - **Go for signing app**: Single binary, `piv-go` for direct YubiKey access (PIN in-process), `crypto/ed25519` in stdlib, Fyne for cross-platform GUI. Rust was evaluated but its `yubikey` crate lacks Ed25519 PIV support (issue #602, no progress). CGO required on macOS/Linux for PCSC; pure Go on Windows.
 - **SVG as primary QR output**: Vector format scales perfectly for print. No pixel density concerns, no forced QR version needed.
 - **Registry fallback chain**: remote (10s timeout) → cached file → embedded (go:embed). Corrupted cache falls through to embedded without terminating.

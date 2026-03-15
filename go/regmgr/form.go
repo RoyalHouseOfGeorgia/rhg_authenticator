@@ -13,6 +13,7 @@ import (
 	xwidget "fyne.io/x/fyne/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -22,7 +23,7 @@ func buildEntry(authority, from string, to *string, publicKey, note string) core
 		Authority: norm.NFC.String(strings.TrimSpace(authority)),
 		From:      from,
 		To:        to,
-		Algorithm: "Ed25519",
+		Algorithm: core.SupportedAlgorithm,
 		PublicKey:  publicKey,
 		Note:      note,
 	}
@@ -111,6 +112,24 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 		d.Show()
 	})
 
+	importYubiKeyBtn := widget.NewButton("Import from YubiKey", func() {
+		key, err := yubikey.ReadPublicKey()
+		if err != nil {
+			lower := strings.ToLower(err.Error())
+			if strings.Contains(lower, "pcsc") || strings.Contains(lower, "scard") {
+				keyLabel.SetText("Smart card service not available")
+			} else {
+				keyLabel.SetText("No YubiKey detected — plug in and try again")
+			}
+			importedKey = ""
+			errorLabel.SetText("")
+			return
+		}
+		importedKey = key
+		keyLabel.SetText(key)
+		errorLabel.SetText("")
+	})
+
 	noteEntry := widget.NewMultiLineEntry()
 	noteEntry.SetPlaceHolder("Optional note")
 
@@ -123,7 +142,7 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 		toRow,
 		noExpiryCheck,
 		widget.NewLabel("Public Key"),
-		importBtn,
+		container.NewHBox(importBtn, importYubiKeyBtn),
 		keyLabel,
 		errorLabel,
 		widget.NewLabel("Note"),
