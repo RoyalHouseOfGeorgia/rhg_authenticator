@@ -32,7 +32,7 @@ type RegistryCommit struct {
 const (
 	githubOwner        = "royalhouseofgeorgia"
 	githubRepo         = "rhg-authenticator"
-	registryFilePath   = "keys/registry.json"
+	registryFilePath   = "verify/keys/registry.json"
 	commitsPerPage     = 50
 	commitFetchTimeout = 10 * time.Second
 	maxCommitsBytes    = 1 << 20 // 1 MiB
