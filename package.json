@@ -21,7 +21,7 @@
     "audit:deps": "npm audit --omit=dev"
   },
   "dependencies": {
-    "@noble/curves": "^1.8.0"
+    "@noble/curves": "^2.0.1"
   },
   "devDependencies": {
     "@types/node": "^20",
