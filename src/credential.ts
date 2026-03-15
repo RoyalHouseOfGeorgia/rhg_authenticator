@@ -88,10 +88,11 @@ export function validateCredential(obj: unknown): Credential {
     if (CONTROL_CHAR_RE.test(value)) {
       throw new Error(`${field} contains invalid control characters`);
     }
-    if (value.length === 0) {
+    const codePointLength = [...value].length;
+    if (codePointLength === 0) {
       throw new Error(`${field} must not be empty`);
     }
-    if (value.length > FIELD_MAX_LENGTHS[field]) {
+    if (codePointLength > FIELD_MAX_LENGTHS[field]) {
       throw new Error(`${field} exceeds maximum length of ${FIELD_MAX_LENGTHS[field]}`);
     }
   }

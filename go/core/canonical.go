@@ -48,15 +48,24 @@ func writeValue(buf *bytes.Buffer, v any, depth int) error {
 		if val == 0 && math.Signbit(val) {
 			return errors.New("negative zero is not a valid JSON value")
 		}
-		buf.WriteString(formatNumber(val))
+		s, err := formatNumber(val)
+		if err != nil {
+			return err
+		}
+		buf.WriteString(s)
 
 	case int:
 		buf.WriteString(strconv.Itoa(val))
 
 	case string:
-		writeJSONString(buf, norm.NFC.String(val))
+		if err := writeJSONString(buf, norm.NFC.String(val)); err != nil {
+			return err
+		}
 
 	case []any:
+		if depth >= maxDepth {
+			return errors.New("value exceeds maximum nesting depth")
+		}
 		buf.WriteByte('[')
 		for i, elem := range val {
 			if i > 0 {
@@ -90,7 +99,9 @@ func writeValue(buf *bytes.Buffer, v any, depth int) error {
 				buf.WriteByte(',')
 			}
 			// Keys are NOT NFC-normalized per spec.
-			writeJSONString(buf, k)
+			if err := writeJSONString(buf, k); err != nil {
+				return err
+			}
 			buf.WriteByte(':')
 			if err := writeValue(buf, val[k], depth+1); err != nil {
 				return err
@@ -105,22 +116,28 @@ func writeValue(buf *bytes.Buffer, v any, depth int) error {
 	return nil
 }
 
-// formatNumber formats a float64 to match JSON.stringify behavior:
-// integers render without a decimal point, fractions use minimal
-// representation.
-func formatNumber(v float64) string {
-	if v == math.Trunc(v) && !math.IsInf(v, 0) {
-		return strconv.FormatInt(int64(v), 10)
+// formatNumber formats a float64 as an integer string.
+// It rejects non-integer values and values outside the safe integer range.
+func formatNumber(v float64) (string, error) {
+	if v != math.Trunc(v) {
+		return "", fmt.Errorf("non-integer float values are not supported in canonical JSON")
 	}
-	return strconv.FormatFloat(v, 'f', -1, 64)
+	const maxSafeInt = 1<<53 - 1
+	if v > maxSafeInt || v < -maxSafeInt {
+		return "", fmt.Errorf("integer value %v exceeds safe range", v)
+	}
+	return strconv.FormatInt(int64(v), 10), nil
 }
 
 // writeJSONString writes a JSON-escaped string to buf, matching the
 // escaping rules of JavaScript's JSON.stringify (RFC 8259 §7).
-func writeJSONString(buf *bytes.Buffer, s string) {
+func writeJSONString(buf *bytes.Buffer, s string) error {
 	buf.WriteByte('"')
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			return fmt.Errorf("invalid UTF-8 byte at position %d", i)
+		}
 		switch {
 		case r == '"':
 			buf.WriteString(`\"`)
@@ -145,4 +162,5 @@ func writeJSONString(buf *bytes.Buffer, s string) {
 		i += size
 	}
 	buf.WriteByte('"')
+	return nil
 }

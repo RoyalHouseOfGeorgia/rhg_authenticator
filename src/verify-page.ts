@@ -94,8 +94,8 @@ export async function fetchRegistry(url: string): Promise<Registry> {
       credentials: 'omit',
       referrerPolicy: 'no-referrer',
     });
-  } catch {
-    throw new Error('Failed to contact verification service');
+  } catch (err) {
+    throw new Error('Failed to contact verification service', { cause: err });
   } finally {
     clearTimeout(timer);
   }
@@ -104,17 +104,30 @@ export async function fetchRegistry(url: string): Promise<Registry> {
     throw new Error('Verification service returned an error');
   }
 
+  const MAX_REGISTRY_BYTES = 1 << 20; // 1 MiB
+
+  // Early-out on Content-Length (optimization only — may reflect compressed size).
+  const contentLength = response.headers.get('content-length');
+  if (contentLength !== null && parseInt(contentLength, 10) > MAX_REGISTRY_BYTES) {
+    throw new Error('Registry response exceeds size limit');
+  }
+
+  const text = await response.text();
+  if (new TextEncoder().encode(text).byteLength > MAX_REGISTRY_BYTES) {
+    throw new Error('Registry response exceeds size limit');
+  }
+
   let body: unknown;
   try {
-    body = await response.json();
-  } catch {
-    throw new Error('Registry data is corrupted');
+    body = JSON.parse(text);
+  } catch (err) {
+    throw new Error('Registry data is corrupted', { cause: err });
   }
 
   try {
     return validateRegistry(body);
-  } catch {
-    throw new Error('Registry data is invalid');
+  } catch (err) {
+    throw new Error('Registry data is invalid', { cause: err });
   }
 }
 

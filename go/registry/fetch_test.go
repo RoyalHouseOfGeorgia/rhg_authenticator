@@ -84,6 +84,7 @@ func TestFetchRegistry_RemoteSuccess(t *testing.T) {
 func TestFetchRegistry_RemoteSuccess_CacheWritten(t *testing.T) {
 	body := validRegistryJSON()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.Write(body)
 	}))
 	defer srv.Close()
@@ -478,5 +479,43 @@ func TestFetchRegistry_DefaultRegistryURL(t *testing.T) {
 func TestFetchRegistry_FetchTimeout(t *testing.T) {
 	if FetchTimeout.Seconds() != 10 {
 		t.Errorf("expected 10s timeout, got %v", FetchTimeout)
+	}
+}
+
+func TestFetchRegistry_WrongContentType_FallsThrough(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(validRegistryJSON())
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "registry.cache.json")
+
+	_, source, err := FetchRegistry(srv.URL, cachePath, validRegistryJSON())
+	if err != nil {
+		t.Fatalf("should fall back to embedded: %v", err)
+	}
+	if source != "embedded" {
+		t.Errorf("expected source 'embedded', got %q", source)
+	}
+}
+
+func TestFetchRegistry_MissingContentType_FallsThrough(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No Content-Type header set.
+		w.Write(validRegistryJSON())
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "registry.cache.json")
+
+	_, source, err := FetchRegistry(srv.URL, cachePath, validRegistryJSON())
+	if err != nil {
+		t.Fatalf("should fall back to embedded: %v", err)
+	}
+	if source != "embedded" {
+		t.Errorf("expected source 'embedded', got %q", source)
 	}
 }

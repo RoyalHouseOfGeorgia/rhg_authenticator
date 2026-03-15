@@ -67,7 +67,7 @@ func ValidateCredential(obj map[string]any) (CredentialV1, error) {
 		return CredentialV1{}, fmt.Errorf("version must be a number")
 	}
 	if verNum != 1 {
-		return CredentialV1{}, fmt.Errorf("Unsupported credential version: %v", verNum)
+		return CredentialV1{}, fmt.Errorf("unsupported credential version: %v", verNum)
 	}
 
 	// 2. String fields — validated in order.

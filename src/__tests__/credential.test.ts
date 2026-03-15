@@ -384,6 +384,26 @@ describe('validateCredential', () => {
         'date exceeds maximum length of 10',
       );
     });
+
+    it('accepts authority with emoji near boundary (199 BMP + 1 emoji = 200 code points)', () => {
+      // 199 BMP chars + 1 emoji (U+1F600, 2 UTF-16 code units) = .length 201 but [...s].length 200
+      const value = 'A'.repeat(199) + '\u{1F600}';
+      expect(value.length).toBe(201); // UTF-16 length
+      expect([...value].length).toBe(200); // code point length
+      const cred = { ...validCredential, authority: value };
+      expect(() => validateCredential(cred)).not.toThrow();
+    });
+
+    it('rejects authority with emoji over boundary (200 BMP + 1 emoji = 201 code points)', () => {
+      // 200 BMP chars + 1 emoji (U+1F600, 2 UTF-16 code units) = .length 202 but [...s].length 201
+      const value = 'A'.repeat(200) + '\u{1F600}';
+      expect(value.length).toBe(202); // UTF-16 length
+      expect([...value].length).toBe(201); // code point length
+      const cred = { ...validCredential, authority: value };
+      expect(() => validateCredential(cred)).toThrow(
+        'authority exceeds maximum length of 200',
+      );
+    });
   });
 
   describe('extra fields', () => {

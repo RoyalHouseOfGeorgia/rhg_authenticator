@@ -4,6 +4,7 @@ import {
   findKeysByAuthority,
   isDateInRange,
   decodePublicKey,
+  MAX_REGISTRY_KEYS,
 } from '../registry.js';
 import type { KeyEntry, Registry } from '../registry.js';
 
@@ -99,6 +100,17 @@ describe('validateRegistry', () => {
     expect(() => validateRegistry({ keys: [] })).toThrow(
       'keys array must not be empty',
     );
+  });
+
+  it('rejects registry with more than MAX_REGISTRY_KEYS entries', () => {
+    const entries = Array.from({ length: MAX_REGISTRY_KEYS + 1 }, () => makeEntry());
+    expect(() => validateRegistry({ keys: entries })).toThrow('maximum key count');
+  });
+
+  it('accepts registry with exactly MAX_REGISTRY_KEYS entries', () => {
+    const entries = Array.from({ length: MAX_REGISTRY_KEYS }, () => makeEntry());
+    const result = validateRegistry({ keys: entries });
+    expect(result.keys).toHaveLength(MAX_REGISTRY_KEYS);
   });
 
   it('rejects extra top-level fields', () => {
@@ -346,14 +358,17 @@ describe('findKeysByAuthority', () => {
     expect(result).toEqual([]);
   });
 
-  it('NFC-normalizes both sides of comparison', () => {
-    // U+00E9 (precomposed) vs U+0065 U+0301 (decomposed) — both NFC to U+00E9.
+  it('NFC-normalizes the query to match pre-normalized entries', () => {
+    // Entry authority is NFC-normalized during validation.
+    // Query with decomposed form should still match.
     const precomposed = 'Caf\u00e9';
     const decomposed = 'Cafe\u0301';
-    const entry = makeEntry({ authority: decomposed });
+    // Simulate a validated entry (authority already NFC-normalized).
+    const entry = makeEntry({ authority: precomposed });
     const reg: Registry = { keys: [entry] };
 
-    const result = findKeysByAuthority(reg, precomposed);
+    // Query with decomposed form — findKeysByAuthority normalizes the query.
+    const result = findKeysByAuthority(reg, decomposed);
     expect(result).toHaveLength(1);
     expect(result[0]).toBe(entry);
   });

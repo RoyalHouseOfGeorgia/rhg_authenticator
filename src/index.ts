@@ -3,15 +3,14 @@
  * for the Royal House of Georgia.
  */
 
-// Canonical JSON serialization.
-export { canonicalize } from './canonical.js';
+// Canonical JSON types.
 export type { JsonValue, JsonObject } from './canonical.js';
 
 // Base64URL and standard Base64 encoding/decoding.
 export { base64urlEncode, base64urlDecode, base64Decode } from './base64url.js';
 
-// Ed25519 cryptographic operations.
-export { sign, verify, getPublicKey } from './crypto.js';
+// Ed25519 signature verification.
+export { verify } from './crypto.js';
 
 // Credential schema validation.
 export { validateCredential, UnsupportedVersionError } from './credential.js';

@@ -342,15 +342,22 @@ func TestCanonicalizeNumbers(t *testing.T) {
 	obj := map[string]any{
 		"int":  float64(42),
 		"zero": float64(0),
-		"frac": float64(1.5),
 	}
 	got, err := Canonicalize(obj)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
-	want := `{"frac":1.5,"int":42,"zero":0}`
+	want := `{"int":42,"zero":0}`
 	if string(got) != want {
 		t.Errorf("got %q, want %q", string(got), want)
+	}
+}
+
+func TestCanonicalizeNonIntegerFloatError(t *testing.T) {
+	obj := map[string]any{"val": float64(1.5)}
+	_, err := Canonicalize(obj)
+	if err == nil {
+		t.Error("expected error for non-integer float 1.5")
 	}
 }
 
@@ -454,6 +461,147 @@ func TestCanonicalizeArrayInArray(t *testing.T) {
 	want := `{"matrix":[[1,2],[3,4]]}`
 	if string(got) != want {
 		t.Errorf("got %q, want %q", string(got), want)
+	}
+}
+
+func TestFormatNumberErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		val  float64
+	}{
+		{"large exponent", 1e20},
+		{"small negative exponent", 1e-7},
+		{"half", 0.5},
+		{"max float64", math.MaxFloat64},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := map[string]any{"val": tt.val}
+			_, err := Canonicalize(obj)
+			if err == nil {
+				t.Errorf("expected error for %v", tt.val)
+			}
+		})
+	}
+}
+
+func TestFormatNumberSuccess(t *testing.T) {
+	tests := []struct {
+		name string
+		val  float64
+		want string
+	}{
+		{"1e15", 1e15, "1000000000000000"},
+		{"1.0", 1.0, "1"},
+		{"100.0", 100.0, "100"},
+		{"-1.0", -1.0, "-1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := map[string]any{"val": tt.val}
+			got, err := Canonicalize(obj)
+			if err != nil {
+				t.Fatalf("unexpected error for %v: %v", tt.val, err)
+			}
+			want := `{"val":` + tt.want + `}`
+			if string(got) != want {
+				t.Errorf("got %q, want %q", string(got), want)
+			}
+		})
+	}
+}
+
+func TestCanonicalizeInvalidUTF8Value(t *testing.T) {
+	obj := map[string]any{
+		"val": "hello\xffworld",
+	}
+	_, err := Canonicalize(obj)
+	if err == nil {
+		t.Error("expected error for invalid UTF-8 in string value")
+	}
+}
+
+func TestCanonicalizeInvalidUTF8Key(t *testing.T) {
+	obj := map[string]any{
+		"bad\xffkey": "value",
+	}
+	_, err := Canonicalize(obj)
+	if err == nil {
+		t.Error("expected error for invalid UTF-8 in object key")
+	}
+}
+
+func TestCanonicalizeArrayDepthLimit(t *testing.T) {
+	// Build deeply nested array that exceeds maxDepth.
+	// depth 0: top-level map, depth 1: outer array, depth 2: inner1,
+	// depth 3: inner2, depth 4: inner3 — rejected.
+	inner := []any{"deep"}
+	for i := 0; i < 3; i++ {
+		inner = []any{inner}
+	}
+	obj := map[string]any{"arr": inner}
+	_, err := Canonicalize(obj)
+	if err == nil {
+		t.Error("expected depth limit error for deeply nested array")
+	}
+}
+
+func TestCanonicalizeArrayJustUnderDepthLimit(t *testing.T) {
+	// depth 0: top-level map, depth 1: outer array, depth 2: inner1,
+	// depth 3: inner2 — should succeed (3 < maxDepth=4).
+	inner := []any{"ok"}
+	for i := 0; i < 2; i++ {
+		inner = []any{inner}
+	}
+	obj := map[string]any{"arr": inner}
+	got, err := Canonicalize(obj)
+	if err != nil {
+		t.Fatalf("expected success for array at depth 3: %v", err)
+	}
+	want := `{"arr":[[["ok"]]]}`
+	if string(got) != want {
+		t.Errorf("got %q, want %q", string(got), want)
+	}
+}
+
+func TestCanonicalizeArrayAtExactDepthLimit(t *testing.T) {
+	// depth 0: map, depth 1: arr1, depth 2: arr2, depth 3: arr3,
+	// depth 4: arr4 — rejected (depth >= maxDepth).
+	var v any = []any{"val"}
+	for i := 0; i < 3; i++ {
+		v = []any{v}
+	}
+	obj := map[string]any{"a": v}
+	_, err := Canonicalize(obj)
+	if err == nil {
+		t.Error("expected depth limit error for array at depth 4")
+	}
+}
+
+func TestCanonicalizeSafeIntBoundary(t *testing.T) {
+	maxSafe := float64(1<<53 - 1)
+	obj := map[string]any{"val": maxSafe}
+	_, err := Canonicalize(obj)
+	if err != nil {
+		t.Fatalf("maxSafeInt should succeed: %v", err)
+	}
+
+	obj["val"] = -maxSafe
+	_, err = Canonicalize(obj)
+	if err != nil {
+		t.Fatalf("-maxSafeInt should succeed: %v", err)
+	}
+
+	obj["val"] = maxSafe + 1
+	_, err = Canonicalize(obj)
+	if err == nil {
+		t.Error("expected error for maxSafeInt + 1")
+	}
+
+	obj["val"] = -maxSafe - 1
+	_, err = Canonicalize(obj)
+	if err == nil {
+		t.Error("expected error for -maxSafeInt - 1")
 	}
 }
 

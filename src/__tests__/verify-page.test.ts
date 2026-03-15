@@ -185,6 +185,25 @@ describe('fetchRegistry', () => {
     );
   });
 
+  it('throws when response body exceeds 1 MiB', async () => {
+    const oversized = 'x'.repeat(1024 * 1024 + 1);
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(oversized, { status: 200 }),
+    );
+    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
+      'Registry response exceeds size limit',
+    );
+  });
+
+  it('accepts response body under 1 MiB with valid registry JSON', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(validJson, { status: 200 }),
+    );
+    const result = await fetchRegistry('/keys/registry.json');
+    // validJson is well under 1 MiB — just verify it parses successfully
+    expect(result.keys).toHaveLength(1);
+  });
+
   it('throws on schema validation failure (valid JSON, invalid registry)', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ keys: [] }), { status: 200 }),
@@ -205,6 +224,16 @@ describe('fetchRegistry', () => {
         credentials: 'omit',
         referrerPolicy: 'no-referrer',
       }),
+    );
+  });
+
+  it('rejects early when Content-Length header exceeds size limit', async () => {
+    const headers = new Headers({ 'Content-Length': '2000000' });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response('{}', { status: 200, headers }),
+    );
+    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
+      'Registry response exceeds size limit',
     );
   });
 

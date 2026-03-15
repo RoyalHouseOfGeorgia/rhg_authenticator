@@ -2,10 +2,10 @@
 package gui
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,10 +16,10 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
+	xwidget "fyne.io/x/fyne/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/qr"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
@@ -36,10 +36,36 @@ var honorTitles = []string{
 type SignTabConfig struct {
 	Registry core.Registry
 	LogPath  string
+	DataDir  string
+}
+
+// QR code output sizes.
+const (
+	qrPreviewPx = 512
+	qrSavePx    = 2048
+)
+
+// debugLogger appends timestamped messages to a log file. A nil or
+// zero-value logger silently discards all messages.
+type debugLogger struct {
+	path string
+}
+
+func (d *debugLogger) log(msg string) {
+	if d == nil || d.path == "" {
+		return
+	}
+	f, err := os.OpenFile(d.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "[%s] %s\n", time.Now().UTC().Format(time.RFC3339), msg)
 }
 
 // NewSignTab creates the credential signing tab UI.
 func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
+	logger := &debugLogger{path: filepath.Join(config.DataDir, "debug.log")}
 	pinCache := yubikey.NewPinCache()
 
 	recipientEntry := widget.NewEntry()
@@ -52,8 +78,17 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 	detailEntry.SetPlaceHolder("Specific distinction or rank")
 
 	dateEntry := widget.NewEntry()
-	dateEntry.SetPlaceHolder("YYYY-MM-DD")
 	dateEntry.SetText(time.Now().Format("2006-01-02"))
+	dateEntry.Disable() // read-only — date set via calendar
+
+	calButton := widget.NewButton("\U0001F4C5", func() {
+		cal := xwidget.NewCalendar(time.Now(), func(t time.Time) {
+			dateEntry.SetText(t.Format("2006-01-02"))
+		})
+		dialog.ShowCustom("Select Date", "Close", cal, window)
+	})
+
+	dateRow := container.NewBorder(nil, nil, nil, calButton, dateEntry)
 
 	statusLabel := widget.NewLabel("")
 	statusLabel.Wrapping = fyne.TextWrapWord
@@ -85,58 +120,18 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 		go func() {
 			defer fyne.Do(func() { signButton.Enable() })
 
-			adapter, err := yubikey.NewYubiKeyAdapter(MakePinReader(window, pinCache))
-			if err != nil {
-				fyne.Do(func() {
-					statusLabel.SetText(friendlyYubiKeyError(err))
-				})
-				return
-			}
-			defer adapter.Close()
-
-			pubKey, err := adapter.ExportPublicKey()
-			if err != nil {
-				fyne.Do(func() {
-					statusLabel.SetText("Error: " + err.Error())
-				})
-				return
+			openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+				a, err := yubikey.NewYubiKeyAdapter(readPin)
+				if err != nil {
+					return nil, nil, err
+				}
+				return a, a, nil
 			}
 
-			authority, err := registry.FindMatchingAuthority(config.Registry, pubKey)
+			result, err := executeSignFlow(req, config.Registry, config.LogPath, openAdapter, MakePinReader(window, pinCache), logger)
 			if err != nil {
 				fyne.Do(func() {
-					statusLabel.SetText("YubiKey public key not found in registry")
-				})
-				return
-			}
-
-			fyne.Do(func() {
-				statusLabel.SetText("Signing...")
-			})
-
-			resp, err := core.HandleSign(req, adapter, pubKey, authority, config.LogPath)
-			if err != nil {
-				fyne.Do(func() {
-					statusLabel.SetText("Error: " + err.Error())
-				})
-				return
-			}
-
-			// QR is generated at 512px for preview and 2048px for save. These are
-			// separate operations because the save resolution is much higher.
-			pngData, err := qr.GeneratePNG(resp.URL, 512)
-			if err != nil {
-				fyne.Do(func() {
-					statusLabel.SetText("QR generation error: " + err.Error())
-				})
-				return
-			}
-
-			// Compute hash8 for filenames.
-			hash8, err := computeHash8(resp.Payload)
-			if err != nil {
-				fyne.Do(func() {
-					statusLabel.SetText("Hash computation error: " + err.Error())
+					statusLabel.SetText(signFlowErrorMessage(err, logger))
 				})
 				return
 			}
@@ -146,7 +141,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 
 				// QR preview image.
 				qrImage := canvas.NewImageFromResource(
-					fyne.NewStaticResource("qr-preview.png", pngData),
+					fyne.NewStaticResource("qr-preview.png", result.PNGPreview),
 				)
 				qrImage.FillMode = canvas.ImageFillContain
 				qrImage.SetMinSize(fyne.NewSize(256, 256))
@@ -155,13 +150,13 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 				printAdvisory.Alignment = fyne.TextAlignCenter
 
 				saveSVGButton := widget.NewButton("Save SVG", func() {
-					defaultName := buildFilename(req.Date, hash8, "svg")
+					defaultName := buildFilename(req.Date, result.Hash8, "svg")
 					saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 						if err != nil || writer == nil {
 							return
 						}
 						defer writer.Close()
-						if saveErr := qr.SaveSVG(resp.URL, writer.URI().Path()); saveErr != nil {
+						if saveErr := qr.SaveSVG(result.Response.URL, writer.URI().Path()); saveErr != nil {
 							dialog.ShowError(saveErr, window)
 						}
 					}, window)
@@ -171,13 +166,13 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 				})
 
 				savePNGButton := widget.NewButton("Save PNG", func() {
-					defaultName := buildFilename(req.Date, hash8, "png")
+					defaultName := buildFilename(req.Date, result.Hash8, "png")
 					saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 						if err != nil || writer == nil {
 							return
 						}
 						defer writer.Close()
-						pngHiRes, pngErr := qr.GeneratePNG(resp.URL, 2048)
+						pngHiRes, pngErr := qr.GeneratePNG(result.Response.URL, qrSavePx)
 						if pngErr != nil {
 							dialog.ShowError(pngErr, window)
 							return
@@ -192,7 +187,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 				})
 
 				copyURLButton := widget.NewButton("Copy URL", func() {
-					window.Clipboard().SetContent(resp.URL)
+					window.Clipboard().SetContent(result.Response.URL)
 				})
 
 				actionButtons := container.NewHBox(saveSVGButton, savePNGButton, copyURLButton)
@@ -213,7 +208,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 		widget.NewLabel("Detail"),
 		detailEntry,
 		widget.NewLabel("Date"),
-		dateEntry,
+		dateRow,
 		layout.NewSpacer(),
 		signButton,
 		statusLabel,
@@ -226,34 +221,43 @@ func NewSignTab(config SignTabConfig, window fyne.Window) *fyne.Container {
 // validateSignForm checks that all required sign form fields are filled and valid.
 func validateSignForm(recipient, honor, detail, date string) error {
 	if strings.TrimSpace(recipient) == "" {
-		return fmt.Errorf("Recipient is required")
+		return fmt.Errorf("recipient is required")
 	}
 	if honor == "" {
-		return fmt.Errorf("Honor title must be selected")
+		return fmt.Errorf("honor title must be selected")
 	}
 	if strings.TrimSpace(detail) == "" {
-		return fmt.Errorf("Detail is required")
+		return fmt.Errorf("detail is required")
 	}
 	if !core.IsValidDate(date) {
-		return fmt.Errorf("Date must be in YYYY-MM-DD format and be a valid calendar date")
+		return fmt.Errorf("date must be in YYYY-MM-DD format and be a valid calendar date")
 	}
 	return nil
 }
 
-// computeHash8 returns the first 8 hex characters of the SHA-256 hash of the
-// decoded payload bytes. The payload is base64url-encoded canonical JSON.
-func computeHash8(payloadB64 string) (string, error) {
-	payloadBytes, err := core.Decode(payloadB64)
-	if err != nil {
-		return "", fmt.Errorf("decoding payload: %w", err)
+// sanitizeError returns a generic description for hardware-related errors,
+// stripping implementation details that could leak hardware configuration.
+func sanitizeError(prefix string, err error) string {
+	if err == nil {
+		return prefix + ": unknown error"
 	}
-	sum := sha256.Sum256(payloadBytes)
-	return hex.EncodeToString(sum[:])[:8], nil
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "pcsc") || strings.Contains(lower, "scard"):
+		return prefix + ": smart card service error"
+	case strings.Contains(lower, "pin"):
+		return prefix + ": PIN error"
+	case strings.Contains(lower, "yubikey") || strings.Contains(lower, "card"):
+		return prefix + ": hardware device error"
+	default:
+		return prefix + ": " + msg
+	}
 }
 
 // friendlyYubiKeyError returns a user-friendly error message for YubiKey
 // connection failures.
-func friendlyYubiKeyError(err error) string {
+func friendlyYubiKeyError(err error, logger *debugLogger) string {
 	lower := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(lower, "pcsc") || strings.Contains(lower, "scard"):
@@ -261,7 +265,31 @@ func friendlyYubiKeyError(err error) string {
 	case strings.Contains(lower, "yubikey") || strings.Contains(lower, "card"):
 		return "Please plug in your YubiKey and try again"
 	default:
-		return "Failed to connect to YubiKey.\n\nDetails: " + err.Error()
+		logger.log(sanitizeError("YubiKey", err))
+		return "Failed to connect to YubiKey. Check debug.log for details."
+	}
+}
+
+// signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
+// status message.
+func signFlowErrorMessage(err error, logger *debugLogger) string {
+	msg := err.Error()
+	switch {
+	case strings.HasPrefix(msg, "export public key:"):
+		return "Failed to read YubiKey. Check debug.log for details."
+	case strings.Contains(msg, "no active registry entry"):
+		logger.log("key not found: " + msg)
+		return "YubiKey public key not found in registry"
+	case strings.HasPrefix(msg, "QR generation:"):
+		return "QR generation failed. Check debug.log for details."
+	default:
+		lower := strings.ToLower(msg)
+		if strings.Contains(lower, "pcsc") || strings.Contains(lower, "scard") ||
+			strings.Contains(lower, "yubikey") || strings.Contains(lower, "card") {
+			return friendlyYubiKeyError(err, logger)
+		}
+		logger.log("sign flow: " + msg)
+		return "Signing failed. Check debug.log for details."
 	}
 }
 

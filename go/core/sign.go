@@ -38,9 +38,10 @@ type SignRequest struct {
 
 // SignResponse is the successful output of HandleSign.
 type SignResponse struct {
-	Signature string // base64url-encoded signature
-	Payload   string // base64url-encoded canonical JSON
-	URL       string // full verification URL
+	Signature     string // base64url-encoded signature
+	Payload       string // base64url-encoded canonical JSON
+	URL           string // full verification URL
+	PayloadSHA256 string // hex-encoded SHA-256 of raw canonical JSON bytes (pre-base64url)
 }
 
 // HandleSign validates, signs, and produces a verification URL for a credential.
@@ -57,18 +58,18 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte, author
 
 	// 2. Validate credential.
 	if _, err := ValidateCredential(credObj); err != nil {
-		return SignResponse{}, fmt.Errorf("Invalid credential data: %w", err)
+		return SignResponse{}, fmt.Errorf("invalid credential data: %w", err)
 	}
 
 	// 3. Canonicalize.
 	payloadBytes, err := Canonicalize(credObj)
 	if err != nil {
-		return SignResponse{}, fmt.Errorf("Invalid credential data: %w", err)
+		return SignResponse{}, fmt.Errorf("invalid credential data: %w", err)
 	}
 
 	// 4. Size check.
 	if len(payloadBytes) > MaxPayloadBytes {
-		return SignResponse{}, fmt.Errorf("Payload exceeds maximum size")
+		return SignResponse{}, fmt.Errorf("payload exceeds maximum size")
 	}
 
 	// 5. Sign.
@@ -77,12 +78,12 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte, author
 		return SignResponse{}, fmt.Errorf("signing failed: %w", err)
 	}
 	if len(signature) != 64 {
-		return SignResponse{}, fmt.Errorf("Expected 64-byte Ed25519 signature, got %d bytes", len(signature))
+		return SignResponse{}, fmt.Errorf("expected 64-byte Ed25519 signature, got %d bytes", len(signature))
 	}
 
 	// 6. Post-sign verification.
 	if !ed25519.Verify(pubKey[:], payloadBytes, signature) {
-		return SignResponse{}, fmt.Errorf("Post-sign verification failed — signature does not verify")
+		return SignResponse{}, fmt.Errorf("post-sign verification failed — signature does not verify")
 	}
 
 	// 7. Build URL.
@@ -112,8 +113,9 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte, author
 
 	// 9. Return response.
 	return SignResponse{
-		Signature: sigB64,
-		Payload:   payloadB64,
-		URL:       url,
+		Signature:     sigB64,
+		Payload:       payloadB64,
+		URL:           url,
+		PayloadSHA256: hex.EncodeToString(sha256sum[:]),
 	}, nil
 }

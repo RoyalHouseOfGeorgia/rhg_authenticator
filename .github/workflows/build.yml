@@ -20,8 +20,14 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
+      - name: Check test vectors are in sync
+        run: diff go/testdata/vectors.json src/__tests__/fixtures/vectors.json
       - run: npm run lint
       - run: npm test
+      - name: Check verify.js is up to date
+        run: |
+          npm run build:verify
+          git diff --exit-code verify/verify.js
       - run: npm audit --audit-level=high
 
   test-go:
@@ -40,7 +46,7 @@ jobs:
       - working-directory: go
         run: go test ./... -count=1
       - working-directory: go
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
       - name: Run gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
 
@@ -78,16 +84,22 @@ jobs:
           cache-dependency-path: go/go.sum
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libgl1-mesa-dev xorg-dev
-      - working-directory: go
-        run: go build -trimpath -ldflags "-s -w" -o ../release/rhg-authenticator-${{ matrix.suffix }}${{ runner.os == 'Windows' && '.exe' || '' }} .
       - if: runner.os == 'Windows'
-        run: dir release
+        working-directory: go
+        run: go build -trimpath -ldflags "-s -w -H windowsgui" -o ../release/rhg-authenticator-${{ matrix.suffix }}.exe .
       - if: runner.os != 'Windows'
-        run: ls -la release/
+        working-directory: go
+        run: go build -trimpath -ldflags "-s -w" -o ../release/rhg-authenticator-${{ matrix.suffix }} .
+      - if: runner.os == 'Windows'
+        working-directory: go
+        run: go build -trimpath -ldflags "-s -w -H windowsgui" -o ../release/rhg-regmgr-${{ matrix.suffix }}.exe ./cmd/regmgr
+      - if: runner.os != 'Windows'
+        working-directory: go
+        run: go build -trimpath -ldflags "-s -w" -o ../release/rhg-regmgr-${{ matrix.suffix }} ./cmd/regmgr
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: rhg-authenticator-${{ matrix.suffix }}
-          path: release/rhg-authenticator-${{ matrix.suffix }}*
+          path: release/rhg-*-${{ matrix.suffix }}*
           retention-days: 7
 
   release:
@@ -109,10 +121,10 @@ jobs:
         with:
           path: release
           merge-multiple: true
-      - run: cd release && shasum -a 256 rhg-authenticator-* > SHA256SUMS.txt
+      - run: cd release && shasum -a 256 rhg-* > SHA256SUMS.txt
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2.4.0
         with:
-          subject-path: 'release/rhg-authenticator-*'
+          subject-path: 'release/rhg-*'
       - uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
         with:
           files: release/*

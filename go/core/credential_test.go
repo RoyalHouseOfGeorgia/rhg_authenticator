@@ -71,7 +71,7 @@ func TestValidateCredential_Version2(t *testing.T) {
 	obj := validObj()
 	obj["version"] = float64(2)
 	_, err := ValidateCredential(obj)
-	if err == nil || !strings.Contains(err.Error(), "Unsupported credential version") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported credential version") {
 		t.Fatalf("expected unsupported version error, got %v", err)
 	}
 }
@@ -289,7 +289,7 @@ func TestValidateCredential_VersionNonInteger(t *testing.T) {
 	obj := validObj()
 	obj["version"] = float64(1.5)
 	_, err := ValidateCredential(obj)
-	if err == nil || !strings.Contains(err.Error(), "Unsupported credential version") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported credential version") {
 		t.Fatalf("expected unsupported version error for 1.5, got %v", err)
 	}
 }

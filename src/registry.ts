@@ -22,6 +22,8 @@ export type Registry = { keys: KeyEntry[] };
 
 const REGISTRY_FIELDS = new Set<string>(['keys']);
 
+export const MAX_REGISTRY_KEYS = 1000;
+
 const ENTRY_FIELDS = new Set<string>([
   'authority',
   'from',
@@ -60,6 +62,8 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
   if (record.authority.length === 0) {
     throw new Error(`keys[${index}]: authority must not be empty`);
   }
+  // NFC-normalize authority during validation so lookups can use plain comparison.
+  record.authority = record.authority.normalize('NFC');
 
   // from: valid date string.
   if (!('from' in record)) {
@@ -136,6 +140,9 @@ export function validateRegistry(obj: unknown): Registry {
   if (record.keys.length === 0) {
     throw new Error('keys array must not be empty');
   }
+  if (record.keys.length > MAX_REGISTRY_KEYS) {
+    throw new Error(`registry exceeds maximum key count (${MAX_REGISTRY_KEYS})`);
+  }
 
   // Reject extra top-level fields.
   // Note: Object.keys does NOT enumerate __proto__ after JSON.parse, so this
@@ -169,8 +176,9 @@ export function findKeysByAuthority(
   authority: string,
 ): KeyEntry[] {
   const normalizedQuery = authority.normalize('NFC');
+  // entry.authority is already NFC-normalized during validation.
   return registry.keys.filter(
-    (entry) => entry.authority.normalize('NFC') === normalizedQuery,
+    (entry) => entry.authority === normalizedQuery,
   );
 }
 

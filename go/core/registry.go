@@ -184,7 +184,7 @@ func validateEntry(data json.RawMessage, index int) (KeyEntry, error) {
 	}
 
 	return KeyEntry{
-		Authority: authority,
+		Authority: norm.NFC.String(authority),
 		From:      from,
 		To:        to,
 		Algorithm: algorithm,
@@ -231,7 +231,8 @@ func FindKeysByAuthority(reg Registry, authority string) []KeyEntry {
 	normalizedQuery := norm.NFC.String(authority)
 	var result []KeyEntry
 	for _, entry := range reg.Keys {
-		if norm.NFC.String(entry.Authority) == normalizedQuery {
+		// entry.Authority is already NFC-normalized during validation.
+		if entry.Authority == normalizedQuery {
 			result = append(result, entry)
 		}
 	}

@@ -1,0 +1,50 @@
+[
+  {
+    "name": "ascii_only",
+    "credential": {
+      "version": 1,
+      "authority": "Test Authority",
+      "recipient": "John Doe",
+      "honor": "Test Honor",
+      "detail": "For service",
+      "date": "2026-03-13"
+    },
+    "canonical_hex": "7b22617574686f72697479223a225465737420417574686f72697479222c2264617465223a22323032362d30332d3133222c2264657461696c223a22466f722073657276696365222c22686f6e6f72223a225465737420486f6e6f72222c22726563697069656e74223a224a6f686e20446f65222c2276657273696f6e223a317d",
+    "payload_b64url": "eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoiRm9yIHNlcnZpY2UiLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiJKb2huIERvZSIsInZlcnNpb24iOjF9",
+    "signature_b64url": "hSxvD8MQMdEXZ5RK49wAjAyJR8XnAZxigplusWLQDzHMytqh-d6JkyX6PqcLY7utky3atUARp0C_21HFZfBlAA",
+    "url": "https://verify.royalhouseofgeorgia.ge/?p=eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoiRm9yIHNlcnZpY2UiLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiJKb2huIERvZSIsInZlcnNpb24iOjF9&s=hSxvD8MQMdEXZ5RK49wAjAyJR8XnAZxigplusWLQDzHMytqh-d6JkyX6PqcLY7utky3atUARp0C_21HFZfBlAA",
+    "public_key_hex": "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc"
+  },
+  {
+    "name": "georgian_text",
+    "credential": {
+      "version": 1,
+      "authority": "Test Authority",
+      "recipient": "ქართველი",
+      "honor": "Test Honor",
+      "detail": "საქართველოს სამეფო",
+      "date": "2026-03-13"
+    },
+    "canonical_hex": "7b22617574686f72697479223a225465737420417574686f72697479222c2264617465223a22323032362d30332d3133222c2264657461696c223a22e183a1e18390e183a5e18390e183a0e18397e18395e18394e1839ae1839de183a120e183a1e18390e1839be18394e183a4e1839d222c22686f6e6f72223a225465737420486f6e6f72222c22726563697069656e74223a22e183a5e18390e183a0e18397e18395e18394e1839ae18398222c2276657273696f6e223a317d",
+    "payload_b64url": "eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoi4YOh4YOQ4YOl4YOQ4YOg4YOX4YOV4YOU4YOa4YOd4YOhIOGDoeGDkOGDm-GDlOGDpOGDnSIsImhvbm9yIjoiVGVzdCBIb25vciIsInJlY2lwaWVudCI6IuGDpeGDkOGDoOGDl-GDleGDlOGDmuGDmCIsInZlcnNpb24iOjF9",
+    "signature_b64url": "hc2Rnyps__zApVDZhm2LuwkAHF86fucbcsYd3V0lNO6ZiIoQ19BVWYkLWdL7SM7421CpALb5-BLyZOWWGGzxCA",
+    "url": "https://verify.royalhouseofgeorgia.ge/?p=eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoi4YOh4YOQ4YOl4YOQ4YOg4YOX4YOV4YOU4YOa4YOd4YOhIOGDoeGDkOGDm-GDlOGDpOGDnSIsImhvbm9yIjoiVGVzdCBIb25vciIsInJlY2lwaWVudCI6IuGDpeGDkOGDoOGDl-GDleGDlOGDmuGDmCIsInZlcnNpb24iOjF9&s=hc2Rnyps__zApVDZhm2LuwkAHF86fucbcsYd3V0lNO6ZiIoQ19BVWYkLWdL7SM7421CpALb5-BLyZOWWGGzxCA",
+    "public_key_hex": "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc"
+  },
+  {
+    "name": "nfc_edge_case",
+    "credential": {
+      "version": 1,
+      "authority": "Test Authority",
+      "recipient": "Café",
+      "honor": "Test Honor",
+      "detail": "résumé",
+      "date": "2026-03-13"
+    },
+    "canonical_hex": "7b22617574686f72697479223a225465737420417574686f72697479222c2264617465223a22323032362d30332d3133222c2264657461696c223a2272c3a973756dc3a9222c22686f6e6f72223a225465737420486f6e6f72222c22726563697069656e74223a22436166c3a9222c2276657273696f6e223a317d",
+    "payload_b64url": "eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoicsOpc3Vtw6kiLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiJDYWbDqSIsInZlcnNpb24iOjF9",
+    "signature_b64url": "FwS2C9T37895FVI-1TWfs-RM1YWD_cCguKV2jTyVDEP97WKTPqc1AzISxOmdxWrr2vti4w9eSuvXQf2wz6zIDQ",
+    "url": "https://verify.royalhouseofgeorgia.ge/?p=eyJhdXRob3JpdHkiOiJUZXN0IEF1dGhvcml0eSIsImRhdGUiOiIyMDI2LTAzLTEzIiwiZGV0YWlsIjoicsOpc3Vtw6kiLCJob25vciI6IlRlc3QgSG9ub3IiLCJyZWNpcGllbnQiOiJDYWbDqSIsInZlcnNpb24iOjF9&s=FwS2C9T37895FVI-1TWfs-RM1YWD_cCguKV2jTyVDEP97WKTPqc1AzISxOmdxWrr2vti4w9eSuvXQf2wz6zIDQ",
+    "public_key_hex": "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc"
+  }
+]

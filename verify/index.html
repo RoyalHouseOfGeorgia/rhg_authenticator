@@ -6,10 +6,13 @@
   <!-- CSP: connect-src must match PRODUCTION_HOSTNAME in src/verify-page.ts -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' https://verify.royalhouseofgeorgia.ge; base-uri 'none'; form-action 'none'">
-  <!-- IMPORTANT: frame-ancestors is ignored in <meta> CSP per spec.
-       The production hosting server (GitHub Pages/CDN) MUST set an HTTP
-       Content-Security-Policy header with frame-ancestors 'none' to
-       prevent clickjacking. X-Frame-Options: DENY is also recommended. -->
+  <!--
+    Security headers that MUST be set by the production hosting server:
+    - Content-Security-Policy: frame-ancestors 'none' (meta tag CSP ignores this directive per spec)
+    - Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+    - X-Content-Type-Options: nosniff (GitHub Pages sets this; verify on other hosts)
+    - X-Frame-Options: DENY (legacy browsers without CSP support)
+  -->
   <meta name="referrer" content="no-referrer">
   <title>Royal House of Georgia — Credential Verification</title>
   <link rel="icon" href="favicon.ico" type="image/png">

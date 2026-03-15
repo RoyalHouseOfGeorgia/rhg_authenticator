@@ -1,13 +1,12 @@
 package gui
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
@@ -25,8 +24,8 @@ func TestValidateSignForm_EmptyRecipient(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty recipient")
 	}
-	if !strings.Contains(err.Error(), "Recipient") {
-		t.Errorf("error should mention Recipient, got: %v", err)
+	if !strings.Contains(err.Error(), "recipient") {
+		t.Errorf("error should mention recipient, got: %v", err)
 	}
 }
 
@@ -42,8 +41,8 @@ func TestValidateSignForm_NoHonorSelected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty honor")
 	}
-	if !strings.Contains(err.Error(), "Honor") {
-		t.Errorf("error should mention Honor, got: %v", err)
+	if !strings.Contains(err.Error(), "honor") {
+		t.Errorf("error should mention honor, got: %v", err)
 	}
 }
 
@@ -52,8 +51,8 @@ func TestValidateSignForm_EmptyDetail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty detail")
 	}
-	if !strings.Contains(err.Error(), "Detail") {
-		t.Errorf("error should mention Detail, got: %v", err)
+	if !strings.Contains(err.Error(), "detail") {
+		t.Errorf("error should mention detail, got: %v", err)
 	}
 }
 
@@ -69,8 +68,8 @@ func TestValidateSignForm_InvalidDate_BadFormat(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid date")
 	}
-	if !strings.Contains(err.Error(), "Date") {
-		t.Errorf("error should mention Date, got: %v", err)
+	if !strings.Contains(err.Error(), "date") {
+		t.Errorf("error should mention date, got: %v", err)
 	}
 }
 
@@ -119,36 +118,6 @@ func TestBuildFilename_OtherExt(t *testing.T) {
 	want := "rhg-credential-2026-01-01-deadbeef-min3cm.pdf"
 	if got != want {
 		t.Errorf("buildFilename other = %q, want %q", got, want)
-	}
-}
-
-// --- computeHash8 tests ---
-
-func TestComputeHash8_ValidPayload(t *testing.T) {
-	// Create a known payload via core.Encode.
-	payload := []byte(`{"test":"data"}`)
-	b64 := core.Encode(payload)
-
-	hash8, err := computeHash8(b64)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(hash8) != 8 {
-		t.Fatalf("hash8 length = %d, want 8", len(hash8))
-	}
-
-	// Verify it matches the expected SHA-256 prefix.
-	sum := sha256.Sum256(payload)
-	want := hex.EncodeToString(sum[:])[:8]
-	if hash8 != want {
-		t.Errorf("computeHash8 = %q, want %q", hash8, want)
-	}
-}
-
-func TestComputeHash8_InvalidBase64(t *testing.T) {
-	_, err := computeHash8("!!!invalid!!!")
-	if err == nil {
-		t.Fatal("expected error for invalid base64")
 	}
 }
 
@@ -398,42 +367,221 @@ func TestMaxHonorDisplay(t *testing.T) {
 	}
 }
 
+// --- sanitizeError tests ---
+
+func TestSanitizeError_PCSC(t *testing.T) {
+	got := sanitizeError("test", fmt.Errorf("pcsc daemon not running"))
+	if got != "test: smart card service error" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSanitizeError_SCARD(t *testing.T) {
+	got := sanitizeError("test", fmt.Errorf("scard: service unavailable"))
+	if got != "test: smart card service error" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSanitizeError_PIN(t *testing.T) {
+	got := sanitizeError("test", fmt.Errorf("wrong PIN entered"))
+	if got != "test: PIN error" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSanitizeError_YubiKey(t *testing.T) {
+	got := sanitizeError("test", fmt.Errorf("no YubiKey detected"))
+	if got != "test: hardware device error" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSanitizeError_Card(t *testing.T) {
+	got := sanitizeError("test", fmt.Errorf("smart card not found"))
+	if got != "test: hardware device error" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSanitizeError_Generic(t *testing.T) {
+	got := sanitizeError("test", fmt.Errorf("unexpected failure"))
+	if got != "test: unexpected failure" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSanitizeError_Nil(t *testing.T) {
+	got := sanitizeError("test", nil)
+	if got != "test: unknown error" {
+		t.Errorf("got %q", got)
+	}
+}
+
 // --- friendlyYubiKeyError tests ---
 
 func TestFriendlyYubiKeyError_YubiKeyError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("no YubiKey detected"))
+	got := friendlyYubiKeyError(fmt.Errorf("no YubiKey detected"), nil)
 	if !strings.Contains(got, "plug in") {
 		t.Errorf("expected 'plug in' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_CardError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("smart card not found"))
+	got := friendlyYubiKeyError(fmt.Errorf("smart card not found"), nil)
 	if !strings.Contains(got, "plug in") {
 		t.Errorf("expected 'plug in' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_PCSCError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("pcsc daemon not running"))
+	got := friendlyYubiKeyError(fmt.Errorf("pcsc daemon not running"), nil)
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected 'Smart card service' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_SCARDError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("scard: service not available"))
+	got := friendlyYubiKeyError(fmt.Errorf("scard: service not available"), nil)
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected 'Smart card service' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("unexpected failure"))
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	got := friendlyYubiKeyError(fmt.Errorf("unexpected failure"), logger)
 	if !strings.Contains(got, "Failed to connect") {
 		t.Errorf("expected 'Failed to connect' message, got: %q", got)
 	}
-	if !strings.Contains(got, "unexpected failure") {
-		t.Errorf("expected error details in message, got: %q", got)
+	if !strings.Contains(got, "debug.log") {
+		t.Errorf("expected debug.log reference in message, got: %q", got)
+	}
+}
+
+// --- debugLogger tests ---
+
+func TestDebugLogger_CreatesFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger.log("test message")
+
+	data, err := os.ReadFile(logger.path)
+	if err != nil {
+		t.Fatalf("debug log file not created: %v", err)
+	}
+	if !strings.Contains(string(data), "test message") {
+		t.Errorf("debug log missing message, got: %q", string(data))
+	}
+}
+
+func TestDebugLogger_FilePermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger.log("perm check")
+
+	info, err := os.Stat(logger.path)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+	perm := info.Mode().Perm()
+	if perm != 0o600 {
+		t.Errorf("file permissions = %o, want 0600", perm)
+	}
+}
+
+func TestDebugLogger_AppendMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+
+	logger.log("first message")
+	logger.log("second message")
+
+	data, err := os.ReadFile(logger.path)
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "first message") {
+		t.Errorf("missing first message, got: %q", content)
+	}
+	if !strings.Contains(content, "second message") {
+		t.Errorf("missing second message, got: %q", content)
+	}
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	if len(lines) != 2 {
+		t.Errorf("expected 2 lines, got %d", len(lines))
+	}
+}
+
+func TestDebugLogger_EmptyPath(t *testing.T) {
+	logger := &debugLogger{path: ""}
+	// Should not panic or create any file.
+	logger.log("should be a no-op")
+}
+
+func TestDebugLogger_NilLogger(t *testing.T) {
+	var logger *debugLogger
+	// Should not panic.
+	logger.log("should not panic")
+}
+
+func TestDebugLogger_TimestampFormat(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger.log("ts check")
+
+	data, err := os.ReadFile(logger.path)
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	content := string(data)
+	// RFC3339 timestamps contain a "T" between date and time.
+	if !strings.Contains(content, "T") || !strings.Contains(content, "Z") {
+		t.Errorf("expected RFC3339 timestamp, got: %q", content)
+	}
+	// Line should be bracketed: [timestamp] message
+	if !strings.HasPrefix(content, "[") {
+		t.Errorf("expected line to start with '[', got: %q", content)
+	}
+}
+
+// --- signFlowErrorMessage tests ---
+
+func TestSignFlowErrorMessage_ExportPublicKey(t *testing.T) {
+	got := signFlowErrorMessage(fmt.Errorf("export public key: hardware failure"), nil)
+	if !strings.Contains(got, "Failed to read YubiKey") {
+		t.Errorf("expected YubiKey read failure message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_NoRegistryEntry(t *testing.T) {
+	got := signFlowErrorMessage(fmt.Errorf("no active registry entry matches the YubiKey public key"), nil)
+	if !strings.Contains(got, "not found in registry") {
+		t.Errorf("expected registry not found message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_QRGeneration(t *testing.T) {
+	got := signFlowErrorMessage(fmt.Errorf("QR generation: encode failed"), nil)
+	if !strings.Contains(got, "QR generation failed") {
+		t.Errorf("expected QR failure message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_YubiKeyAdapter(t *testing.T) {
+	got := signFlowErrorMessage(fmt.Errorf("pcsc daemon not running"), nil)
+	if !strings.Contains(got, "Smart card service") {
+		t.Errorf("expected smart card service message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_GenericError(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	got := signFlowErrorMessage(fmt.Errorf("something unexpected"), logger)
+	if !strings.Contains(got, "Signing failed") {
+		t.Errorf("expected signing failed message, got: %q", got)
 	}
 }
