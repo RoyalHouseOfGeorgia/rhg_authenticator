@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -127,6 +128,9 @@ func TestWriteRegistry_EmptyKeysRejected(t *testing.T) {
 }
 
 func TestWriteRegistry_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "registry.json")
 	reg := validRegistry()

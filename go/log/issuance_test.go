@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -131,6 +132,9 @@ func TestReadLog_InvalidJSON(t *testing.T) {
 }
 
 func TestAppendRecord_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "issuance.json")
 
@@ -339,6 +343,9 @@ func TestAppendRecord_JSONFormatPrettyPrinted(t *testing.T) {
 }
 
 func TestReadLog_PermissionDenied(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "issuance.json")
 
@@ -373,6 +380,9 @@ func TestAppendRecord_ReadError(t *testing.T) {
 }
 
 func TestAppendRecord_WriteError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
 	// logPath points to a non-writable directory, so WriteFile will fail.
 	dir := t.TempDir()
 	subdir := filepath.Join(dir, "readonly")

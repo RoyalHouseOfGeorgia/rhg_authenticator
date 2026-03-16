@@ -102,8 +102,3 @@ Compare the output with the hash in `SHA256SUMS.txt`.
 | [`@noble/curves`](https://github.com/paulmillr/noble-curves) | Audited Ed25519 implementation | Runtime |
 | `typescript`, `vitest`, `esbuild`, `happy-dom` | Build + test toolchain | Dev |
 
-## License
-
-Copyright 2026 Royal House of Georgia. All rights reserved.
-
-This software is proprietary. No license is granted to use, copy, modify, or distribute this software without explicit written permission from the Royal House of Georgia.

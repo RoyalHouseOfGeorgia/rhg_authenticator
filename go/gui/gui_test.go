@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -518,6 +519,9 @@ func TestDebugLogger_CreatesFile(t *testing.T) {
 }
 
 func TestDebugLogger_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
 	tmpDir := t.TempDir()
 	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
 	logger.log("perm check")

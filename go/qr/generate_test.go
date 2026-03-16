@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"regexp"
 	"strconv"
 	"strings"
@@ -227,6 +228,9 @@ func TestSaveSVGWritesFile(t *testing.T) {
 }
 
 func TestSaveSVGFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.svg")
 
