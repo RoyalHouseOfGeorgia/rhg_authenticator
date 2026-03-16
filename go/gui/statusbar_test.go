@@ -48,20 +48,6 @@ func TestComputeRegistryStats_ExpiredOlderThan30Days(t *testing.T) {
 	}
 }
 
-func TestComputeRegistryStats_LastUpdated(t *testing.T) {
-	reg := core.Registry{
-		Keys: []core.KeyEntry{
-			{Authority: "A", From: "2025-01-01", To: nil},
-			{Authority: "B", From: "2026-02-15", To: nil},
-			{Authority: "C", From: "2025-06-01", To: nil},
-		},
-	}
-	stats := ComputeRegistryStats(reg, "2026-03-15")
-	if stats.LastUpdated != "2026-02-15" {
-		t.Errorf("LastUpdated = %q, want %q", stats.LastUpdated, "2026-02-15")
-	}
-}
-
 func TestComputeRegistryStats_EmptyRegistry(t *testing.T) {
 	reg := core.Registry{Keys: []core.KeyEntry{}}
 	stats := ComputeRegistryStats(reg, "2026-03-15")
@@ -70,9 +56,6 @@ func TestComputeRegistryStats_EmptyRegistry(t *testing.T) {
 	}
 	if stats.RecentlyExpired != 0 {
 		t.Errorf("RecentlyExpired = %d, want 0", stats.RecentlyExpired)
-	}
-	if stats.LastUpdated != "" {
-		t.Errorf("LastUpdated = %q, want empty", stats.LastUpdated)
 	}
 }
 
@@ -115,8 +98,5 @@ func TestComputeRegistryStats_MixedKeys(t *testing.T) {
 	}
 	if stats.RecentlyExpired != 1 {
 		t.Errorf("RecentlyExpired = %d, want 1", stats.RecentlyExpired)
-	}
-	if stats.LastUpdated != "2027-01-01" {
-		t.Errorf("LastUpdated = %q, want %q", stats.LastUpdated, "2027-01-01")
 	}
 }

@@ -16,11 +16,10 @@ import (
 type RegistryStats struct {
 	ActiveKeys      int
 	RecentlyExpired int // expired within the past 30 days
-	LastUpdated     string
 }
 
-// ComputeRegistryStats computes statistics from a registry using the given date
-// (YYYY-MM-DD format) as "today".
+// ComputeRegistryStats computes active key count and recently-expired count
+// from a registry using the given date (YYYY-MM-DD format) as "today".
 func ComputeRegistryStats(reg core.Registry, today string) RegistryStats {
 	var stats RegistryStats
 
@@ -30,13 +29,7 @@ func ComputeRegistryStats(reg core.Registry, today string) RegistryStats {
 	}
 	thirtyDaysAgo := todayTime.AddDate(0, 0, -30).Format("2006-01-02")
 
-	var latestFrom string
 	for _, key := range reg.Keys {
-		// Track the latest "from" date as a proxy for last registry update.
-		if key.From > latestFrom {
-			latestFrom = key.From
-		}
-
 		active := today >= key.From && (key.To == nil || today <= *key.To)
 		if active {
 			stats.ActiveKeys++
@@ -49,9 +42,6 @@ func ComputeRegistryStats(reg core.Registry, today string) RegistryStats {
 		}
 	}
 
-	if latestFrom != "" {
-		stats.LastUpdated = latestFrom
-	}
 	return stats
 }
 
@@ -69,18 +59,41 @@ func NewStatusBar(reg core.Registry, online bool) *fyne.Container {
 
 	activeLabel := widget.NewLabel(fmt.Sprintf("Active keys: %d", stats.ActiveKeys))
 	recentLabel := widget.NewLabel(fmt.Sprintf("Expired (30d): %d", stats.RecentlyExpired))
+	updatedLabel := widget.NewLabel("Last update: loading...")
 
-	updatedText := "Last update: unknown"
-	if stats.LastUpdated != "" {
-		updatedText = "Last update: " + core.FormatDateDisplay(stats.LastUpdated)
-	}
-	updatedLabel := widget.NewLabel(updatedText)
-
-	return container.NewHBox(
+	bar := container.NewHBox(
 		activeLabel,
 		layout.NewSpacer(),
 		recentLabel,
 		layout.NewSpacer(),
 		updatedLabel,
 	)
+
+	// TODO(tech-debt): This makes a separate GitHub API call from the audit tab's
+	// fetchCommits. Could share the first commit via callback/channel to avoid the
+	// duplicate request.
+	go func() {
+		apiURL := fmt.Sprintf(
+			"https://api.github.com/repos/%s/%s/commits?path=%s&per_page=1",
+			githubOwner, githubRepo, registryFilePath,
+		)
+		commits, _, err := fetchCommits(apiURL, "")
+		fyne.Do(func() {
+			if err != nil || len(commits) == 0 {
+				updatedLabel.SetText("Last update: unknown")
+				return
+			}
+			// TODO(tech-debt): Uses Author.Date (patch creation), not Committer.Date
+			// (push/merge). For rebased commits these may differ. Consistent with
+			// audit tab's formatCommitSummary which also uses Author.Date.
+			t, err := time.Parse(time.RFC3339, commits[0].Commit.Author.Date)
+			if err != nil {
+				updatedLabel.SetText("Last update: unknown")
+				return
+			}
+			updatedLabel.SetText("Last update: " + t.UTC().Format("2006-Jan-02"))
+		})
+	}()
+
+	return bar
 }
