@@ -55,10 +55,10 @@ func checkYubiKey(reg core.Registry) KeyCheckResult {
 // and detail lines for display.
 func formatKeyResult(result KeyCheckResult) (status string, details []string) {
 	if result.Error != nil {
-		switch classifyHardwareError(result.Error) {
-		case hwErrSmartcard:
+		switch core.ClassifyHardwareError(result.Error) {
+		case core.HwErrSmartcard:
 			status = "Smart card service not available"
-		case hwErrHardware:
+		case core.HwErrHardware:
 			status = "Please plug in your YubiKey and try again"
 		default:
 			status = "Failed to read YubiKey"

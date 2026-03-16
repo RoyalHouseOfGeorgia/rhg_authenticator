@@ -237,6 +237,16 @@ describe('fetchRegistry', () => {
     );
   });
 
+  it('rejects non-numeric Content-Length header', async () => {
+    const headers = new Headers({ 'Content-Length': 'bogus' });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response('{}', { status: 200, headers }),
+    );
+    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
+      'Registry response exceeds size limit',
+    );
+  });
+
   it('throws on timeout', async () => {
     vi.useFakeTimers();
     vi.mocked(fetch).mockImplementation(

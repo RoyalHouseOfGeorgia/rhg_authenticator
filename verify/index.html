@@ -7,11 +7,16 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' https://verify.royalhouseofgeorgia.ge; base-uri 'none'; form-action 'none'">
   <!--
-    Security headers that MUST be set by the production hosting server:
-    - Content-Security-Policy: frame-ancestors 'none' (meta tag CSP ignores this directive per spec)
-    - Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
-    - X-Content-Type-Options: nosniff (GitHub Pages sets this; verify on other hosts)
-    - X-Frame-Options: DENY (legacy browsers without CSP support)
+    REQUIRED: The production server MUST set these HTTP response headers.
+    GitHub Pages sets X-Content-Type-Options: nosniff by default.
+    For HSTS preload and frame-ancestors, configure via the hosting provider
+    or use a CDN/proxy (e.g., Cloudflare) that supports custom headers.
+
+    Content-Security-Policy: frame-ancestors 'none'
+      (meta tag CSP ignores frame-ancestors per W3C spec — server header required)
+    Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+    X-Content-Type-Options: nosniff
+    X-Frame-Options: DENY
   -->
   <meta name="referrer" content="no-referrer">
   <title>Royal House of Georgia — Credential Verification</title>
@@ -37,6 +42,6 @@
   <footer>
     <p>&copy; 2026 <a href="https://royalhouseofgeorgia.ge">Royal House of Georgia</a></p>
   </footer>
-  <script src="verify.js" integrity="sha384-mWrkr/TM/cCLtmn1Tazf9YT7ryiPRBWklZ2kEq6UcEwtJZpFnJB11TcTXuarlAHZ" crossorigin="anonymous"></script>
+  <script src="verify.js" integrity="sha384-08puUhmZVXhgZLf9MBpNZ6VZArUo3Z5d0rkqWnNuwTt3xUuNmD69OF4BnCK6ZmCQ" crossorigin="anonymous"></script>
 </body>
 </html>

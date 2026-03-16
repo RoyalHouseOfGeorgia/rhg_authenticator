@@ -196,7 +196,20 @@ if (result.valid) {
 - No mocking of internal modules — tests exercise the real code paths
 - Verification page tests use `// @vitest-environment happy-dom` per-file directive
 - `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page tests
-- 305 tests total (9 test files)
+- 306 tests total (9 test files)
+
+## Deployment Checklist — Verification Page
+
+The verification page (`verify/`) requires these HTTP headers from the hosting server:
+
+| Header | Value | Notes |
+|--------|-------|-------|
+| `Content-Security-Policy` | `frame-ancestors 'none'` | Meta tag CSP cannot enforce this directive |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` | Required for HSTS preload list |
+| `X-Content-Type-Options` | `nosniff` | GitHub Pages sets this by default |
+| `X-Frame-Options` | `DENY` | Legacy browser fallback |
+
+GitHub Pages provides HTTPS and `X-Content-Type-Options` automatically. For HSTS preload and `frame-ancestors`, use a CDN or proxy (e.g., Cloudflare) with custom header support.
 
 ## Key Registry Format
 
@@ -204,6 +217,6 @@ The `verify/keys/registry.json` file contains the development/maintenance key. T
 
 1. Generate an Ed25519 key on YubiKey PIV slot 9c (see [go/README.md](go/README.md#yubikey-setup))
 2. Open the **Registry** tab in the signing app
-3. Click **"Import from YubiKey"** (or import a `.crt`/`.pem` file via **"Import Certificate"**)
+3. Click **"Import from YubiKey"** to read the key directly, or **"Import Certificate"** for a `.crt`/`.pem` file
 4. Set `authority` to the formal title, `from` to the activation date, `to` to `null` for an active key
 5. Save and commit the updated `verify/keys/registry.json`

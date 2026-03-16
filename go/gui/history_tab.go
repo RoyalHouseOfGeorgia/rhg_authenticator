@@ -2,6 +2,7 @@ package gui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -58,7 +59,8 @@ func NewHistoryTab(logPath string, window fyne.Window) *fyne.Container {
 	loadRecords := func() {
 		records, err := log.ReadLog(logPath)
 		if err != nil {
-			dialog.ShowError(fmt.Errorf("Failed to read log: %w", err), window)
+			fmt.Fprintf(os.Stderr, "history: failed to read log: %v\n", err)
+			dialog.ShowError(fmt.Errorf("unable to load history"), window)
 			return
 		}
 		allRecords = records

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/go-piv/piv-go/v2/piv"
 )
@@ -24,6 +25,7 @@ var (
 type YubiKeyAdapter struct {
 	yk      yubiKeyHandle
 	pubKey  [32]byte
+	mu      sync.Mutex
 	readPin func() (string, error)
 }
 
@@ -89,6 +91,8 @@ func newAdapterFromHandle(yk yubiKeyHandle, readPin func() (string, error)) (*Yu
 // SetReadPin sets the PIN reader callback. This supports two-phase initialization
 // where the adapter is created before the GUI window exists.
 func (a *YubiKeyAdapter) SetReadPin(readPin func() (string, error)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.readPin = readPin
 }
 
@@ -100,13 +104,18 @@ func (a *YubiKeyAdapter) ExportPublicKey() ([32]byte, error) {
 // SignBytes signs data using the YubiKey's Ed25519 private key in PIV slot 9c.
 // The readPin callback is invoked to obtain the PIN for authentication.
 func (a *YubiKeyAdapter) SignBytes(data []byte) ([]byte, error) {
-	if a.readPin == nil {
+	// Narrow lock: read readPin reference only. Do not hold during PIN
+	// prompt or hardware signing — those block on user input and PCSC I/O.
+	a.mu.Lock()
+	rp := a.readPin
+	a.mu.Unlock()
+	if rp == nil {
 		return nil, errors.New("PIN reader not initialized")
 	}
 	priv, err := a.yk.PrivateKey(
 		piv.SlotSignature,
 		ed25519.PublicKey(a.pubKey[:]),
-		piv.KeyAuth{PINPrompt: a.readPin},
+		piv.KeyAuth{PINPrompt: rp},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get private key handle: %w", err)

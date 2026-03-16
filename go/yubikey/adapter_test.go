@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-piv/piv-go/v2/piv"
@@ -511,5 +512,41 @@ func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 	if len(sig) != 64 {
 		t.Fatalf("expected 64-byte signature, got %d", len(sig))
 	}
+}
+
+func TestYubiKeyAdapter_ConcurrentSignAndSetReadPin(t *testing.T) {
+	pub, sk := testEd25519Key()
+	yk := &fakeYubiKey{
+		cert:    testCert(pub),
+		privKey: &fakeSigner{key: sk},
+	}
+
+	adapter, err := newAdapterFromHandle(yk, staticPin("000000"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer adapter.Close()
+
+	const goroutines = 100
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		if i%2 == 0 {
+			go func() {
+				defer wg.Done()
+				adapter.SetReadPin(staticPin("123456"))
+			}()
+		} else {
+			go func() {
+				defer wg.Done()
+				// We don't care about the result — only that there is no
+				// data race or panic from concurrent access.
+				adapter.SignBytes([]byte("concurrent test data"))
+			}()
+		}
+	}
+
+	wg.Wait()
 }
 

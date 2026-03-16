@@ -33,14 +33,6 @@ func canSave(reg core.Registry) bool {
 	return len(reg.Keys) > 0
 }
 
-// formatKeyColumn returns a truncated display of a public key string.
-func formatKeyColumn(key string) string {
-	if len(key) <= 12 {
-		return key
-	}
-	return key[:12] + "..."
-}
-
 // RegistryTab holds the registry manager UI and its state.
 type RegistryTab struct {
 	Content     fyne.CanvasObject
@@ -106,13 +98,16 @@ func NewRegistryTab(window fyne.Window) *RegistryTab {
 			return len(state.registry.Keys) + 1, len(tableColumns) // +1 for header row
 		},
 		func() fyne.CanvasObject {
-			return widget.NewLabel("placeholder")
+			label := widget.NewLabel("placeholder")
+			label.Truncation = fyne.TextTruncateEllipsis
+			return label
 		},
 		func(id widget.TableCellID, o fyne.CanvasObject) {
 			label, ok := o.(*widget.Label)
 			if !ok {
 				return
 			}
+			label.Truncation = fyne.TextTruncateEllipsis
 			if id.Row == 0 {
 				// Header row.
 				label.SetText(tableColumns[id.Col])
@@ -158,6 +153,29 @@ func NewRegistryTab(window fyne.Window) *RegistryTab {
 			return
 		}
 		state.selected = id.Row - 1 // convert to 0-based index into Keys
+		if id.Row > 0 && id.Row-1 < len(state.registry.Keys) {
+			entry := state.registry.Keys[id.Row-1]
+			var cellText string
+			switch id.Col {
+			case 0:
+				cellText = fmt.Sprintf("%d", id.Row)
+			case 1:
+				cellText = entry.Authority
+			case 2:
+				cellText = core.FormatDateDisplay(entry.From)
+			case 3:
+				if entry.To != nil {
+					cellText = core.FormatDateDisplay(*entry.To)
+				}
+			case 4:
+				cellText = entry.Note
+			case 5:
+				cellText = fingerprintCache[id.Row-1]
+			}
+			if cellText != "" {
+				statusLabel.SetText(cellText)
+			}
+		}
 	}
 
 	// Helper to refresh UI after state changes.

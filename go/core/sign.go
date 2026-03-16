@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"time"
 
 	"golang.org/x/text/unicode/norm"
@@ -42,10 +41,11 @@ type SignResponse struct {
 	Payload       string // base64url-encoded canonical JSON
 	URL           string // full verification URL
 	PayloadSHA256 string // hex-encoded SHA-256 of raw canonical JSON bytes (pre-base64url)
+	Record        issuancelog.IssuanceRecord // populated issuance record for caller to log
 }
 
 // HandleSign validates, signs, and produces a verification URL for a credential.
-func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte, logPath string) (SignResponse, error) {
+func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte) (SignResponse, error) {
 	// 1. Construct credential with NFC-normalized fields.
 	credObj := map[string]any{
 		"version":   float64(1),
@@ -90,23 +90,17 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte, logPat
 	sigB64 := Encode(signature)
 	url := VerifyBaseURL + "?p=" + payloadB64 + "&s=" + sigB64
 
-	// 8. Append issuance log record (non-fatal — signing already succeeded).
+	// 8. Build issuance record for caller to log.
 	sha256sum := sha256.Sum256(payloadBytes)
+	sha256hex := hex.EncodeToString(sha256sum[:])
 	record := issuancelog.IssuanceRecord{
 		Timestamp:       time.Now().UTC().Format(time.RFC3339),
 		Recipient:       credObj["recipient"].(string),
 		Honor:           credObj["honor"].(string),
 		Detail:          credObj["detail"].(string),
 		Date:            credObj["date"].(string),
-		PayloadSHA256:   hex.EncodeToString(sha256sum[:]),
+		PayloadSHA256:   sha256hex,
 		SignatureB64URL: sigB64,
-	}
-	// Fields guaranteed present as strings by ValidateCredential above.
-	if logPath != "" {
-		if err := issuancelog.AppendRecord(logPath, record); err != nil {
-			// Synchronous write is <1ms for expected volume (~100s of records).
-			fmt.Fprintf(os.Stderr, "warning: log append failed: %v\n", err)
-		}
 	}
 
 	// 9. Return response.
@@ -114,6 +108,7 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte, logPat
 		Signature:     sigB64,
 		Payload:       payloadB64,
 		URL:           url,
-		PayloadSHA256: hex.EncodeToString(sha256sum[:]),
+		PayloadSHA256: sha256hex,
+		Record:        record,
 	}, nil
 }

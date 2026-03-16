@@ -115,10 +115,10 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	importYubiKeyBtn := widget.NewButton("Import from YubiKey", func() {
 		key, err := yubikey.ReadPublicKey()
 		if err != nil {
-			lower := strings.ToLower(err.Error())
-			if strings.Contains(lower, "pcsc") || strings.Contains(lower, "scard") {
+			switch core.ClassifyHardwareError(err) {
+			case core.HwErrSmartcard:
 				keyLabel.SetText("Smart card service not available")
-			} else {
+			default:
 				keyLabel.SetText("No YubiKey detected — plug in and try again")
 			}
 			importedKey = ""
@@ -155,12 +155,15 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 		}
 		authority := strings.TrimSpace(authorityEntry.Text)
 		if authority == "" {
+			errorLabel.SetText("Authority is required")
 			return
 		}
 		if importedKey == "" {
+			errorLabel.SetText("Import a public key first")
 			return
 		}
 		if fromEntry.Text == "" {
+			errorLabel.SetText("From date is required")
 			return
 		}
 
@@ -231,6 +234,9 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 	noteEntry := widget.NewMultiLineEntry()
 	noteEntry.SetText(entry.Note)
 
+	errorLabel := widget.NewLabel("")
+	errorLabel.Wrapping = fyne.TextWrapBreak
+
 	formContent := container.NewVBox(
 		widget.NewLabel("Authority"),
 		authorityEntry,
@@ -243,6 +249,7 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 		keyLabel,
 		widget.NewLabel("Note"),
 		noteEntry,
+		errorLabel,
 	)
 
 	dialog.ShowCustomConfirm("Edit Entry", "Save", "Cancel", formContent, func(ok bool) {
@@ -251,9 +258,11 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 		}
 		authority := strings.TrimSpace(authorityEntry.Text)
 		if authority == "" {
+			errorLabel.SetText("Authority is required")
 			return
 		}
 		if fromEntry.Text == "" {
+			errorLabel.SetText("From date is required")
 			return
 		}
 

@@ -13,7 +13,6 @@ Self-contained desktop application for signing Royal House of Georgia credential
 |----------|------|-----|----------------|
 | **macOS** | Built-in (PCSC framework) | Built-in (OpenGL) | None |
 | **Windows** | Built-in (WinSCard) | Built-in (OpenGL) | None |
-| **Linux** | Requires `pcscd` | Requires OpenGL/X11 dev libs | `sudo apt install libpcsclite-dev libgl1-mesa-dev xorg-dev pcscd` |
 
 ## Build
 
@@ -69,7 +68,7 @@ yubico-piv-tool -s 9c -a import-certificate -i cert.pem
 
 ### Export Public Key for Registry
 
-The easiest way is to use the **Registry Manager** tool (`rhg-regmgr`), which can import `.crt`/`.pem` certificate files directly and extract the Ed25519 public key automatically. See [Registry Manager](#registry-manager) below.
+The easiest way is to use the **Registry** tab in the signing app, which can import `.crt`/`.pem` certificate files directly and extract the Ed25519 public key automatically. See [Registry Tab](#registry-tab) below.
 
 Alternatively, using command-line tools:
 
@@ -84,23 +83,19 @@ Or using **YubiKey Manager** (`ykman`):
 ```bash
 ykman piv certificates export 9c cert.crt
 ```
-Then import `cert.crt` into the Registry Manager.
+Then import `cert.crt` via the Registry tab.
 
-## Registry Manager
+## Registry Tab
 
-The **Registry Manager** (`rhg-regmgr`) is a standalone GUI tool for managing the key registry. Build and run:
+The **Registry** tab (built into the signing app) manages the key registry:
 
-```bash
-go build -o release/rhg-regmgr ./cmd/regmgr
-./release/rhg-regmgr
-```
-
-Features:
 - **Auto-fetches** the live registry from the server on startup
-- **Import certificates** (`.crt`/`.pem`) — extracts Ed25519 public keys automatically
+- **Import from YubiKey** — reads the Ed25519 public key directly from an inserted YubiKey
+- **Import certificates** (`.crt`/`.pem`) — extracts Ed25519 public keys from certificate files
 - **Add/Edit** registry entries with full validation (entries cannot be deleted — revoke by setting an expiry date)
 - **Calendar date pickers** for key validity ranges
 - **Save** to local JSON file for committing to the repository
+- **Click any cell** to see the full text in the status bar (long values are truncated with ellipsis in the table)
 
 Workflow:
 1. Open the **Registry** tab — it fetches the current production registry automatically
@@ -131,11 +126,12 @@ go/
 │   ├── credential.go    # Credential v1 validation
 │   ├── date.go          # Calendar-correct date validation
 │   ├── format.go        # Date display formatting (YYYY-Mon-DD)
+│   ├── hwerror.go       # Hardware error classification (shared by gui + regmgr)
 │   ├── registry.go      # Key registry schema, lookup, fingerprint
 │   └── sign.go          # Signing orchestrator
 ├── gui/                 # Fyne GUI (signing app)
 │   ├── audit_tab.go     # Registry audit (GitHub commit history, ETag caching)
-│   ├── errors.go        # Hardware error classification
+│   ├── errors.go        # Error sanitization for GUI dialogs (delegates to core/hwerror)
 │   ├── history_tab.go   # Issuance log browser
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display

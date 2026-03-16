@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -210,27 +211,25 @@ func DecodePublicKey(entry KeyEntry) ([32]byte, error) {
 		return result, fmt.Errorf("decodePublicKey: public_key exceeds maximum length")
 	}
 
-	bytes, err := base64.StdEncoding.DecodeString(entry.PublicKey)
+	rawKey, err := base64.StdEncoding.DecodeString(entry.PublicKey)
 	if err != nil {
 		return result, fmt.Errorf("decodePublicKey: invalid base64: %w", err)
 	}
 
-	if len(bytes) == 44 {
-		for i := 0; i < len(ED25519SpkiPrefix); i++ {
-			if bytes[i] != ED25519SpkiPrefix[i] {
-				return result, fmt.Errorf("decodePublicKey: 44-byte key does not have expected Ed25519 SPKI prefix")
-			}
+	if len(rawKey) == 44 {
+		if !bytes.HasPrefix(rawKey, ED25519SpkiPrefix) {
+			return result, fmt.Errorf("decodePublicKey: 44-byte key does not have expected Ed25519 SPKI prefix")
 		}
-		copy(result[:], bytes[len(ED25519SpkiPrefix):])
+		copy(result[:], rawKey[len(ED25519SpkiPrefix):])
 		return result, nil
 	}
 
-	if len(bytes) == 32 {
-		copy(result[:], bytes)
+	if len(rawKey) == 32 {
+		copy(result[:], rawKey)
 		return result, nil
 	}
 
-	return result, fmt.Errorf("decodePublicKey: unexpected key length %d bytes (expected 32 or 44)", len(bytes))
+	return result, fmt.Errorf("decodePublicKey: unexpected key length %d bytes (expected 32 or 44)", len(rawKey))
 }
 
 // KeyFingerprint returns the SHA-256 fingerprint of a key entry's public key

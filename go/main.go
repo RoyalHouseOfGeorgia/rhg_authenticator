@@ -111,7 +111,7 @@ func main() {
 
 	// 9. Non-blocking version check.
 	go func() {
-		result := update.Check("royalhouseofgeorgia", "rhg-authenticator", version)
+		result := update.Check("RoyalHouseOfGeorgia", "rhg_authenticator", version)
 		if result.UpdateAvailable {
 			u, err := url.Parse(result.DownloadURL)
 			if err != nil || u.Scheme != "https" {
@@ -139,19 +139,33 @@ func fatalDialog(window fyne.Window, message string) {
 	window.ShowAndRun()
 }
 
-// rhgTheme implements fyne.Theme with a burgundy/cream color scheme.
+// rhgTheme implements fyne.Theme with a navy/ivory color scheme.
 type rhgTheme struct{}
 
 func (t *rhgTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
 	switch name {
 	case theme.ColorNamePrimary:
-		return color.NRGBA{R: 0x80, G: 0x00, B: 0x20, A: 0xFF} // #800020 burgundy
+		return color.NRGBA{R: 0x1B, G: 0x3A, B: 0x5C, A: 0xFF} // #1B3A5C deep navy
 	case theme.ColorNameButton:
-		return color.NRGBA{R: 0x80, G: 0x00, B: 0x20, A: 0xFF}
+		return color.NRGBA{R: 0x1B, G: 0x3A, B: 0x5C, A: 0xFF} // #1B3A5C deep navy
+	case theme.ColorNameForegroundOnPrimary:
+		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white on buttons
 	case theme.ColorNameBackground:
-		return color.NRGBA{R: 0xFA, G: 0xF8, B: 0xF0, A: 0xFF} // #FAF8F0 cream
+		return color.NRGBA{R: 0xF5, G: 0xF2, B: 0xEB, A: 0xFF} // #F5F2EB ivory
 	case theme.ColorNameForeground:
-		return color.NRGBA{R: 0x2C, G: 0x2C, B: 0x2C, A: 0xFF} // #2c2c2c
+		return color.NRGBA{R: 0x1A, G: 0x1A, B: 0x1A, A: 0xFF} // #1A1A1A near-black
+	case theme.ColorNameInputBackground:
+		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white inputs
+	case theme.ColorNameDisabled:
+		return color.NRGBA{R: 0x8C, G: 0x8C, B: 0x8C, A: 0xFF} // #8C8C8C
+	case theme.ColorNamePlaceHolder:
+		return color.NRGBA{R: 0x6B, G: 0x6B, B: 0x6B, A: 0xFF} // #6B6B6B
+	case theme.ColorNameHover:
+		return color.NRGBA{R: 0x26, G: 0x4D, B: 0x73, A: 0xFF} // #264D73
+	case theme.ColorNamePressed:
+		return color.NRGBA{R: 0x12, G: 0x2A, B: 0x42, A: 0xFF} // #122A42
+	case theme.ColorNameFocus:
+		return color.NRGBA{R: 0x26, G: 0x4D, B: 0x73, A: 0xFF} // #264D73
 	default:
 		return theme.DefaultTheme().Color(name, variant)
 	}

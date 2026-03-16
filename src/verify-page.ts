@@ -108,8 +108,11 @@ export async function fetchRegistry(url: string): Promise<Registry> {
 
   // Early-out on Content-Length (optimization only — may reflect compressed size).
   const contentLength = response.headers.get('content-length');
-  if (contentLength !== null && parseInt(contentLength, 10) > MAX_REGISTRY_BYTES) {
-    throw new Error('Registry response exceeds size limit');
+  if (contentLength !== null) {
+    const len = parseInt(contentLength, 10);
+    if (!Number.isFinite(len) || len > MAX_REGISTRY_BYTES) {
+      throw new Error('Registry response exceeds size limit');
+    }
   }
 
   const text = await response.text();

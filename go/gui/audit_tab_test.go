@@ -12,7 +12,7 @@ import (
 // validCommitJSON is a fixture for fetch tests.
 const validCommitJSON = `[{
 	"sha": "abc123",
-	"html_url": "https://github.com/royalhouseofgeorgia/rhg-authenticator/commit/abc123",
+	"html_url": "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/commit/abc123",
 	"commit": {
 		"message": "Update registry",
 		"author": {
@@ -41,7 +41,7 @@ func TestFetchCommits_Success(t *testing.T) {
 	if commits[0].SHA != "abc123" {
 		t.Errorf("SHA = %q, want %q", commits[0].SHA, "abc123")
 	}
-	if commits[0].HTMLURL != "https://github.com/royalhouseofgeorgia/rhg-authenticator/commit/abc123" {
+	if commits[0].HTMLURL != "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/commit/abc123" {
 		t.Errorf("HTMLURL = %q", commits[0].HTMLURL)
 	}
 	if commits[0].Commit.Message != "Update registry" {

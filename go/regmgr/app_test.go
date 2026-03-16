@@ -27,28 +27,6 @@ func TestCanSave_NonEmpty(t *testing.T) {
 	}
 }
 
-func TestFormatKeyColumn_Short(t *testing.T) {
-	got := formatKeyColumn("abc")
-	if got != "abc" {
-		t.Errorf("formatKeyColumn(short) = %q, want %q", got, "abc")
-	}
-}
-
-func TestFormatKeyColumn_Exact12(t *testing.T) {
-	got := formatKeyColumn("123456789012")
-	if got != "123456789012" {
-		t.Errorf("formatKeyColumn(12 chars) = %q, want no truncation", got)
-	}
-}
-
-func TestFormatKeyColumn_Long(t *testing.T) {
-	got := formatKeyColumn("1234567890123456")
-	want := "123456789012..."
-	if got != want {
-		t.Errorf("formatKeyColumn(long) = %q, want %q", got, want)
-	}
-}
-
 func TestAppState_InitialValues(t *testing.T) {
 	state := &appState{selected: -1}
 	if state.filePath != "" {

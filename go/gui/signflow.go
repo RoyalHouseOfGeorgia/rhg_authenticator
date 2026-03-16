@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/qr"
 )
 
@@ -39,20 +40,27 @@ func executeSignFlow(
 	}
 
 	// 3. Sign.
-	resp, err := core.HandleSign(req, adapter, pubKey, logPath)
+	resp, err := core.HandleSign(req, adapter, pubKey)
 	if err != nil {
 		logger.log(sanitizeError("HandleSign", err))
 		return SignFlowResult{}, fmt.Errorf("sign: %w", err)
 	}
 
-	// 4. Generate QR preview.
+	// 4. Log issuance record (non-fatal — signing already succeeded).
+	if logPath != "" {
+		if logErr := issuancelog.AppendRecord(logPath, resp.Record); logErr != nil {
+			logger.log("log append failed: " + logErr.Error())
+		}
+	}
+
+	// 5. Generate QR preview.
 	pngData, err := qr.GeneratePNG(resp.URL, qrPreviewPx)
 	if err != nil {
 		logger.log(sanitizeError("QR", err))
 		return SignFlowResult{}, fmt.Errorf("QR generation: %w", err)
 	}
 
-	// 5. Compute hash8 from PayloadSHA256 (set by HandleSign).
+	// 6. Compute hash8 from PayloadSHA256 (set by HandleSign).
 	hash8 := resp.PayloadSHA256[:8]
 
 	return SignFlowResult{

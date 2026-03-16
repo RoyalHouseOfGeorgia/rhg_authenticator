@@ -83,7 +83,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 	dateEntry.Disable() // read-only — date set via calendar
 
 	calButton := widget.NewButton("\U0001F4C5", func() {
-		cal := xwidget.NewCalendar(time.Now(), func(t time.Time) {
+		cal := xwidget.NewCalendar(time.Now().UTC(), func(t time.Time) {
 			dateEntry.SetText(t.Format("2006-01-02"))
 		})
 		dialog.ShowCustom("Select Date", "Close", cal, window)
@@ -158,7 +158,8 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 						}
 						defer writer.Close()
 						if saveErr := qr.SaveSVG(result.Response.URL, writer.URI().Path()); saveErr != nil {
-							dialog.ShowError(saveErr, window)
+							logger.log("SVG save failed: " + saveErr.Error())
+							dialog.ShowError(fmt.Errorf("failed to save SVG file"), window)
 						}
 					}, window)
 					saveDialog.SetFileName(defaultName)
@@ -175,11 +176,13 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 						defer writer.Close()
 						pngHiRes, pngErr := qr.GeneratePNG(result.Response.URL, qrSavePx)
 						if pngErr != nil {
-							dialog.ShowError(pngErr, window)
+							logger.log("PNG generation failed: " + pngErr.Error())
+							dialog.ShowError(fmt.Errorf("failed to generate PNG"), window)
 							return
 						}
 						if writeErr := os.WriteFile(writer.URI().Path(), pngHiRes, 0o600); writeErr != nil {
-							dialog.ShowError(writeErr, window)
+							logger.log("PNG save failed: " + writeErr.Error())
+							dialog.ShowError(fmt.Errorf("failed to save PNG file"), window)
 						}
 					}, window)
 					saveDialog.SetFileName(defaultName)
@@ -242,12 +245,12 @@ func sanitizeError(prefix string, err error) string {
 	if err == nil {
 		return prefix + ": unknown error"
 	}
-	switch classifyHardwareError(err) {
-	case hwErrSmartcard:
+	switch core.ClassifyHardwareError(err) {
+	case core.HwErrSmartcard:
 		return prefix + ": smart card service error"
-	case hwErrPIN:
+	case core.HwErrPIN:
 		return prefix + ": PIN error"
-	case hwErrHardware:
+	case core.HwErrHardware:
 		return prefix + ": hardware device error"
 	default:
 		return prefix + ": unexpected error"
@@ -260,10 +263,10 @@ func friendlyYubiKeyError(err error, logger *debugLogger) string {
 	if err == nil {
 		return "Unknown YubiKey error"
 	}
-	switch classifyHardwareError(err) {
-	case hwErrSmartcard:
+	switch core.ClassifyHardwareError(err) {
+	case core.HwErrSmartcard:
 		return "Smart card service not available. On Linux: sudo apt install pcscd"
-	case hwErrHardware:
+	case core.HwErrHardware:
 		return "Please plug in your YubiKey and try again"
 	default:
 		logger.log("YubiKey: " + err.Error())
@@ -284,7 +287,7 @@ func signFlowErrorMessage(err error, logger *debugLogger) string {
 		logger.log(msg)
 		return "Signing failed. Check debug.log for details."
 	default:
-		if classifyHardwareError(err) != "" {
+		if core.ClassifyHardwareError(err) != "" {
 			return friendlyYubiKeyError(err, logger)
 		}
 		logger.log("sign flow: " + msg)

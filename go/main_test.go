@@ -8,46 +8,36 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
-func TestRhgTheme_PrimaryColor(t *testing.T) {
+func TestRhgTheme_Colors(t *testing.T) {
 	th := &rhgTheme{}
-	got := th.Color(theme.ColorNamePrimary, theme.VariantDark)
-	want := color.NRGBA{R: 0x80, G: 0x00, B: 0x20, A: 0xFF}
-	if got != want {
-		t.Errorf("Primary color = %v, want %v", got, want)
+	tests := []struct {
+		name fyne.ThemeColorName
+		want color.Color
+	}{
+		{theme.ColorNamePrimary, color.NRGBA{0x1B, 0x3A, 0x5C, 0xFF}},
+		{theme.ColorNameButton, color.NRGBA{0x1B, 0x3A, 0x5C, 0xFF}},
+		{theme.ColorNameForegroundOnPrimary, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
+		{theme.ColorNameBackground, color.NRGBA{0xF5, 0xF2, 0xEB, 0xFF}},
+		{theme.ColorNameForeground, color.NRGBA{0x1A, 0x1A, 0x1A, 0xFF}},
+		{theme.ColorNameInputBackground, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
+		{theme.ColorNameDisabled, color.NRGBA{0x8C, 0x8C, 0x8C, 0xFF}},
+		{theme.ColorNamePlaceHolder, color.NRGBA{0x6B, 0x6B, 0x6B, 0xFF}},
+		{theme.ColorNameHover, color.NRGBA{0x26, 0x4D, 0x73, 0xFF}},
+		{theme.ColorNamePressed, color.NRGBA{0x12, 0x2A, 0x42, 0xFF}},
+		{theme.ColorNameFocus, color.NRGBA{0x26, 0x4D, 0x73, 0xFF}},
 	}
-}
-
-func TestRhgTheme_ButtonColor(t *testing.T) {
-	th := &rhgTheme{}
-	got := th.Color(theme.ColorNameButton, theme.VariantDark)
-	want := color.NRGBA{R: 0x80, G: 0x00, B: 0x20, A: 0xFF}
-	if got != want {
-		t.Errorf("Button color = %v, want %v", got, want)
-	}
-}
-
-func TestRhgTheme_BackgroundColor(t *testing.T) {
-	th := &rhgTheme{}
-	got := th.Color(theme.ColorNameBackground, theme.VariantLight)
-	want := color.NRGBA{R: 0xFA, G: 0xF8, B: 0xF0, A: 0xFF}
-	if got != want {
-		t.Errorf("Background color = %v, want %v", got, want)
-	}
-}
-
-func TestRhgTheme_ForegroundColor(t *testing.T) {
-	th := &rhgTheme{}
-	got := th.Color(theme.ColorNameForeground, theme.VariantLight)
-	want := color.NRGBA{R: 0x2C, G: 0x2C, B: 0x2C, A: 0xFF}
-	if got != want {
-		t.Errorf("Foreground color = %v, want %v", got, want)
+	for _, tt := range tests {
+		got := th.Color(tt.name, theme.VariantLight)
+		if got != tt.want {
+			t.Errorf("Color(%s) = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }
 
 func TestRhgTheme_FallbackColor(t *testing.T) {
 	th := &rhgTheme{}
-	got := th.Color(theme.ColorNameDisabled, theme.VariantDark)
-	want := theme.DefaultTheme().Color(theme.ColorNameDisabled, theme.VariantDark)
+	got := th.Color(theme.ColorNameSeparator, theme.VariantDark)
+	want := theme.DefaultTheme().Color(theme.ColorNameSeparator, theme.VariantDark)
 	if got != want {
 		t.Errorf("Fallback color = %v, want %v (default theme)", got, want)
 	}
@@ -55,11 +45,18 @@ func TestRhgTheme_FallbackColor(t *testing.T) {
 
 func TestRhgTheme_VariantIndependence(t *testing.T) {
 	th := &rhgTheme{}
-	// Custom colors should be the same regardless of variant.
-	light := th.Color(theme.ColorNamePrimary, theme.VariantLight)
-	dark := th.Color(theme.ColorNamePrimary, theme.VariantDark)
-	if light != dark {
-		t.Errorf("Primary color varies by variant: light=%v, dark=%v", light, dark)
+	names := []fyne.ThemeColorName{
+		theme.ColorNamePrimary, theme.ColorNameButton, theme.ColorNameForegroundOnPrimary,
+		theme.ColorNameBackground, theme.ColorNameForeground, theme.ColorNameInputBackground,
+		theme.ColorNameDisabled, theme.ColorNamePlaceHolder, theme.ColorNameHover,
+		theme.ColorNamePressed, theme.ColorNameFocus,
+	}
+	for _, name := range names {
+		light := th.Color(name, theme.VariantLight)
+		dark := th.Color(name, theme.VariantDark)
+		if light != dark {
+			t.Errorf("Color(%s) varies by variant: light=%v, dark=%v", name, light, dark)
+		}
 	}
 }
 

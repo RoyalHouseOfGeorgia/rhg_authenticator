@@ -3,40 +3,42 @@ package gui
 import (
 	"fmt"
 	"testing"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
 func TestClassifyHardwareError_PCSC(t *testing.T) {
 	got := classifyHardwareError(fmt.Errorf("pcsc daemon not running"))
-	if got != hwErrSmartcard {
-		t.Errorf("got %q, want %q", got, hwErrSmartcard)
+	if got != core.HwErrSmartcard {
+		t.Errorf("got %q, want %q", got, core.HwErrSmartcard)
 	}
 }
 
 func TestClassifyHardwareError_SCARD(t *testing.T) {
 	got := classifyHardwareError(fmt.Errorf("scard: service unavailable"))
-	if got != hwErrSmartcard {
-		t.Errorf("got %q, want %q", got, hwErrSmartcard)
+	if got != core.HwErrSmartcard {
+		t.Errorf("got %q, want %q", got, core.HwErrSmartcard)
 	}
 }
 
 func TestClassifyHardwareError_PIN(t *testing.T) {
 	got := classifyHardwareError(fmt.Errorf("wrong PIN entered"))
-	if got != hwErrPIN {
-		t.Errorf("got %q, want %q", got, hwErrPIN)
+	if got != core.HwErrPIN {
+		t.Errorf("got %q, want %q", got, core.HwErrPIN)
 	}
 }
 
 func TestClassifyHardwareError_YubiKey(t *testing.T) {
 	got := classifyHardwareError(fmt.Errorf("no YubiKey detected"))
-	if got != hwErrHardware {
-		t.Errorf("got %q, want %q", got, hwErrHardware)
+	if got != core.HwErrHardware {
+		t.Errorf("got %q, want %q", got, core.HwErrHardware)
 	}
 }
 
 func TestClassifyHardwareError_Card(t *testing.T) {
 	got := classifyHardwareError(fmt.Errorf("smart card not found"))
-	if got != hwErrHardware {
-		t.Errorf("got %q, want %q", got, hwErrHardware)
+	if got != core.HwErrHardware {
+		t.Errorf("got %q, want %q", got, core.HwErrHardware)
 	}
 }
 
@@ -56,8 +58,8 @@ func TestClassifyHardwareError_Nil(t *testing.T) {
 
 func TestClassifyHardwareError_PINLocked(t *testing.T) {
 	got := classifyHardwareError(fmt.Errorf("PIN locked"))
-	if got != hwErrPIN {
-		t.Errorf("got %q, want %q", got, hwErrPIN)
+	if got != core.HwErrPIN {
+		t.Errorf("got %q, want %q", got, core.HwErrPIN)
 	}
 }
 

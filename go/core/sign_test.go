@@ -7,11 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
 // mockAdapter signs with an in-memory Ed25519 key.
@@ -144,7 +141,7 @@ func TestCrossLanguageVectors(t *testing.T) {
 				Honor:     honor,
 				Detail:    detail,
 				Date:      date,
-			}, adapter, pubKey, "")
+			}, adapter, pubKey)
 			if err != nil {
 				t.Fatalf("HandleSign error: %v", err)
 			}
@@ -171,7 +168,7 @@ func TestHandleSign_ValidationError(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "Test Detail",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "")
+	}, adapter, pubKey)
 
 	if err == nil {
 		t.Fatal("expected error for empty recipient")
@@ -194,7 +191,7 @@ func TestHandleSign_PayloadTooLarge(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    hugeDetail,
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "")
+	}, adapter, pubKey)
 
 	if err == nil {
 		t.Fatal("expected error for oversized payload")
@@ -214,7 +211,7 @@ func TestHandleSign_SignatureWrongLength(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "")
+	}, adapter, pubKey)
 
 	if err == nil {
 		t.Fatal("expected error for wrong signature length")
@@ -234,7 +231,7 @@ func TestHandleSign_PostSignVerifyFailure(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "")
+	}, adapter, pubKey)
 
 	if err == nil {
 		t.Fatal("expected error for post-sign verification failure")
@@ -255,7 +252,7 @@ func TestHandleSign_NFCNormalization(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "re\u0301sume\u0301", // NFD
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "")
+	}, adapter, pubKey)
 	if err != nil {
 		t.Fatalf("HandleSign error: %v", err)
 	}
@@ -288,7 +285,7 @@ func TestHandleSign_SigningAdapterError(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "")
+	}, adapter, pubKey)
 
 	if err == nil {
 		t.Fatal("expected error from adapter")
@@ -308,7 +305,7 @@ func TestHandleSign_InvalidDate(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "not-a-date",
-	}, adapter, pubKey, "")
+	}, adapter, pubKey)
 
 	if err == nil {
 		t.Fatal("expected error for invalid date")
@@ -318,20 +315,17 @@ func TestHandleSign_InvalidDate(t *testing.T) {
 	}
 }
 
-func TestHandleSign_LogFileWritten(t *testing.T) {
+func TestHandleSign_RecordPopulated(t *testing.T) {
 	sk := testSecretKey()
 	pubKey := testPubKey()
 	adapter := &mockAdapter{secretKey: sk}
-
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "issuances.json")
 
 	resp, err := HandleSign(SignRequest{
 		Recipient: "John Doe",
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, logPath)
+	}, adapter, pubKey)
 	if err != nil {
 		t.Fatalf("HandleSign error: %v", err)
 	}
@@ -344,61 +338,37 @@ func TestHandleSign_LogFileWritten(t *testing.T) {
 		t.Errorf("PayloadSHA256 is not valid hex: %v", err)
 	}
 
-	// Verify the log file exists and contains the record.
-	records, err := issuancelog.ReadLog(logPath)
-	if err != nil {
-		t.Fatalf("ReadLog error: %v", err)
+	// Verify the Record field is populated with correct values.
+	rec := resp.Record
+	if rec.Recipient != "John Doe" {
+		t.Errorf("Record.Recipient = %q, want %q", rec.Recipient, "John Doe")
 	}
-	if len(records) != 1 {
-		t.Fatalf("expected 1 log record, got %d", len(records))
+	if rec.Honor != "Test Honor" {
+		t.Errorf("Record.Honor = %q, want %q", rec.Honor, "Test Honor")
 	}
-	if records[0].Recipient != "John Doe" {
-		t.Errorf("Recipient = %q, want %q", records[0].Recipient, "John Doe")
+	if rec.Detail != "For service" {
+		t.Errorf("Record.Detail = %q, want %q", rec.Detail, "For service")
 	}
-	if records[0].Honor != "Test Honor" {
-		t.Errorf("Honor = %q, want %q", records[0].Honor, "Test Honor")
+	if rec.Date != "2026-03-13" {
+		t.Errorf("Record.Date = %q, want %q", rec.Date, "2026-03-13")
 	}
-	if records[0].Detail != "For service" {
-		t.Errorf("Detail = %q, want %q", records[0].Detail, "For service")
+	if rec.PayloadSHA256 == "" {
+		t.Error("Record.PayloadSHA256 should not be empty")
 	}
-	if records[0].Date != "2026-03-13" {
-		t.Errorf("Date = %q, want %q", records[0].Date, "2026-03-13")
+	if rec.PayloadSHA256 != resp.PayloadSHA256 {
+		t.Errorf("Record.PayloadSHA256 = %q, want %q (matching response)", rec.PayloadSHA256, resp.PayloadSHA256)
 	}
-	if records[0].PayloadSHA256 == "" {
-		t.Error("PayloadSHA256 should not be empty")
+	if rec.SignatureB64URL == "" {
+		t.Error("Record.SignatureB64URL should not be empty")
 	}
-	if records[0].SignatureB64URL == "" {
-		t.Error("SignatureB64URL should not be empty")
+	if rec.SignatureB64URL != resp.Signature {
+		t.Errorf("Record.SignatureB64URL = %q, want %q (matching response)", rec.SignatureB64URL, resp.Signature)
 	}
-	if records[0].Timestamp == "" {
-		t.Error("Timestamp should not be empty")
-	}
-}
-
-func TestHandleSign_NoLogWhenPathEmpty(t *testing.T) {
-	sk := testSecretKey()
-	pubKey := testPubKey()
-	adapter := &mockAdapter{secretKey: sk}
-
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "issuances.json")
-
-	// Pass empty logPath — no log file should be created.
-	_, err := HandleSign(SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Test Honor",
-		Detail:    "For service",
-		Date:      "2026-03-13",
-	}, adapter, pubKey, "")
-	if err != nil {
-		t.Fatalf("HandleSign error: %v", err)
-	}
-
-	// The log file at the temp dir path should not exist.
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Errorf("log file should not exist when logPath is empty, but got stat result: %v", err)
+	if rec.Timestamp == "" {
+		t.Error("Record.Timestamp should not be empty")
 	}
 }
+
 
 func TestHandleSign_PayloadSHA256MatchesCanonical(t *testing.T) {
 	sk := testSecretKey()
@@ -410,7 +380,7 @@ func TestHandleSign_PayloadSHA256MatchesCanonical(t *testing.T) {
 		Honor:     "Test Honor",
 		Detail:    "For service",
 		Date:      "2026-03-13",
-	}, adapter, pubKey, "")
+	}, adapter, pubKey)
 	if err != nil {
 		t.Fatalf("HandleSign error: %v", err)
 	}
@@ -427,28 +397,10 @@ func TestHandleSign_PayloadSHA256MatchesCanonical(t *testing.T) {
 		t.Errorf("PayloadSHA256 mismatch:\n  got  %s\n  want %s", resp.PayloadSHA256, expectedHex)
 	}
 
-	// Also verify it matches the log record's PayloadSHA256 when logging is enabled.
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "issuances.json")
-	resp2, err := HandleSign(SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Test Honor",
-		Detail:    "For service",
-		Date:      "2026-03-13",
-	}, adapter, pubKey, logPath)
-	if err != nil {
-		t.Fatalf("HandleSign error: %v", err)
-	}
-	records, err := issuancelog.ReadLog(logPath)
-	if err != nil {
-		t.Fatalf("ReadLog error: %v", err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("expected 1 log record, got %d", len(records))
-	}
-	if resp2.PayloadSHA256 != records[0].PayloadSHA256 {
-		t.Errorf("response PayloadSHA256 %q != log record PayloadSHA256 %q",
-			resp2.PayloadSHA256, records[0].PayloadSHA256)
+	// Also verify it matches the Record's PayloadSHA256.
+	if resp.PayloadSHA256 != resp.Record.PayloadSHA256 {
+		t.Errorf("response PayloadSHA256 %q != Record.PayloadSHA256 %q",
+			resp.PayloadSHA256, resp.Record.PayloadSHA256)
 	}
 }
 

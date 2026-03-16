@@ -4,11 +4,13 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
 // mockSignAdapter implements core.SigningAdapter using an in-memory Ed25519 key.
@@ -158,5 +160,125 @@ func TestExecuteSignFlow_SignError(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "signing") {
 		t.Errorf("error should relate to signing, got: %q", got)
+	}
+}
+
+func TestExecuteSignFlow_LogFileWritten(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	adapter := &mockSignAdapter{secretKey: priv}
+
+	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return adapter, nopCloser{}, nil
+	}
+
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logPath := filepath.Join(tmpDir, "issuances.json")
+
+	req := core.SignRequest{
+		Recipient: "John Doe",
+		Honor:     "Order of the Crown of Georgia",
+		Detail:    "Distinguished service",
+		Date:      "2026-03-14",
+	}
+
+	_, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, logger)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the log file was written by signflow (not by HandleSign).
+	records, err := issuancelog.ReadLog(logPath)
+	if err != nil {
+		t.Fatalf("ReadLog error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 log record, got %d", len(records))
+	}
+	if records[0].Recipient != "John Doe" {
+		t.Errorf("Recipient = %q, want %q", records[0].Recipient, "John Doe")
+	}
+	if records[0].Honor != "Order of the Crown of Georgia" {
+		t.Errorf("Honor = %q, want %q", records[0].Honor, "Order of the Crown of Georgia")
+	}
+	if records[0].PayloadSHA256 == "" {
+		t.Error("PayloadSHA256 should not be empty")
+	}
+	if records[0].SignatureB64URL == "" {
+		t.Error("SignatureB64URL should not be empty")
+	}
+	if records[0].Timestamp == "" {
+		t.Error("Timestamp should not be empty")
+	}
+}
+
+func TestExecuteSignFlow_NoLogWhenPathEmpty(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	adapter := &mockSignAdapter{secretKey: priv}
+
+	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return adapter, nopCloser{}, nil
+	}
+
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+
+	req := core.SignRequest{
+		Recipient: "John Doe",
+		Honor:     "Order of the Crown of Georgia",
+		Detail:    "Distinguished service",
+		Date:      "2026-03-14",
+	}
+
+	// Pass empty logPath — no log file should be created.
+	_, err := executeSignFlow(req, "", openAdapter, dummyReadPin, logger)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify no log file was created in the temp directory.
+	logPath := filepath.Join(tmpDir, "issuances.json")
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("log file should not exist when logPath is empty, got stat result: %v", err)
+	}
+}
+
+func TestExecuteSignFlow_LogWriteFailureNonFatal(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	adapter := &mockSignAdapter{secretKey: priv}
+
+	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return adapter, nopCloser{}, nil
+	}
+
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+
+	// Use a log path in a non-existent directory to force a write error.
+	logPath := filepath.Join(tmpDir, "nonexistent", "subdir", "issuances.json")
+
+	req := core.SignRequest{
+		Recipient: "John Doe",
+		Honor:     "Order of the Crown of Georgia",
+		Detail:    "Distinguished service",
+		Date:      "2026-03-14",
+	}
+
+	// Should succeed — log failure is non-fatal.
+	result, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, logger)
+	if err != nil {
+		t.Fatalf("expected no error (log failure is non-fatal), got: %v", err)
+	}
+	if result.Response.URL == "" {
+		t.Error("expected non-empty URL despite log failure")
+	}
+
+	// Verify the debug log captured the failure.
+	debugData, err := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
+	if err != nil {
+		t.Fatalf("ReadFile debug.log error: %v", err)
+	}
+	if !strings.Contains(string(debugData), "log append failed") {
+		t.Errorf("debug log should contain 'log append failed', got: %s", string(debugData))
 	}
 }

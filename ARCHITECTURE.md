@@ -16,7 +16,7 @@ The system has three independent components:
 
 1. **Verification library + page (TypeScript)** — core crypto, credential validation, key registry, and the public-facing verification page on GitHub Pages. This is what the world sees.
 2. **Signing app (Go)** — self-contained desktop application with Fyne GUI. Talks directly to YubiKey via PCSC (`piv-go`), signs credentials, generates QR codes (SVG/PNG). Single binary, no external tools required. See [go/README.md](go/README.md) for details.
-3. **Registry manager (Go, tab in signing app)** — integrated tab for managing the key registry. Imports Ed25519 public keys directly from an inserted YubiKey or from `.crt`/`.pem` certificate files, supports add/edit of registry entries with date pickers (entries cannot be deleted — revoke by setting an expiry date), fetches the live registry from the server, and saves to a local JSON file for committing.
+3. **Registry manager (Go, tab in signing app)** — integrated tab for managing the key registry. Imports Ed25519 public keys directly from an inserted YubiKey or from `.crt`/`.pem` certificate files, supports add/edit of registry entries with date pickers (entries cannot be deleted — revoke by setting an expiry date), fetches the live registry from the server, saves to a local JSON file for committing. Table cells show truncated text with ellipsis; click any cell to see the full value in the status bar.
 
 ## Threat Model
 
@@ -186,5 +186,5 @@ Verification operates on the original payload bytes, not a re-canonicalized form
 - **Single-pass verification**: Verify signature against all registry keys; authority is derived from the matching key. Date-mismatch diagnostics reported for valid-but-expired matches.
 - **Go for signing app**: Single binary, `piv-go` for direct YubiKey access (PIN in-process), `crypto/ed25519` in stdlib, Fyne for cross-platform GUI. Rust was evaluated but its `yubikey` crate lacks Ed25519 PIV support (issue #602, no progress). CGO required on macOS/Linux for PCSC; pure Go on Windows.
 - **SVG as primary QR output**: Vector format scales perfectly for print. No pixel density concerns, no forced QR version needed.
-- **Registry fallback chain**: remote (10s timeout) → cached file → embedded (go:embed). Corrupted cache falls through to embedded without terminating.
+- **Registry fetch**: remote only (10s timeout), no cache or embedded fallback. If the server is unreachable, the app opens in offline mode (signing still works, but registry-dependent features are unavailable).
 - **Cross-language compatibility**: Go `core/` package produces byte-identical canonical JSON to TypeScript. Verified by test vectors (ASCII, Georgian, NFC edge cases).

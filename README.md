@@ -25,7 +25,7 @@
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-743 tests passing (438 Go + 305 TypeScript).
+854 tests passing (548 Go + 306 TypeScript).
 
 ## Quick Start — Signing App (Go)
 
@@ -47,7 +47,6 @@ The app has five tabs:
 **Platform-specific build dependencies:**
 - macOS: none (PCSC framework + OpenGL built-in)
 - Windows: none (WinSCard + OpenGL built-in)
-- Linux: `sudo apt install libpcsclite-dev libgl1-mesa-dev xorg-dev pcscd`
 
 See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
@@ -55,7 +54,7 @@ See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
 ```bash
 npm install
-npm test              # 305 tests
+npm test              # 306 tests
 npm run lint          # tsc --noEmit
 npm run build:verify  # Bundle verification page JS
 ```
