@@ -139,33 +139,51 @@ func fatalDialog(window fyne.Window, message string) {
 	window.ShowAndRun()
 }
 
-// rhgTheme implements fyne.Theme with a navy/ivory color scheme.
+// rhgTheme implements fyne.Theme with a Microsoft Office / Fluent UI color scheme.
 type rhgTheme struct{}
 
 func (t *rhgTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
 	switch name {
 	case theme.ColorNamePrimary:
-		return color.NRGBA{R: 0x1B, G: 0x3A, B: 0x5C, A: 0xFF} // #1B3A5C deep navy
+		return color.NRGBA{R: 0x2B, G: 0x57, B: 0x9A, A: 0xFF} // #2B579A Office blue
 	case theme.ColorNameButton:
-		return color.NRGBA{R: 0x1B, G: 0x3A, B: 0x5C, A: 0xFF} // #1B3A5C deep navy
+		return color.NRGBA{R: 0x2B, G: 0x57, B: 0x9A, A: 0xFF} // #2B579A Office blue
 	case theme.ColorNameForegroundOnPrimary:
-		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white on buttons
+		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white on blue
 	case theme.ColorNameBackground:
-		return color.NRGBA{R: 0xF5, G: 0xF2, B: 0xEB, A: 0xFF} // #F5F2EB ivory
+		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white
 	case theme.ColorNameForeground:
-		return color.NRGBA{R: 0x1A, G: 0x1A, B: 0x1A, A: 0xFF} // #1A1A1A near-black
+		return color.NRGBA{R: 0x33, G: 0x33, B: 0x33, A: 0xFF} // #333333 body text
 	case theme.ColorNameInputBackground:
 		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white inputs
 	case theme.ColorNameDisabled:
-		return color.NRGBA{R: 0x8C, G: 0x8C, B: 0x8C, A: 0xFF} // #8C8C8C
+		return color.NRGBA{R: 0x75, G: 0x75, B: 0x75, A: 0xFF} // #757575 WCAG AA
 	case theme.ColorNamePlaceHolder:
-		return color.NRGBA{R: 0x6B, G: 0x6B, B: 0x6B, A: 0xFF} // #6B6B6B
+		return color.NRGBA{R: 0x76, G: 0x76, B: 0x76, A: 0xFF} // #767676 WCAG AA
 	case theme.ColorNameHover:
-		return color.NRGBA{R: 0x26, G: 0x4D, B: 0x73, A: 0xFF} // #264D73
+		return color.NRGBA{R: 0x2B, G: 0x57, B: 0x9A, A: 0x26} // ~15% blue overlay
 	case theme.ColorNamePressed:
-		return color.NRGBA{R: 0x12, G: 0x2A, B: 0x42, A: 0xFF} // #122A42
+		return color.NRGBA{R: 0x2B, G: 0x57, B: 0x9A, A: 0x33} // ~20% blue overlay
 	case theme.ColorNameFocus:
-		return color.NRGBA{R: 0x26, G: 0x4D, B: 0x73, A: 0xFF} // #264D73
+		return color.NRGBA{R: 0x00, G: 0x5A, B: 0x9E, A: 0xFF} // #005A9E distinct focus
+	case theme.ColorNameMenuBackground:
+		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white popups
+	case theme.ColorNameOverlayBackground:
+		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF dialog panels
+	case theme.ColorNameSelection:
+		return color.NRGBA{R: 0x2B, G: 0x57, B: 0x9A, A: 0x40} // ~25% blue selection
+	case theme.ColorNameDisabledButton:
+		return color.NRGBA{R: 0xF3, G: 0xF2, B: 0xF1, A: 0xFF} // #F3F2F1 Fluent disabled
+	case theme.ColorNameHeaderBackground:
+		return color.NRGBA{R: 0xF3, G: 0xF2, B: 0xF1, A: 0xFF} // #F3F2F1 Fluent neutral
+	case theme.ColorNameInputBorder:
+		return color.NRGBA{R: 0x8A, G: 0x88, B: 0x86, A: 0xFF} // #8A8886 Fluent tertiary
+	case theme.ColorNameHyperlink:
+		return color.NRGBA{R: 0x05, G: 0x63, B: 0xC1, A: 0xFF} // #0563C1 Office link
+	case theme.ColorNameScrollBar:
+		return color.NRGBA{R: 0xC8, G: 0xC6, B: 0xC4, A: 0xFF} // #C8C6C4 Fluent quaternary
+	case theme.ColorNameSeparator:
+		return color.NRGBA{R: 0xED, G: 0xEB, B: 0xE9, A: 0xFF} // #EDEBE9 Fluent light
 	default:
 		return theme.DefaultTheme().Color(name, variant)
 	}

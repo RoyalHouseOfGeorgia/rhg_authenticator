@@ -14,17 +14,26 @@ func TestRhgTheme_Colors(t *testing.T) {
 		name fyne.ThemeColorName
 		want color.Color
 	}{
-		{theme.ColorNamePrimary, color.NRGBA{0x1B, 0x3A, 0x5C, 0xFF}},
-		{theme.ColorNameButton, color.NRGBA{0x1B, 0x3A, 0x5C, 0xFF}},
+		{theme.ColorNamePrimary, color.NRGBA{0x2B, 0x57, 0x9A, 0xFF}},
+		{theme.ColorNameButton, color.NRGBA{0x2B, 0x57, 0x9A, 0xFF}},
 		{theme.ColorNameForegroundOnPrimary, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
-		{theme.ColorNameBackground, color.NRGBA{0xF5, 0xF2, 0xEB, 0xFF}},
-		{theme.ColorNameForeground, color.NRGBA{0x1A, 0x1A, 0x1A, 0xFF}},
+		{theme.ColorNameBackground, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
+		{theme.ColorNameForeground, color.NRGBA{0x33, 0x33, 0x33, 0xFF}},
 		{theme.ColorNameInputBackground, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
-		{theme.ColorNameDisabled, color.NRGBA{0x8C, 0x8C, 0x8C, 0xFF}},
-		{theme.ColorNamePlaceHolder, color.NRGBA{0x6B, 0x6B, 0x6B, 0xFF}},
-		{theme.ColorNameHover, color.NRGBA{0x26, 0x4D, 0x73, 0xFF}},
-		{theme.ColorNamePressed, color.NRGBA{0x12, 0x2A, 0x42, 0xFF}},
-		{theme.ColorNameFocus, color.NRGBA{0x26, 0x4D, 0x73, 0xFF}},
+		{theme.ColorNameDisabled, color.NRGBA{0x75, 0x75, 0x75, 0xFF}},
+		{theme.ColorNamePlaceHolder, color.NRGBA{0x76, 0x76, 0x76, 0xFF}},
+		{theme.ColorNameHover, color.NRGBA{0x2B, 0x57, 0x9A, 0x26}},
+		{theme.ColorNamePressed, color.NRGBA{0x2B, 0x57, 0x9A, 0x33}},
+		{theme.ColorNameFocus, color.NRGBA{0x00, 0x5A, 0x9E, 0xFF}},
+		{theme.ColorNameMenuBackground, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
+		{theme.ColorNameOverlayBackground, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
+		{theme.ColorNameSelection, color.NRGBA{0x2B, 0x57, 0x9A, 0x40}},
+		{theme.ColorNameDisabledButton, color.NRGBA{0xF3, 0xF2, 0xF1, 0xFF}},
+		{theme.ColorNameHeaderBackground, color.NRGBA{0xF3, 0xF2, 0xF1, 0xFF}},
+		{theme.ColorNameInputBorder, color.NRGBA{0x8A, 0x88, 0x86, 0xFF}},
+		{theme.ColorNameHyperlink, color.NRGBA{0x05, 0x63, 0xC1, 0xFF}},
+		{theme.ColorNameScrollBar, color.NRGBA{0xC8, 0xC6, 0xC4, 0xFF}},
+		{theme.ColorNameSeparator, color.NRGBA{0xED, 0xEB, 0xE9, 0xFF}},
 	}
 	for _, tt := range tests {
 		got := th.Color(tt.name, theme.VariantLight)
@@ -36,8 +45,8 @@ func TestRhgTheme_Colors(t *testing.T) {
 
 func TestRhgTheme_FallbackColor(t *testing.T) {
 	th := &rhgTheme{}
-	got := th.Color(theme.ColorNameSeparator, theme.VariantDark)
-	want := theme.DefaultTheme().Color(theme.ColorNameSeparator, theme.VariantDark)
+	got := th.Color(theme.ColorNameError, theme.VariantDark)
+	want := theme.DefaultTheme().Color(theme.ColorNameError, theme.VariantDark)
 	if got != want {
 		t.Errorf("Fallback color = %v, want %v (default theme)", got, want)
 	}
@@ -49,7 +58,10 @@ func TestRhgTheme_VariantIndependence(t *testing.T) {
 		theme.ColorNamePrimary, theme.ColorNameButton, theme.ColorNameForegroundOnPrimary,
 		theme.ColorNameBackground, theme.ColorNameForeground, theme.ColorNameInputBackground,
 		theme.ColorNameDisabled, theme.ColorNamePlaceHolder, theme.ColorNameHover,
-		theme.ColorNamePressed, theme.ColorNameFocus,
+		theme.ColorNamePressed, theme.ColorNameFocus, theme.ColorNameMenuBackground,
+		theme.ColorNameOverlayBackground, theme.ColorNameSelection, theme.ColorNameDisabledButton,
+		theme.ColorNameHeaderBackground, theme.ColorNameInputBorder, theme.ColorNameHyperlink,
+		theme.ColorNameScrollBar, theme.ColorNameSeparator,
 	}
 	for _, name := range names {
 		light := th.Color(name, theme.VariantLight)
