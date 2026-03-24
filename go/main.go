@@ -70,7 +70,7 @@ func main() {
 		DataDir: dataDir,
 	}, window)
 	historyContent := gui.NewHistoryTab(logPath, window)
-	regTab := regmgr.NewRegistryTab(window)
+	regTab := regmgr.NewRegistryTab(window, dataDir)
 	auditContent := gui.NewAuditTab(window)
 	yubiKeyContent := gui.NewYubiKeyTab(reg, regOnline, window)
 
@@ -90,8 +90,8 @@ func main() {
 	// 7. Close intercept for unsaved registry changes + PIN cache cleanup.
 	window.SetCloseIntercept(func() {
 		if regTab.IsDirty() {
-			dialog.ShowConfirm("Unsaved Changes",
-				"The registry has unsaved changes. Exit anyway?",
+			dialog.ShowConfirm("Unsubmitted Changes",
+				"The registry has unsubmitted changes. Exit anyway?",
 				func(ok bool) {
 					if ok {
 						signCleanup()
@@ -114,7 +114,7 @@ func main() {
 		result := update.Check("RoyalHouseOfGeorgia", "rhg_authenticator", version)
 		if result.UpdateAvailable {
 			u, err := url.Parse(result.DownloadURL)
-			if err != nil || u.Scheme != "https" {
+			if err != nil || u.Scheme != "https" || u.Host != "github.com" {
 				return
 			}
 			fyne.Do(func() {
@@ -142,20 +142,27 @@ func fatalDialog(window fyne.Window, message string) {
 // rhgTheme implements fyne.Theme with a Microsoft Office / Fluent UI color scheme.
 type rhgTheme struct{}
 
+// Named theme colors to avoid repeating hex values.
+var (
+	officeBlue    = color.NRGBA{R: 0x2B, G: 0x57, B: 0x9A, A: 0xFF} // #2B579A
+	white         = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF
+	fluentNeutral = color.NRGBA{R: 0xF3, G: 0xF2, B: 0xF1, A: 0xFF} // #F3F2F1
+)
+
 func (t *rhgTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
 	switch name {
 	case theme.ColorNamePrimary:
-		return color.NRGBA{R: 0x2B, G: 0x57, B: 0x9A, A: 0xFF} // #2B579A Office blue
+		return officeBlue
 	case theme.ColorNameButton:
-		return color.NRGBA{R: 0x2B, G: 0x57, B: 0x9A, A: 0xFF} // #2B579A Office blue
+		return officeBlue
 	case theme.ColorNameForegroundOnPrimary:
-		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white on blue
+		return white
 	case theme.ColorNameBackground:
-		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white
+		return white
 	case theme.ColorNameForeground:
 		return color.NRGBA{R: 0x33, G: 0x33, B: 0x33, A: 0xFF} // #333333 body text
 	case theme.ColorNameInputBackground:
-		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white inputs
+		return white
 	case theme.ColorNameDisabled:
 		return color.NRGBA{R: 0x75, G: 0x75, B: 0x75, A: 0xFF} // #757575 WCAG AA
 	case theme.ColorNamePlaceHolder:
@@ -167,15 +174,15 @@ func (t *rhgTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) co
 	case theme.ColorNameFocus:
 		return color.NRGBA{R: 0x00, G: 0x5A, B: 0x9E, A: 0xFF} // #005A9E distinct focus
 	case theme.ColorNameMenuBackground:
-		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF white popups
+		return white
 	case theme.ColorNameOverlayBackground:
-		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF} // #FFFFFF dialog panels
+		return white
 	case theme.ColorNameSelection:
 		return color.NRGBA{R: 0x2B, G: 0x57, B: 0x9A, A: 0x40} // ~25% blue selection
 	case theme.ColorNameDisabledButton:
-		return color.NRGBA{R: 0xF3, G: 0xF2, B: 0xF1, A: 0xFF} // #F3F2F1 Fluent disabled
+		return fluentNeutral
 	case theme.ColorNameHeaderBackground:
-		return color.NRGBA{R: 0xF3, G: 0xF2, B: 0xF1, A: 0xFF} // #F3F2F1 Fluent neutral
+		return fluentNeutral
 	case theme.ColorNameInputBorder:
 		return color.NRGBA{R: 0x8A, G: 0x88, B: 0x86, A: 0xFF} // #8A8886 Fluent tertiary
 	case theme.ColorNameHyperlink:

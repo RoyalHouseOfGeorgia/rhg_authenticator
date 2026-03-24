@@ -115,3 +115,67 @@ func TestBuildEntry_PreservesFromDate(t *testing.T) {
 		t.Errorf("From = %q, want %q", entry.From, "2099-12-31")
 	}
 }
+
+func TestValidateEntryForm_Valid(t *testing.T) {
+	err := validateEntryForm("Auth", "2026-01-01", "key", true, "")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEntryForm_EmptyAuthority(t *testing.T) {
+	err := validateEntryForm("", "2026-01-01", "key", true, "")
+	if err == nil {
+		t.Fatal("expected error for empty authority")
+	}
+}
+
+func TestValidateEntryForm_WhitespaceAuthority(t *testing.T) {
+	err := validateEntryForm("   ", "2026-01-01", "key", true, "")
+	if err == nil {
+		t.Fatal("expected error for whitespace authority")
+	}
+}
+
+func TestValidateEntryForm_EmptyFrom(t *testing.T) {
+	err := validateEntryForm("Auth", "", "key", true, "")
+	if err == nil {
+		t.Fatal("expected error for empty from date")
+	}
+}
+
+func TestValidateEntryForm_InvalidFromDate(t *testing.T) {
+	err := validateEntryForm("Auth", "not-a-date", "key", true, "")
+	if err == nil {
+		t.Fatal("expected error for invalid from date")
+	}
+}
+
+func TestValidateEntryForm_InvalidToDate(t *testing.T) {
+	err := validateEntryForm("Auth", "2026-01-01", "key", false, "not-a-date")
+	if err == nil {
+		t.Fatal("expected error for invalid to date")
+	}
+}
+
+func TestValidateEntryForm_ValidToDate(t *testing.T) {
+	err := validateEntryForm("Auth", "2026-01-01", "key", false, "2027-12-31")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEntryForm_NoExpirySkipsToValidation(t *testing.T) {
+	// When noExpiry is true, to date is ignored.
+	err := validateEntryForm("Auth", "2026-01-01", "key", true, "garbage")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEntryForm_EmptyKey(t *testing.T) {
+	err := validateEntryForm("Auth", "2026-01-01", "", true, "")
+	if err == nil {
+		t.Fatal("expected error for empty key")
+	}
+}

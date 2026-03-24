@@ -12,6 +12,9 @@ const (
 	HwErrHardware  = "hardware"
 )
 
+// Patterns match error strings from piv-go and the PCSC daemon.
+// Update if the piv-go library changes its error format.
+
 // pinRE matches the word "pin" as a whole word (case-insensitive),
 // avoiding false positives like "spinning", "hairpin", "pinot".
 var pinRE = regexp.MustCompile(`(?i)\bpin\b`)

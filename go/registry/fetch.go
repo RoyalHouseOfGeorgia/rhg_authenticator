@@ -3,8 +3,8 @@ package registry
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -35,9 +35,15 @@ func FetchRegistry(remoteURL string) (core.Registry, error) {
 	return reg, nil
 }
 
+// Security note: uses default TLS (system CA bundle). Certificate pinning is
+// intentionally omitted — it breaks on cert rotation and requires app updates.
+// Registry integrity is ultimately verified by matching signing keys against
+// the registry, not by TLS alone.
+var registryClient = &http.Client{Timeout: FetchTimeout}
+
 // fetchRemote does an HTTP GET with timeout and body size limit.
 func fetchRemote(url string) ([]byte, error) {
-	client := &http.Client{Timeout: FetchTimeout}
+	client := registryClient
 
 	resp, err := client.Get(url)
 	if err != nil {
@@ -50,13 +56,17 @@ func fetchRemote(url string) ([]byte, error) {
 	}
 
 	ct := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(ct, "application/json") {
+	mediaType, _, parseErr := mime.ParseMediaType(ct)
+	if parseErr != nil || mediaType != "application/json" {
 		return nil, fmt.Errorf("unexpected Content-Type: %q", ct)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+	if len(body) > maxRegistryBytes {
+		return nil, fmt.Errorf("registry response exceeds %d byte limit", maxRegistryBytes)
 	}
 
 	return body, nil

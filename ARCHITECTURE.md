@@ -16,12 +16,12 @@ The system has three independent components:
 
 1. **Verification library + page (TypeScript)** — core crypto, credential validation, key registry, and the public-facing verification page on GitHub Pages. This is what the world sees.
 2. **Signing app (Go)** — self-contained desktop application with Fyne GUI. Talks directly to YubiKey via PCSC (`piv-go`), signs credentials, generates QR codes (SVG/PNG). Single binary, no external tools required. See [go/README.md](go/README.md) for details.
-3. **Registry manager (Go, tab in signing app)** — integrated tab for managing the key registry. Imports Ed25519 public keys directly from an inserted YubiKey or from `.crt`/`.pem` certificate files, supports add/edit of registry entries with date pickers (entries cannot be deleted — revoke by setting an expiry date), fetches the live registry from the server, saves to a local JSON file for committing. Table cells show truncated text with ellipsis; click any cell to see the full value in the status bar.
+3. **Registry manager (Go, tab in signing app)** — integrated tab for managing the key registry. Imports Ed25519 public keys directly from an inserted YubiKey or from `.crt`/`.pem` certificate files, supports add/edit of registry entries with date pickers (entries cannot be deleted — revoke by setting an expiry date), fetches the live registry from the server. Changes are submitted as GitHub pull requests for admin review via the `ghapi` package (OAuth Device Flow, token stored in OS keychain with 90-day local TTL). Table cells show truncated text with ellipsis; click any cell to see the full value in the status bar.
 
 ## Threat Model
 
 - **Trust anchor**: The YubiKey hardware token. Private key never leaves the device.
-- **Public registry**: `verify/keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls. Managed via the Registry tab in the signing app.
+- **Public registry**: `verify/keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls and a PR-based review workflow. Changes are submitted as pull requests via the Registry tab; the repository admin reviews and merges.
 - **Verification is client-side**: The public verification page fetches the registry and performs all crypto in the browser — no server round-trip.
 - **PIN security**: The Go signing app uses `piv-go` to talk directly to the YubiKey via PCSC. PIN is handled entirely in-process — never on the command line, never in a file, never visible in `/proc`.
 - **QR as transport**: The QR code is a URL containing the full signed credential. No database lookup required.
@@ -187,4 +187,5 @@ Verification operates on the original payload bytes, not a re-canonicalized form
 - **Go for signing app**: Single binary, `piv-go` for direct YubiKey access (PIN in-process), `crypto/ed25519` in stdlib, Fyne for cross-platform GUI. Rust was evaluated but its `yubikey` crate lacks Ed25519 PIV support (issue #602, no progress). CGO required on macOS/Linux for PCSC; pure Go on Windows.
 - **SVG as primary QR output**: Vector format scales perfectly for print. No pixel density concerns, no forced QR version needed.
 - **Registry fetch**: remote only (10s timeout), no cache or embedded fallback. If the server is unreachable, the app opens in offline mode (signing still works, but registry-dependent features are unavailable).
+- **Token lifecycle**: OAuth tokens stored in OS keychain (Linux: file fallback with 0600). 90-day local TTL enforced on session restore; expired tokens are cleared and require re-authentication. Tokens validated live against GitHub API on each app startup.
 - **Cross-language compatibility**: Go `core/` package produces byte-identical canonical JSON to TypeScript. Verified by test vectors (ASCII, Georgian, NFC edge cases).

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
@@ -589,6 +590,52 @@ func TestDebugLogger_TimestampFormat(t *testing.T) {
 	// Line should be bracketed: [timestamp] message
 	if !strings.HasPrefix(content, "[") {
 		t.Errorf("expected line to start with '[', got: %q", content)
+	}
+}
+
+func TestDebugLogger_SanitizesControlChars(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger.log("line1\ninjected\r\x00hidden")
+
+	data, err := os.ReadFile(logger.path)
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	content := string(data)
+	// The file should contain exactly one line (timestamp + sanitized message + newline).
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	if len(lines) != 1 {
+		t.Errorf("expected 1 line, got %d: %q", len(lines), content)
+	}
+	// No control chars except the trailing newline from Fprintf format.
+	for _, r := range strings.TrimSpace(content) {
+		if r < 0x20 {
+			t.Errorf("found control char U+%04X in log output: %q", r, content)
+			break
+		}
+	}
+}
+
+func TestDebugLogger_TruncatesLongMessage(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	longMsg := strings.Repeat("x", 600)
+	logger.log(longMsg)
+
+	data, err := os.ReadFile(logger.path)
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	content := string(data)
+	// The message portion (after "] ") should be at most 500 chars.
+	idx := strings.Index(content, "] ")
+	if idx < 0 {
+		t.Fatalf("unexpected format: %q", content)
+	}
+	msgPart := strings.TrimSpace(content[idx+2:])
+	if len([]rune(msgPart)) > core.MaxLogRunes {
+		t.Errorf("message not truncated: %d runes, want <= %d", len([]rune(msgPart)), core.MaxLogRunes)
 	}
 }
 

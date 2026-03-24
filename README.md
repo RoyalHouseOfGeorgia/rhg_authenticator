@@ -40,7 +40,7 @@ make build          # → release/rhg-authenticator
 The app has five tabs:
 - **Sign** — fill in credential form, sign with YubiKey, generate QR code
 - **History** — browse previously issued credentials, search by recipient
-- **Registry** — manage the key registry (import from YubiKey or .crt/.pem, add/edit entries, save JSON)
+- **Registry** — manage the key registry (import from YubiKey or .crt/.pem, add/edit entries, submit as PR for review)
 - **Audit** — view GitHub commit history of the registry file (tamper detection)
 - **YubiKey** — check if the inserted YubiKey is authorized in the registry
 
@@ -92,6 +92,7 @@ Compare the output with the hash in `SHA256SUMS.txt`.
 | [`go-piv/piv-go/v2`](https://github.com/go-piv/piv-go) | YubiKey PIV access (Ed25519, PCSC, PIN in-process) |
 | [`fyne.io/fyne/v2`](https://fyne.io) | Cross-platform GUI |
 | [`skip2/go-qrcode`](https://github.com/skip2/go-qrcode) | QR code generation (SVG + PNG) |
+| [`zalando/go-keyring`](https://github.com/zalando/go-keyring) | OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) |
 | `golang.org/x/text` | NFC Unicode normalization |
 | Go stdlib | `crypto/ed25519`, `crypto/sha256`, `encoding/json`, `encoding/base64` |
 

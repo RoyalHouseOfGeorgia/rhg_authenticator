@@ -1,6 +1,7 @@
 package regmgr
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -29,46 +30,76 @@ func buildEntry(authority, from string, to *string, publicKey, note string) core
 	}
 }
 
+// datePickerRow holds widgets for a date input with calendar button.
+type datePickerRow struct {
+	entry  *widget.Entry
+	calBtn *widget.Button
+	row    *fyne.Container
+}
+
+// newDatePickerRow builds a date picker row with a calendar popup.
+func newDatePickerRow(window fyne.Window, initial string) datePickerRow {
+	entry := widget.NewEntry()
+	entry.SetText(initial)
+	entry.Disable()
+	calBtn := widget.NewButton("\U0001F4C5", func() {
+		cal := xwidget.NewCalendar(time.Now().UTC(), func(t time.Time) {
+			entry.SetText(t.Format("2006-01-02"))
+		})
+		dialog.ShowCustom("Select Date", "Close", cal, window)
+	})
+	row := container.NewBorder(nil, nil, nil, calBtn, entry)
+	return datePickerRow{entry: entry, calBtn: calBtn, row: row}
+}
+
+// newExpirySection builds a to-date picker with "No expiry" checkbox.
+func newExpirySection(window fyne.Window, initialTo string, hasExpiry bool) (datePickerRow, *widget.Check) {
+	dp := newDatePickerRow(window, initialTo)
+	if !hasExpiry {
+		dp.calBtn.Disable()
+	}
+	noExpiryCheck := widget.NewCheck("No expiry", func(checked bool) {
+		if checked {
+			dp.entry.SetText("")
+			dp.entry.Disable()
+			dp.calBtn.Disable()
+		} else {
+			dp.entry.Enable()
+			dp.calBtn.Enable()
+		}
+	})
+	noExpiryCheck.SetChecked(!hasExpiry)
+	return dp, noExpiryCheck
+}
+
+// validateEntryForm validates common entry form fields.
+// Returns nil if valid, or an error with a user-facing message.
+func validateEntryForm(authority, from, key string, noExpiry bool, to string) error {
+	if strings.TrimSpace(authority) == "" {
+		return fmt.Errorf("Authority is required")
+	}
+	if from == "" {
+		return fmt.Errorf("From date is required")
+	}
+	if !core.IsValidDate(from) {
+		return fmt.Errorf("Invalid from date format")
+	}
+	if !noExpiry && to != "" && !core.IsValidDate(to) {
+		return fmt.Errorf("Invalid to date format")
+	}
+	if key == "" {
+		return fmt.Errorf("Import a public key first")
+	}
+	return nil
+}
+
 // showAddDialog shows a dialog for adding a new key entry.
 func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	authorityEntry := widget.NewEntry()
 	authorityEntry.SetPlaceHolder("Authority name")
 
-	// From date picker.
-	fromEntry := widget.NewEntry()
-	fromEntry.SetText(time.Now().UTC().Format("2006-01-02"))
-	fromEntry.Disable()
-	fromCalButton := widget.NewButton("\U0001F4C5", func() {
-		cal := xwidget.NewCalendar(time.Now().UTC(), func(t time.Time) {
-			fromEntry.SetText(t.Format("2006-01-02"))
-		})
-		dialog.ShowCustom("Select Date", "Close", cal, window)
-	})
-	fromRow := container.NewBorder(nil, nil, nil, fromCalButton, fromEntry)
-
-	// To date picker with "No expiry" checkbox.
-	toEntry := widget.NewEntry()
-	toEntry.Disable()
-	toCalButton := widget.NewButton("\U0001F4C5", func() {
-		cal := xwidget.NewCalendar(time.Now().UTC(), func(t time.Time) {
-			toEntry.SetText(t.Format("2006-01-02"))
-		})
-		dialog.ShowCustom("Select Date", "Close", cal, window)
-	})
-	toCalButton.Disable()
-	toRow := container.NewBorder(nil, nil, nil, toCalButton, toEntry)
-
-	noExpiryCheck := widget.NewCheck("No expiry", func(checked bool) {
-		if checked {
-			toEntry.SetText("")
-			toEntry.Disable()
-			toCalButton.Disable()
-		} else {
-			toEntry.Enable()
-			toCalButton.Enable()
-		}
-	})
-	noExpiryCheck.SetChecked(true)
+	fromDP := newDatePickerRow(window, time.Now().UTC().Format("2006-01-02"))
+	toDP, noExpiryCheck := newExpirySection(window, "", false)
 
 	// Public key import.
 	var importedKey string
@@ -137,9 +168,9 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 		widget.NewLabel("Authority"),
 		authorityEntry,
 		widget.NewLabel("From date"),
-		fromRow,
+		fromDP.row,
 		widget.NewLabel("To date"),
-		toRow,
+		toDP.row,
 		noExpiryCheck,
 		widget.NewLabel("Public Key"),
 		container.NewHBox(importBtn, importYubiKeyBtn),
@@ -153,27 +184,18 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 		if !ok {
 			return
 		}
-		authority := strings.TrimSpace(authorityEntry.Text)
-		if authority == "" {
-			errorLabel.SetText("Authority is required")
-			return
-		}
-		if importedKey == "" {
-			errorLabel.SetText("Import a public key first")
-			return
-		}
-		if fromEntry.Text == "" {
-			errorLabel.SetText("From date is required")
+		if err := validateEntryForm(authorityEntry.Text, fromDP.entry.Text, importedKey, noExpiryCheck.Checked, toDP.entry.Text); err != nil {
+			errorLabel.SetText(err.Error())
 			return
 		}
 
 		var to *string
-		if !noExpiryCheck.Checked && toEntry.Text != "" {
-			t := toEntry.Text
+		if !noExpiryCheck.Checked && toDP.entry.Text != "" {
+			t := toDP.entry.Text
 			to = &t
 		}
 
-		entry := buildEntry(authorityEntry.Text, fromEntry.Text, to, importedKey, noteEntry.Text)
+		entry := buildEntry(authorityEntry.Text, fromDP.entry.Text, to, importedKey, noteEntry.Text)
 		onAdd(entry)
 	}, window)
 }
@@ -183,49 +205,14 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 	authorityEntry := widget.NewEntry()
 	authorityEntry.SetText(entry.Authority)
 
-	// From date picker.
-	fromEntry := widget.NewEntry()
-	fromEntry.SetText(entry.From)
-	fromEntry.Disable()
-	fromCalButton := widget.NewButton("\U0001F4C5", func() {
-		cal := xwidget.NewCalendar(time.Now().UTC(), func(t time.Time) {
-			fromEntry.SetText(t.Format("2006-01-02"))
-		})
-		dialog.ShowCustom("Select Date", "Close", cal, window)
-	})
-	fromRow := container.NewBorder(nil, nil, nil, fromCalButton, fromEntry)
-
-	// To date picker with "No expiry" checkbox.
-	toEntry := widget.NewEntry()
-	toEntry.Disable()
-	toCalButton := widget.NewButton("\U0001F4C5", func() {
-		cal := xwidget.NewCalendar(time.Now().UTC(), func(t time.Time) {
-			toEntry.SetText(t.Format("2006-01-02"))
-		})
-		dialog.ShowCustom("Select Date", "Close", cal, window)
-	})
+	fromDP := newDatePickerRow(window, entry.From)
 
 	hasExpiry := entry.To != nil
+	initialTo := ""
 	if hasExpiry {
-		toEntry.SetText(*entry.To)
-		toEntry.Enable()
-		toCalButton.Enable()
-	} else {
-		toCalButton.Disable()
+		initialTo = *entry.To
 	}
-	toRow := container.NewBorder(nil, nil, nil, toCalButton, toEntry)
-
-	noExpiryCheck := widget.NewCheck("No expiry", func(checked bool) {
-		if checked {
-			toEntry.SetText("")
-			toEntry.Disable()
-			toCalButton.Disable()
-		} else {
-			toEntry.Enable()
-			toCalButton.Enable()
-		}
-	})
-	noExpiryCheck.SetChecked(!hasExpiry)
+	toDP, noExpiryCheck := newExpirySection(window, initialTo, hasExpiry)
 
 	// Public key is read-only for edit.
 	keyLabel := widget.NewLabel(entry.PublicKey)
@@ -241,9 +228,9 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 		widget.NewLabel("Authority"),
 		authorityEntry,
 		widget.NewLabel("From date"),
-		fromRow,
+		fromDP.row,
 		widget.NewLabel("To date"),
-		toRow,
+		toDP.row,
 		noExpiryCheck,
 		widget.NewLabel("Public Key"),
 		keyLabel,
@@ -256,23 +243,18 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 		if !ok {
 			return
 		}
-		authority := strings.TrimSpace(authorityEntry.Text)
-		if authority == "" {
-			errorLabel.SetText("Authority is required")
-			return
-		}
-		if fromEntry.Text == "" {
-			errorLabel.SetText("From date is required")
+		if err := validateEntryForm(authorityEntry.Text, fromDP.entry.Text, entry.PublicKey, noExpiryCheck.Checked, toDP.entry.Text); err != nil {
+			errorLabel.SetText(err.Error())
 			return
 		}
 
 		var to *string
-		if !noExpiryCheck.Checked && toEntry.Text != "" {
-			t := toEntry.Text
+		if !noExpiryCheck.Checked && toDP.entry.Text != "" {
+			t := toDP.entry.Text
 			to = &t
 		}
 
-		updated := buildEntry(authorityEntry.Text, fromEntry.Text, to, entry.PublicKey, noteEntry.Text)
+		updated := buildEntry(authorityEntry.Text, fromDP.entry.Text, to, entry.PublicKey, noteEntry.Text)
 		onSave(updated)
 	}, window)
 }

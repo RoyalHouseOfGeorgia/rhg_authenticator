@@ -30,10 +30,15 @@ type githubRelease struct {
 // it with the current version. Returns immediately with UpdateAvailable=false
 // if anything fails (network, parse, invalid version). Never panics.
 func Check(owner, repo, currentVersion string) CheckResult {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	return checkInternal(url, currentVersion, checkTimeout)
+}
+
+// checkInternal is the testable core of Check with injectable URL and timeout.
+func checkInternal(url, currentVersion string, timeout time.Duration) CheckResult {
 	result := CheckResult{CurrentVersion: currentVersion}
 
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
-	client := &http.Client{Timeout: checkTimeout}
+	client := &http.Client{Timeout: timeout}
 
 	resp, err := client.Get(url)
 	if err != nil {

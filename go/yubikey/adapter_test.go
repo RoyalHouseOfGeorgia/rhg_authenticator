@@ -390,14 +390,13 @@ func TestSigningAdapterCompliance(t *testing.T) {
 }
 
 func TestNewYubiKeyAdapter_CardsError(t *testing.T) {
-	origCards := pivCardsFunc
-	defer func() { pivCardsFunc = origCards }()
-
-	pivCardsFunc = func() ([]string, error) {
-		return nil, errors.New("pcsc daemon not running")
+	provider := PIVProvider{
+		Cards: func() ([]string, error) {
+			return nil, errors.New("pcsc daemon not running")
+		},
+		Open: nil,
 	}
-
-	_, err := NewYubiKeyAdapter(staticPin("123456"))
+	_, err := NewYubiKeyAdapterWithProvider(provider, staticPin("123456"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -407,14 +406,13 @@ func TestNewYubiKeyAdapter_CardsError(t *testing.T) {
 }
 
 func TestNewYubiKeyAdapter_NoYubiKeyFound(t *testing.T) {
-	origCards := pivCardsFunc
-	defer func() { pivCardsFunc = origCards }()
-
-	pivCardsFunc = func() ([]string, error) {
-		return []string{"Some Other Card"}, nil
+	provider := PIVProvider{
+		Cards: func() ([]string, error) {
+			return []string{"Some Other Card"}, nil
+		},
+		Open: nil,
 	}
-
-	_, err := NewYubiKeyAdapter(staticPin("123456"))
+	_, err := NewYubiKeyAdapterWithProvider(provider, staticPin("123456"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -424,21 +422,15 @@ func TestNewYubiKeyAdapter_NoYubiKeyFound(t *testing.T) {
 }
 
 func TestNewYubiKeyAdapter_OpenError(t *testing.T) {
-	origCards := pivCardsFunc
-	origOpen := pivOpenFunc
-	defer func() {
-		pivCardsFunc = origCards
-		pivOpenFunc = origOpen
-	}()
-
-	pivCardsFunc = func() ([]string, error) {
-		return []string{"Yubico YubiKey 5 NFC"}, nil
+	provider := PIVProvider{
+		Cards: func() ([]string, error) {
+			return []string{"Yubico YubiKey 5 NFC"}, nil
+		},
+		Open: func(card string) (*piv.YubiKey, error) {
+			return nil, errors.New("device busy")
+		},
 	}
-	pivOpenFunc = func(card string) (*piv.YubiKey, error) {
-		return nil, errors.New("device busy")
-	}
-
-	_, err := NewYubiKeyAdapter(staticPin("123456"))
+	_, err := NewYubiKeyAdapterWithProvider(provider, staticPin("123456"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -448,14 +440,13 @@ func TestNewYubiKeyAdapter_OpenError(t *testing.T) {
 }
 
 func TestNewYubiKeyAdapter_EmptyCardList(t *testing.T) {
-	origCards := pivCardsFunc
-	defer func() { pivCardsFunc = origCards }()
-
-	pivCardsFunc = func() ([]string, error) {
-		return []string{}, nil
+	provider := PIVProvider{
+		Cards: func() ([]string, error) {
+			return []string{}, nil
+		},
+		Open: nil,
 	}
-
-	_, err := NewYubiKeyAdapter(staticPin("123456"))
+	_, err := NewYubiKeyAdapterWithProvider(provider, staticPin("123456"))
 	if err == nil {
 		t.Fatal("expected error")
 	}

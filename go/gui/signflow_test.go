@@ -13,7 +13,8 @@ import (
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
-// mockSignAdapter implements core.SigningAdapter using an in-memory Ed25519 key.
+// mockSignAdapter mirrors core/sign_test.go's mockAdapter.
+// Intentionally duplicated to keep test packages independent.
 type mockSignAdapter struct {
 	secretKey ed25519.PrivateKey
 }

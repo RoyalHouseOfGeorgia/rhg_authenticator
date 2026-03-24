@@ -46,8 +46,33 @@ jobs:
       - uses: github/codeql-action/autobuild@38697555549f1db7851b81482ff19f1fa5c4fedc  # v4.34.1
       - uses: github/codeql-action/analyze@38697555549f1db7851b81482ff19f1fa5c4fedc  # v4.34.1
 
+  gitleaks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Required by gitleaks-action for API access
+
+  test-race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6.3.0
+        with:
+          go-version: '1.25.8'
+          cache-dependency-path: go/go.sum
+      - run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libgl1-mesa-dev xorg-dev
+      - working-directory: go
+        run: go test -race ./... -count=1
+
   build:
-    needs: [test-typescript, security]
+    needs: [test-typescript, security, gitleaks, test-race]
     strategy:
       matrix:
         include:
@@ -70,13 +95,11 @@ jobs:
         run: go vet ./...
       - working-directory: go
         run: go test ./... -count=1
-      - working-directory: go
-        run: go run golang.org/x/vuln/cmd/govulncheck ./...
-      - name: Run gitleaks
-        if: runner.os != 'Windows'
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: govulncheck
+        working-directory: go
+        run: |
+          set -euo pipefail
+          go run golang.org/x/vuln/cmd/govulncheck ./...
       - if: runner.os == 'Windows'
         working-directory: go
         run: go build -trimpath -ldflags "-s -w -H windowsgui" -o ../release/rhg-authenticator-${{ matrix.suffix }}.exe .
@@ -110,6 +133,8 @@ jobs:
         with:
           path: release
           merge-multiple: true
+      # SHA256SUMS for convenience; SLSA provenance attestation below provides
+      # stronger integrity verification than GPG-signed checksums.
       - run: cd release && shasum -a 256 rhg-authenticator-* > SHA256SUMS.txt
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2.4.0
         with:

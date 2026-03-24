@@ -4,7 +4,7 @@ Self-contained desktop application for signing Royal House of Georgia credential
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.25.8+
 - YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
 ### Platform-Specific
@@ -94,15 +94,18 @@ The **Registry** tab (built into the signing app) manages the key registry:
 - **Import certificates** (`.crt`/`.pem`) — extracts Ed25519 public keys from certificate files
 - **Add/Edit** registry entries with full validation (entries cannot be deleted — revoke by setting an expiry date)
 - **Calendar date pickers** for key validity ranges
-- **Save** to local JSON file for committing to the repository
+- **Submit for Review** — creates a GitHub pull request with the updated registry for admin review
+- **GitHub login** via OAuth Device Flow (enter a code in your browser — no technical setup required)
+- **Token storage** in OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
 - **Click any cell** to see the full text in the status bar (long values are truncated with ellipsis in the table)
 
 Workflow:
 1. Open the **Registry** tab — it fetches the current production registry automatically
-2. Add/edit entries as needed (entries cannot be deleted — revoke by setting an expiry date)
-3. Save → produces a `registry.json` file
-4. Copy to `verify/keys/registry.json` and commit to the repository
-5. Deploy (the verification page and signing app both fetch from the hosted registry)
+2. Log in to GitHub (one-time — click "Login to GitHub", enter the code shown in your browser)
+3. Add/edit entries as needed (entries cannot be deleted — revoke by setting an expiry date)
+4. Click **Submit for Review** — a pull request is created automatically
+5. The repository admin reviews and merges the PR
+6. Deploy (the verification page and signing app both fetch from the hosted registry)
 
 ## Key Registry
 
@@ -114,6 +117,9 @@ The app fetches the key registry from `https://verify.royalhouseofgeorgia.ge/key
 - **PIN caching** (opt-in): stored in `mlock`'d memory (non-swappable), protected by mutex, auto-zeroed after 5 minutes of inactivity.
 - **Post-sign verification**: every signature is verified immediately after signing to catch hardware errors.
 - **Atomic log writes**: issuance records use tmp-file + rename pattern for crash safety.
+- **GitHub token in OS keychain**: OAuth tokens are stored via `go-keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). File fallback on Linux only (0600 permissions). Token redacted from `fmt.Sprintf` output via `String()`/`GoString()` methods. Tokens expire after 90 days (enforced locally on session restore).
+- **Redirect protection**: HTTP client strips `Authorization` header on cross-origin redirects (allows `*.github.com` only).
+- **Input sanitization**: All untrusted GitHub API responses are sanitized before logging (control characters replaced, truncated to 500 runes). User-facing error messages are mapped to safe generic text.
 
 ## Architecture
 
@@ -127,7 +133,9 @@ go/
 │   ├── date.go          # Calendar-correct date validation
 │   ├── format.go        # Date display formatting (YYYY-Mon-DD)
 │   ├── hwerror.go       # Hardware error classification (shared by gui + regmgr)
+│   ├── rand.go          # Shared RandomHex utility
 │   ├── registry.go      # Key registry schema, lookup, fingerprint
+│   ├── sanitize.go      # SanitizeForLog (shared by gui + ghapi)
 │   └── sign.go          # Signing orchestrator
 ├── gui/                 # Fyne GUI (signing app)
 │   ├── audit_tab.go     # Registry audit (GitHub commit history, ETag caching)
@@ -138,11 +146,15 @@ go/
 │   ├── signflow.go      # Extracted signing workflow (testable)
 │   ├── statusbar.go     # Bottom status bar (key stats, online status)
 │   └── yubikey_tab.go   # YubiKey registry check (no PIN)
+├── ghapi/               # GitHub API client + OAuth device flow
+│   ├── keyring.go       # Keyring interface (OS keychain + FakeKeyring for tests)
+│   ├── auth.go          # OAuth device flow, token storage, session restore
+│   └── client.go        # GitHub REST API (branches, contents, PRs)
 ├── regmgr/              # Registry Manager (tab in main app)
-│   ├── app.go           # Main UI: toolbar, table, state management
+│   ├── app.go           # Main UI: toolbar, table, login, submit, state management
 │   ├── form.go          # Add/Edit entry dialogs (cert import, calendar)
 │   ├── certparse.go     # X.509 → Ed25519 key extraction
-│   └── fileio.go        # Registry read + atomic write
+│   └── fileio.go        # Registry marshal + atomic write
 ├── yubikey/             # YubiKey hardware adapter
 │   ├── adapter.go       # piv-go PIV signing
 │   ├── pincache.go      # Secure PIN cache (mlock + mutex)

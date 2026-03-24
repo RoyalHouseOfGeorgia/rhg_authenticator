@@ -1,17 +1,20 @@
 module github.com/royalhouseofgeorgia/rhg-authenticator
 
-go 1.25.0
+go 1.25.8
 
 require (
 	fyne.io/x/fyne v0.0.0-20260219123538-e09698d18b34
 	github.com/go-piv/piv-go/v2 v2.5.0
-	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // unmaintained (2020); monitor for alternatives
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // unmaintained (2020); TODO(2027): evaluate maintained alternative. Security audit 2026-03: no known CVEs, input is app-controlled.
 	golang.org/x/text v0.35.0
 )
+
+require github.com/zalando/go-keyring v0.2.8
 
 require (
 	fyne.io/systray v1.12.0 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fyne-io/glfw-js v0.3.0 // indirect
@@ -38,7 +41,7 @@ require (
 	github.com/go-gl/gl v0.0.0-20231021071112-07e5d0ea2e71 // indirect
 	github.com/go-text/render v0.2.0 // indirect
 	github.com/go-text/typesetting v0.3.3 // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
 	github.com/hack-pad/safejs v0.1.0 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade // indirect

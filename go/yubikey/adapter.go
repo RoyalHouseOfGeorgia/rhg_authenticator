@@ -14,11 +14,17 @@ import (
 	"github.com/go-piv/piv-go/v2/piv"
 )
 
-// pivCardsFunc and pivOpenFunc are seams for testing without hardware.
-var (
-	pivCardsFunc = piv.Cards
-	pivOpenFunc  = piv.Open
-)
+// PIVProvider abstracts PIV hardware access for dependency injection.
+type PIVProvider struct {
+	Cards func() ([]string, error)
+	Open  func(card string) (*piv.YubiKey, error)
+}
+
+// DefaultPIVProvider uses the real piv-go hardware functions.
+var DefaultPIVProvider = PIVProvider{
+	Cards: piv.Cards,
+	Open:  piv.Open,
+}
 
 // YubiKeyAdapter talks directly to a YubiKey via PCSC for Ed25519 PIV signing.
 // PIN is handled entirely in-process — never on command line, never in a file.
@@ -36,11 +42,9 @@ type yubiKeyHandle interface {
 	Close() error
 }
 
-// NewYubiKeyAdapter opens a YubiKey, reads the certificate from PIV slot 9c,
-// extracts the Ed25519 public key, and returns an adapter.
-// readPin is called each time a signature is needed (unless PIN is cached externally).
-func NewYubiKeyAdapter(readPin func() (string, error)) (*YubiKeyAdapter, error) {
-	cards, err := pivCardsFunc()
+// NewYubiKeyAdapterWithProvider opens a YubiKey using the given PIV provider.
+func NewYubiKeyAdapterWithProvider(provider PIVProvider, readPin func() (string, error)) (*YubiKeyAdapter, error) {
+	cards, err := provider.Cards()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list smart cards: %w", err)
 	}
@@ -56,12 +60,19 @@ func NewYubiKeyAdapter(readPin func() (string, error)) (*YubiKeyAdapter, error) 
 		return nil, fmt.Errorf("failed to open YubiKey: no YubiKey found among %d smart card(s)", len(cards))
 	}
 
-	yk, err := pivOpenFunc(cardName)
+	yk, err := provider.Open(cardName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open YubiKey: %w", err)
 	}
 
 	return newAdapterFromHandle(yk, readPin)
+}
+
+// NewYubiKeyAdapter opens a YubiKey, reads the certificate from PIV slot 9c,
+// extracts the Ed25519 public key, and returns an adapter.
+// readPin is called each time a signature is needed (unless PIN is cached externally).
+func NewYubiKeyAdapter(readPin func() (string, error)) (*YubiKeyAdapter, error) {
+	return NewYubiKeyAdapterWithProvider(DefaultPIVProvider, readPin)
 }
 
 // newAdapterFromHandle constructs an adapter from an already-opened YubiKey handle.
@@ -88,8 +99,9 @@ func newAdapterFromHandle(yk yubiKeyHandle, readPin func() (string, error)) (*Yu
 	}, nil
 }
 
-// SetReadPin sets the PIN reader callback. This supports two-phase initialization
-// where the adapter is created before the GUI window exists.
+// SetReadPin replaces the PIN reader callback. Supports two-phase init where the
+// adapter is created at startup (before the GUI window exists) and the PIN dialog
+// is set later. Safe for concurrent use with SignBytes.
 func (a *YubiKeyAdapter) SetReadPin(readPin func() (string, error)) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

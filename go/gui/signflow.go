@@ -60,7 +60,7 @@ func executeSignFlow(
 		return SignFlowResult{}, fmt.Errorf("QR generation: %w", err)
 	}
 
-	// 6. Compute hash8 from PayloadSHA256 (set by HandleSign).
+	// 6. First 8 hex chars of the SHA-256 hash, used as a short identifier in filenames.
 	hash8 := resp.PayloadSHA256[:8]
 
 	return SignFlowResult{

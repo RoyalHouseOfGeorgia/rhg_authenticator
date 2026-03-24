@@ -59,7 +59,7 @@ func (d *debugLogger) log(msg string) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "[%s] %s\n", time.Now().UTC().Format(time.RFC3339), msg)
+	fmt.Fprintf(f, "[%s] %s\n", time.Now().UTC().Format(time.RFC3339), core.SanitizeForLog(msg))
 }
 
 // NewSignTab creates the credential signing tab UI. The returned cleanup

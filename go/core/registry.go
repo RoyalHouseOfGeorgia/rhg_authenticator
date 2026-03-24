@@ -27,7 +27,7 @@ type Registry struct {
 }
 
 // MaxRegistryKeys is the maximum number of key entries allowed in a registry.
-// This prevents resource exhaustion from excessively large registries.
+// Prevents memory exhaustion from oversized registries (~2 MiB JSON at 1000 entries).
 const MaxRegistryKeys = 1000
 
 // SupportedAlgorithm is the only supported key algorithm.
@@ -259,6 +259,7 @@ func FindKeysByAuthority(reg Registry, authority string) []KeyEntry {
 
 // IsDateInRange checks if a credential date falls within a key's validity range.
 // Uses lexicographic comparison, inclusive on both ends. to=nil means no upper bound.
+// Returns false for malformed dates (callers validate format at input boundaries).
 func IsDateInRange(credDate string, key KeyEntry) bool {
 	if !dateRE.MatchString(credDate) {
 		return false

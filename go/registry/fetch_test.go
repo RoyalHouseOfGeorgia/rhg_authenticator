@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
@@ -131,6 +132,39 @@ func TestFetchRegistry_WrongContentType(t *testing.T) {
 	_, err := FetchRegistry(srv.URL)
 	if err == nil {
 		t.Fatal("expected error for wrong Content-Type")
+	}
+	if !strings.Contains(err.Error(), "Content-Type") {
+		t.Errorf("error should mention Content-Type, got: %v", err)
+	}
+}
+
+func TestFetchRegistry_ContentTypeWithCharset(t *testing.T) {
+	body := validRegistryJSON()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	reg, err := FetchRegistry(srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error for application/json with charset: %v", err)
+	}
+	if len(reg.Keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(reg.Keys))
+	}
+}
+
+func TestFetchRegistry_ContentTypeVariant(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json-patch+json")
+		w.Write(validRegistryJSON())
+	}))
+	defer srv.Close()
+
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for application/json-patch+json")
 	}
 	if !strings.Contains(err.Error(), "Content-Type") {
 		t.Errorf("error should mention Content-Type, got: %v", err)
@@ -390,5 +424,44 @@ func TestFindMatchingEntryAt_Expired(t *testing.T) {
 	entry := FindMatchingEntryAt(reg, testPubKey, "2026-03-15")
 	if entry != nil {
 		t.Errorf("expected nil for expired entry, got: %+v", entry)
+	}
+}
+
+// --- Size limit tests ---
+
+func TestFetchRegistry_ExactlyMaxBytes(t *testing.T) {
+	// Body at exactly maxRegistryBytes should pass the size check.
+	// It won't be valid registry JSON, so we expect a validation error, not a size error.
+	body := bytes.Repeat([]byte("x"), maxRegistryBytes)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error (validation), got nil")
+	}
+	if strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("should not be a size error, got: %v", err)
+	}
+}
+
+func TestFetchRegistry_OversizedResponse(t *testing.T) {
+	// Body exceeding maxRegistryBytes by 1 must be rejected with a size error.
+	body := bytes.Repeat([]byte("x"), maxRegistryBytes+1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for oversized response")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error should contain 'exceeds', got: %v", err)
 	}
 }

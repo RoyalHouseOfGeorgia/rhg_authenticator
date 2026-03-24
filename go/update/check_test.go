@@ -2,7 +2,6 @@ package update
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +15,7 @@ func TestCheck_UpdateAvailable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := checkWithURL(server.URL, "v1.0.0")
+	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if !result.UpdateAvailable {
 		t.Fatal("expected update available")
 	}
@@ -34,7 +33,7 @@ func TestCheck_SameVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := checkWithURL(server.URL, "v1.0.0")
+	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update for same version")
 	}
@@ -46,7 +45,7 @@ func TestCheck_OlderVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := checkWithURL(server.URL, "v1.0.0")
+	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update when latest is older")
 	}
@@ -58,7 +57,7 @@ func TestCheck_Server404(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := checkWithURL(server.URL, "v1.0.0")
+	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on 404")
 	}
@@ -71,7 +70,7 @@ func TestCheck_ServerTimeout(t *testing.T) {
 	defer server.Close()
 
 	// Use a very short timeout to test timeout behavior
-	result := checkWithURLAndTimeout(server.URL, "v1.0.0", 100*time.Millisecond)
+	result := checkInternal(server.URL, "v1.0.0", 100*time.Millisecond)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on timeout")
 	}
@@ -83,7 +82,7 @@ func TestCheck_InvalidJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := checkWithURL(server.URL, "v1.0.0")
+	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on invalid JSON")
 	}
@@ -95,14 +94,14 @@ func TestCheck_EmptyTagName(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := checkWithURL(server.URL, "v1.0.0")
+	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on empty tag")
 	}
 }
 
 func TestCheck_ConnectionRefused(t *testing.T) {
-	result := checkWithURL("http://127.0.0.1:1", "v1.0.0")
+	result := checkInternal("http://127.0.0.1:1", "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on connection error")
 	}
@@ -179,47 +178,8 @@ func TestCheck_OversizedResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := checkWithURL(server.URL, "v1.0.0")
+	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update when response exceeds 1MB limit")
 	}
-}
-
-// checkWithURL is a test helper that overrides the GitHub API URL.
-func checkWithURL(url, currentVersion string) CheckResult {
-	return checkWithURLAndTimeout(url, currentVersion, checkTimeout)
-}
-
-// checkWithURLAndTimeout allows overriding both URL and timeout for tests.
-func checkWithURLAndTimeout(url, currentVersion string, timeout time.Duration) CheckResult {
-	result := CheckResult{CurrentVersion: currentVersion}
-
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Get(url)
-	if err != nil {
-		return result
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return result
-	}
-
-	var release githubRelease
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&release); err != nil {
-		return result
-	}
-
-	if release.TagName == "" {
-		return result
-	}
-
-	result.LatestVersion = release.TagName
-	result.DownloadURL = release.HTMLURL
-
-	if isNewer(release.TagName, currentVersion) {
-		result.UpdateAvailable = true
-	}
-
-	return result
 }

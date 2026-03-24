@@ -11,9 +11,12 @@
 *.keystore
 credentials.json
 service-account*.json
+github_token.json
 *.crt
 !go/testdata/*.crt
 *.gpg
+*.cert
+github_token.json.tmp.*
 
 # Dependencies
 node_modules/

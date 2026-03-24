@@ -7,6 +7,9 @@ import (
 )
 
 // PinCacheTimeout is the duration after which a cached PIN is automatically cleared.
+// 5-minute timeout balances usability (multi-sign sessions) against unattended-
+// workstation risk. PIN is stored in mlock'd memory and zeroed on timeout, disable,
+// or app close. Users can disable caching entirely via the UI checkbox.
 const PinCacheTimeout = 5 * time.Minute
 
 // mlockFunc is the mlock implementation. Overridable in tests (not parallel-safe).

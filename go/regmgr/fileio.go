@@ -1,8 +1,6 @@
 package regmgr
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,22 +17,31 @@ func ReadRegistry(path string) (core.Registry, error) {
 	return core.ValidateRegistry(data)
 }
 
-// WriteRegistry marshals a registry to JSON and writes it atomically to the given path.
-// The output is validated before writing to prevent persisting invalid data.
-func WriteRegistry(path string, reg core.Registry) error {
+// MarshalRegistry marshals a registry to formatted JSON bytes and validates the output.
+// Returns JSON with 2-space indent and a trailing newline.
+func MarshalRegistry(reg core.Registry) ([]byte, error) {
 	data, err := json.MarshalIndent(reg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshaling registry: %w", err)
+		return nil, fmt.Errorf("marshaling registry: %w", err)
 	}
 	data = append(data, '\n')
 
-	// Validate output before writing.
 	if _, err := core.ValidateRegistry(data); err != nil {
-		return fmt.Errorf("registry validation failed: %w", err)
+		return nil, fmt.Errorf("registry validation failed: %w", err)
+	}
+	return data, nil
+}
+
+// WriteRegistry marshals a registry to JSON and writes it atomically to the given path.
+// The output is validated before writing to prevent persisting invalid data.
+func WriteRegistry(path string, reg core.Registry) error {
+	data, err := MarshalRegistry(reg)
+	if err != nil {
+		return err
 	}
 
 	// Atomic write via temp+rename.
-	suffix, err := randomSuffix()
+	suffix, err := core.RandomHex(16)
 	if err != nil {
 		return fmt.Errorf("generating temp suffix: %w", err)
 	}
@@ -47,12 +54,4 @@ func WriteRegistry(path string, reg core.Registry) error {
 		return fmt.Errorf("renaming temp file: %w", err)
 	}
 	return nil
-}
-
-func randomSuffix() (string, error) {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
 }

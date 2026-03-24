@@ -10,6 +10,10 @@ import (
 )
 
 // IssuanceRecord is one entry in the issuance log.
+// Security note: PII fields (Recipient, Honor, Detail) are also present in
+// the signed credentials published on the verify page. The log adds no
+// sensitivity beyond what is already public. Stored with 0o600 on the
+// user's local filesystem.
 type IssuanceRecord struct {
 	Timestamp     string `json:"timestamp"`       // RFC 3339 (e.g., "2026-03-13T10:30:00Z")
 	Recipient     string `json:"recipient"`
@@ -21,12 +25,12 @@ type IssuanceRecord struct {
 }
 
 // AppendRecord reads the entire log, appends, and rewrites. This is O(n) but
-// acceptable for the expected volume (~100s of records). For high-volume use,
-// consider incremental append (seek to end, truncate ']', write new record).
+// acceptable for the expected volume (~100s of records). The read-all-then-rewrite
+// pattern is intentional: incremental append would sacrifice atomic-write crash
+// safety for a performance gain not needed at current scale.
 //
-// Concurrent AppendRecord calls are not safe. The app is single-instance
-// (enforced by Fyne's app ID) and signing is mutex-serialized by the
-// YubiKey hardware, so concurrent calls cannot occur in practice.
+// REQUIRES: caller must serialize calls (not concurrent-safe). Enforced by
+// Fyne single-instance guarantee (app ID) and YubiKey mutex-serialized signing.
 //
 // AppendRecord atomically appends a record to the issuance log.
 // Uses a temp file + rename pattern for crash safety.
@@ -113,6 +117,7 @@ func CleanStaleTmpFiles(logPath string) error {
 }
 
 // randomHex returns n random hex characters (n/2 bytes of entropy).
+// Duplicated from core.RandomHex to avoid circular import (core → log).
 func randomHex(n int) (string, error) {
 	b := make([]byte, (n+1)/2)
 	if _, err := rand.Read(b); err != nil {

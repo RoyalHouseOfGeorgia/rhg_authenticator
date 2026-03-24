@@ -217,6 +217,8 @@ The `verify/keys/registry.json` file contains the development/maintenance key. T
 
 1. Generate an Ed25519 key on YubiKey PIV slot 9c (see [go/README.md](go/README.md#yubikey-setup))
 2. Open the **Registry** tab in the signing app
-3. Click **"Import from YubiKey"** to read the key directly, or **"Import Certificate"** for a `.crt`/`.pem` file
-4. Set `authority` to the formal title, `from` to the activation date, `to` to `null` for an active key
-5. Save and commit the updated `verify/keys/registry.json`
+3. Log in to GitHub (one-time — click "Login to GitHub" and enter the code in your browser)
+4. Click **"Import from YubiKey"** to read the key directly, or **"Import Certificate"** for a `.crt`/`.pem` file
+5. Set `authority` to the formal title, `from` to the activation date, `to` to `null` for an active key
+6. Click **"Submit for Review"** — this creates a GitHub pull request
+7. The repository admin reviews and merges the PR; the updated registry deploys automatically via GitHub Pages
