@@ -97,9 +97,7 @@ jobs:
         run: go test ./... -count=1
       - name: govulncheck
         working-directory: go
-        run: |
-          set -euo pipefail
-          go run golang.org/x/vuln/cmd/govulncheck ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck ./...
       - if: runner.os == 'Windows'
         working-directory: go
         run: go build -trimpath -ldflags "-s -w -H windowsgui" -o ../release/rhg-authenticator-${{ matrix.suffix }}.exe .
