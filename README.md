@@ -25,11 +25,11 @@
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-854 tests passing (548 Go + 306 TypeScript).
+910 tests passing (604 Go + 306 TypeScript).
 
 ## Quick Start — Signing App (Go)
 
-**Requirements**: Go 1.24+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
+**Requirements**: Go 1.25.8+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
 ```bash
 cd go

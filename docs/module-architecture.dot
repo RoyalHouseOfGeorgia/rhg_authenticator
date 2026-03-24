@@ -5,9 +5,9 @@ digraph module_architecture {
     edge [color="#868e96", penwidth=0.8];
     compound=true;
 
-    // Core library
-    subgraph cluster_core {
-        label="Core Library";
+    // TypeScript verification library
+    subgraph cluster_ts {
+        label="TypeScript — Verification Library";
         labeljust=l;
         style="dashed,rounded";
         color="#4263eb";
@@ -26,9 +26,9 @@ digraph module_architecture {
         canonical [label="canonical.ts\n(JSON serializer)", fillcolor="#dbe4ff", color="#4263eb"];
     }
 
-    // Server
-    subgraph cluster_server {
-        label="Signing Server";
+    // Go signing app
+    subgraph cluster_go {
+        label="Go — Desktop Signing App";
         labeljust=l;
         style="dashed,rounded";
         color="#e67700";
@@ -36,23 +36,26 @@ digraph module_architecture {
         fontsize=10;
         fontcolor="#e67700";
 
-        cli [label="cli.ts\n(entry point)", fillcolor="#fff3bf", color="#e67700"];
-        main [label="main.ts\n(startup)", fillcolor="#fff3bf", color="#e67700"];
-        http [label="http.ts\n(request handler)", fillcolor="#fff3bf", color="#e67700"];
-        sign [label="sign.ts\n(sign orchestrator)", fillcolor="#fff3bf", color="#e67700"];
-        reg_fetch [label="registry-fetch.ts\n(fetch + SSRF)", fillcolor="#fff3bf", color="#e67700"];
-        key_match [label="key-match.ts\n(key lookup)", fillcolor="#fff3bf", color="#e67700"];
-        yubikey [label="yubikey.ts\n(YubiKey PIV)", fillcolor="#fff3bf", color="#e67700"];
-        signature [label="signature.ts\n(sig validation)", fillcolor="#fff3bf", color="#e67700"];
-        log [label="log.ts\n(issuance log)", fillcolor="#fff3bf", color="#e67700"];
-        types [label="types.ts\n(shared types)", fillcolor="#fff3bf", color="#e67700"];
+        go_gui [label="gui/\n(Fyne GUI — 5 tabs)", fillcolor="#fff3bf", color="#e67700"];
+        go_core [label="core/\n(credential, canonical,\nregistry, sign)", fillcolor="#fff3bf", color="#e67700"];
+        go_regmgr [label="regmgr/\n(Registry Manager tab)", fillcolor="#fff3bf", color="#e67700"];
+        go_ghapi [label="ghapi/\n(GitHub OAuth +\nREST API)", fillcolor="#fff3bf", color="#e67700"];
+        go_yubikey [label="yubikey/\n(piv-go PIV adapter\n+ PIN cache)", fillcolor="#fff3bf", color="#e67700"];
+        go_qr [label="qr/\n(SVG + PNG)", fillcolor="#fff3bf", color="#e67700"];
+        go_log [label="log/\n(issuance log)", fillcolor="#fff3bf", color="#e67700"];
+        go_registry [label="registry/\n(remote fetch)", fillcolor="#fff3bf", color="#e67700"];
     }
 
-    // External
+    // External deps
     noble [label="@noble/curves\n(Ed25519)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
-    yubikey_hw [label="yubico-piv-tool\n(YubiKey CLI)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
+    pivgo [label="piv-go\n(PCSC)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
+    fyne [label="fyne\n(GUI)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
+    keyring [label="go-keyring\n(OS keychain)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
 
-    // Core deps
+    // Cross-language link
+    vectors [label="Cross-language\ntest vectors", shape=note, fillcolor="#e9ecef", color="#868e96"];
+
+    // TypeScript core deps
     verify -> credential;
     verify -> crypto;
     verify -> registry;
@@ -64,23 +67,21 @@ digraph module_architecture {
     registry -> validation;
     crypto -> noble;
 
-    // Server deps
-    cli -> main;
-    main -> http;
-    main -> yubikey;
-    main -> reg_fetch;
-    main -> key_match;
-    http -> sign;
-    http -> key_match;
-    sign -> canonical [lhead=cluster_core];
-    sign -> signature;
-    sign -> log;
-    sign -> credential [style=dashed];
-    sign -> crypto [style=dashed];
-    reg_fetch -> registry [style=dashed];
-    reg_fetch -> credential [style=dashed, label="sanitize"];
-    key_match -> registry [style=dashed];
-    yubikey -> yubikey_hw;
-    yubikey -> signature;
-    yubikey -> registry [style=dashed, label="SPKI prefix"];
+    // Go internal deps
+    go_gui -> go_core;
+    go_gui -> go_yubikey;
+    go_gui -> go_qr;
+    go_gui -> go_log;
+    go_gui -> go_registry;
+    go_regmgr -> go_core;
+    go_regmgr -> go_ghapi;
+    go_regmgr -> go_yubikey;
+    go_yubikey -> pivgo;
+    go_gui -> fyne;
+    go_regmgr -> fyne;
+    go_ghapi -> keyring;
+
+    // Cross-language
+    go_core -> vectors [style=dotted, dir=both, label="byte-identical\noutput"];
+    canonical -> vectors [style=dotted, dir=both];
 }

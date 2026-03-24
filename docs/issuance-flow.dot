@@ -5,8 +5,8 @@ digraph issuance_flow {
     edge [fontname="Helvetica", fontsize=9, color="#6c757d"];
 
     // Principals
-    subgraph cluster_issuer {
-        label="Issuer (Prince)";
+    subgraph cluster_app {
+        label="Desktop App (Go + Fyne GUI)";
         labeljust=l;
         style="dashed,rounded";
         color="#868e96";
@@ -14,43 +14,30 @@ digraph issuance_flow {
         fontsize=10;
         fontcolor="#495057";
 
-        form [label="Issuer Form\n(browser)", fillcolor="#dbe4ff"];
-    }
-
-    subgraph cluster_server {
-        label="Signing Server (localhost)";
-        labeljust=l;
-        style="dashed,rounded";
-        color="#868e96";
-        fontname="Helvetica";
-        fontsize=10;
-        fontcolor="#495057";
-
+        form [label="Credential Form\n(recipient, honor,\ndetail, date)", fillcolor="#dbe4ff"];
         validate [label="Validate\ncredential"];
         canonicalize [label="Canonicalize\n(JSON → bytes)"];
-        sign_req [label="Sign via\nYubiKey PIV 9c"];
+        sign_req [label="Sign via\npiv-go (PCSC)"];
         verify_rt [label="Verify\nround-trip"];
         log [label="Append to\nissuance log"];
         encode [label="Base64URL\nencode"];
         build_url [label="Build\nverification URL"];
+        gen_qr [label="Generate QR\n(SVG + PNG)"];
     }
 
-    yubikey [label="YubiKey\nEd25519", shape=cylinder, fillcolor="#fff3bf"];
-    registry [label="Key Registry\n(GitHub Pages)", shape=cylinder, fillcolor="#d3f9d8"];
+    yubikey [label="YubiKey\nPIV slot 9c\nEd25519", shape=cylinder, fillcolor="#fff3bf"];
     qr [label="QR Code\non Diploma", fillcolor="#ffe3e3", shape=note];
 
     // Flow
-    form -> validate [label="credential JSON\n+ bearer token"];
+    form -> validate [label="credential fields"];
     validate -> canonicalize;
     canonicalize -> sign_req [label="canonical bytes"];
-    sign_req -> yubikey [label="PIN + touch", style=dashed];
+    sign_req -> yubikey [label="PIN via\nGUI dialog", style=dashed];
     yubikey -> sign_req [label="64-byte signature", style=dashed];
     sign_req -> verify_rt [label="signature"];
     verify_rt -> log;
     log -> encode;
     encode -> build_url [label="p=...&s=..."];
-    build_url -> qr [label="verification URL"];
-
-    // Pre-sign registry check
-    registry -> validate [label="pre-sign\nkey check", style=dotted, constraint=false];
+    build_url -> gen_qr [label="verification URL"];
+    gen_qr -> qr [label="SVG for print\nPNG for preview"];
 }

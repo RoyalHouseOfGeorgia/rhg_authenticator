@@ -22,16 +22,15 @@ digraph verification_flow {
         decode [label="2. Base64URL decode\n→ payload + signature bytes"];
         fetch_reg [label="3. Fetch\n/keys/registry.json"];
         parse_cred [label="4. Parse + validate\ncredential JSON"];
-        find_keys [label="5. Find keys\nby authority"];
-        verify_sig [label="6. Verify Ed25519\nsignature"];
-        check_date [label="7. Check credential date\nvs key validity range"];
-        render [label="8. Render result"];
+        verify_sig [label="5. Verify Ed25519 signature\nagainst all registry keys\n(single pass)"];
+        derive [label="6. Derive authority\nfrom matching key"];
+        render [label="7. Render result"];
     }
 
     registry [label="Key Registry\n(registry.json)", shape=cylinder, fillcolor="#d3f9d8"];
 
     // Success/failure
-    success [label="Verified\n(credential details)", fillcolor="#b2f2bb", shape=oval];
+    success [label="Verified\n(credential details\n+ authority)", fillcolor="#b2f2bb", shape=oval];
     failure [label="Rejected\n(reason displayed)", fillcolor="#ffc9c9", shape=oval];
 
     // Edges
@@ -41,10 +40,10 @@ digraph verification_flow {
     decode -> fetch_reg;
     fetch_reg -> registry [style=dashed, dir=both, label="HTTPS"];
     fetch_reg -> parse_cred;
-    parse_cred -> find_keys;
-    find_keys -> verify_sig;
-    verify_sig -> check_date;
-    check_date -> render;
+    parse_cred -> verify_sig;
+    verify_sig -> derive [label="matching key"];
+    derive -> render;
     render -> success [label="valid"];
+    verify_sig -> render [label="no match", style=dashed];
     render -> failure [label="invalid"];
 }
