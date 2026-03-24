@@ -300,8 +300,12 @@ func TestSaveToken_BothFail(t *testing.T) {
 	kr := NewFakeKeyring()
 	kr.SimulateError = errors.New("keyring unavailable")
 
-	// Use /dev/null as config dir — cannot create files there.
-	err := SaveToken(kr, "/dev/null/impossible", tok())
+	// Create a regular file where a directory is expected — MkdirAll fails on all OSes.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	err := SaveToken(kr, filepath.Join(blocker, "subdir"), tok())
 	if err == nil {
 		t.Fatal("expected error when both keyring and file write fail")
 	}
