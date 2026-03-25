@@ -95,10 +95,10 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte) (SignR
 	sha256hex := hex.EncodeToString(sha256sum[:])
 	record := issuancelog.IssuanceRecord{
 		Timestamp:       time.Now().UTC().Format(time.RFC3339),
-		Recipient:       credObj["recipient"].(string),
-		Honor:           credObj["honor"].(string),
-		Detail:          credObj["detail"].(string),
-		Date:            credObj["date"].(string),
+		Recipient:       safeString(credObj, "recipient"),
+		Honor:           safeString(credObj, "honor"),
+		Detail:          safeString(credObj, "detail"),
+		Date:            safeString(credObj, "date"),
 		PayloadSHA256:   sha256hex,
 		SignatureB64URL: sigB64,
 	}
@@ -111,4 +111,11 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte) (SignR
 		PayloadSHA256: sha256hex,
 		Record:        record,
 	}, nil
+}
+
+// safeString extracts a string from a map without panicking on type mismatch.
+// Returns "" if the key is missing or the value is not a string.
+func safeString(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return s
 }

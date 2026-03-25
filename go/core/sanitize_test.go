@@ -63,6 +63,51 @@ func TestSanitizeForLog(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "DEL character replaced",
+			input: "hello\x7fworld",
+			check: func(t *testing.T, result string) {
+				if result != "hello world" {
+					t.Errorf("result = %q, want %q", result, "hello world")
+				}
+			},
+		},
+		{
+			name:  "C1 characters replaced",
+			input: "a" + string(rune(0x80)) + "b" + string(rune(0x9f)) + "c",
+			check: func(t *testing.T, result string) {
+				if result != "a b c" {
+					t.Errorf("result = %q, want %q", result, "a b c")
+				}
+			},
+		},
+		{
+			name:  "bidi override characters replaced",
+			input: "left\u202aright\u2069end",
+			check: func(t *testing.T, result string) {
+				if result != "left right end" {
+					t.Errorf("result = %q, want %q", result, "left right end")
+				}
+			},
+		},
+		{
+			name:  "boundary 0x1f replaced",
+			input: "a\x1fb",
+			check: func(t *testing.T, result string) {
+				if result != "a b" {
+					t.Errorf("result = %q, want %q", result, "a b")
+				}
+			},
+		},
+		{
+			name:  "boundary 0x20 space preserved",
+			input: "a b",
+			check: func(t *testing.T, result string) {
+				if result != "a b" {
+					t.Errorf("result = %q, want %q", result, "a b")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

@@ -24,6 +24,8 @@ npm install
 | `npm run lint` | Type-check without emitting (`tsc --noEmit`) |
 | `npm run build` | Compile TypeScript to `dist/` |
 | `npm run build:verify` | Bundle verification page JS (`verify/verify.js`) |
+| `npm run build:verify:sri` | Bundle verify.js and update SRI hash in `index.html` |
+| `npm run check:sri` | Validate SRI hash matches without modifying files |
 | `npm run audit:deps` | Run `npm audit` on production dependencies |
 
 ## Project Structure
@@ -36,6 +38,7 @@ src/
 ├── crypto.ts             # Ed25519 sign/verify/getPublicKey
 ├── registry.ts           # Key registry schema, lookup, decoding
 ├── validation.ts         # Shared date validation utilities
+├── revocation.ts         # Revocation types, validation, buildRevocationSet, isRevoked
 ├── verify.ts             # Verification orchestrator
 ├── verify-page.ts        # Verification page logic (URL parsing, fetch, render)
 ├── index.ts              # Barrel export
@@ -50,6 +53,7 @@ src/
     ├── crypto.test.ts
     ├── registry.test.ts
     ├── validation.test.ts
+    ├── revocation.test.ts
     ├── verify.test.ts
     └── verify-page.test.ts
 verify/
@@ -59,9 +63,12 @@ verify/
 ├── favicon.ico           # Site favicon
 ├── royal-arms-120.png    # Royal arms crest (120x120)
 └── keys/
-    └── registry.json     # Public key registry (development + maintenance key)
+    ├── registry.json     # Public key registry (development + maintenance key)
+    └── revocations.json  # Revocation list (SHA-256 hashes of revoked credentials)
 scripts/
-└── generate-test-url.ts  # Generate signed test URLs for UI preview
+├── generate-test-url.ts  # Generate signed test URLs for UI preview
+├── generate-test-vectors.ts  # Generate cross-language test vectors
+└── update-sri.sh         # Rebuild verify.js and update SRI hash in index.html
 ```
 
 ## API Reference
@@ -119,6 +126,15 @@ decodePublicKey(entry: KeyEntry): Uint8Array   // SPKI DER or raw → 32 bytes
 - `validateRegistry` rejects extra fields at both top-level and entry-level
 - `decodePublicKey` accepts 44-byte SPKI DER (strips 12-byte prefix) or 32-byte raw keys
 
+### Revocation
+
+```typescript
+buildRevocationSet(list: RevocationList): Set<string>
+isRevoked(payloadBytes: Uint8Array, revocationSet: Set<string>): boolean
+```
+
+Revocation list validation (`validateRevocationList`), set construction from SHA-256 hashes, and lookup. The revocation list (`revocations.json`) contains only opaque hashes — no credential data is published.
+
 ### Verification Orchestrator
 
 ```typescript
@@ -126,11 +142,15 @@ verifyCredential(
   payloadBytes: Uint8Array,
   signatureBytes: Uint8Array,
   registry: Registry,
+  revocation?: RevocationCheck,
 ): VerificationResult
+
+type RevocationCheck = { revoked: boolean; fetchFailed?: boolean }
 
 type VerificationResult =
   | { valid: true; key: KeyEntry; credential: Credential }
   | { valid: false; reason: string }
+  | { valid: true; key: KeyEntry; credential: Credential; revoked: true }   // VerificationRevoked
 ```
 
 Full verification pipeline:
@@ -138,25 +158,33 @@ Full verification pipeline:
 2. Parse JSON, validate credential schema
 3. Try all registry keys; authority derived from matching key
 4. Single-pass: verify signature against all keys; track date-mismatch diagnostics
-5. Return typed result with matching key or failure reason
+5. If revocation check provided, mark result as revoked when applicable
+6. Return typed result with matching key or failure reason
 
 ### Verification Page
 
 ```typescript
 parseParams(search: string): PageParams | ParseError
-getRegistryUrl(): string
+getKeyFileUrl(filename: string): string
+fetchAndValidate<T>(url: string, validate: (obj: unknown) => T): Promise<T>
 fetchRegistry(url: string): Promise<Registry>
+fetchRevocationList(url: string): Promise<RevocationList>
 runVerification(params: PageParams, registry: Registry): VerifyPageResult
 renderResult(result: VerifyPageResult, container: Element): void
 initVerifyPage(): Promise<void>
 ```
 
-Client-side verification page logic. Parses URL parameters (`?p=<payload>&s=<signature>`), fetches the key registry, runs cryptographic verification, and renders the result into the DOM. All text is set via `textContent` (never `innerHTML`) to prevent XSS. Registry URL is absolute only on `verify.royalhouseofgeorgia.ge`; relative path everywhere else.
+`VerifyPageResult` status includes `'revoked'` in addition to `'valid'` and `'invalid'`.
+
+`getKeyFileUrl` builds the URL for any file under `keys/` (used for both `registry.json` and `revocations.json`). `fetchAndValidate<T>` is the shared fetch helper used by `fetchRegistry` and `fetchRevocationList`.
+
+Client-side verification page logic. Parses URL parameters (`?p=<payload>&s=<signature>`), fetches the key registry and revocation list, runs cryptographic verification, and renders the result into the DOM. All text is set via `textContent` (never `innerHTML`) to prevent XSS. Registry URL is absolute only on `verify.royalhouseofgeorgia.ge`; relative path everywhere else.
 
 ### Building the Verification Page
 
 ```bash
-npm run build:verify    # esbuild → verify/verify.js (IIFE, es2020, minified)
+npm run build:verify      # esbuild → verify/verify.js (IIFE, es2020, minified)
+npm run build:verify:sri  # same + updates SRI hash in verify/index.html
 ```
 
 To preview locally:
@@ -196,7 +224,7 @@ if (result.valid) {
 - No mocking of internal modules — tests exercise the real code paths
 - Verification page tests use `// @vitest-environment happy-dom` per-file directive
 - `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page tests
-- 306 tests total (9 test files)
+- 387 tests total (10 test files)
 
 ## Deployment Checklist — Verification Page
 

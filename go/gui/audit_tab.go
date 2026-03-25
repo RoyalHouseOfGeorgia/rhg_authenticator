@@ -1,10 +1,7 @@
 package gui
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -14,79 +11,17 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
-)
 
-// RegistryCommit represents a single commit from the GitHub Commits API.
-type RegistryCommit struct {
-	SHA     string `json:"sha"`
-	HTMLURL string `json:"html_url"`
-	Commit  struct {
-		Message string `json:"message"`
-		Author  struct {
-			Name string `json:"name"`
-			Date string `json:"date"`
-		} `json:"author"`
-	} `json:"commit"`
-}
+	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
+)
 
 const (
-	githubOwner        = "RoyalHouseOfGeorgia"
-	githubRepo         = "rhg_authenticator"
-	registryFilePath   = "verify/keys/registry.json"
-	commitsPerPage     = 50
-	commitFetchTimeout = 10 * time.Second
-	maxCommitsBytes    = 1 << 20 // 1 MiB
-	maxCommitMsgRunes  = 80
+	commitsPerPage    = 50
+	maxCommitMsgRunes = 80
 )
 
-// commitClient is reused across fetchCommits calls for connection pooling.
-var commitClient = &http.Client{Timeout: commitFetchTimeout}
-
-// fetchCommits retrieves registry file commits from the given GitHub API URL.
-// If etag is non-empty, it is sent as If-None-Match for conditional requests.
-// On 304 Not Modified, returns (nil, etag, nil) — nil commits signals no change.
-func fetchCommits(apiURL string, etag string) ([]RegistryCommit, string, error) {
-
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		return nil, "", fmt.Errorf("creating request: %w", err)
-	}
-	if etag != "" {
-		req.Header.Set("If-None-Match", etag)
-	}
-
-	resp, err := commitClient.Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotModified {
-		return nil, etag, nil
-	}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, "", fmt.Errorf("rate limited")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		return nil, "", fmt.Errorf("unexpected Content-Type: %s", ct)
-	}
-
-	newETag := resp.Header.Get("ETag")
-
-	var commits []RegistryCommit
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxCommitsBytes)).Decode(&commits); err != nil {
-		return nil, "", fmt.Errorf("JSON decode: %w", err)
-	}
-
-	return commits, newETag, nil
-}
-
 // formatCommitSummary returns a one-line summary for the audit list.
-func formatCommitSummary(c RegistryCommit) string {
+func formatCommitSummary(c ghapi.RegistryCommit) string {
 	// Date: parse RFC3339, fall back to raw string.
 	dateStr := strings.TrimSpace(c.Commit.Author.Date)
 	if t, err := time.Parse(time.RFC3339, dateStr); err == nil {
@@ -113,6 +48,9 @@ func formatCommitSummary(c RegistryCommit) string {
 
 // truncateRunes truncates s to maxLen runes, appending "..." if truncated.
 func truncateRunes(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
 	if utf8.RuneCountInString(s) <= maxLen {
 		return s
 	}
@@ -134,8 +72,8 @@ func parseGitHubURL(rawURL string) *url.URL {
 }
 
 // NewAuditTab creates the registry audit tab UI showing GitHub commit history.
-func NewAuditTab(window fyne.Window) *fyne.Container {
-	var commits []RegistryCommit
+func NewAuditTab(window fyne.Window, lastUpdateCh chan<- string) *fyne.Container {
+	var commits []ghapi.RegistryCommit
 	statusLabel := widget.NewLabel("")
 
 	list := widget.NewList(
@@ -170,6 +108,7 @@ func NewAuditTab(window fyne.Window) *fyne.Container {
 	var fetching atomic.Bool
 	var lastETag string
 	var refreshBtn *widget.Button
+	sent := false
 
 	doFetch := func() {
 		if !fetching.CompareAndSwap(false, true) {
@@ -179,16 +118,12 @@ func NewAuditTab(window fyne.Window) *fyne.Container {
 		statusLabel.SetText("Fetching...")
 		currentETag := lastETag // capture under UI thread
 		go func() {
-			apiURL := fmt.Sprintf(
-				"https://api.github.com/repos/%s/%s/commits?path=%s&per_page=%d",
-				githubOwner, githubRepo, registryFilePath, commitsPerPage,
-			)
-			result, newETag, err := fetchCommits(apiURL, currentETag)
+			result, newETag, err := ghapi.FetchRegistryCommits(commitsPerPage, currentETag)
 			fyne.Do(func() {
 				fetching.Store(false)
 				refreshBtn.Enable()
 				if err != nil {
-					if strings.Contains(err.Error(), "rate limited") {
+					if ghapi.IsRateLimited(err) {
 						statusLabel.SetText("GitHub API rate limit reached — try again later")
 					} else {
 						statusLabel.SetText("Failed to fetch registry history")
@@ -200,6 +135,13 @@ func NewAuditTab(window fyne.Window) *fyne.Container {
 					lastETag = newETag
 					list.Refresh()
 					statusLabel.SetText(fmt.Sprintf("Loaded %d commits", len(commits)))
+					if !sent && len(commits) > 0 {
+						select {
+						case lastUpdateCh <- commits[0].Commit.Author.Date:
+						default: // channel full, skip
+						}
+						sent = true
+					}
 				} else {
 					statusLabel.SetText("No changes since last check")
 				}

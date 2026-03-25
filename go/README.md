@@ -48,7 +48,7 @@ The binary embeds the version from `git describe --tags`.
 
 ### History Tab
 
-Browse previously issued credentials. Search by recipient name. Click any entry for full details.
+Browse previously issued credentials. Search by recipient name. Click any entry for full details. **Revoke** a credential via the Revoke button — this submits a GitHub PR to add the credential's SHA-256 hash to the revocation list.
 
 ## YubiKey Setup
 
@@ -111,6 +111,14 @@ Workflow:
 
 The app fetches the key registry from `https://verify.royalhouseofgeorgia.ge/keys/registry.json` on startup. **Remote only** — no cache or embedded fallback (a local copy could be tampered with). If the server is unreachable, the app opens in offline mode (signing still works, but YubiKey registry check is unavailable). Restart the app to retry.
 
+## Credential Revocation
+
+The app fetches the revocation list (`revocations.json`) alongside the registry on startup. The revocation list contains only SHA-256 hashes of revoked credential payloads — no personal data.
+
+- **History tab**: the **Revoke** button opens a confirmation dialog, then submits a PR via `ghapi.CreateRevocationPR` adding the credential hash to `revocations.json`.
+- **Caching**: `cachedRevocationList` with deep-copy before mutation to prevent races.
+- **Soft failure**: if the revocation list fetch fails, the app displays feedback via the `revocationStatus` label in the status bar; verification proceeds without revocation checks.
+
 ## Security
 
 - **PIN never leaves the process**: `piv-go` talks directly to the YubiKey via PCSC. No subprocess, no command-line arguments, no `/proc` exposure.
@@ -135,21 +143,25 @@ go/
 │   ├── hwerror.go       # Hardware error classification (shared by gui + regmgr)
 │   ├── rand.go          # Shared RandomHex utility
 │   ├── registry.go      # Key registry schema, lookup, fingerprint
-│   ├── sanitize.go      # SanitizeForLog (shared by gui + ghapi)
+│   ├── revocation.go    # RevocationEntry, RevocationList, ValidateRevocationList, BuildRevocationSet, IsRevoked
+│   ├── revocation_test.go
+│   ├── sanitize.go      # SanitizeForLog: C0, C1, DEL, bidi (shared by gui + ghapi)
 │   └── sign.go          # Signing orchestrator
 ├── gui/                 # Fyne GUI (signing app)
-│   ├── audit_tab.go     # Registry audit (GitHub commit history, ETag caching)
-│   ├── errors.go        # Error sanitization for GUI dialogs (delegates to core/hwerror)
-│   ├── history_tab.go   # Issuance log browser
+│   ├── audit_tab.go     # Registry audit (renders commit history from ghapi/commits)
+│   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi)
+│   ├── history_tab_test.go
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display
 │   ├── signflow.go      # Extracted signing workflow (testable)
-│   ├── statusbar.go     # Bottom status bar (key stats, online status)
+│   ├── statusbar.go     # Bottom status bar (key stats, online status, lastUpdateCh coordination, revocationStatus label)
 │   └── yubikey_tab.go   # YubiKey registry check (no PIN)
 ├── ghapi/               # GitHub API client + OAuth device flow
 │   ├── keyring.go       # Keyring interface (OS keychain + FakeKeyring for tests)
 │   ├── auth.go          # OAuth device flow, token storage, session restore
-│   └── client.go        # GitHub REST API (branches, contents, PRs)
+│   ├── client.go        # GitHub REST API (branches, contents, PRs); safeRedirect, exported DefaultOwner/DefaultRepo/RegistryFilePath
+│   ├── commits.go       # FetchRegistryCommits (moved from audit_tab.go); commitClient with safeRedirect
+│   └── commits_test.go
 ├── regmgr/              # Registry Manager (tab in main app)
 │   ├── app.go           # Main UI: toolbar, table, login, submit, state management
 │   ├── form.go          # Add/Edit entry dialogs (cert import, calendar)
@@ -165,7 +177,7 @@ go/
 ├── log/                 # Issuance log
 │   └── issuance.go      # Atomic append-only JSON log
 ├── registry/            # Registry fetch
-│   └── fetch.go         # Remote-only registry fetch
+│   └── fetch.go         # Remote-only registry fetch; readLimitedBody helper
 ├── update/              # Version check
 │   └── check.go         # GitHub releases version check
 ├── testdata/            # Cross-language test vectors + cert fixtures

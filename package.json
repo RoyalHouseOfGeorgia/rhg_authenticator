@@ -17,6 +17,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
+    "build:verify:sri": "bash scripts/update-sri.sh",
+    "check:sri": "bash scripts/update-sri.sh --check",
     "audit:deps": "npm audit --omit=dev"
   },
   "dependencies": {

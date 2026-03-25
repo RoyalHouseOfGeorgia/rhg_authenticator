@@ -52,6 +52,29 @@ The system has three independent components:
 4. Ed25519 signature verified client-side in browser
 5. Result displayed: valid credential details or rejection reason
 
+## Credential Revocation
+
+Credentials can be revoked after issuance. The revocation mechanism is hash-based and privacy-preserving.
+
+### Design
+
+- **Revocation list** (`verify/keys/revocations.json`) is hosted on GitHub Pages alongside the key registry.
+- **Privacy property**: only opaque SHA-256 hashes of credential payloads are published. No personal data or credential content is exposed.
+- **Verification order**: signature is verified first; revocation is checked only after a valid signature is confirmed.
+- **Soft failure**: if the revocation list is unavailable (network error), verification proceeds with a warning. The system does not block valid credentials due to a fetch failure.
+
+### Desktop App (Go)
+
+- The **History** tab includes a **Revoke** button with a confirmation dialog. Revoking a credential submits a pull request via the GitHub API (`CreateRevocationPR` in `ghapi`), adding the credential's SHA-256 hash to `revocations.json`.
+- `core/revocation.go` provides `RevocationEntry`, `RevocationList`, `ValidateRevocationList`, `BuildRevocationSet`, and `IsRevoked`.
+- The revocation list is cached (`cachedRevocationList`) with deep-copy before mutation.
+
+### Verification Page (TypeScript)
+
+- `revocation.ts` provides `buildRevocationSet` and `isRevoked`.
+- `verify-page.ts` fetches the revocation list via `fetchRevocationList` (using the shared `fetchAndValidate<T>` helper) and passes a `RevocationCheck` to the verification orchestrator.
+- `VerifyPageResult` includes a `'revoked'` status alongside `'valid'` and `'invalid'`.
+
 ## Module Architecture (TypeScript — Verification Library)
 
 | Module | Responsibility | External Deps |
@@ -64,7 +87,8 @@ The system has three independent components:
 | `validation.ts` | Shared date validation (calendar-correct, no `Date` constructor) | None |
 | `verify.ts` | Single-pass verification orchestrator | `credential.ts`, `crypto.ts`, `registry.ts` |
 | `index.ts` | Barrel export | All core modules |
-| `verify-page.ts` | Browser verification page: URL parsing, registry fetch, DOM rendering | `verify.ts`, `base64url.ts`, `registry.ts` |
+| `revocation.ts` | Revocation list validation, `buildRevocationSet`, `isRevoked` | None |
+| `verify-page.ts` | Browser verification page: URL parsing, registry/revocation fetch, DOM rendering | `verify.ts`, `revocation.ts`, `base64url.ts`, `registry.ts` |
 
 ## Credential Format
 
@@ -87,7 +111,7 @@ All five fields are required. No extra fields allowed. Strings must be non-empty
 Before signing, the credential is serialized to canonical JSON:
 
 1. Object keys sorted lexicographically at all levels
-2. Strings NFC-normalized (Unicode normalization) — both keys and values
+2. String values NFC-normalized (Unicode normalization); keys are serialized as-is (not normalized)
 3. No whitespace between tokens
 4. Standard JSON escaping per RFC 8259 §7 (including U+2028/U+2029)
 

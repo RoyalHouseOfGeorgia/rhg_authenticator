@@ -62,6 +62,9 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
   if (record.authority.length === 0) {
     throw new Error(`keys[${index}]: authority must not be empty`);
   }
+  if (CONTROL_CHAR_RE.test(record.authority)) {
+    throw new Error(`keys[${index}]: authority contains invalid control characters`);
+  }
   // NFC-normalize authority so lookups can use plain comparison.
   const normalizedAuthority = record.authority.normalize('NFC');
 

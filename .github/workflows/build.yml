@@ -39,7 +39,7 @@ jobs:
           npm run build:verify
           HASH=$(cat verify/verify.js | openssl dgst -sha384 -binary | openssl base64 -A)
           grep -q "sha384-$HASH" verify/index.html || (echo "SRI hash mismatch — rebuild verify.js and update index.html" && exit 1)
-      - run: npm audit --audit-level=high
+      - run: npm audit --audit-level=moderate
 
   security:
     runs-on: ubuntu-latest
@@ -69,15 +69,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Required by gitleaks-action for API access
 
+  # Race detection on macOS only. Windows excluded: -race requires
+  # CGO_ENABLED=1 and a C compiler not available on windows-latest runners.
   test-race:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6.3.0
         with:
           go-version: '1.25.8'
           cache-dependency-path: go/go.sum
-      - run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libgl1-mesa-dev xorg-dev
       - working-directory: go
         run: go test -race ./... -count=1
 

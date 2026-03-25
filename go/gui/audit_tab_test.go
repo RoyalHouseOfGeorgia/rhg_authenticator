@@ -1,160 +1,18 @@
 package gui
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 )
-
-// validCommitJSON is a fixture for fetch tests.
-const validCommitJSON = `[{
-	"sha": "abc123",
-	"html_url": "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/commit/abc123",
-	"commit": {
-		"message": "Update registry",
-		"author": {
-			"name": "Kimon",
-			"date": "2026-03-15T10:00:00Z"
-		}
-	}
-}]`
-
-// --- fetchCommits tests ---
-
-func TestFetchCommits_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(validCommitJSON))
-	}))
-	defer srv.Close()
-
-	commits, _, err := fetchCommits(srv.URL, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(commits) != 1 {
-		t.Fatalf("expected 1 commit, got %d", len(commits))
-	}
-	if commits[0].SHA != "abc123" {
-		t.Errorf("SHA = %q, want %q", commits[0].SHA, "abc123")
-	}
-	if commits[0].HTMLURL != "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/commit/abc123" {
-		t.Errorf("HTMLURL = %q", commits[0].HTMLURL)
-	}
-	if commits[0].Commit.Message != "Update registry" {
-		t.Errorf("Message = %q", commits[0].Commit.Message)
-	}
-	if commits[0].Commit.Author.Name != "Kimon" {
-		t.Errorf("Author.Name = %q", commits[0].Commit.Author.Name)
-	}
-	if commits[0].Commit.Author.Date != "2026-03-15T10:00:00Z" {
-		t.Errorf("Author.Date = %q", commits[0].Commit.Author.Date)
-	}
-}
-
-func TestFetchCommits_HTTP404(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	_, _, err := fetchCommits(srv.URL, "")
-	if err == nil {
-		t.Fatal("expected error for HTTP 404")
-	}
-	if !strings.Contains(err.Error(), "404") {
-		t.Errorf("error should contain '404', got: %v", err)
-	}
-}
-
-func TestFetchCommits_InvalidJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{not valid json"))
-	}))
-	defer srv.Close()
-
-	_, _, err := fetchCommits(srv.URL, "")
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-	if !strings.Contains(err.Error(), "JSON decode") {
-		t.Errorf("error should mention JSON decode, got: %v", err)
-	}
-}
-
-func TestFetchCommits_EmptyArray(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("[]"))
-	}))
-	defer srv.Close()
-
-	commits, _, err := fetchCommits(srv.URL, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(commits) != 0 {
-		t.Errorf("expected empty slice, got %d", len(commits))
-	}
-}
-
-func TestFetchCommits_WrongContentType(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("<html></html>"))
-	}))
-	defer srv.Close()
-
-	_, _, err := fetchCommits(srv.URL, "")
-	if err == nil {
-		t.Fatal("expected error for wrong Content-Type")
-	}
-	if !strings.Contains(err.Error(), "Content-Type") {
-		t.Errorf("error should mention Content-Type, got: %v", err)
-	}
-}
-
-func TestFetchCommits_OversizedResponse(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// Write a valid JSON array start, then exceed 1 MiB so the
-		// LimitReader truncates mid-stream causing a decode error.
-		w.Write([]byte(`[{"sha":"`))
-		filler := strings.Repeat("x", maxCommitsBytes+1)
-		w.Write([]byte(filler))
-		w.Write([]byte(`"}]`))
-	}))
-	defer srv.Close()
-
-	_, _, err := fetchCommits(srv.URL, "")
-	if err == nil {
-		t.Fatal("expected error for oversized response")
-	}
-}
-
-func TestFetchCommits_RateLimited(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
-
-	_, _, err := fetchCommits(srv.URL, "")
-	if err == nil {
-		t.Fatal("expected error for 429")
-	}
-	if !strings.Contains(err.Error(), "rate limited") {
-		t.Errorf("error should contain 'rate limited', got: %v", err)
-	}
-}
 
 // --- formatCommitSummary tests ---
 
 func TestFormatCommitSummary(t *testing.T) {
-	c := RegistryCommit{SHA: "abc123"}
+	c := ghapi.RegistryCommit{SHA: "abc123"}
 	c.Commit.Message = "Fix registry"
 	c.Commit.Author.Name = "Kimon"
 	c.Commit.Author.Date = "2026-03-15T10:00:00Z"
@@ -167,7 +25,7 @@ func TestFormatCommitSummary(t *testing.T) {
 }
 
 func TestFormatCommitSummary_LongMessage(t *testing.T) {
-	c := RegistryCommit{}
+	c := ghapi.RegistryCommit{}
 	c.Commit.Message = strings.Repeat("a", 100)
 	c.Commit.Author.Name = "Author"
 	c.Commit.Author.Date = "2026-03-15T10:00:00Z"
@@ -190,7 +48,7 @@ func TestFormatCommitSummary_LongMessage(t *testing.T) {
 }
 
 func TestFormatCommitSummary_MultilineMessage(t *testing.T) {
-	c := RegistryCommit{}
+	c := ghapi.RegistryCommit{}
 	c.Commit.Message = "line1\nline2\nline3"
 	c.Commit.Author.Name = "Author"
 	c.Commit.Author.Date = "2026-03-15T10:00:00Z"
@@ -205,7 +63,7 @@ func TestFormatCommitSummary_MultilineMessage(t *testing.T) {
 }
 
 func TestFormatCommitSummary_EmptyFields(t *testing.T) {
-	c := RegistryCommit{}
+	c := ghapi.RegistryCommit{}
 	c.Commit.Message = ""
 	c.Commit.Author.Name = ""
 	c.Commit.Author.Date = "not-a-date"
@@ -222,7 +80,7 @@ func TestFormatCommitSummary_EmptyFields(t *testing.T) {
 	}
 }
 
-// --- isValidGitHubURL tests ---
+// --- parseGitHubURL tests ---
 
 func TestParseGitHubURL_Valid(t *testing.T) {
 	if parseGitHubURL("https://github.com/owner/repo/commit/abc123") == nil {
@@ -248,43 +106,7 @@ func TestParseGitHubURL_Malformed(t *testing.T) {
 	}
 }
 
-// --- truncateRunes tests ---
-
-func TestTruncateRunes_Short(t *testing.T) {
-	got := truncateRunes("short", 80)
-	if got != "short" {
-		t.Errorf("truncateRunes = %q, want %q", got, "short")
-	}
-}
-
-func TestTruncateRunes_ExactLength(t *testing.T) {
-	s := strings.Repeat("a", 80)
-	got := truncateRunes(s, 80)
-	if got != s {
-		t.Errorf("truncateRunes exact = %q, want %q", got, s)
-	}
-}
-
-func TestTruncateRunes_Long(t *testing.T) {
-	s := strings.Repeat("a", 90)
-	got := truncateRunes(s, 80)
-	want := strings.Repeat("a", 80) + "..."
-	if got != want {
-		t.Errorf("truncateRunes long = %q, want %q", got, want)
-	}
-}
-
-func TestTruncateRunes_Unicode(t *testing.T) {
-	// Georgian characters: multi-byte but single rune each.
-	s := strings.Repeat("\u10D0", 85)
-	got := truncateRunes(s, 80)
-	want := strings.Repeat("\u10D0", 80) + "..."
-	if got != want {
-		t.Errorf("truncateRunes unicode mismatch")
-	}
-}
-
-// --- isValidGitHubURL additional edge cases ---
+// --- parseGitHubURL additional edge cases ---
 
 func TestParseGitHubURL_EmptyString(t *testing.T) {
 	if parseGitHubURL("") != nil {
@@ -295,102 +117,6 @@ func TestParseGitHubURL_EmptyString(t *testing.T) {
 func TestParseGitHubURL_WithCredentials(t *testing.T) {
 	if parseGitHubURL("https://user:pass@github.com/owner/repo") != nil {
 		t.Error("expected nil for URL with embedded credentials")
-	}
-}
-
-// --- fetchCommits edge cases ---
-
-func TestFetchCommits_NetworkError(t *testing.T) {
-	// Use a URL that will definitely fail to connect.
-	_, _, err := fetchCommits("http://127.0.0.1:1/nonexistent", "")
-	if err == nil {
-		t.Fatal("expected error for unreachable server")
-	}
-}
-
-func TestFetchCommits_ContentTypeWithCharset(t *testing.T) {
-	// GitHub returns "application/json; charset=utf-8" — should still work.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Write([]byte(validCommitJSON))
-	}))
-	defer srv.Close()
-
-	commits, _, err := fetchCommits(srv.URL, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(commits) != 1 {
-		t.Errorf("expected 1 commit, got %d", len(commits))
-	}
-}
-
-// --- ETag caching tests ---
-
-func TestFetchCommits_304NotModified(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("If-None-Match") == `"abc123"` {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `"abc123"`)
-		w.Write([]byte(validCommitJSON))
-	}))
-	defer srv.Close()
-
-	// First fetch: gets data + etag.
-	result, etag, err := fetchCommits(srv.URL, "")
-	if err != nil {
-		t.Fatalf("first fetch: unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("first fetch: expected non-nil commits")
-	}
-	if etag != `"abc123"` {
-		t.Errorf("first fetch: etag = %q, want %q", etag, `"abc123"`)
-	}
-
-	// Second fetch with etag: gets 304.
-	result2, etag2, err2 := fetchCommits(srv.URL, etag)
-	if err2 != nil {
-		t.Fatalf("second fetch: unexpected error: %v", err2)
-	}
-	if result2 != nil {
-		t.Error("second fetch: expected nil commits for 304")
-	}
-	if etag2 != etag {
-		t.Errorf("second fetch: etag = %q, want %q", etag2, etag)
-	}
-}
-
-func TestFetchCommits_ETagSent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("If-None-Match"); got != `"test-etag"` {
-			t.Errorf("If-None-Match = %q, want %q", got, `"test-etag"`)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(validCommitJSON))
-	}))
-	defer srv.Close()
-
-	fetchCommits(srv.URL, `"test-etag"`)
-}
-
-func TestFetchCommits_ETagCached(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `"fresh-etag"`)
-		w.Write([]byte(validCommitJSON))
-	}))
-	defer srv.Close()
-
-	_, etag, err := fetchCommits(srv.URL, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if etag != `"fresh-etag"` {
-		t.Errorf("etag = %q, want %q", etag, `"fresh-etag"`)
 	}
 }
 

@@ -24,11 +24,11 @@ func TestNewClient(t *testing.T) {
 	if c.token != "tok_abc" {
 		t.Errorf("Token = %q, want %q", c.token, "tok_abc")
 	}
-	if c.Owner != defaultOwner {
-		t.Errorf("Owner = %q, want %q", c.Owner, defaultOwner)
+	if c.Owner != DefaultOwner {
+		t.Errorf("Owner = %q, want %q", c.Owner, DefaultOwner)
 	}
-	if c.Repo != defaultRepo {
-		t.Errorf("Repo = %q, want %q", c.Repo, defaultRepo)
+	if c.Repo != DefaultRepo {
+		t.Errorf("Repo = %q, want %q", c.Repo, DefaultRepo)
 	}
 	if c.HTTPClient == nil {
 		t.Fatal("HTTPClient is nil")
@@ -794,6 +794,272 @@ func TestCreateRegistryPR_422RetryAnyMessage(t *testing.T) {
 	}
 }
 
+// --- CreateRevocationPR ---
+
+func TestCreateRevocationPR_Success(t *testing.T) {
+	var callSequence []string
+	content := []byte(`{"revocations": []}`)
+	fullHash := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+
+	var capturedBranchRef string
+	var capturedContentsPath string
+	var capturedPRTitle string
+	var capturedPRBody string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
+			callSequence = append(callSequence, "getRef")
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]any{
+				"ref":    "refs/heads/main",
+				"object": map[string]string{"sha": "main-sha-000"},
+			})
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
+			callSequence = append(callSequence, "createRef")
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]string
+			json.Unmarshal(body, &req)
+			capturedBranchRef = req["ref"]
+			w.WriteHeader(201)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
+			callSequence = append(callSequence, "getContents")
+			// Verify path targets revocations.json
+			capturedContentsPath = r.URL.Path
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]string{"sha": "file-sha-rev"})
+
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
+			callSequence = append(callSequence, "updateContents")
+			// Verify PUT targets revocations.json
+			if !strings.Contains(r.URL.Path, "revocations.json") {
+				t.Errorf("PUT path = %s, want to contain revocations.json", r.URL.Path)
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			callSequence = append(callSequence, "createPR")
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]string
+			json.Unmarshal(body, &req)
+			capturedPRTitle = req["title"]
+			capturedPRBody = req["body"]
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(PRResult{Number: 99, HTMLURL: "https://github.com/test/pr/99"})
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv, "tok")
+	pr, err := c.CreateRevocationPR(context.Background(), content, fullHash)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr.Number != 99 {
+		t.Errorf("PR number = %d, want 99", pr.Number)
+	}
+	if pr.HTMLURL != "https://github.com/test/pr/99" {
+		t.Errorf("PR URL = %q, want https://github.com/test/pr/99", pr.HTMLURL)
+	}
+
+	// Verify call sequence.
+	expected := []string{"getRef", "createRef", "getContents", "updateContents", "createPR"}
+	if len(callSequence) != len(expected) {
+		t.Fatalf("call sequence = %v, want %v", callSequence, expected)
+	}
+	for i, want := range expected {
+		if callSequence[i] != want {
+			t.Errorf("call[%d] = %q, want %q", i, callSequence[i], want)
+		}
+	}
+
+	// Verify branch name contains "revoke-" prefix.
+	if !strings.Contains(capturedBranchRef, "revoke-") {
+		t.Errorf("branch ref = %q, want to contain 'revoke-'", capturedBranchRef)
+	}
+
+	// Verify contents path targets revocations.json.
+	if !strings.Contains(capturedContentsPath, "revocations.json") {
+		t.Errorf("getContents path = %q, want to contain revocations.json", capturedContentsPath)
+	}
+
+	// Verify PR title contains "Revoke credential".
+	shortHash := fullHash[:16]
+	if !strings.Contains(capturedPRTitle, "Revoke credential") {
+		t.Errorf("PR title = %q, want to contain 'Revoke credential'", capturedPRTitle)
+	}
+	if !strings.Contains(capturedPRTitle, shortHash) {
+		t.Errorf("PR title = %q, want to contain short hash %q", capturedPRTitle, shortHash)
+	}
+
+	// Verify PR body contains the full hash.
+	if !strings.Contains(capturedPRBody, fullHash) {
+		t.Errorf("PR body = %q, want to contain full hash %q", capturedPRBody, fullHash)
+	}
+}
+
+func TestCreateRevocationPR_EmptyContent(t *testing.T) {
+	apiCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCalled = true
+		w.WriteHeader(500)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv, "tok")
+	_, err := c.CreateRevocationPR(context.Background(), nil, "somehash")
+	if err == nil {
+		t.Fatal("expected error for empty content")
+	}
+	if !strings.Contains(err.Error(), "no revocation content") {
+		t.Errorf("error = %q, want to contain 'no revocation content'", err.Error())
+	}
+	if apiCalled {
+		t.Error("API was called despite empty content")
+	}
+
+	// Also test with zero-length slice.
+	_, err = c.CreateRevocationPR(context.Background(), []byte{}, "somehash")
+	if err == nil {
+		t.Fatal("expected error for zero-length content")
+	}
+	if !strings.Contains(err.Error(), "no revocation content") {
+		t.Errorf("error = %q, want to contain 'no revocation content'", err.Error())
+	}
+}
+
+func TestCreateRevocationPR_LongHash(t *testing.T) {
+	longHash := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	content := []byte(`{"revocations": []}`)
+
+	var capturedBranchRef string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]any{
+				"ref":    "refs/heads/main",
+				"object": map[string]string{"sha": "sha1"},
+			})
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]string
+			json.Unmarshal(body, &req)
+			capturedBranchRef = req["ref"]
+			w.WriteHeader(201)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]string{"sha": "fsha"})
+
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(PRResult{Number: 1})
+
+		default:
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv, "tok")
+	_, err := c.CreateRevocationPR(context.Background(), content, longHash)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Branch ref should contain "revoke-" followed by exactly 16 hex chars, then "-".
+	// The full 64-char hash must NOT appear in the branch name.
+	expectedPrefix := "revoke-" + longHash[:16] + "-"
+	if !strings.Contains(capturedBranchRef, expectedPrefix) {
+		t.Errorf("branch ref = %q, want to contain %q", capturedBranchRef, expectedPrefix)
+	}
+	// Ensure the full hash is NOT in the branch name (it was truncated).
+	if strings.Contains(capturedBranchRef, longHash) {
+		t.Errorf("branch ref = %q, should not contain full hash %q", capturedBranchRef, longHash)
+	}
+}
+
+func TestCreateRevocationPR_ShortHash(t *testing.T) {
+	// Hash shorter than 16 chars should be used as-is (no truncation).
+	shortHash := "abc123"
+	content := []byte(`{"revocations": []}`)
+
+	var capturedBranchRef string
+	var capturedPRTitle string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]any{
+				"ref":    "refs/heads/main",
+				"object": map[string]string{"sha": "sha1"},
+			})
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]string
+			json.Unmarshal(body, &req)
+			capturedBranchRef = req["ref"]
+			w.WriteHeader(201)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]string{"sha": "fsha"})
+
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]string
+			json.Unmarshal(body, &req)
+			capturedPRTitle = req["title"]
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(PRResult{Number: 1})
+
+		default:
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv, "tok")
+	_, err := c.CreateRevocationPR(context.Background(), content, shortHash)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Short hash should appear in full in the branch prefix.
+	expectedPrefix := "revoke-" + shortHash + "-"
+	if !strings.Contains(capturedBranchRef, expectedPrefix) {
+		t.Errorf("branch ref = %q, want to contain %q", capturedBranchRef, expectedPrefix)
+	}
+
+	// Title should use the short hash as-is.
+	if !strings.Contains(capturedPRTitle, shortHash) {
+		t.Errorf("PR title = %q, want to contain %q", capturedPRTitle, shortHash)
+	}
+}
+
 // --- helpers ---
 
 // newTestClient creates a Client pointing at the given test server.
@@ -870,8 +1136,8 @@ func TestDoJSON_RedirectStripsAuth(t *testing.T) {
 		HTTPClient: &http.Client{
 			CheckRedirect: safeCheckRedirect,
 		},
-		Owner: defaultOwner,
-		Repo:  defaultRepo,
+		Owner: DefaultOwner,
+		Repo:  DefaultRepo,
 	}
 
 	// Make a direct request to server A (bypassing rewriteTransport so
@@ -913,8 +1179,8 @@ func TestDoJSON_SameHostRedirectKeepsAuth(t *testing.T) {
 		HTTPClient: &http.Client{
 			CheckRedirect: safeCheckRedirect,
 		},
-		Owner: defaultOwner,
-		Repo:  defaultRepo,
+		Owner: DefaultOwner,
+		Repo:  DefaultRepo,
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/start", nil)
@@ -1017,10 +1283,10 @@ func TestClient_String_RedactsToken(t *testing.T) {
 	if !strings.Contains(str, "[REDACTED]") {
 		t.Errorf("String() missing [REDACTED]: %s", str)
 	}
-	if !strings.Contains(str, defaultOwner) {
+	if !strings.Contains(str, DefaultOwner) {
 		t.Errorf("String() missing Owner: %s", str)
 	}
-	if !strings.Contains(str, defaultRepo) {
+	if !strings.Contains(str, DefaultRepo) {
 		t.Errorf("String() missing Repo: %s", str)
 	}
 

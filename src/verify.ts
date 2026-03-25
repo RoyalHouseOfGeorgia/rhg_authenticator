@@ -13,13 +13,20 @@ import {
   decodePublicKey,
 } from './registry.js';
 import { verify as ed25519Verify } from './crypto.js';
+import { isRevoked } from './revocation.js';
 
 import type { Credential } from './credential.js';
 import type { KeyEntry, Registry } from './registry.js';
 
 export type VerificationSuccess = { valid: true; key: KeyEntry; credential: Credential };
-export type VerificationFailure = { valid: false; reason: string };
-export type VerificationResult = VerificationSuccess | VerificationFailure;
+export type VerificationRevoked = { valid: false; revoked: true; reason: string };
+export type VerificationFailure = { valid: false; revoked: false; reason: string };
+export type VerificationResult = VerificationSuccess | VerificationRevoked | VerificationFailure;
+
+export type RevocationCheck = {
+  revocationSet: Set<string>;
+  payloadHash: string;
+};
 
 const decoder = new TextDecoder();
 
@@ -44,10 +51,11 @@ export function verifyCredential(
   payloadBytes: Uint8Array,
   signatureBytes: Uint8Array,
   registry: Registry,
+  revocation?: RevocationCheck,
 ): VerificationResult {
   // Step 0: Enforce payload size limit.
   if (payloadBytes.length > MAX_PAYLOAD_BYTES) {
-    return { valid: false, reason: 'payload exceeds maximum size' };
+    return { valid: false, revoked: false, reason: 'payload exceeds maximum size' };
   }
 
   // Step 1: Parse payload as JSON.
@@ -55,11 +63,11 @@ export function verifyCredential(
   try {
     parsed = JSON.parse(decoder.decode(payloadBytes));
   } catch {
-    return { valid: false, reason: 'payload is not valid JSON' };
+    return { valid: false, revoked: false, reason: 'payload is not valid JSON' };
   }
 
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { valid: false, reason: 'payload must be a JSON object' };
+    return { valid: false, revoked: false, reason: 'payload must be a JSON object' };
   }
 
   // Step 2: Validate as a credential.
@@ -68,21 +76,27 @@ export function verifyCredential(
     credential = validateCredential(parsed);
   } catch (err) {
     if (err instanceof UnsupportedVersionError) {
-      return { valid: false, reason: 'credential version not supported' };
+      return { valid: false, revoked: false, reason: 'credential version not supported' };
     }
     return {
       valid: false,
+      revoked: false,
       reason: 'credential validation failed',
     };
   }
 
   // Step 3: Validate signature length.
   if (signatureBytes.length !== 64) {
-    return { valid: false, reason: 'invalid signature length' };
+    return { valid: false, revoked: false, reason: 'invalid signature length' };
   }
 
-  // Step 4: Iterate all registry keys — the authority is determined by which key verifies.
+  // Step 4: Check for empty registry (defense-in-depth; validateRegistry rejects this).
   const keys = registry.keys;
+  if (keys.length === 0) {
+    return { valid: false, revoked: false, reason: 'registry contains no keys' };
+  }
+
+  // Step 5: Iterate all registry keys — the authority is determined by which key verifies.
   let signatureMatchedButDateInvalid = false;
   let decodeFailures = 0;
   for (let i = 0; i < keys.length; i++) {
@@ -97,6 +111,13 @@ export function verifyCredential(
 
     try {
       if (ed25519Verify(signatureBytes, payloadBytes, publicKey)) {
+        // Check revocation as soon as signature matches, regardless of date range.
+        // Revocation is per-payload (hash-based), not per-key — if the payload hash
+        // is in the revocation set, it is revoked regardless of which key signed it
+        // or whether that key's date range is valid.
+        if (revocation && isRevoked(revocation.payloadHash, revocation.revocationSet)) {
+          return { valid: false, revoked: true, reason: 'this credential has been revoked' };
+        }
         if (isDateInRange(credential.date, key)) {
           return { valid: true, key, credential };
         }
@@ -110,11 +131,12 @@ export function verifyCredential(
   if (signatureMatchedButDateInvalid) {
     return {
       valid: false,
+      revoked: false,
       reason: 'signature valid but credential date outside key validity period',
     };
   }
   if (decodeFailures === keys.length) {
-    return { valid: false, reason: 'all registry keys failed to decode' };
+    return { valid: false, revoked: false, reason: 'all registry keys failed to decode' };
   }
-  return { valid: false, reason: 'no matching key produced a valid signature' };
+  return { valid: false, revoked: false, reason: 'no matching key produced a valid signature' };
 }

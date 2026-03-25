@@ -209,46 +209,53 @@ func TestFilterRecords_ReverseOrder(t *testing.T) {
 	}
 }
 
-// --- truncateHonor tests ---
+// --- truncateRunes tests ---
 
-func TestTruncateHonor_Short(t *testing.T) {
-	got := truncateHonor("Short", 50)
+func TestTruncateRunes_Short(t *testing.T) {
+	got := truncateRunes("Short", 50)
 	if got != "Short" {
-		t.Errorf("truncateHonor = %q, want %q", got, "Short")
+		t.Errorf("truncateRunes = %q, want %q", got, "Short")
 	}
 }
 
-func TestTruncateHonor_ExactLength(t *testing.T) {
+func TestTruncateRunes_ExactLength(t *testing.T) {
 	s := strings.Repeat("a", 50)
-	got := truncateHonor(s, 50)
+	got := truncateRunes(s, 50)
 	if got != s {
-		t.Errorf("truncateHonor exact = %q, want %q", got, s)
+		t.Errorf("truncateRunes exact = %q, want %q", got, s)
 	}
 }
 
-func TestTruncateHonor_Long(t *testing.T) {
+func TestTruncateRunes_Long(t *testing.T) {
 	s := strings.Repeat("a", 60)
-	got := truncateHonor(s, 50)
+	got := truncateRunes(s, 50)
 	want := strings.Repeat("a", 50) + "..."
 	if got != want {
-		t.Errorf("truncateHonor long = %q, want %q", got, want)
+		t.Errorf("truncateRunes long = %q, want %q", got, want)
 	}
 }
 
-func TestTruncateHonor_Unicode(t *testing.T) {
+func TestTruncateRunes_Unicode(t *testing.T) {
 	// Georgian characters are multi-byte but each is one rune.
 	s := strings.Repeat("\u10D0", 55) // 55 Georgian "a" runes
-	got := truncateHonor(s, 50)
+	got := truncateRunes(s, 50)
 	wantPrefix := strings.Repeat("\u10D0", 50) + "..."
 	if got != wantPrefix {
-		t.Errorf("truncateHonor unicode length mismatch")
+		t.Errorf("truncateRunes unicode length mismatch")
 	}
 }
 
-func TestTruncateHonor_Empty(t *testing.T) {
-	got := truncateHonor("", 50)
+func TestTruncateRunes_Empty(t *testing.T) {
+	got := truncateRunes("", 50)
 	if got != "" {
-		t.Errorf("truncateHonor empty = %q, want empty", got)
+		t.Errorf("truncateRunes empty = %q, want empty", got)
+	}
+}
+
+func TestTruncateRunes_ZeroMax(t *testing.T) {
+	got := truncateRunes("anything", 0)
+	if got != "" {
+		t.Errorf("truncateRunes zero max = %q, want empty", got)
 	}
 }
 
@@ -700,6 +707,114 @@ func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 	got := signFlowErrorMessage(fmt.Errorf("something unexpected"), logger)
 	if !strings.Contains(got, "Signing failed") {
 		t.Errorf("expected signing failed message, got: %q", got)
+	}
+}
+
+// --- formatRecordSummaryWithRevocation tests ---
+
+func TestFormatRecordSummaryWithRevocation_NotRevoked(t *testing.T) {
+	rec := log.IssuanceRecord{
+		Date:          "2026-03-14",
+		Recipient:     "John Doe",
+		Honor:         "Order of the Crown of Georgia",
+		PayloadSHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+	}
+	revokedHashes := map[string]bool{
+		"0000000000000000000000000000000000000000000000000000000000000000": true,
+	}
+	got := formatRecordSummaryWithRevocation(rec, revokedHashes)
+	if strings.HasPrefix(got, "[REVOKED]") {
+		t.Errorf("non-revoked record should not have [REVOKED] prefix, got: %q", got)
+	}
+	// Should match plain formatRecordSummary output.
+	want := formatRecordSummary(rec)
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatRecordSummaryWithRevocation_Revoked(t *testing.T) {
+	hash := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	rec := log.IssuanceRecord{
+		Date:          "2026-03-14",
+		Recipient:     "John Doe",
+		Honor:         "Order of the Crown of Georgia",
+		PayloadSHA256: hash,
+	}
+	revokedHashes := map[string]bool{
+		hash: true,
+	}
+	got := formatRecordSummaryWithRevocation(rec, revokedHashes)
+	if !strings.HasPrefix(got, "[REVOKED] ") {
+		t.Errorf("revoked record should have [REVOKED] prefix, got: %q", got)
+	}
+	// The rest should be the normal summary.
+	withoutPrefix := strings.TrimPrefix(got, "[REVOKED] ")
+	want := formatRecordSummary(rec)
+	if withoutPrefix != want {
+		t.Errorf("after removing prefix: got %q, want %q", withoutPrefix, want)
+	}
+}
+
+func TestFormatRecordSummaryWithRevocation_CaseInsensitive(t *testing.T) {
+	rec := log.IssuanceRecord{
+		Date:          "2026-03-14",
+		Recipient:     "Jane Doe",
+		Honor:         "Test Honor",
+		PayloadSHA256: "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
+	}
+	revokedHashes := map[string]bool{
+		"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789": true,
+	}
+	got := formatRecordSummaryWithRevocation(rec, revokedHashes)
+	if !strings.HasPrefix(got, "[REVOKED] ") {
+		t.Errorf("case-insensitive match should still mark as revoked, got: %q", got)
+	}
+}
+
+func TestFormatRecordSummaryWithRevocation_NilMap(t *testing.T) {
+	rec := log.IssuanceRecord{
+		Date:          "2026-03-14",
+		Recipient:     "John Doe",
+		Honor:         "Test Honor",
+		PayloadSHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+	}
+	got := formatRecordSummaryWithRevocation(rec, nil)
+	if strings.HasPrefix(got, "[REVOKED]") {
+		t.Errorf("nil map should not produce [REVOKED] prefix, got: %q", got)
+	}
+	want := formatRecordSummary(rec)
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatRecordSummaryWithRevocation_EmptyMap(t *testing.T) {
+	rec := log.IssuanceRecord{
+		Date:          "2026-03-14",
+		Recipient:     "John Doe",
+		Honor:         "Test Honor",
+		PayloadSHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+	}
+	got := formatRecordSummaryWithRevocation(rec, map[string]bool{})
+	if strings.HasPrefix(got, "[REVOKED]") {
+		t.Errorf("empty map should not produce [REVOKED] prefix, got: %q", got)
+	}
+}
+
+func TestFormatRecordSummaryWithRevocation_EmptyHash(t *testing.T) {
+	rec := log.IssuanceRecord{
+		Date:          "2026-03-14",
+		Recipient:     "John Doe",
+		Honor:         "Test Honor",
+		PayloadSHA256: "",
+	}
+	revokedHashes := map[string]bool{
+		"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789": true,
+	}
+	got := formatRecordSummaryWithRevocation(rec, revokedHashes)
+	if strings.HasPrefix(got, "[REVOKED]") {
+		t.Errorf("empty hash should not match revoked set, got: %q", got)
 	}
 }
 

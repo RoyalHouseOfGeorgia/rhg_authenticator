@@ -47,7 +47,9 @@ func ComputeRegistryStats(reg core.Registry, today string) RegistryStats {
 
 // NewStatusBar creates a status bar widget showing registry statistics.
 // online indicates whether the registry was fetched from the remote server.
-func NewStatusBar(reg core.Registry, online bool) *fyne.Container {
+// lastUpdateCh receives the date string of the most recent registry commit
+// from the audit tab.
+func NewStatusBar(reg core.Registry, online bool, lastUpdateCh <-chan string) *fyne.Container {
 	if !online {
 		return container.NewHBox(
 			widget.NewLabel("No internet"),
@@ -69,30 +71,22 @@ func NewStatusBar(reg core.Registry, online bool) *fyne.Container {
 		updatedLabel,
 	)
 
-	// TODO(tech-debt): This makes a separate GitHub API call from the audit tab's
-	// fetchCommits. Could share the first commit via callback/channel to avoid the
-	// duplicate request.
 	go func() {
-		apiURL := fmt.Sprintf(
-			"https://api.github.com/repos/%s/%s/commits?path=%s&per_page=1",
-			githubOwner, githubRepo, registryFilePath,
-		)
-		commits, _, err := fetchCommits(apiURL, "")
-		fyne.Do(func() {
-			if err != nil || len(commits) == 0 {
+		select {
+		case date := <-lastUpdateCh:
+			t, err := time.Parse(time.RFC3339, date)
+			fyne.Do(func() {
+				if err != nil {
+					updatedLabel.SetText("Last update: unknown")
+					return
+				}
+				updatedLabel.SetText("Last update: " + t.UTC().Format("2006-Jan-02"))
+			})
+		case <-time.After(15 * time.Second):
+			fyne.Do(func() {
 				updatedLabel.SetText("Last update: unknown")
-				return
-			}
-			// TODO(tech-debt): Uses Author.Date (patch creation), not Committer.Date
-			// (push/merge). For rebased commits these may differ. Consistent with
-			// audit tab's formatCommitSummary which also uses Author.Date.
-			t, err := time.Parse(time.RFC3339, commits[0].Commit.Author.Date)
-			if err != nil {
-				updatedLabel.SetText("Last update: unknown")
-				return
-			}
-			updatedLabel.SetText("Last update: " + t.UTC().Format("2006-Jan-02"))
-		})
+			})
+		}
 	}()
 
 	return bar

@@ -6,7 +6,7 @@
 
 <p align="center">
   Cryptographically verifiable credential system for the Royal House of Georgia.<br>
-  Ed25519 signatures via YubiKey, QR codes on physical diplomas, public verification via GitHub Pages.
+  Ed25519 signatures via YubiKey, QR codes on physical diplomas, credential revocation, public verification via GitHub Pages.
 </p>
 
 ---
@@ -25,7 +25,7 @@
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-910 tests passing (604 Go + 306 TypeScript).
+1034 tests passing (649 Go + 385 TypeScript).
 
 ## Quick Start — Signing App (Go)
 
@@ -54,7 +54,7 @@ See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
 ```bash
 npm install
-npm test              # 306 tests
+npm test              # 385 tests
 npm run lint          # tsc --noEmit
 npm run build:verify  # Bundle verification page JS
 ```

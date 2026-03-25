@@ -122,6 +122,9 @@ func validateEntry(data json.RawMessage, index int) (KeyEntry, error) {
 	if authority == "" {
 		return KeyEntry{}, fmt.Errorf("keys[%d]: authority must not be empty", index)
 	}
+	if controlCharRE.MatchString(authority) {
+		return KeyEntry{}, fmt.Errorf("keys[%d]: authority contains invalid control characters", index)
+	}
 
 	// from: valid date string.
 	if _, ok := raw["from"]; !ok {

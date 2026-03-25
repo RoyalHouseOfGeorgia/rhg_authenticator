@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -463,5 +464,318 @@ func TestFetchRegistry_OversizedResponse(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Errorf("error should contain 'exceeds', got: %v", err)
+	}
+}
+
+// --- FetchRevocationList tests ---
+
+func validRevocationJSON() []byte {
+	return []byte(`{"revocations": [{"hash": "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc", "revoked_on": "2026-03-25"}]}`)
+}
+
+func TestFetchRevocationList_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(validRevocationJSON())
+	}))
+	defer srv.Close()
+
+	list, err := FetchRevocationList(srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list.Revocations) != 1 {
+		t.Fatalf("expected 1 revocation, got %d", len(list.Revocations))
+	}
+	if list.Revocations[0].Hash != "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc" {
+		t.Errorf("unexpected hash: %s", list.Revocations[0].Hash)
+	}
+	if list.Revocations[0].RevokedOn != "2026-03-25" {
+		t.Errorf("unexpected revoked_on: %s", list.Revocations[0].RevokedOn)
+	}
+}
+
+func TestFetchRevocationList_404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	list, err := FetchRevocationList(srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error on 404: %v", err)
+	}
+	if list == nil {
+		t.Fatal("expected non-nil list on 404")
+	}
+	if len(list.Revocations) != 0 {
+		t.Errorf("expected empty revocations on 404, got %d", len(list.Revocations))
+	}
+}
+
+func TestFetchRevocationList_500(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	_, err := FetchRevocationList(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for 500")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error should contain '500', got: %v", err)
+	}
+}
+
+func TestFetchRevocationList_403(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	_, err := FetchRevocationList(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for 403")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("error should contain '403', got: %v", err)
+	}
+}
+
+func TestFetchRevocationList_NetworkError(t *testing.T) {
+	_, err := FetchRevocationList("http://127.0.0.1:1/nonexistent")
+	if err == nil {
+		t.Fatal("expected error for unreachable server")
+	}
+}
+
+func TestFetchRevocationList_InvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("not json {{"))
+	}))
+	defer srv.Close()
+
+	_, err := FetchRevocationList(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "validation failed") {
+		t.Errorf("error should mention validation, got: %v", err)
+	}
+}
+
+func TestFetchRevocationList_OversizedResponse(t *testing.T) {
+	body := bytes.Repeat([]byte("x"), maxRegistryBytes+1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	_, err := FetchRevocationList(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for oversized response")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error should contain 'exceeds', got: %v", err)
+	}
+}
+
+func TestFetchRevocationList_InvalidSchema(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"revocations": [{"hash": "short", "revoked_on": "2026-03-25"}]}`))
+	}))
+	defer srv.Close()
+
+	_, err := FetchRevocationList(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for invalid schema")
+	}
+	if !strings.Contains(err.Error(), "validation failed") {
+		t.Errorf("error should mention validation, got: %v", err)
+	}
+}
+
+func TestFetchRevocationList_EmptyList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"revocations": []}`))
+	}))
+	defer srv.Close()
+
+	list, err := FetchRevocationList(srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if list == nil {
+		t.Fatal("expected non-nil list")
+	}
+	if len(list.Revocations) != 0 {
+		t.Errorf("expected empty revocations, got %d", len(list.Revocations))
+	}
+}
+
+func TestFetchRevocationList_ContentTypeGitHubRaw(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.github.raw+json")
+		w.Write(validRevocationJSON())
+	}))
+	defer srv.Close()
+
+	list, err := FetchRevocationList(srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list.Revocations) != 1 {
+		t.Fatalf("expected 1 revocation, got %d", len(list.Revocations))
+	}
+}
+
+func TestFetchRevocationList_WrongContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(validRevocationJSON())
+	}))
+	defer srv.Close()
+
+	_, err := FetchRevocationList(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for wrong Content-Type")
+	}
+	if !strings.Contains(err.Error(), "Content-Type") {
+		t.Errorf("error should mention Content-Type, got: %v", err)
+	}
+}
+
+func TestDefaultRevocationURL(t *testing.T) {
+	if DefaultRevocationURL != "https://verify.royalhouseofgeorgia.ge/keys/revocations.json" {
+		t.Errorf("unexpected default revocation URL: %s", DefaultRevocationURL)
+	}
+}
+
+// --- readLimitedBody tests ---
+
+func TestReadLimitedBody_WithinLimit(t *testing.T) {
+	body := strings.Repeat("x", 100)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	data, err := readLimitedBody(resp, 200)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(data) != body {
+		t.Errorf("body = %q, want %q", string(data), body)
+	}
+}
+
+func TestReadLimitedBody_ExceedsLimit(t *testing.T) {
+	body := strings.Repeat("x", 200)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	_, err = readLimitedBody(resp, 100)
+	if err == nil {
+		t.Fatal("expected error for body exceeding limit")
+	}
+	if !strings.Contains(err.Error(), "100 byte limit") {
+		t.Errorf("error = %q, want mention of byte limit", err.Error())
+	}
+}
+
+func TestReadLimitedBody_ExactLimit(t *testing.T) {
+	body := strings.Repeat("x", 100)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	data, err := readLimitedBody(resp, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(data) != 100 {
+		t.Errorf("body length = %d, want 100", len(data))
+	}
+}
+
+func TestReadLimitedBody_EmptyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// empty response
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	data, err := readLimitedBody(resp, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("body length = %d, want 0", len(data))
+	}
+}
+
+// --- safeRedirect tests ---
+
+func TestSafeRedirect_RejectsHTTP(t *testing.T) {
+	target, _ := url.Parse("http://evil.com/path")
+	req := &http.Request{URL: target}
+	via := []*http.Request{{}}
+	err := safeRedirect(req, via)
+	if err == nil {
+		t.Fatal("expected error for HTTP redirect")
+	}
+}
+
+func TestSafeRedirect_AllowsHTTPS(t *testing.T) {
+	target, _ := url.Parse("https://cdn.example.com/path")
+	req := &http.Request{URL: target}
+	via := []*http.Request{{}}
+	err := safeRedirect(req, via)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSafeRedirect_RejectsExcessiveRedirects(t *testing.T) {
+	target, _ := url.Parse("https://example.com/path")
+	req := &http.Request{URL: target}
+	via := make([]*http.Request, 10)
+	for i := range via {
+		via[i] = &http.Request{}
+	}
+	err := safeRedirect(req, via)
+	if err == nil {
+		t.Fatal("expected error after 10 redirects")
 	}
 }

@@ -9,8 +9,11 @@
 import { base64urlDecode } from './base64url.js';
 import { verifyCredential } from './verify.js';
 import { validateRegistry } from './registry.js';
+import { validateRevocationList, buildRevocationSet } from './revocation.js';
 
 import type { Registry } from './registry.js';
+import type { RevocationList } from './revocation.js';
+import type { RevocationCheck } from './verify.js';
 
 export type PageParams = {
   payload: string;
@@ -22,8 +25,9 @@ export type ParseError = {
 };
 
 export type VerifyPageResult =
-  | { status: 'valid'; recipient: string; honor: string; detail: string; date: string; authority: string }
+  | { status: 'valid'; recipient: string; honor: string; detail: string; date: string; authority: string; revocationUnknown?: boolean }
   | { status: 'info' }
+  | { status: 'revoked' }
   | { status: 'invalid'; reason: string }
   | { status: 'error'; message: string };
 
@@ -60,30 +64,51 @@ export function parseParams(search: string): PageParams | ParseError {
 const PRODUCTION_HOSTNAME = 'verify.royalhouseofgeorgia.ge';
 
 /**
- * Determine the registry URL based on the current hostname.
+ * Build a URL for a key-related JSON file based on the current hostname.
  *
- * Returns the absolute production URL only when running on the production
+ * Returns an absolute production URL only when running on the production
  * hostname. All other hostnames (localhost, LAN IPs, dev servers) use a
- * relative path so the registry is fetched from the same origin.
+ * relative path so the file is fetched from the same origin.
  */
-export function getRegistryUrl(): string {
+function getKeyFileUrl(filename: string): string {
   const hostname = window.location.hostname;
   if (hostname === PRODUCTION_HOSTNAME) {
-    return `https://${PRODUCTION_HOSTNAME}/keys/registry.json`;
+    return `https://${PRODUCTION_HOSTNAME}/keys/${filename}`;
   }
-  return '/keys/registry.json';
+  return `/keys/${filename}`;
 }
 
-/** Timeout in milliseconds for the registry fetch. */
+export function getRegistryUrl(): string {
+  return getKeyFileUrl('registry.json');
+}
+
+export function getRevocationListUrl(): string {
+  return getKeyFileUrl('revocations.json');
+}
+
+/** Timeout in milliseconds for fetch requests. */
 const FETCH_TIMEOUT_MS = 10_000;
 
+/** Maximum response size for fetched JSON resources (1 MiB). */
+const MAX_RESPONSE_BYTES = 1 << 20;
+
 /**
- * Fetch and validate the key registry from the given URL.
+ * Fetch a JSON resource, enforce size limits, parse, and validate.
  *
- * Uses an `AbortController` with a 10-second timeout. Throws a user-facing
- * error string on all failure conditions.
+ * Uses an `AbortController` with a 10-second timeout. Throws user-facing
+ * errors on all failure conditions.
+ *
+ * @param url        - Resource URL to fetch.
+ * @param serviceName - Lowercase name for service-level errors (e.g. "verification").
+ * @param dataName    - Capitalized name for data-level errors (e.g. "Registry").
+ * @param validate   - Schema validation function applied to the parsed JSON.
  */
-export async function fetchRegistry(url: string): Promise<Registry> {
+async function fetchAndValidate<T>(
+  url: string,
+  serviceName: string,
+  dataName: string,
+  validate: (data: unknown) => T,
+): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
@@ -95,43 +120,49 @@ export async function fetchRegistry(url: string): Promise<Registry> {
       referrerPolicy: 'no-referrer',
     });
   } catch (err) {
-    throw new Error('Failed to contact verification service', { cause: err });
+    throw new Error(`Failed to contact ${serviceName} service`, { cause: err });
   } finally {
     clearTimeout(timer);
   }
 
   if (!response.ok) {
-    throw new Error('Verification service returned an error');
+    throw new Error(`${serviceName[0].toUpperCase() + serviceName.slice(1)} service returned an error`);
   }
-
-  const MAX_REGISTRY_BYTES = 1 << 20; // 1 MiB
 
   // Early-out on Content-Length (optimization only — may reflect compressed size).
   const contentLength = response.headers.get('content-length');
   if (contentLength !== null) {
     const len = parseInt(contentLength, 10);
-    if (!Number.isFinite(len) || len > MAX_REGISTRY_BYTES) {
-      throw new Error('Registry response exceeds size limit');
+    if (!Number.isFinite(len) || len > MAX_RESPONSE_BYTES) {
+      throw new Error(`${dataName} response exceeds size limit`);
     }
   }
 
   const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_REGISTRY_BYTES) {
-    throw new Error('Registry response exceeds size limit');
+  if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
+    throw new Error(`${dataName} response exceeds size limit`);
   }
 
   let body: unknown;
   try {
     body = JSON.parse(text);
   } catch (err) {
-    throw new Error('Registry data is corrupted', { cause: err });
+    throw new Error(`${dataName} data is corrupted`, { cause: err });
   }
 
   try {
-    return validateRegistry(body);
+    return validate(body);
   } catch (err) {
-    throw new Error('Registry data is invalid', { cause: err });
+    throw new Error(`${dataName} data is invalid`, { cause: err });
   }
+}
+
+export async function fetchRegistry(url: string): Promise<Registry> {
+  return fetchAndValidate(url, 'verification', 'Registry', validateRegistry);
+}
+
+export async function fetchRevocationList(url: string): Promise<RevocationList> {
+  return fetchAndValidate(url, 'revocation', 'Revocation', validateRevocationList);
 }
 
 /**
@@ -139,8 +170,17 @@ export async function fetchRegistry(url: string): Promise<Registry> {
  *
  * The `authority` in a valid result comes from the registry key entry, not the
  * credential payload, preventing forged authority names from reaching the UI.
+ *
+ * When a revocation list is available, computes the SHA-256 hash of the payload
+ * bytes via `crypto.subtle` and passes it to `verifyCredential` for revocation
+ * checking. If `crypto.subtle` is unavailable, revocation checking is skipped.
  */
-export function runVerification(params: PageParams, registry: Registry): VerifyPageResult {
+export async function runVerification(
+  params: PageParams,
+  registry: Registry,
+  revocationList?: RevocationList,
+  revocationFetchFailed?: boolean,
+): Promise<VerifyPageResult> {
   let payloadBytes: Uint8Array;
   try {
     payloadBytes = base64urlDecode(params.payload);
@@ -155,8 +195,18 @@ export function runVerification(params: PageParams, registry: Registry): VerifyP
     return { status: 'error', message: 'Invalid signature encoding' };
   }
 
+  // Build revocation check if the list is available and crypto.subtle is present.
+  let revocation: RevocationCheck | undefined;
+  if (revocationList && typeof crypto !== 'undefined' && crypto.subtle) {
+    const revocationSet = buildRevocationSet(revocationList);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', payloadBytes);
+    const payloadHash = [...new Uint8Array(hashBuffer)]
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+    revocation = { revocationSet, payloadHash };
+  }
+
   // Signature length validated by verifyCredential.
-  const result = verifyCredential(payloadBytes, signatureBytes, registry);
+  const result = verifyCredential(payloadBytes, signatureBytes, registry, revocation);
 
   if (result.valid) {
     return {
@@ -166,7 +216,12 @@ export function runVerification(params: PageParams, registry: Registry): VerifyP
       detail: result.credential.detail,
       date: result.credential.date,
       authority: result.key.authority,
+      revocationUnknown: (revocationFetchFailed || !revocation) ? true : undefined,
     };
+  }
+
+  if ('revoked' in result && result.revoked) {
+    return { status: 'revoked' };
   }
 
   return { status: 'invalid', reason: result.reason };
@@ -228,6 +283,13 @@ export function renderResult(result: VerifyPageResult, container: Element): void
         row.appendChild(valueEl);
         wrapper.appendChild(row);
       }
+
+      if (result.revocationUnknown) {
+        const note = document.createElement('p');
+        note.className = 'revocation-unknown';
+        note.textContent = 'Revocation status could not be verified.';
+        wrapper.appendChild(note);
+      }
       break;
     }
 
@@ -263,6 +325,23 @@ export function renderResult(result: VerifyPageResult, container: Element): void
       const detail = document.createElement('p');
       detail.className = 'result-detail';
       detail.textContent = 'This credential could not be verified. It may be invalid, tampered with, or not issued by the Royal House of Georgia.';
+      wrapper.appendChild(detail);
+
+      wrapper.appendChild(createContactParagraph());
+      break;
+    }
+
+    case 'revoked': {
+      wrapper.className = 'result-revoked';
+
+      const banner = document.createElement('div');
+      banner.className = 'status-banner';
+      banner.textContent = 'Credential Revoked';
+      wrapper.appendChild(banner);
+
+      const detail = document.createElement('p');
+      detail.className = 'result-detail';
+      detail.textContent = 'This credential has been revoked by the issuing authority and is no longer valid.';
       wrapper.appendChild(detail);
 
       wrapper.appendChild(createContactParagraph());
@@ -324,17 +403,32 @@ export async function initVerifyPage(): Promise<void> {
     return;
   }
 
-  let registry: Registry;
-  try {
-    const url = getRegistryUrl();
-    registry = await fetchRegistry(url);
-  } catch (err) {
-    console.error('Registry fetch error:', err);
+  const registryUrl = getRegistryUrl();
+  const revocationUrl = getRevocationListUrl();
+
+  const [registryResult, revocationResult] = await Promise.allSettled([
+    fetchRegistry(registryUrl),
+    fetchRevocationList(revocationUrl),
+  ]);
+
+  if (registryResult.status === 'rejected') {
+    console.error('Registry fetch error:', registryResult.reason);
     renderResult({ status: 'error', message: 'Unable to verify — please try again' }, container);
     return;
   }
 
-  const result = runVerification(paramResult, registry);
+  const registry = registryResult.value;
+
+  let revocationList: RevocationList | undefined;
+  let revocationFetchFailed = false;
+  if (revocationResult.status === 'rejected') {
+    console.warn('Revocation list fetch failed:', revocationResult.reason);
+    revocationFetchFailed = true;
+  } else {
+    revocationList = revocationResult.value;
+  }
+
+  const result = await runVerification(paramResult, registry, revocationList, revocationFetchFailed);
   renderResult(result, container);
 }
 

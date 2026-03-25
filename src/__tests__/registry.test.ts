@@ -194,6 +194,20 @@ describe('validateRegistry', () => {
       );
     });
 
+    it('rejects authority with null byte control character', () => {
+      const entry = makeEntry({ authority: 'bad\u0000auth' });
+      expect(() => validateRegistry({ keys: [entry] })).toThrow(
+        'keys[0]: authority contains invalid control characters',
+      );
+    });
+
+    it('rejects authority with bidi override control character', () => {
+      const entry = makeEntry({ authority: 'bidi\u202eoverride' });
+      expect(() => validateRegistry({ keys: [entry] })).toThrow(
+        'keys[0]: authority contains invalid control characters',
+      );
+    });
+
     it('throws when public_key is empty', () => {
       const entry = makeEntry({ public_key: '' });
       expect(() => validateRegistry({ keys: [entry] })).toThrow(

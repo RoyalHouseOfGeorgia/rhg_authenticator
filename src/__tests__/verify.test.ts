@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { createHash } from "crypto";
 import { verifyCredential, MAX_PAYLOAD_BYTES } from "../verify.js";
-import type { VerificationSuccess, VerificationFailure } from "../verify.js";
+import type {
+  VerificationSuccess,
+  VerificationFailure,
+  VerificationRevoked,
+  RevocationCheck,
+} from "../verify.js";
 import { sign } from "../crypto.js";
 import { canonicalize } from "../canonical.js";
 import { base64urlEncode, base64urlDecode } from "../base64url.js";
@@ -541,5 +547,201 @@ describe("verifyCredential", () => {
     const result = verifyCredential(payload, shortSig, reg);
     expect(result.valid).toBe(false);
     expect((result as VerificationFailure).reason).toBe('invalid signature length');
+  });
+
+  it("returns failure for empty registry (no keys)", () => {
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const fakeSig = new Uint8Array(64);
+    const registry = makeRegistry(); // no keys
+
+    const result = verifyCredential(payload, fakeSig, registry);
+
+    expect(result.valid).toBe(false);
+    const failure = result as VerificationFailure;
+    expect(failure.revoked).toBe(false);
+    expect(failure.reason).toBe("registry contains no keys");
+  });
+});
+
+/** Compute SHA-256 hex digest of a Uint8Array. */
+function sha256hex(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+describe("verifyCredential — revocation checks", () => {
+  it("returns valid when no revocation param is provided (backwards compat)", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const result = verifyCredential(payload, signature, registry);
+
+    expect(result.valid).toBe(true);
+    const success = result as VerificationSuccess;
+    expect(success.key).toBe(entry);
+  });
+
+  it("returns revoked result for a valid credential that is in the revocation set", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const hash = sha256hex(payload);
+    const revocation: RevocationCheck = {
+      revocationSet: new Set([hash]),
+      payloadHash: hash,
+    };
+
+    const result = verifyCredential(payload, signature, registry, revocation);
+
+    expect(result.valid).toBe(false);
+    const revoked = result as VerificationRevoked;
+    expect(revoked.revoked).toBe(true);
+    expect(revoked.reason).toContain("revoked");
+  });
+
+  it("returns non-revoked failure when signature is invalid even if hash is in revocation set", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    // Tamper with the signature
+    const badSig = new Uint8Array(signature);
+    badSig[0] ^= 0xff;
+
+    const hash = sha256hex(payload);
+    const revocation: RevocationCheck = {
+      revocationSet: new Set([hash]),
+      payloadHash: hash,
+    };
+
+    const result = verifyCredential(payload, badSig, registry, revocation);
+
+    expect(result.valid).toBe(false);
+    const failure = result as VerificationFailure;
+    expect(failure.revoked).toBe(false);
+    expect(failure.reason).toContain("no matching key produced a valid signature");
+  });
+
+  it("returns valid when revocation set is empty", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const hash = sha256hex(payload);
+    const revocation: RevocationCheck = {
+      revocationSet: new Set(),
+      payloadHash: hash,
+    };
+
+    const result = verifyCredential(payload, signature, registry, revocation);
+
+    expect(result.valid).toBe(true);
+    const success = result as VerificationSuccess;
+    expect(success.key).toBe(entry);
+  });
+
+  it("revocation result has revoked: true discriminant", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const hash = sha256hex(payload);
+    const revocation: RevocationCheck = {
+      revocationSet: new Set([hash, "other-hash-1", "other-hash-2"]),
+      payloadHash: hash,
+    };
+
+    const result = verifyCredential(payload, signature, registry, revocation);
+
+    expect(result.valid).toBe(false);
+    // Type narrowing: check the discriminant
+    if (!result.valid) {
+      expect("revoked" in result).toBe(true);
+      if ("revoked" in result && result.revoked) {
+        expect(result.revoked).toBe(true);
+        expect(result.reason).toBe("this credential has been revoked");
+      }
+    }
+  });
+
+  it("returns revoked (not date-invalid) when signature matches an expired key", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    // Key expired end of 2023; credential date is mid-2024 (outside range).
+    const cred = validCredentialObj({ date: "2024-06-15" });
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey, {
+      from: "2020-01-01",
+      to: "2023-12-31",
+    });
+    const registry = makeRegistry(entry);
+
+    const hash = sha256hex(payload);
+    const revocation: RevocationCheck = {
+      revocationSet: new Set([hash]),
+      payloadHash: hash,
+    };
+
+    const result = verifyCredential(payload, signature, registry, revocation);
+
+    expect(result.valid).toBe(false);
+    const revoked = result as VerificationRevoked;
+    expect(revoked.revoked).toBe(true);
+    expect(revoked.reason).toContain("revoked");
+  });
+
+  it("returns valid when revocation set contains a different hash (mismatched payloadHash)", () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    const realHash = sha256hex(payload);
+    const otherHash = createHash("sha256").update("something-else").digest("hex");
+    const revocation: RevocationCheck = {
+      revocationSet: new Set([otherHash]),
+      payloadHash: realHash,
+    };
+
+    const result = verifyCredential(payload, signature, registry, revocation);
+
+    expect(result.valid).toBe(true);
+    const success = result as VerificationSuccess;
+    expect(success.key).toBe(entry);
+  });
+
+  it("existing failure results include revoked: false discriminant", () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    // Trigger the "payload is not valid JSON" path
+    const badPayload = new Uint8Array([0xff, 0xfe, 0x00, 0x01]);
+    const fakeSig = new Uint8Array(64);
+    const result = verifyCredential(badPayload, fakeSig, registry);
+
+    expect(result.valid).toBe(false);
+    const failure = result as VerificationFailure;
+    expect(failure.revoked).toBe(false);
+    expect(failure.reason).toContain("JSON");
   });
 });

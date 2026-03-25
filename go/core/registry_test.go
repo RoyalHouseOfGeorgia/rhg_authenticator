@@ -587,6 +587,24 @@ func TestValidateRegistry_NoteWithBidiOverride(t *testing.T) {
 	}
 }
 
+func TestValidateRegistry_AuthorityWithControlCharacters(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	data := `{"keys": [{"authority":"bad\u0001auth","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"` + key + `","note":""}]}`
+	_, err := ValidateRegistry([]byte(data))
+	if err == nil || !strings.Contains(err.Error(), "authority contains invalid control characters") {
+		t.Fatalf("expected control char error, got %v", err)
+	}
+}
+
+func TestValidateRegistry_AuthorityWithBidiOverride(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	data := `{"keys": [{"authority":"bidi` + "\u202e" + `override","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"` + key + `","note":""}]}`
+	_, err := ValidateRegistry([]byte(data))
+	if err == nil || !strings.Contains(err.Error(), "authority contains invalid control characters") {
+		t.Fatalf("expected control char error, got %v", err)
+	}
+}
+
 func TestValidateRegistry_AlgorithmNotString(t *testing.T) {
 	data := `{"keys": [{"authority":"A","from":"2025-01-01","to":null,"algorithm":123,"public_key":"AAAA","note":""}]}`
 	_, err := ValidateRegistry([]byte(data))

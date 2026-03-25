@@ -69,9 +69,10 @@ func main() {
 		LogPath: logPath,
 		DataDir: dataDir,
 	}, window)
-	historyContent := gui.NewHistoryTab(logPath, window)
+	historyContent := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, nil, window)
 	regTab := regmgr.NewRegistryTab(window, dataDir)
-	auditContent := gui.NewAuditTab(window)
+	lastUpdateCh := make(chan string, 1)
+	auditContent := gui.NewAuditTab(window, lastUpdateCh)
 	yubiKeyContent := gui.NewYubiKeyTab(reg, regOnline, window)
 
 	signTab := container.NewTabItem("Sign", signContent)
@@ -82,7 +83,7 @@ func main() {
 
 	// 6. Set content.
 	tabs := container.NewAppTabs(signTab, historyTab, registryTab, auditTab, yubiKeyTab)
-	statusBar := gui.NewStatusBar(reg, regOnline)
+	statusBar := gui.NewStatusBar(reg, regOnline, lastUpdateCh)
 	updateBanner := container.NewVBox()
 	windowContent := container.NewBorder(updateBanner, statusBar, nil, nil, tabs)
 	window.SetContent(windowContent)

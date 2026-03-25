@@ -282,6 +282,10 @@ func RequestDeviceCode(ctx context.Context) (DeviceCodeResponse, error) {
 // (e.g. fine-grained PATs) do not return a scope string.
 func hasRequiredScope(scope string) bool {
 	if scope == "" {
+		// Fine-grained PATs and some token types do not return an
+		// X-OAuth-Scopes header. Accept empty scope — GitHub enforces
+		// permissions server-side. The token will fail on actual API
+		// calls if it lacks the required access.
 		return true
 	}
 	// GitHub returns comma-separated scopes; split on both comma and space for robustness.
