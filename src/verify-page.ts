@@ -199,7 +199,7 @@ export async function runVerification(
   let revocation: RevocationCheck | undefined;
   if (revocationList && typeof crypto !== 'undefined' && crypto.subtle) {
     const revocationSet = buildRevocationSet(revocationList);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', payloadBytes);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', payloadBytes as Uint8Array<ArrayBuffer>);
     const payloadHash = [...new Uint8Array(hashBuffer)]
       .map(b => b.toString(16).padStart(2, '0')).join('');
     revocation = { revocationSet, payloadHash };
