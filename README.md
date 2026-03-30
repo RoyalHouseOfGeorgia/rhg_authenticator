@@ -63,6 +63,7 @@ Requires Node.js 20+.
 
 ## Documentation
 
+- **[Royal House of Georgia — Digital Authenticator](Royal%20House%20of%20Georgia%20-%20Digital%20Authenticator.pdf)** — Non-technical overview: what the system does, how verification works, threat model, privacy
 - **[go/README.md](go/README.md)** — Go signing app: build, usage, YubiKey setup, platform notes
 - **[DEVELOPER.md](DEVELOPER.md)** — TypeScript library: setup, API reference, testing conventions
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — System design, security model, data flows
