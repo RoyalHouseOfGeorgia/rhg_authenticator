@@ -3,7 +3,7 @@ name: Build & Test
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['v*']  # paths-ignore does not apply to tag pushes
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -17,8 +17,19 @@ on:
       - 'LICENSE'
       - '.reqs/**'
 
+# Deduplicate: when a tag push and branch push fire simultaneously,
+# each event type gets its own group so a release run is never cancelled
+# by a concurrent branch run.
+concurrency:
+  group: build-${{ github.sha }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
+
+env:
+  GO_VERSION: '1.25.8'
+  NODE_VERSION: '20'
 
 jobs:
   test-typescript:
@@ -27,7 +38,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       - run: npm ci
       - name: Check test vectors are in sync
@@ -36,8 +47,9 @@ jobs:
       - run: npm test
       - name: Verify verify.js SRI hash
         run: |
+          set -euo pipefail
           npm run build:verify
-          HASH=$(cat verify/verify.js | openssl dgst -sha384 -binary | openssl base64 -A)
+          HASH=$(openssl dgst -sha384 -binary < verify/verify.js | openssl base64 -A)
           grep -q "sha384-$HASH" verify/index.html || (echo "SRI hash mismatch — rebuild verify.js and update index.html" && exit 1)
       - run: npm audit --audit-level=moderate
 
@@ -72,43 +84,51 @@ jobs:
   # Race detection on macOS only. Windows excluded: -race requires
   # CGO_ENABLED=1 and a C compiler not available on windows-latest runners.
   test-race:
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6.3.0
         with:
-          go-version: '1.25.8'
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go/go.sum
+      - name: Toolchain versions
+        run: uname -m && sw_vers && xcodebuild -version && go version
       - working-directory: go
         run: go test -race ./... -count=1
 
   build:
-    needs: [test-typescript, security, gitleaks, test-race]
+    needs: [test-typescript, test-race]
     strategy:
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-26
             suffix: darwin-arm64
           - os: windows-latest
             suffix: windows-amd64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          fetch-depth: 0
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6.3.0
         with:
-          go-version: '1.25.8'
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go/go.sum
+      - name: Toolchain versions (macOS)
+        if: runner.os == 'macOS'
+        run: uname -m && sw_vers && xcodebuild -version && go version
+      - name: Toolchain versions (Windows)
+        if: runner.os == 'Windows'
+        run: go version
       - working-directory: go
         run: go mod verify
       - working-directory: go
         run: go vet ./...
-      - working-directory: go
+      - name: Go tests
+        if: runner.os == 'Windows'
+        working-directory: go
         run: go test ./... -count=1
       - name: govulncheck
         working-directory: go
-        run: go run golang.org/x/vuln/cmd/govulncheck ./...
+        run: go tool govulncheck ./...
       - if: runner.os == 'Windows'
         working-directory: go
         run: go build -trimpath -ldflags "-s -w -H windowsgui" -o ../release/rhg-authenticator-${{ matrix.suffix }}.exe .
@@ -123,7 +143,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, security, gitleaks]
     runs-on: ubuntu-latest
     # id-token and attestations needed only by attest-build-provenance step,
     # but GitHub Actions requires job-level permissions. All actions are SHA-pinned.
@@ -133,18 +153,13 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           path: release
           merge-multiple: true
       # SHA256SUMS for convenience; SLSA provenance attestation below provides
       # stronger integrity verification than GPG-signed checksums.
-      - run: cd release && shasum -a 256 rhg-authenticator-* > SHA256SUMS.txt
+      - run: cd release && sha256sum rhg-authenticator-* > SHA256SUMS.txt
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2.4.0
         with:
           subject-path: 'release/*'
