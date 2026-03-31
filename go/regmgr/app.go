@@ -167,8 +167,10 @@ func (rt *RegistryTab) startLogin() {
 		defer rt.loggingIn.Store(false)
 		dcr, err := ghapi.RequestDeviceCode(ctx)
 		if err != nil {
-			fyne.Do(func() { rt.handleDeviceCodeError(ctx, err) })
-			cancel()
+			fyne.Do(func() {
+				rt.handleDeviceCodeError(ctx, err)
+				cancel()
+			})
 			return
 		}
 
@@ -181,8 +183,10 @@ func (rt *RegistryTab) startLogin() {
 		// first network call, which is ample time for fyne.Do to render the dialog above.
 		tok, pollErr := ghapi.PollForToken(ctx, dcr.DeviceCode, dcr.Interval, dcr.ExpiresIn)
 		if pollErr != nil {
-			fyne.Do(func() { rt.handlePollError(ctx, pollErr) })
-			cancel()
+			fyne.Do(func() {
+				rt.handlePollError(ctx, pollErr)
+				cancel()
+			})
 			return
 		}
 

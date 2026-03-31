@@ -35,13 +35,8 @@ const (
 
 // ClientID is the GitHub OAuth App client ID.
 // This is public and safe to embed — device flow does not use a client secret.
-//
-// For production builds, set via:
-//
-//	go build -ldflags '-X github.com/royalhouseofgeorgia/rhg-authenticator/ghapi.ClientID=YOUR_ID'
-//
 // Declared as var (not const) so tests can override it directly.
-var ClientID = "PLACEHOLDER"
+var ClientID = "Ov23li5iKh6JEcL1Vj3d"
 
 // printableASCII50RE matches strings containing only printable ASCII (0x20-0x7E), 1-50 chars.
 var printableASCII50RE = regexp.MustCompile(`^[\x20-\x7E]{1,50}$`)
