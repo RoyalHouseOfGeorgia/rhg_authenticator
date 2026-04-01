@@ -70,6 +70,30 @@ func TestNewClient(t *testing.T) {
 	}
 }
 
+// --- baseURL tests ---
+
+func TestClient_baseURL_Default(t *testing.T) {
+	c := NewClient("tok")
+	if got := c.baseURL(); got != defaultAPIBaseURL {
+		t.Errorf("baseURL() = %q, want %q", got, defaultAPIBaseURL)
+	}
+}
+
+func TestClient_baseURL_Override(t *testing.T) {
+	c := NewClient("tok")
+	c.BaseURL = "http://localhost:9999"
+	if got := c.baseURL(); got != "http://localhost:9999" {
+		t.Errorf("baseURL() = %q, want %q", got, "http://localhost:9999")
+	}
+}
+
+func TestClient_baseURL_EmptyStringUsesDefault(t *testing.T) {
+	c := &Client{BaseURL: ""}
+	if got := c.baseURL(); got != defaultAPIBaseURL {
+		t.Errorf("baseURL() = %q, want %q", got, defaultAPIBaseURL)
+	}
+}
+
 // --- doJSON tests ---
 
 func TestDoJSON_AuthHeader(t *testing.T) {

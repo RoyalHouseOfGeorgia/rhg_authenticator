@@ -118,7 +118,7 @@ func NewAuditTab(window fyne.Window, lastUpdateCh chan<- string) *fyne.Container
 		statusLabel.SetText("Fetching...")
 		currentETag := lastETag // capture under UI thread
 		go func() {
-			result, newETag, err := ghapi.FetchRegistryCommits(commitsPerPage, currentETag)
+			result, newETag, err := ghapi.FetchRegistryCommits("", commitsPerPage, currentETag)
 			fyne.Do(func() {
 				fetching.Store(false)
 				refreshBtn.Enable()

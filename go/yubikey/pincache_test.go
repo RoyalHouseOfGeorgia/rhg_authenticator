@@ -336,6 +336,57 @@ func TestPinCache_SetMlockFailure_PreservesOldCache(t *testing.T) {
 	}
 }
 
+func TestPinCache_SetDuringExpiry(t *testing.T) {
+	// Regression test for TOCTOU race: a stale timer goroutine that lost the
+	// race for the mutex must not zero a PIN set in a subsequent call to Set.
+	//
+	// Strategy:
+	//   1. Set with a very short timeout (1ms) so the first timer fires fast.
+	//   2. Sleep 5ms — well past that timeout so the old goroutine has fired
+	//      and is either done or blocked on the mutex.
+	//   3. Re-set with a new PIN using a much longer timeout (500ms) so the
+	//      second timer cannot fire before we verify.
+	//   4. Give any stale goroutine a moment to run (5ms), then verify.
+	//
+	// Without the generation guard, the stale goroutine clears the new PIN
+	// and Get returns ("", false).  With the fix it detects gen != c.gen and
+	// leaves the new PIN intact.
+	c := newPinCacheWithTimeout(1 * time.Millisecond)
+	defer c.Close()
+	c.SetEnabled(true)
+
+	if err := c.Set("first"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sleep well past the 1ms timeout so the old timer goroutine fires.
+	time.Sleep(5 * time.Millisecond)
+
+	// Switch to a longer timeout before re-setting so the second timer cannot
+	// fire during the verification window.
+	c.mu.Lock()
+	c.timeout = 500 * time.Millisecond
+	c.mu.Unlock()
+
+	// Re-set with a new PIN.  The stale goroutine may be blocked on mu at this
+	// point; once Set releases mu it must detect the generation mismatch and
+	// leave the new PIN intact.
+	if err := c.Set("second"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Give any pending stale goroutine time to run and (incorrectly) clear.
+	time.Sleep(5 * time.Millisecond)
+
+	pin, ok := c.Get()
+	if !ok {
+		t.Fatal("expected PIN to still be valid after re-set during expiry window")
+	}
+	if pin != "second" {
+		t.Errorf("expected PIN %q, got %q (stale timer zeroed the new PIN)", "second", pin)
+	}
+}
+
 func TestPinCache_SetEmptyPin(t *testing.T) {
 	c := NewPinCache()
 	defer c.Close()

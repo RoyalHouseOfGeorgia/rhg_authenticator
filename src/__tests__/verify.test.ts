@@ -469,6 +469,45 @@ describe("verifyCredential", () => {
     expect(success.credential.recipient).toBe("Jane Doe");
   });
 
+  // 18b. console.warn is emitted when ed25519Verify throws unexpectedly
+  it("emits console.warn and continues when ed25519Verify throws unexpectedly", async () => {
+    const { secretKey, publicKey } = makeKeypair();
+    const cred = validCredentialObj();
+    const payload = encodeCredential(cred);
+    const signature = sign(payload, secretKey);
+
+    // A key whose public-key bytes decode successfully (valid length) but will
+    // cause ed25519Verify to throw because we mock the verify function to throw
+    // for that specific key.
+    const throwingEntry = makeKeyEntry(publicKey, { note: "throws on verify" });
+    const registry = makeRegistry(throwingEntry);
+
+    const cryptoModule = await import("../crypto.js");
+    const verifySpy = vi
+      .spyOn(cryptoModule, "verify")
+      .mockImplementationOnce(() => {
+        throw new Error("unexpected internal error");
+      });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = verifyCredential(payload, signature, registry);
+      // The mocked throw should have been caught; no key matched, so we get a failure.
+      expect(result.valid).toBe(false);
+      expect((result as VerificationFailure).reason).toBe(
+        "no matching key produced a valid signature",
+      );
+      // console.warn must have been called with the expected message prefix.
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(warnSpy.mock.calls[0][0]).toBe(
+        "Unexpected error during signature verification:",
+      );
+      expect(warnSpy.mock.calls[0][1]).toBeInstanceOf(Error);
+    } finally {
+      verifySpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
   // 19. All registry keys fail to decode
   it("returns specific failure when all registry keys fail to decode", () => {
     const { secretKey } = makeKeypair();

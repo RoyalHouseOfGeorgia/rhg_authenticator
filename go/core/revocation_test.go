@@ -325,6 +325,77 @@ func TestBuildRevocationSet_LowercasesHashes(t *testing.T) {
 	}
 }
 
+// --- AppendRevocationEntry tests ---
+
+func TestAppendRevocationEntry_EmptyList(t *testing.T) {
+	existing := &RevocationList{Revocations: []RevocationEntry{}}
+	hash := strings.Repeat("a", 64)
+	result := AppendRevocationEntry(existing, hash, "2026-01-15")
+	if len(result.Revocations) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(result.Revocations))
+	}
+	if result.Revocations[0].Hash != hash {
+		t.Errorf("hash = %q, want %q", result.Revocations[0].Hash, hash)
+	}
+	if result.Revocations[0].RevokedOn != "2026-01-15" {
+		t.Errorf("revoked_on = %q, want %q", result.Revocations[0].RevokedOn, "2026-01-15")
+	}
+}
+
+func TestAppendRevocationEntry_NonEmptyList_PreservesExisting(t *testing.T) {
+	hashA := strings.Repeat("a", 64)
+	hashB := strings.Repeat("b", 64)
+	existing := &RevocationList{
+		Revocations: []RevocationEntry{
+			{Hash: hashA, RevokedOn: "2025-06-01"},
+		},
+	}
+	result := AppendRevocationEntry(existing, hashB, "2026-01-15")
+	if len(result.Revocations) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(result.Revocations))
+	}
+	if result.Revocations[0].Hash != hashA {
+		t.Errorf("first entry hash = %q, want %q", result.Revocations[0].Hash, hashA)
+	}
+	if result.Revocations[1].Hash != hashB {
+		t.Errorf("second entry hash = %q, want %q", result.Revocations[1].Hash, hashB)
+	}
+}
+
+func TestAppendRevocationEntry_DeepCopy_DoesNotMutateInput(t *testing.T) {
+	hashA := strings.Repeat("a", 64)
+	hashB := strings.Repeat("b", 64)
+	original := []RevocationEntry{{Hash: hashA, RevokedOn: "2025-06-01"}}
+	existing := &RevocationList{Revocations: original}
+
+	result := AppendRevocationEntry(existing, hashB, "2026-01-15")
+
+	// Appending to result's slice must not affect the original.
+	result.Revocations = append(result.Revocations, RevocationEntry{Hash: strings.Repeat("c", 64), RevokedOn: "2026-02-01"})
+	if len(existing.Revocations) != 1 {
+		t.Errorf("original list mutated: got %d entries, want 1", len(existing.Revocations))
+	}
+}
+
+func TestAppendRevocationEntry_HashLowercased(t *testing.T) {
+	existing := &RevocationList{Revocations: []RevocationEntry{}}
+	hashUpper := strings.ToUpper(strings.Repeat("a", 64))
+	result := AppendRevocationEntry(existing, hashUpper, "2026-01-15")
+	want := strings.ToLower(hashUpper)
+	if result.Revocations[0].Hash != want {
+		t.Errorf("hash = %q, want lowercased %q", result.Revocations[0].Hash, want)
+	}
+}
+
+func TestAppendRevocationEntry_RevokedOnPassedThrough(t *testing.T) {
+	existing := &RevocationList{Revocations: []RevocationEntry{}}
+	revokedOn := "2099-12-31"
+	result := AppendRevocationEntry(existing, strings.Repeat("a", 64), revokedOn)
+	if result.Revocations[0].RevokedOn != revokedOn {
+		t.Errorf("revoked_on = %q, want %q", result.Revocations[0].RevokedOn, revokedOn)
+	}
+}
+
 func TestIsRevoked_ViaSet(t *testing.T) {
 	hashLower := strings.Repeat("c", 64)
 	list := &RevocationList{

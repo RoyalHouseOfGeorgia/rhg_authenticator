@@ -1307,3 +1307,227 @@ func TestForkTestUsername_DistinctFromDefaultOwner(t *testing.T) {
 		t.Fatalf("test username %q must differ from DefaultOwner %q", testUsername, DefaultOwner)
 	}
 }
+
+// --- Partial-failure tests using request-log assertion strategy ---
+
+// recordedRequests tracks "METHOD /path" strings under a mutex so the
+// httptest handler (called from a different goroutine) can append safely.
+type recordedRequests struct {
+	mu      sync.Mutex
+	entries []string
+}
+
+func (r *recordedRequests) record(req *http.Request) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entries = append(r.entries, req.Method+" "+req.URL.Path)
+}
+
+func (r *recordedRequests) has(method, pathSubstr string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.entries {
+		if e == method+" "+pathSubstr || strings.Contains(e, method+" ") && strings.Contains(e, pathSubstr) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCreateForkFilePR_GetContentsFails verifies that when step 6
+// (getContentsFor) returns 500, the cleanup DELETE refs request is recorded.
+// Branch creation (step 5) succeeds before the failure.
+func TestCreateForkFilePR_GetContentsFails(t *testing.T) {
+	withForkOverrides(t, 0, 1)
+
+	var reqs recordedRequests
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.record(r)
+
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") &&
+			!strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			// waitForFork poll — fork ready immediately.
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]any{
+				"ref":    "refs/heads/main",
+				"object": map[string]string{"sha": "sha1"},
+			})
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
+			// Step 5: branch creation succeeds.
+			w.WriteHeader(201)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
+			// Step 6: getContentsFor fails.
+			w.WriteHeader(500)
+			w.Write([]byte(`{"message": "Internal Server Error"}`))
+
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/git/refs/"):
+			// Cleanup DELETE — succeed.
+			w.WriteHeader(204)
+
+		default:
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClientWithUser(srv, "tok", "testuser")
+	_, err := c.createForkFilePR(context.Background(), "path.json", []byte("data"), "prefix-", "title", "body")
+	if err == nil {
+		t.Fatal("expected error when getContentsFor fails")
+	}
+	if !strings.Contains(err.Error(), "getting file SHA from fork") {
+		t.Errorf("error = %q, want to contain 'getting file SHA from fork'", err.Error())
+	}
+
+	// Cleanup runs synchronously inside createForkFilePR before it returns,
+	// but give a small margin in case of any scheduler delay.
+	time.Sleep(50 * time.Millisecond)
+
+	if !reqs.has(http.MethodDelete, "/git/refs/") {
+		t.Error("expected DELETE /git/refs/ recorded for cleanup, but not found")
+	}
+}
+
+// TestCreateForkFilePR_CreatePRFails verifies that when step 8
+// (createPRFor) returns 500, the cleanup DELETE refs request is recorded.
+// File update (step 7) succeeds before the failure.
+func TestCreateForkFilePR_CreatePRFails(t *testing.T) {
+	withForkOverrides(t, 0, 1)
+
+	var reqs recordedRequests
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.record(r)
+
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") &&
+			!strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]any{
+				"ref":    "refs/heads/main",
+				"object": map[string]string{"sha": "sha1"},
+			})
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
+			// Step 5: branch creation succeeds.
+			w.WriteHeader(201)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
+			// Step 6: getContentsFor succeeds.
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]string{"sha": "fsha"})
+
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
+			// Step 7: file update succeeds.
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			// Step 8: createPR fails.
+			w.WriteHeader(500)
+			w.Write([]byte(`{"message": "Internal Server Error"}`))
+
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/git/refs/"):
+			// Cleanup DELETE — succeed.
+			w.WriteHeader(204)
+
+		default:
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClientWithUser(srv, "tok", "testuser")
+	_, err := c.createForkFilePR(context.Background(), "path.json", []byte("data"), "prefix-", "title", "body")
+	if err == nil {
+		t.Fatal("expected error when createPR fails")
+	}
+	if !strings.Contains(err.Error(), "creating pull request") {
+		t.Errorf("error = %q, want to contain 'creating pull request'", err.Error())
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if !reqs.has(http.MethodDelete, "/git/refs/") {
+		t.Error("expected DELETE /git/refs/ recorded for cleanup, but not found")
+	}
+}
+
+// TestCreateForkFilePR_ForkPollTimeout verifies that when the fork poll
+// always returns 404 (times out), an error is returned and no branch-creation
+// POST /git/refs request was recorded (cleanup never runs because no branch
+// was created).
+func TestCreateForkFilePR_ForkPollTimeout(t *testing.T) {
+	// Use 3 poll attempts with zero interval so the test completes quickly.
+	withForkOverrides(t, 0, 3)
+
+	var reqs recordedRequests
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.record(r)
+
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") &&
+			!strings.Contains(r.URL.Path, "/git/"):
+			// Fork poll — always 404 so the poll exhausts all attempts.
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message": "Not Found"}`))
+
+		default:
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClientWithUser(srv, "tok", "testuser")
+	_, err := c.createForkFilePR(context.Background(), "path.json", []byte("data"), "prefix-", "title", "body")
+	if err == nil {
+		t.Fatal("expected error when fork poll times out")
+	}
+	if !IsForkError(err) {
+		t.Errorf("expected ForkError, got %T: %v", err, err)
+	}
+
+	// No branch was created — POST /git/refs must not appear in the request log.
+	reqs.mu.Lock()
+	defer reqs.mu.Unlock()
+	for _, e := range reqs.entries {
+		if e == http.MethodPost+" /repos/testuser/"+DefaultRepo+"/git/refs" {
+			t.Errorf("unexpected branch-creation request recorded: %q", e)
+		}
+	}
+}

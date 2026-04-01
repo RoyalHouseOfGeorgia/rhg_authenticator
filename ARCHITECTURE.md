@@ -66,8 +66,8 @@ Credentials can be revoked after issuance. The revocation mechanism is hash-base
 ### Desktop App (Go)
 
 - The **History** tab includes a **Revoke** button with a confirmation dialog. Revoking a credential submits a pull request via the GitHub API (`CreateRevocationPR` in `ghapi`), adding the credential's SHA-256 hash to `revocations.json`.
-- `core/revocation.go` provides `RevocationEntry`, `RevocationList`, `ValidateRevocationList`, `BuildRevocationSet`, and `IsRevoked`.
-- The revocation list is cached (`cachedRevocationList`) with deep-copy before mutation.
+- `core/revocation.go` provides `RevocationEntry`, `RevocationList`, `ValidateRevocationList`, `BuildRevocationSet`, `IsRevoked`, and `AppendRevocationEntry` (deep-copies the list and appends a new entry without mutating the input).
+- The revocation list is cached (`cachedRevocationList`); mutations use `AppendRevocationEntry` which deep-copies before appending.
 
 ### Verification Page (TypeScript)
 
@@ -180,7 +180,7 @@ YubiKey PIV slot 9c via `go-piv/piv-go` v2 — direct PCSC access, Ed25519 (algo
 ### PIN Security
 
 - PIN is prompted via a GUI dialog on each sign operation (default)
-- Opt-in caching: PIN stored in `mlock`'d memory (non-swappable), protected by `sync.Mutex`, auto-zeroed after 5 minutes of inactivity or app close
+- Opt-in caching: PIN stored in `mlock`'d memory (non-swappable), protected by `sync.Mutex` with generation counter (prevents TOCTOU race on timer expiry), auto-zeroed after 5 minutes of inactivity or app close
 - Platform-specific mlock: `syscall.Mlock` on macOS/Linux, `VirtualLock` via `kernel32.dll` on Windows
 - YubiKey's built-in 3-attempt PIN retry counter is enforced by the hardware
 

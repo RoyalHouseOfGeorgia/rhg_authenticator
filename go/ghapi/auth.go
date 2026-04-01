@@ -87,7 +87,7 @@ var timeNow = time.Now
 var (
 	deviceCodeEndpoint  = deviceCodeURL
 	accessTokenEndpoint = accessTokenURL
-	userAPIEndpoint     = apiBaseURL + "/user"
+	userAPIEndpoint     = defaultAPIBaseURL + "/user"
 )
 
 // LoadToken retrieves a stored GitHub token, trying the keyring first

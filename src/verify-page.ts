@@ -112,48 +112,57 @@ async function fetchAndValidate<T>(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-  let response: Response;
   try {
-    response = await fetch(url, {
-      signal: controller.signal,
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer',
-    });
-  } catch (err) {
-    throw new Error(`Failed to contact ${serviceName} service`, { cause: err });
-  } finally {
-    clearTimeout(timer);
-  }
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        signal: controller.signal,
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+      });
+    } catch (err) {
+      throw new Error(`Failed to contact ${serviceName} service`, { cause: err });
+    }
 
-  if (!response.ok) {
-    throw new Error(`${serviceName[0].toUpperCase() + serviceName.slice(1)} service returned an error`);
-  }
+    if (!response.ok) {
+      throw new Error(`${serviceName[0].toUpperCase() + serviceName.slice(1)} service returned an error`);
+    }
 
-  // Early-out on Content-Length (optimization only — may reflect compressed size).
-  const contentLength = response.headers.get('content-length');
-  if (contentLength !== null) {
-    const len = parseInt(contentLength, 10);
-    if (!Number.isFinite(len) || len > MAX_RESPONSE_BYTES) {
+    // Early-out on Content-Length (optimization only — may reflect compressed size).
+    const contentLength = response.headers.get('content-length');
+    if (contentLength !== null) {
+      const len = parseInt(contentLength, 10);
+      if (!Number.isFinite(len) || len > MAX_RESPONSE_BYTES) {
+        throw new Error(`${dataName} response exceeds size limit`);
+      }
+    }
+
+    // Body read is covered by the abort timeout — timer not yet cleared.
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (err) {
+      throw new Error(`Failed to read ${dataName} response`, { cause: err });
+    }
+
+    if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
       throw new Error(`${dataName} response exceeds size limit`);
     }
-  }
 
-  const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
-    throw new Error(`${dataName} response exceeds size limit`);
-  }
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch (err) {
+      throw new Error(`${dataName} data is corrupted`, { cause: err });
+    }
 
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch (err) {
-    throw new Error(`${dataName} data is corrupted`, { cause: err });
-  }
-
-  try {
-    return validate(body);
-  } catch (err) {
-    throw new Error(`${dataName} data is invalid`, { cause: err });
+    try {
+      return validate(body);
+    } catch (err) {
+      throw new Error(`${dataName} data is invalid`, { cause: err });
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
 

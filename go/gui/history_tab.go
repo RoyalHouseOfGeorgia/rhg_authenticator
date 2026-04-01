@@ -123,15 +123,8 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				ctx, cancel := context.WithTimeout(context.Background(), revocationTimeout)
 				defer cancel()
 
-				// Deep-copy cached revocation list before mutating.
-				entries := make([]core.RevocationEntry, len(cached.Revocations), len(cached.Revocations)+1)
-				copy(entries, cached.Revocations)
-				today := time.Now().UTC().Format("2006-01-02")
-				entries = append(entries, core.RevocationEntry{
-					Hash:      strings.ToLower(rec.PayloadSHA256),
-					RevokedOn: today,
-				})
-				updatedList := &core.RevocationList{Revocations: entries}
+				// Build updated revocation list (deep-copies cached, does not mutate it).
+				updatedList := core.AppendRevocationEntry(cached, rec.PayloadSHA256, time.Now().UTC().Format("2006-01-02"))
 
 				// Marshal.
 				content, err := json.MarshalIndent(updatedList, "", "  ")

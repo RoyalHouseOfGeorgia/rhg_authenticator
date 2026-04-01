@@ -33,11 +33,15 @@ const (
 var commitClient = &http.Client{Timeout: commitFetchTimeout, CheckRedirect: core.SafeRedirect}
 
 // FetchRegistryCommits retrieves registry file commits from the GitHub API.
+// baseURL overrides the default API base URL (pass "" for production).
 // If etag is non-empty, it is sent as If-None-Match for conditional requests.
 // On 304 Not Modified, returns (nil, etag, nil) — nil commits signals no change.
-func FetchRegistryCommits(perPage int, etag string) ([]RegistryCommit, string, error) {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits?path=%s&per_page=%d",
-		DefaultOwner, DefaultRepo, RegistryFilePath, perPage)
+func FetchRegistryCommits(baseURL string, perPage int, etag string) ([]RegistryCommit, string, error) {
+	if baseURL == "" {
+		baseURL = defaultAPIBaseURL
+	}
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/commits?path=%s&per_page=%d",
+		baseURL, DefaultOwner, DefaultRepo, RegistryFilePath, perPage)
 
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {

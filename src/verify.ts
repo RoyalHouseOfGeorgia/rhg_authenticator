@@ -123,7 +123,10 @@ export function verifyCredential(
         }
         signatureMatchedButDateInvalid = true;
       }
-    } catch {
+    } catch (err) {
+      // ed25519Verify should not throw on length-validated inputs.
+      // Log unexpected errors so bugs are observable, not silently masked.
+      console.warn('Unexpected error during signature verification:', err);
       continue;
     }
   }

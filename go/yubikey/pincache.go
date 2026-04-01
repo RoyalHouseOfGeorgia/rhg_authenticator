@@ -22,8 +22,9 @@ type PinCache struct {
 	pin     []byte // mlock'd buffer
 	valid   bool
 	timer   *time.Timer
-	enabled bool // whether caching is enabled (checkbox state)
+	enabled bool   // whether caching is enabled (checkbox state)
 	timeout time.Duration
+	gen     uint64 // generation counter; guards against TOCTOU race in Set
 }
 
 // NewPinCache creates a new PIN cache (disabled by default).
@@ -99,10 +100,18 @@ func (c *PinCache) Set(pin string) error {
 	}
 	c.pin = buf
 	c.valid = true
+	c.gen++
+	gen := c.gen
 	if c.timer != nil {
 		c.timer.Stop()
 	}
-	c.timer = time.AfterFunc(c.timeout, c.Clear)
+	c.timer = time.AfterFunc(c.timeout, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.gen == gen {
+			c.clearLocked()
+		}
+	})
 	return nil
 }
 

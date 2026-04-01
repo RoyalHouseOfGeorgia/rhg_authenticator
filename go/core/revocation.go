@@ -128,6 +128,19 @@ func validateRevocationEntry(data json.RawMessage, index int) (RevocationEntry, 
 	}, nil
 }
 
+// AppendRevocationEntry deep-copies the revocation list, appends a new entry,
+// and returns the updated list. Does not mutate the input.
+// The hash is lowercased for consistency with BuildRevocationSet.
+func AppendRevocationEntry(existing *RevocationList, hash, revokedOn string) *RevocationList {
+	newEntries := make([]RevocationEntry, len(existing.Revocations), len(existing.Revocations)+1)
+	copy(newEntries, existing.Revocations)
+	newEntries = append(newEntries, RevocationEntry{
+		Hash:      strings.ToLower(hash),
+		RevokedOn: revokedOn,
+	})
+	return &RevocationList{Revocations: newEntries}
+}
+
 // BuildRevocationSet returns a map for O(1) revocation lookups.
 // Hashes are stored as returned by validation (lowercased), but
 // BuildRevocationSet also applies ToLower as defense-in-depth for

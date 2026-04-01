@@ -188,10 +188,12 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 		noteEntry,
 	)
 
-	dialog.ShowCustomConfirm("Add Entry", "Add", "Cancel", formContent, func(ok bool) {
-		if !ok {
-			return
-		}
+	// Use NewCustomWithoutButtons + SetButtons so validation errors are
+	// visible on the still-open dialog. ShowCustomConfirm dismisses the
+	// dialog before invoking the callback, hiding any errorLabel updates.
+	d := dialog.NewCustomWithoutButtons("Add Entry", formContent, window)
+
+	confirmBtn := widget.NewButton("Add", func() {
 		if err := validateEntryForm(authorityEntry.Text, fromDP.entry.Text, importedKey, noExpiryCheck.Checked, toDP.entry.Text); err != nil {
 			errorLabel.SetText(err.Error())
 			return
@@ -204,8 +206,15 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 		}
 
 		entry := buildEntry(authorityEntry.Text, fromDP.entry.Text, to, importedKey, noteEntry.Text)
+		d.Hide()
 		onAdd(entry)
-	}, window)
+	})
+	confirmBtn.Importance = widget.HighImportance
+
+	cancelBtn := widget.NewButton("Cancel", func() { d.Hide() })
+
+	d.SetButtons([]fyne.CanvasObject{cancelBtn, confirmBtn})
+	d.Show()
 }
 
 // showEditDialog shows a dialog for editing an existing key entry.
@@ -247,10 +256,12 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 		errorLabel,
 	)
 
-	dialog.ShowCustomConfirm("Edit Entry", "Save", "Cancel", formContent, func(ok bool) {
-		if !ok {
-			return
-		}
+	// Use NewCustomWithoutButtons + SetButtons so validation errors are
+	// visible on the still-open dialog. ShowCustomConfirm dismisses the
+	// dialog before invoking the callback, hiding any errorLabel updates.
+	d := dialog.NewCustomWithoutButtons("Edit Entry", formContent, window)
+
+	confirmBtn := widget.NewButton("Save", func() {
 		if err := validateEntryForm(authorityEntry.Text, fromDP.entry.Text, entry.PublicKey, noExpiryCheck.Checked, toDP.entry.Text); err != nil {
 			errorLabel.SetText(err.Error())
 			return
@@ -263,6 +274,13 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 		}
 
 		updated := buildEntry(authorityEntry.Text, fromDP.entry.Text, to, entry.PublicKey, noteEntry.Text)
+		d.Hide()
 		onSave(updated)
-	}, window)
+	})
+	confirmBtn.Importance = widget.HighImportance
+
+	cancelBtn := widget.NewButton("Cancel", func() { d.Hide() })
+
+	d.SetButtons([]fyne.CanvasObject{cancelBtn, confirmBtn})
+	d.Show()
 }

@@ -642,6 +642,34 @@ describe('runVerification', () => {
       vi.stubGlobal('crypto', originalCrypto);
     }
   });
+
+  it('returns revoked via crypto.subtle.digest → hex → revocation set lookup end-to-end', async () => {
+    // Build a signed credential using a fresh keypair so it is independent of
+    // other tests.
+    const { secretKey: sk, publicKey: pk } = makeKeypair(42);
+    const credObj = validCredentialObj({ recipient: 'Crypto Subtle Test' });
+    const payloadBytes = canonicalize(credObj as Record<string, string | number>);
+    const signatureBytes = sign(payloadBytes, sk);
+    const params: PageParams = {
+      payload: base64urlEncode(payloadBytes),
+      signature: base64urlEncode(signatureBytes),
+    };
+
+    // Compute the hash the same way runVerification does: via crypto.subtle.digest
+    // then hex-encode with zero-padded bytes.
+    const hashBuffer = await crypto.subtle.digest('SHA-256', payloadBytes as Uint8Array<ArrayBuffer>);
+    const payloadHash = [...new Uint8Array(hashBuffer)]
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    // Build a registry that will accept the credential, and a revocation list
+    // that marks the computed hash as revoked.
+    const testRegistry = makeRegistry(makeKeyEntry(pk));
+    const revocationList = makeRevocationList(payloadHash);
+
+    const result = await runVerification(params, testRegistry, revocationList);
+    expect(result.status).toBe('revoked');
+  });
 });
 
 // ---------------------------------------------------------------------------

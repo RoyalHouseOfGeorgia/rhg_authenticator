@@ -23,7 +23,7 @@ const (
 	DefaultRepo      = "rhg_authenticator"
 	RegistryFilePath = "verify/keys/registry.json"
 	revocationPath   = "verify/keys/revocations.json"
-	apiBaseURL       = "https://api.github.com"
+	defaultAPIBaseURL = "https://api.github.com"
 	maxResponseBytes = 2 * 1024 * 1024 // 2 MiB
 	clientTimeout    = 30 * time.Second
 	maxBranchRetries = 3
@@ -87,6 +87,15 @@ type Client struct {
 	HTTPClient *http.Client
 	Owner      string
 	Repo       string
+	BaseURL    string // Override for testing; empty uses defaultAPIBaseURL.
+}
+
+// baseURL returns the effective API base URL for this client.
+func (c *Client) baseURL() string {
+	if c.BaseURL != "" {
+		return c.BaseURL
+	}
+	return defaultAPIBaseURL
 }
 
 // String returns a redacted representation to prevent token leakage in logs.
@@ -166,7 +175,7 @@ func NewClientWithUser(token, username string) *Client {
 // If body is non-nil it is marshaled to JSON. If result is non-nil, a
 // successful (2xx) response body is unmarshaled into it.
 func (c *Client) doJSON(ctx context.Context, method, urlPath string, body, result any) error {
-	fullURL := apiBaseURL + urlPath
+	fullURL := c.baseURL() + urlPath
 
 	var bodyReader io.Reader
 	if body != nil {

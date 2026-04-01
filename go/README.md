@@ -159,8 +159,8 @@ go/
 ├── ghapi/               # GitHub API client + OAuth device flow
 │   ├── keyring.go       # Keyring interface (OS keychain + FakeKeyring for tests)
 │   ├── auth.go          # OAuth device flow, token storage, session restore
-│   ├── client.go        # GitHub REST API (branches, contents, PRs); safeRedirect, exported DefaultOwner/DefaultRepo/RegistryFilePath
-│   ├── commits.go       # FetchRegistryCommits (moved from audit_tab.go); commitClient with safeRedirect
+│   ├── client.go        # GitHub REST API (branches, contents, PRs); safeRedirect, Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath
+│   ├── commits.go       # FetchRegistryCommits(baseURL, perPage, etag); commitClient with safeRedirect
 │   └── commits_test.go
 ├── regmgr/              # Registry Manager (tab in main app)
 │   ├── app.go           # Main UI: toolbar, table, login, submit, state management
@@ -169,7 +169,7 @@ go/
 │   └── fileio.go        # Registry marshal + atomic write
 ├── yubikey/             # YubiKey hardware adapter
 │   ├── adapter.go       # piv-go PIV signing
-│   ├── pincache.go      # Secure PIN cache (mlock + mutex)
+│   ├── pincache.go      # Secure PIN cache (mlock + mutex + generation counter)
 │   ├── mlock_unix.go    # mlock for macOS/Linux
 │   └── mlock_windows.go # VirtualLock for Windows
 ├── qr/                  # QR code generation

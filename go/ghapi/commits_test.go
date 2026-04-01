@@ -8,22 +8,10 @@ import (
 	"testing"
 )
 
-// testCommitServer creates a test server and overrides commitClient to route
-// requests to it. Returns the server (caller must defer srv.Close()) and a
-// cleanup function that restores the original client.
-func testCommitServer(handler http.HandlerFunc) (*httptest.Server, func()) {
-	srv := httptest.NewServer(handler)
-	orig := commitClient
-	commitClient = &http.Client{
-		Transport: &rewriteTransport{
-			base:      http.DefaultTransport,
-			targetURL: srv.URL,
-		},
-	}
-	return srv, func() {
-		commitClient = orig
-		srv.Close()
-	}
+// testCommitServer creates a test server for commit tests.
+// Returns the server (caller must defer srv.Close()).
+func testCommitServer(handler http.HandlerFunc) *httptest.Server {
+	return httptest.NewServer(handler)
 }
 
 func TestFetchRegistryCommits_Success(t *testing.T) {
@@ -40,16 +28,15 @@ func TestFetchRegistryCommits_Success(t *testing.T) {
 
 	body, _ := json.Marshal(commits)
 
-	srv, cleanup := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
+	ts := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"etag123"`)
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
 	})
-	defer cleanup()
-	_ = srv
+	defer ts.Close()
 
-	result, etag, err := FetchRegistryCommits(50, "")
+	result, etag, err := FetchRegistryCommits(ts.URL, 50, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -71,7 +58,7 @@ func TestFetchRegistryCommits_Success(t *testing.T) {
 }
 
 func TestFetchRegistryCommits_ETag304(t *testing.T) {
-	srv, cleanup := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
+	ts := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("If-None-Match") == `"etag-old"` {
 			w.WriteHeader(http.StatusNotModified)
 			return
@@ -79,10 +66,9 @@ func TestFetchRegistryCommits_ETag304(t *testing.T) {
 		t.Error("expected If-None-Match header")
 		w.WriteHeader(http.StatusOK)
 	})
-	defer cleanup()
-	_ = srv
+	defer ts.Close()
 
-	result, etag, err := FetchRegistryCommits(50, `"etag-old"`)
+	result, etag, err := FetchRegistryCommits(ts.URL, 50, `"etag-old"`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,20 +82,11 @@ func TestFetchRegistryCommits_ETag304(t *testing.T) {
 
 func TestFetchRegistryCommits_NetworkError(t *testing.T) {
 	// Create a server and immediately close it to simulate network error.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	srvURL := srv.URL
-	srv.Close()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	closedURL := ts.URL
+	ts.Close()
 
-	orig := commitClient
-	commitClient = &http.Client{
-		Transport: &rewriteTransport{
-			base:      http.DefaultTransport,
-			targetURL: srvURL,
-		},
-	}
-	defer func() { commitClient = orig }()
-
-	_, _, err := FetchRegistryCommits(50, "")
+	_, _, err := FetchRegistryCommits(closedURL, 50, "")
 	if err == nil {
 		t.Fatal("expected error for network failure")
 	}
@@ -119,15 +96,14 @@ func TestFetchRegistryCommits_NetworkError(t *testing.T) {
 }
 
 func TestFetchRegistryCommits_InvalidJSON(t *testing.T) {
-	srv, cleanup := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
+	ts := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{invalid json`))
 	})
-	defer cleanup()
-	_ = srv
+	defer ts.Close()
 
-	_, _, err := FetchRegistryCommits(50, "")
+	_, _, err := FetchRegistryCommits(ts.URL, 50, "")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -137,18 +113,49 @@ func TestFetchRegistryCommits_InvalidJSON(t *testing.T) {
 }
 
 func TestFetchRegistryCommits_RateLimit(t *testing.T) {
-	srv, cleanup := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
+	ts := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
-	defer cleanup()
-	_ = srv
+	defer ts.Close()
 
-	_, _, err := FetchRegistryCommits(50, "")
+	_, _, err := FetchRegistryCommits(ts.URL, 50, "")
 	if err == nil {
 		t.Fatal("expected error for rate limit")
 	}
 	if !IsRateLimited(err) {
 		t.Errorf("expected IsRateLimited(err) to be true, got error: %v", err)
+	}
+}
+
+func TestFetchRegistryCommits_UnexpectedContentType(t *testing.T) {
+	ts := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<html>oops</html>"))
+	})
+	defer ts.Close()
+
+	_, _, err := FetchRegistryCommits(ts.URL, 10, "")
+	if err == nil {
+		t.Fatal("expected error for unexpected Content-Type")
+	}
+	if !strings.Contains(err.Error(), "unexpected Content-Type") {
+		t.Errorf("error = %q, want it to contain 'unexpected Content-Type'", err.Error())
+	}
+}
+
+func TestFetchRegistryCommits_NonOKStatus(t *testing.T) {
+	ts := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	defer ts.Close()
+
+	_, _, err := FetchRegistryCommits(ts.URL, 10, "")
+	if err == nil {
+		t.Fatal("expected error for 500 status")
+	}
+	if !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("error = %q, want it to contain 'HTTP 500'", err.Error())
 	}
 }
 
