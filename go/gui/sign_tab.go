@@ -280,7 +280,9 @@ func friendlyYubiKeyError(err error, logger *debugLogger) string {
 // status message.
 func signFlowErrorMessage(err error, logger *debugLogger) string {
 	// User cancelled the PIN dialog — not an error.
-	if errors.Is(err, ErrSigningCancelled) {
+	// Use string match because piv-go wraps PINPrompt errors with %v,
+	// breaking the errors.Is chain for our sentinel.
+	if strings.Contains(err.Error(), ErrSigningCancelled.Error()) {
 		return ""
 	}
 	var sfe *SignFlowError

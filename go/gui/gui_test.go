@@ -721,9 +721,12 @@ func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 }
 
 func TestSignFlowErrorMessage_Cancelled(t *testing.T) {
-	// Wrapping mirrors the real chain: MakePinReader → SignBytes → HandleSign → SignFlowError.
-	wrapped := fmt.Errorf("signing failed: failed to get private key handle: %w", ErrSigningCancelled)
-	sfe := &SignFlowError{Phase: PhaseSign, Err: wrapped}
+	// piv-go wraps PINPrompt errors with %v (not %w), breaking errors.Is.
+	// Simulate the real chain: piv-go(%v) → SignBytes(%w) → HandleSign(%w) → SignFlowError.
+	pivWrapped := fmt.Errorf("piv: pin prompt: %v", ErrSigningCancelled) // piv-go uses %v
+	signBytes := fmt.Errorf("failed to get private key handle: %w", pivWrapped)
+	handleSign := fmt.Errorf("signing failed: %w", signBytes)
+	sfe := &SignFlowError{Phase: PhaseSign, Err: handleSign}
 	got := signFlowErrorMessage(sfe, nil)
 	if got != "" {
 		t.Errorf("expected empty string for cancellation, got: %q", got)
