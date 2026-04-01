@@ -7,6 +7,14 @@
       "algorithm": "Ed25519",
       "public_key": "MCowBQYDK2VwAyEANC+4SFm418EqQxyk4TaT9yk1VD3Ed7Rb+JC69cJ5Jvg=",
       "note": "Kimon Andreou - development and maintenance YubiKey"
+    },
+    {
+      "authority": "HRH Crown Prince Davit Bagrationi",
+      "from": "2026-04-01",
+      "to": null,
+      "algorithm": "Ed25519",
+      "public_key": "YJLjyix5YIGMYjNIry1nNd08VAg4EafDjc1KC408Hlc=",
+      "note": ""
     }
   ]
 }
