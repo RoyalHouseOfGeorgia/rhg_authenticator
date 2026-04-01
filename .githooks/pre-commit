@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# If verify-page.ts or its output are staged, ensure SRI hash is current.
+if git diff --cached --name-only | grep -qE '(src/verify-page\.ts|verify/verify\.js|verify/index\.html)'; then
+  printf 'pre-commit: checking SRI hash...\n'
+  npm run check:sri --silent
+fi
