@@ -48,6 +48,7 @@ func executeSignFlow(
 	// 1. Open adapter.
 	adapter, closer, err := openAdapter(readPin)
 	if err != nil {
+		logger.log("connect: " + core.SanitizeForLog(err.Error()))
 		return SignFlowResult{}, err
 	}
 	defer closer.Close()

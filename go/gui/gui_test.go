@@ -451,15 +451,15 @@ func TestFriendlyYubiKeyError_Nil(t *testing.T) {
 
 func TestFriendlyYubiKeyError_YubiKeyError(t *testing.T) {
 	got := friendlyYubiKeyError(fmt.Errorf("no YubiKey detected"), nil)
-	if !strings.Contains(got, "plug in") {
-		t.Errorf("expected 'plug in' message, got: %q", got)
+	if !strings.Contains(got, "not detected") {
+		t.Errorf("expected 'not detected' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_CardError(t *testing.T) {
 	got := friendlyYubiKeyError(fmt.Errorf("smart card not found"), nil)
-	if !strings.Contains(got, "plug in") {
-		t.Errorf("expected 'plug in' message, got: %q", got)
+	if !strings.Contains(got, "not detected") {
+		t.Errorf("expected 'not detected' message, got: %q", got)
 	}
 }
 
@@ -489,7 +489,7 @@ func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 	}
 }
 
-func TestFriendlyYubiKeyError_GenericError_SanitizedLog(t *testing.T) {
+func TestFriendlyYubiKeyError_LogsActualError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "debug.log")
 	logger := &debugLogger{path: logPath}
@@ -501,12 +501,27 @@ func TestFriendlyYubiKeyError_GenericError_SanitizedLog(t *testing.T) {
 		t.Fatalf("debug log file not created: %v", err)
 	}
 	content := string(data)
-	// The debug log must contain a sanitized classification, NOT the raw error.
-	if !strings.Contains(content, "YubiKey: unexpected error") {
-		t.Errorf("debug log should contain sanitized classification, got: %q", content)
+	// The debug log must contain the actual error for diagnosis.
+	if !strings.Contains(content, "yubikey: unexpected failure") {
+		t.Errorf("debug log should contain actual error, got: %q", content)
 	}
-	if strings.Contains(content, "unexpected failure") {
-		t.Errorf("debug log should NOT contain raw error 'unexpected failure', got: %q", content)
+}
+
+func TestFriendlyYubiKeyError_LogsHardwareError(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "debug.log")
+	logger := &debugLogger{path: logPath}
+
+	friendlyYubiKeyError(fmt.Errorf("failed to open YubiKey: no YubiKey found among 0 smart card(s)"), logger)
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("debug log file not created: %v", err)
+	}
+	content := string(data)
+	// Classified hardware errors must also be logged for diagnosis.
+	if !strings.Contains(content, "no YubiKey found") {
+		t.Errorf("debug log should contain actual error, got: %q", content)
 	}
 }
 
@@ -711,6 +726,24 @@ func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 	got := signFlowErrorMessage(fmt.Errorf("something unexpected"), logger)
 	if !strings.Contains(got, "Signing failed") {
 		t.Errorf("expected signing failed message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_CertificateError(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: object not found"), logger)
+	if !strings.Contains(got, "No signing certificate found") {
+		t.Errorf("expected certificate-specific message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_NotEd25519Error(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	got := signFlowErrorMessage(fmt.Errorf("certificate does not contain an Ed25519 public key"), logger)
+	if !strings.Contains(got, "No signing certificate found") {
+		t.Errorf("expected certificate-specific message, got: %q", got)
 	}
 }
 

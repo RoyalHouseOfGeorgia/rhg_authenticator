@@ -264,13 +264,14 @@ func friendlyYubiKeyError(err error, logger *debugLogger) string {
 	if err == nil {
 		return "Unknown YubiKey error"
 	}
+	// Always log the actual error for diagnosis.
+	logger.log("yubikey: " + core.SanitizeForLog(err.Error()))
 	switch core.ClassifyHardwareError(err) {
 	case core.HwErrSmartcard:
-		return "Smart card service not available. On Linux: sudo apt install pcscd"
+		return "Smart card service not available. On macOS this is built-in; on Windows check the Smart Card service is running."
 	case core.HwErrHardware:
-		return "Please plug in your YubiKey and try again"
+		return "YubiKey not detected. Ensure the key is plugged in and no other app (e.g. Yubico Authenticator) is using it."
 	default:
-		logger.log(sanitizeError("YubiKey", err))
 		return "Failed to connect to YubiKey. Check debug.log for details."
 	}
 }
@@ -293,10 +294,17 @@ func signFlowErrorMessage(err error, logger *debugLogger) string {
 			return "Unexpected error. Check debug.log for details."
 		}
 	}
+	// Adapter open failures arrive here (not wrapped in SignFlowError).
+	// Check hardware classification first, then fall back to a message
+	// that covers certificate-not-found and wrong-key-type cases.
 	if core.ClassifyHardwareError(err) != "" {
 		return friendlyYubiKeyError(err, logger)
 	}
-	logger.log("sign flow: " + err.Error())
+	errMsg := err.Error()
+	logger.log("sign flow: " + core.SanitizeForLog(errMsg))
+	if strings.Contains(errMsg, "certificate") || strings.Contains(errMsg, "slot 9c") {
+		return "No signing certificate found on YubiKey (PIV slot 9c). Generate an Ed25519 key first."
+	}
 	return "Signing failed. Check debug.log for details."
 }
 

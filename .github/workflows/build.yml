@@ -9,6 +9,7 @@ on:
       - 'docs/**'
       - 'LICENSE'
       - '.reqs/**'
+      - 'verify/keys/**'
   pull_request:
     branches: [main]
     paths-ignore:
@@ -16,6 +17,7 @@ on:
       - 'docs/**'
       - 'LICENSE'
       - '.reqs/**'
+      - 'verify/keys/**'
 
 # Deduplicate: when a tag push and branch push fire simultaneously,
 # each event type gets its own group so a release run is never cancelled

@@ -38,13 +38,15 @@ The binary embeds the version from `git describe --tags`.
    - **Honor**: select from the dropdown (5 recognized titles)
    - **Detail**: specific distinction or rank
    - **Date**: YYYY-MM-DD (defaults to today)
-2. Plug in your YubiKey
+2. Plug in your YubiKey (close any other app using it — e.g., Yubico Authenticator)
 3. Click **Sign Credential**
 4. Enter your YubiKey PIN when prompted
    - Check "Remember PIN for this session" to cache the PIN (opt-in, mlock'd memory, auto-clears after 5 minutes)
-4. The QR code appears as a preview
-5. Click **Save SVG** (primary — vector for print) or **Save PNG** (2048px alternative)
-6. Copy the verification URL to clipboard via **Copy URL**
+5. The QR code appears as a preview
+6. Click **Save SVG** (primary — vector for print) or **Save PNG** (2048px alternative)
+7. Copy the verification URL to clipboard via **Copy URL**
+
+If signing fails, the status area shows a diagnostic message. Details are written to `debug.log` — see [Troubleshooting](#troubleshooting) below.
 
 ### History Tab
 
@@ -118,6 +120,31 @@ The app fetches the revocation list (`revocations.json`) alongside the registry 
 - **History tab**: the **Revoke** button opens a confirmation dialog, then submits a PR via `ghapi.CreateRevocationPR` adding the credential hash to `revocations.json`.
 - **Caching**: `cachedRevocationList` with deep-copy before mutation to prevent races.
 - **Soft failure**: if the revocation list fetch fails, the app displays feedback via the `revocationStatus` label in the status bar; verification proceeds without revocation checks.
+
+## Troubleshooting
+
+Errors during signing are logged to `debug.log` in the app's data directory:
+
+| Platform | Path |
+|----------|------|
+| **macOS** | `~/Library/Application Support/rhg-authenticator/debug.log` |
+| **Windows** | `%APPDATA%\rhg-authenticator\debug.log` |
+
+### Common errors
+
+| Message | Cause | Fix |
+|---------|-------|-----|
+| **YubiKey not detected** | No YubiKey visible to the smart card service, or another app has an exclusive connection | Close Yubico Authenticator / browser FIDO prompts, unplug and replug the key |
+| **Smart card service not available** | OS smart card service not running | macOS: built-in, should always work. Windows: ensure the "Smart Card" service is running (`services.msc`) |
+| **No signing certificate found on YubiKey (PIV slot 9c)** | Slot 9c has no certificate, or the certificate does not contain an Ed25519 key | Follow [YubiKey Setup](#yubikey-setup) to generate a key and import the certificate. Ed25519 requires firmware >= 5.7 — check with `ykman info` |
+| **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | Check `debug.log` for the actual error message |
+
+### Verifying YubiKey readiness
+
+1. **Check firmware**: `ykman info` — Ed25519 PIV requires firmware >= 5.7
+2. **Check CCID mode**: `ykman config usb` — PIV requires the CCID interface enabled
+3. **Check slot 9c**: `ykman piv info` — should show a certificate in slot 9c (SIGNATURE)
+4. **Test in-app**: Go to the **YubiKey** tab and click **Check YubiKey** — this reads the key without requiring a PIN
 
 ## Security
 
