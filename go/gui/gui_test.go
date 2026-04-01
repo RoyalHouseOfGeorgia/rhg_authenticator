@@ -720,6 +720,23 @@ func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 	}
 }
 
+func TestSignFlowErrorMessage_Cancelled(t *testing.T) {
+	// Wrapping mirrors the real chain: MakePinReader → SignBytes → HandleSign → SignFlowError.
+	wrapped := fmt.Errorf("signing failed: failed to get private key handle: %w", ErrSigningCancelled)
+	sfe := &SignFlowError{Phase: PhaseSign, Err: wrapped}
+	got := signFlowErrorMessage(sfe, nil)
+	if got != "" {
+		t.Errorf("expected empty string for cancellation, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_CancelledRaw(t *testing.T) {
+	got := signFlowErrorMessage(ErrSigningCancelled, nil)
+	if got != "" {
+		t.Errorf("expected empty string for cancellation, got: %q", got)
+	}
+}
+
 func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
@@ -733,6 +750,17 @@ func TestSignFlowErrorMessage_CertificateError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
 	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: object not found"), logger)
+	if !strings.Contains(got, "No signing certificate found") {
+		t.Errorf("expected certificate-specific message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_CertificateWithSmartCardInError(t *testing.T) {
+	// piv-go may include "smart card" in the error when slot 9c is empty.
+	// This must NOT be misclassified as "YubiKey not detected".
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: smart card error: data object not found"), logger)
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
 	}

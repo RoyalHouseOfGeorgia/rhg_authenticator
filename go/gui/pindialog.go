@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
+
+// ErrSigningCancelled is returned when the user dismisses the PIN dialog.
+// This is a normal outcome, not an error — the sign flow should show a
+// neutral status message rather than an error.
+var ErrSigningCancelled = errors.New("signing cancelled")
 
 // MakePinReader returns a function compatible with YubiKeyAdapter's readPin
 // callback. It checks the PinCache first, and if no cached PIN is available,
@@ -33,7 +39,7 @@ func MakePinReader(window fyne.Window, cache *yubikey.PinCache) func() (string, 
 		select {
 		case pin := <-resultCh:
 			if pin == "" {
-				return "", fmt.Errorf("signing cancelled")
+				return "", ErrSigningCancelled
 			}
 			if cache.Enabled() {
 				if err := cache.Set(pin); err != nil {

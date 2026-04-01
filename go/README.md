@@ -38,7 +38,7 @@ The binary embeds the version from `git describe --tags`.
    - **Honor**: select from the dropdown (5 recognized titles)
    - **Detail**: specific distinction or rank
    - **Date**: YYYY-MM-DD (defaults to today)
-2. Plug in your YubiKey (close any other app using it — e.g., Yubico Authenticator)
+2. Plug in your YubiKey
 3. Click **Sign Credential**
 4. Enter your YubiKey PIN when prompted
    - Check "Remember PIN for this session" to cache the PIN (opt-in, mlock'd memory, auto-clears after 5 minutes)
@@ -134,7 +134,7 @@ Errors during signing are logged to `debug.log` in the app's data directory:
 
 | Message | Cause | Fix |
 |---------|-------|-----|
-| **YubiKey not detected** | No YubiKey visible to the smart card service, or another app has an exclusive connection | Close Yubico Authenticator / browser FIDO prompts, unplug and replug the key |
+| **YubiKey not detected** | No YubiKey visible to the smart card service | Unplug and replug the key. Verify CCID is enabled: `ykman config usb` |
 | **Smart card service not available** | OS smart card service not running | macOS: built-in, should always work. Windows: ensure the "Smart Card" service is running (`services.msc`) |
 | **No signing certificate found on YubiKey (PIV slot 9c)** | Slot 9c has no certificate, or the certificate does not contain an Ed25519 key | Follow [YubiKey Setup](#yubikey-setup) to generate a key and import the certificate. Ed25519 requires firmware >= 5.7 — check with `ykman info` |
 | **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | Check `debug.log` for the actual error message |

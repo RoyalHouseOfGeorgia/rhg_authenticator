@@ -270,7 +270,7 @@ func friendlyYubiKeyError(err error, logger *debugLogger) string {
 	case core.HwErrSmartcard:
 		return "Smart card service not available. On macOS this is built-in; on Windows check the Smart Card service is running."
 	case core.HwErrHardware:
-		return "YubiKey not detected. Ensure the key is plugged in and no other app (e.g. Yubico Authenticator) is using it."
+		return "YubiKey not detected. Ensure the key is plugged in."
 	default:
 		return "Failed to connect to YubiKey. Check debug.log for details."
 	}
@@ -279,6 +279,10 @@ func friendlyYubiKeyError(err error, logger *debugLogger) string {
 // signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
 // status message.
 func signFlowErrorMessage(err error, logger *debugLogger) string {
+	// User cancelled the PIN dialog — not an error.
+	if errors.Is(err, ErrSigningCancelled) {
+		return ""
+	}
 	var sfe *SignFlowError
 	if errors.As(err, &sfe) {
 		switch sfe.Phase {
@@ -295,15 +299,17 @@ func signFlowErrorMessage(err error, logger *debugLogger) string {
 		}
 	}
 	// Adapter open failures arrive here (not wrapped in SignFlowError).
-	// Check hardware classification first, then fall back to a message
-	// that covers certificate-not-found and wrong-key-type cases.
-	if core.ClassifyHardwareError(err) != "" {
-		return friendlyYubiKeyError(err, logger)
-	}
+	// Check certificate/slot errors first — the YubiKey WAS detected but
+	// the slot is empty or has the wrong key type. These errors may also
+	// contain "smart card" from piv-go, which would misclassify as
+	// HwErrHardware ("YubiKey not detected") if checked later.
 	errMsg := err.Error()
 	logger.log("sign flow: " + core.SanitizeForLog(errMsg))
 	if strings.Contains(errMsg, "certificate") || strings.Contains(errMsg, "slot 9c") {
 		return "No signing certificate found on YubiKey (PIV slot 9c). Generate an Ed25519 key first."
+	}
+	if core.ClassifyHardwareError(err) != "" {
+		return friendlyYubiKeyError(err, logger)
 	}
 	return "Signing failed. Check debug.log for details."
 }
