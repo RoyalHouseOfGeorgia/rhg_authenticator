@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -225,9 +226,9 @@ func TestSaveToken_FallbackFile(t *testing.T) {
 		t.Skip("file permission check not supported on Windows")
 	}
 
-	origGoos := goos
-	goos = "linux"
-	t.Cleanup(func() { goos = origGoos })
+	withAuthOverrides(t, func() {
+		goos = "linux"
+	})
 
 	kr := NewFakeKeyring()
 	kr.SimulateError = errors.New("keyring unavailable")
@@ -273,9 +274,9 @@ func TestSaveToken_FallbackFile(t *testing.T) {
 }
 
 func TestSaveToken_MkdirAll(t *testing.T) {
-	origGoos := goos
-	goos = "linux"
-	t.Cleanup(func() { goos = origGoos })
+	withAuthOverrides(t, func() {
+		goos = "linux"
+	})
 
 	kr := NewFakeKeyring()
 	kr.SimulateError = errors.New("keyring unavailable")
@@ -293,9 +294,9 @@ func TestSaveToken_MkdirAll(t *testing.T) {
 }
 
 func TestSaveToken_BothFail(t *testing.T) {
-	origGoos := goos
-	goos = "linux"
-	t.Cleanup(func() { goos = origGoos })
+	withAuthOverrides(t, func() {
+		goos = "linux"
+	})
 
 	kr := NewFakeKeyring()
 	kr.SimulateError = errors.New("keyring unavailable")
@@ -312,9 +313,9 @@ func TestSaveToken_BothFail(t *testing.T) {
 }
 
 func TestSaveToken_NonLinuxNoFallback(t *testing.T) {
-	origGoos := goos
-	goos = "darwin"
-	t.Cleanup(func() { goos = origGoos })
+	withAuthOverrides(t, func() {
+		goos = "darwin"
+	})
 
 	kr := NewFakeKeyring()
 	kr.SimulateError = errors.New("keyring unavailable")
@@ -521,45 +522,36 @@ func tok() Token {
 
 // --- helpers for endpoint override ---
 
-func overrideDeviceCodeEndpoint(t *testing.T, url string) {
-	t.Helper()
-	orig := deviceCodeEndpoint
-	deviceCodeEndpoint = url
-	t.Cleanup(func() { deviceCodeEndpoint = orig })
-}
+var authTestMu sync.Mutex
 
-func overrideAccessTokenEndpoint(t *testing.T, url string) {
+// withAuthOverrides locks the auth test mutex, applies overrides, and
+// restores originals + unlocks via t.Cleanup. Tests using this helper
+// MUST NOT call t.Parallel().
+func withAuthOverrides(t *testing.T, overrides func()) {
 	t.Helper()
-	orig := accessTokenEndpoint
-	accessTokenEndpoint = url
-	t.Cleanup(func() { accessTokenEndpoint = orig })
-}
-
-func overrideUserAPIEndpoint(t *testing.T, url string) {
-	t.Helper()
-	orig := userAPIEndpoint
-	userAPIEndpoint = url
-	t.Cleanup(func() { userAPIEndpoint = orig })
-}
-
-func overrideTimeNow(t *testing.T, now time.Time) {
-	t.Helper()
-	orig := timeNow
-	timeNow = func() time.Time { return now }
-	t.Cleanup(func() { timeNow = orig })
+	authTestMu.Lock()
+	// Capture originals before overriding.
+	origDeviceCode := deviceCodeEndpoint
+	origAccessToken := accessTokenEndpoint
+	origUserAPI := userAPIEndpoint
+	origTimeNow := timeNow
+	origGoos := goos
+	origClientID := ClientID
+	overrides()
+	t.Cleanup(func() {
+		deviceCodeEndpoint = origDeviceCode
+		accessTokenEndpoint = origAccessToken
+		userAPIEndpoint = origUserAPI
+		timeNow = origTimeNow
+		goos = origGoos
+		ClientID = origClientID
+		authTestMu.Unlock()
+	})
 }
 
 // --- RequestDeviceCode tests ---
 
-func overrideClientID(t *testing.T, id string) {
-	t.Helper()
-	orig := ClientID
-	ClientID = id
-	t.Cleanup(func() { ClientID = orig })
-}
-
 func TestRequestDeviceCode_Success(t *testing.T) {
-	overrideClientID(t, "test-client-id")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
@@ -580,7 +572,10 @@ func TestRequestDeviceCode_Success(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	overrideDeviceCodeEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		ClientID = "test-client-id"
+		deviceCodeEndpoint = srv.URL
+	})
 
 	dcr, err := RequestDeviceCode(context.Background())
 	if err != nil {
@@ -604,13 +599,15 @@ func TestRequestDeviceCode_Success(t *testing.T) {
 }
 
 func TestRequestDeviceCode_Error(t *testing.T) {
-	overrideClientID(t, "test-client-id")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error":"invalid_client_id"}`))
 	}))
 	defer srv.Close()
-	overrideDeviceCodeEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		ClientID = "test-client-id"
+		deviceCodeEndpoint = srv.URL
+	})
 
 	_, err := RequestDeviceCode(context.Background())
 	if err == nil {
@@ -622,9 +619,9 @@ func TestRequestDeviceCode_Error(t *testing.T) {
 }
 
 func TestRequestDeviceCode_Placeholder(t *testing.T) {
-	origClientID := ClientID
-	ClientID = "PLACEHOLDER"
-	t.Cleanup(func() { ClientID = origClientID })
+	withAuthOverrides(t, func() {
+		ClientID = "PLACEHOLDER"
+	})
 
 	_, err := RequestDeviceCode(context.Background())
 	if err == nil {
@@ -636,7 +633,6 @@ func TestRequestDeviceCode_Placeholder(t *testing.T) {
 }
 
 func TestRequestDeviceCode_InvalidUserCode(t *testing.T) {
-	overrideClientID(t, "test-client-id")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(DeviceCodeResponse{
@@ -648,7 +644,10 @@ func TestRequestDeviceCode_InvalidUserCode(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	overrideDeviceCodeEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		ClientID = "test-client-id"
+		deviceCodeEndpoint = srv.URL
+	})
 
 	_, err := RequestDeviceCode(context.Background())
 	if err == nil {
@@ -672,7 +671,9 @@ func TestPollForToken_Success(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_new","token_type":"bearer","scope":"public_repo"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	tok, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
 	if err != nil {
@@ -704,7 +705,9 @@ func TestPollForToken_Pending(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_ok","token_type":"bearer","scope":"public_repo"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	tok, err := pollForTokenInternal(context.Background(), "dc_123", 1, 30, instantSleep)
 	if err != nil {
@@ -730,7 +733,9 @@ func TestPollForToken_SlowDown(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_sd","token_type":"bearer","scope":"public_repo"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	// Recording sleep that captures requested durations.
 	var sleepDurations []time.Duration
@@ -774,7 +779,9 @@ func TestPollForToken_SlowDownCapped(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_cap","token_type":"bearer","scope":"public_repo"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	var sleepDurations []time.Duration
 	recordingSleep := func(ctx context.Context, d time.Duration) error {
@@ -810,7 +817,9 @@ func TestPollForToken_MultipleSlowDown(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_ms","token_type":"bearer","scope":"public_repo"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	var sleepDurations []time.Duration
 	recordingSleep := func(ctx context.Context, d time.Duration) error {
@@ -849,7 +858,9 @@ func TestPollForToken_Expired(t *testing.T) {
 		fmt.Fprintf(w, `{"error":"expired_token"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	_, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
 	if err == nil {
@@ -866,7 +877,9 @@ func TestPollForToken_Denied(t *testing.T) {
 		fmt.Fprintf(w, `{"error":"access_denied"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	_, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
 	if err == nil {
@@ -883,7 +896,9 @@ func TestPollForToken_ContextCancel(t *testing.T) {
 		fmt.Fprintf(w, `{"error":"authorization_pending"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel after a short delay.
@@ -909,7 +924,9 @@ func TestPollForToken_UnknownError(t *testing.T) {
 		fmt.Fprintf(w, `{"error":"something_unexpected"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	_, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
 	if err == nil {
@@ -930,7 +947,9 @@ func TestPollForToken_ExpiresInDeadline(t *testing.T) {
 		fmt.Fprintf(w, `{"error":"authorization_pending"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	start := time.Now()
 	_, err := pollForTokenInternal(context.Background(), "dc_123", 1, 1, instantSleep)
@@ -964,7 +983,9 @@ func TestPollForToken_IntervalNonPositive(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_def","token_type":"bearer","scope":"public_repo"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	// Verify that interval=0 defaults to 5 seconds via recording sleep.
 	var sleepDurations []time.Duration
@@ -1006,7 +1027,9 @@ func TestValidateToken_Success(t *testing.T) {
 		fmt.Fprintf(w, `{"login":"testuser","id":12345}`)
 	}))
 	defer srv.Close()
-	overrideUserAPIEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		userAPIEndpoint = srv.URL
+	})
 
 	login, err := ValidateToken(context.Background(), Token{AccessToken: "gho_valid"})
 	if err != nil {
@@ -1023,7 +1046,9 @@ func TestValidateToken_Unauthorized(t *testing.T) {
 		fmt.Fprintf(w, `{"message":"Bad credentials"}`)
 	}))
 	defer srv.Close()
-	overrideUserAPIEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		userAPIEndpoint = srv.URL
+	})
 
 	_, err := ValidateToken(context.Background(), Token{AccessToken: "gho_bad"})
 	if err == nil {
@@ -1036,7 +1061,9 @@ func TestValidateToken_Unauthorized(t *testing.T) {
 
 func TestValidateToken_NetworkError(t *testing.T) {
 	// Use an unreachable address.
-	overrideUserAPIEndpoint(t, "http://127.0.0.1:1")
+	withAuthOverrides(t, func() {
+		userAPIEndpoint = "http://127.0.0.1:1"
+	})
 
 	_, err := ValidateToken(context.Background(), Token{AccessToken: "gho_net"})
 	if err == nil {
@@ -1056,7 +1083,9 @@ func TestValidateToken_ContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Already cancelled.
 
-	overrideUserAPIEndpoint(t, "http://127.0.0.1:1")
+	withAuthOverrides(t, func() {
+		userAPIEndpoint = "http://127.0.0.1:1"
+	})
 
 	_, err := ValidateToken(ctx, Token{AccessToken: "gho_timeout"})
 	if err == nil {
@@ -1070,7 +1099,9 @@ func TestValidateToken_EmptyLogin(t *testing.T) {
 		fmt.Fprintf(w, `{"login":"","id":0}`)
 	}))
 	defer srv.Close()
-	overrideUserAPIEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		userAPIEndpoint = srv.URL
+	})
 
 	_, err := ValidateToken(context.Background(), Token{AccessToken: "gho_empty"})
 	if err == nil {
@@ -1087,7 +1118,9 @@ func TestValidateToken_InvalidLogin(t *testing.T) {
 		fmt.Fprintf(w, `{"login":"evil\nuser","id":1}`)
 	}))
 	defer srv.Close()
-	overrideUserAPIEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		userAPIEndpoint = srv.URL
+	})
 
 	_, err := ValidateToken(context.Background(), Token{AccessToken: "gho_bad"})
 	if err == nil {
@@ -1101,13 +1134,15 @@ func TestValidateToken_InvalidLogin(t *testing.T) {
 // --- RestoreSession tests ---
 
 func TestRestoreSession_ValidReachable(t *testing.T) {
-	overrideTimeNow(t, time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"login":"ghuser"}`)
 	}))
 	defer srv.Close()
-	overrideUserAPIEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		timeNow = func() time.Time { return time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC) }
+		userAPIEndpoint = srv.URL
+	})
 
 	kr := NewFakeKeyring()
 	dir := t.TempDir()
@@ -1135,8 +1170,10 @@ func TestRestoreSession_ValidReachable(t *testing.T) {
 }
 
 func TestRestoreSession_ValidUnreachable(t *testing.T) {
-	overrideTimeNow(t, time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC))
-	overrideUserAPIEndpoint(t, "http://127.0.0.1:1")
+	withAuthOverrides(t, func() {
+		timeNow = func() time.Time { return time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC) }
+		userAPIEndpoint = "http://127.0.0.1:1"
+	})
 
 	kr := NewFakeKeyring()
 	dir := t.TempDir()
@@ -1164,13 +1201,15 @@ func TestRestoreSession_ValidUnreachable(t *testing.T) {
 }
 
 func TestRestoreSession_Expired401(t *testing.T) {
-	overrideTimeNow(t, time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprintf(w, `{"message":"Bad credentials"}`)
 	}))
 	defer srv.Close()
-	overrideUserAPIEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		timeNow = func() time.Time { return time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC) }
+		userAPIEndpoint = srv.URL
+	})
 
 	kr := NewFakeKeyring()
 	dir := t.TempDir()
@@ -1220,13 +1259,15 @@ func TestRestoreSession_MissingFile(t *testing.T) {
 }
 
 func TestRestoreSession_ContextTimeout(t *testing.T) {
-	overrideTimeNow(t, time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC))
 	// Use an already-cancelled context so ValidateToken fails immediately.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	// We still need a valid userAPIEndpoint even though it won't be reached.
-	overrideUserAPIEndpoint(t, "http://127.0.0.1:1")
+	withAuthOverrides(t, func() {
+		timeNow = func() time.Time { return time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC) }
+		// We still need a valid userAPIEndpoint even though it won't be reached.
+		userAPIEndpoint = "http://127.0.0.1:1"
+	})
 
 	kr := NewFakeKeyring()
 	dir := t.TempDir()
@@ -1290,7 +1331,9 @@ func TestPollForToken_WrongScope(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_bad","token_type":"bearer","scope":"read:org"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	_, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
 	if err == nil {
@@ -1307,7 +1350,9 @@ func TestPollForToken_MultiScope(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_multi","token_type":"bearer","scope":"read:org, public_repo"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	tok, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
 	if err != nil {
@@ -1324,7 +1369,9 @@ func TestPollForToken_RepoScope(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_repo","token_type":"bearer","scope":"repo"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	tok, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
 	if err != nil {
@@ -1381,7 +1428,9 @@ func TestPollForToken_ExpiresInCapped(t *testing.T) {
 		fmt.Fprintf(w, `{"access_token":"gho_cap","token_type":"bearer","scope":"public_repo"}`)
 	}))
 	defer srv.Close()
-	overrideAccessTokenEndpoint(t, srv.URL)
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+	})
 
 	// Recording sleep that captures the context deadline.
 	var ctxDeadline time.Time
@@ -1460,7 +1509,9 @@ func TestLoadToken_ErrKeyNotFound_FallsThrough(t *testing.T) {
 // --- Finding #8: Token expiry ---
 
 func TestIsTokenExpired_Fresh(t *testing.T) {
-	overrideTimeNow(t, time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC))
+	withAuthOverrides(t, func() {
+		timeNow = func() time.Time { return time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC) }
+	})
 	tok := Token{
 		AccessToken: "gho_fresh",
 		CreatedAt:   time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC),
@@ -1471,7 +1522,9 @@ func TestIsTokenExpired_Fresh(t *testing.T) {
 }
 
 func TestIsTokenExpired_Old(t *testing.T) {
-	overrideTimeNow(t, time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC))
+	withAuthOverrides(t, func() {
+		timeNow = func() time.Time { return time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC) }
+	})
 	tok := Token{
 		AccessToken: "gho_old",
 		CreatedAt:   time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC), // 102 days ago
@@ -1492,14 +1545,17 @@ func TestIsTokenExpired_ZeroCreatedAt(t *testing.T) {
 
 func TestIsTokenExpired_ExactBoundary(t *testing.T) {
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	overrideTimeNow(t, created.Add(maxTokenAge))
+	withAuthOverrides(t, func() {
+		timeNow = func() time.Time { return created.Add(maxTokenAge) }
+	})
 	tok := Token{AccessToken: "gho_edge", CreatedAt: created}
 	// Exactly at maxTokenAge — not expired (> not >=).
 	if isTokenExpired(tok) {
 		t.Error("token at exactly maxTokenAge boundary should not be expired")
 	}
 
-	overrideTimeNow(t, created.Add(maxTokenAge+time.Second))
+	// Mutex already held by withAuthOverrides; safe to mutate directly.
+	timeNow = func() time.Time { return created.Add(maxTokenAge + time.Second) }
 	if !isTokenExpired(tok) {
 		t.Error("token 1s past maxTokenAge should be expired")
 	}
@@ -1507,7 +1563,9 @@ func TestIsTokenExpired_ExactBoundary(t *testing.T) {
 
 func TestRestoreSession_ExpiredToken(t *testing.T) {
 	// Set time to 91 days after the sampleToken's CreatedAt.
-	overrideTimeNow(t, time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC))
+	withAuthOverrides(t, func() {
+		timeNow = func() time.Time { return time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC) }
+	})
 
 	kr := NewFakeKeyring()
 	dir := t.TempDir()

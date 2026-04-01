@@ -2,6 +2,7 @@
 package gui
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -191,7 +192,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 				})
 
 				copyURLButton := widget.NewButton("Copy URL", func() {
-					window.Clipboard().SetContent(result.Response.URL)
+					fyne.CurrentApp().Clipboard().SetContent(result.Response.URL)
 				})
 
 				actionButtons := container.NewHBox(saveSVGButton, savePNGButton, copyURLButton)
@@ -269,7 +270,7 @@ func friendlyYubiKeyError(err error, logger *debugLogger) string {
 	case core.HwErrHardware:
 		return "Please plug in your YubiKey and try again"
 	default:
-		logger.log("YubiKey: " + err.Error())
+		logger.log(sanitizeError("YubiKey", err))
 		return "Failed to connect to YubiKey. Check debug.log for details."
 	}
 }
@@ -277,22 +278,26 @@ func friendlyYubiKeyError(err error, logger *debugLogger) string {
 // signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
 // status message.
 func signFlowErrorMessage(err error, logger *debugLogger) string {
-	msg := err.Error()
-	switch {
-	case strings.HasPrefix(msg, "export public key:"):
-		return "Failed to read YubiKey. Check debug.log for details."
-	case strings.HasPrefix(msg, "QR generation:"):
-		return "QR generation failed. Check debug.log for details."
-	case strings.HasPrefix(msg, "sign:"):
-		logger.log(msg)
-		return "Signing failed. Check debug.log for details."
-	default:
-		if core.ClassifyHardwareError(err) != "" {
-			return friendlyYubiKeyError(err, logger)
+	var sfe *SignFlowError
+	if errors.As(err, &sfe) {
+		switch sfe.Phase {
+		case PhaseExportKey:
+			return "Failed to read YubiKey. Check debug.log for details."
+		case PhaseQR:
+			return "QR generation failed. Check debug.log for details."
+		case PhaseSign:
+			logger.log(sfe.Error())
+			return "Signing failed. Check debug.log for details."
+		default:
+			logger.log(sfe.Error())
+			return "Unexpected error. Check debug.log for details."
 		}
-		logger.log("sign flow: " + msg)
-		return "Signing failed. Check debug.log for details."
 	}
+	if core.ClassifyHardwareError(err) != "" {
+		return friendlyYubiKeyError(err, logger)
+	}
+	logger.log("sign flow: " + err.Error())
+	return "Signing failed. Check debug.log for details."
 }
 
 // buildFilename constructs a default filename for saving QR code output.

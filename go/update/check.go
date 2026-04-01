@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
 const checkTimeout = 5 * time.Second
@@ -38,7 +40,7 @@ func Check(owner, repo, currentVersion string) CheckResult {
 func checkInternal(url, currentVersion string, timeout time.Duration) CheckResult {
 	result := CheckResult{CurrentVersion: currentVersion}
 
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{Timeout: timeout, CheckRedirect: core.SafeRedirect}
 
 	resp, err := client.Get(url)
 	if err != nil {

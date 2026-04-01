@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
 // RegistryCommit represents a single commit from the GitHub Commits API.
@@ -27,19 +29,8 @@ const (
 	maxCommitsBytes    = 1 << 20 // 1 MiB
 )
 
-// safeRedirect rejects non-HTTPS redirects and enforces a 10-redirect limit.
-func safeRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return fmt.Errorf("stopped after 10 redirects")
-	}
-	if req.URL.Scheme != "https" {
-		return fmt.Errorf("redirect to non-HTTPS URL rejected")
-	}
-	return nil
-}
-
 // commitClient is reused across FetchRegistryCommits calls for connection pooling.
-var commitClient = &http.Client{Timeout: commitFetchTimeout, CheckRedirect: safeRedirect}
+var commitClient = &http.Client{Timeout: commitFetchTimeout, CheckRedirect: core.SafeRedirect}
 
 // FetchRegistryCommits retrieves registry file commits from the GitHub API.
 // If etag is non-empty, it is sent as If-None-Match for conditional requests.
@@ -73,7 +64,7 @@ func FetchRegistryCommits(perPage int, etag string) ([]RegistryCommit, string, e
 	}
 
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		return nil, "", fmt.Errorf("unexpected Content-Type: %s", ct)
+		return nil, "", fmt.Errorf("unexpected Content-Type: %s", core.SanitizeForLog(ct))
 	}
 
 	newETag := resp.Header.Get("ETag")

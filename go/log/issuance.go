@@ -1,12 +1,13 @@
 package log
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
 // IssuanceRecord is one entry in the issuance log.
@@ -49,7 +50,7 @@ func AppendRecord(logPath string, record IssuanceRecord) error {
 	}
 	data = append(data, '\n')
 
-	suffix, err := randomHex(16)
+	suffix, err := core.RandomHex(16)
 	if err != nil {
 		return fmt.Errorf("generating tmp suffix: %w", err)
 	}
@@ -116,12 +117,3 @@ func CleanStaleTmpFiles(logPath string) error {
 	return nil
 }
 
-// randomHex returns n random hex characters (n/2 bytes of entropy).
-// Duplicated from core.RandomHex to avoid circular import (core → log).
-func randomHex(n int) (string, error) {
-	b := make([]byte, (n+1)/2)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%x", b)[:n], nil
-}

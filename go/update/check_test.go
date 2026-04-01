@@ -166,6 +166,19 @@ func TestParseSemver(t *testing.T) {
 	}
 }
 
+func TestCheck_RejectsHTTPRedirect(t *testing.T) {
+	// Server redirects to an HTTP URL — should be rejected by SafeRedirect.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://evil.com/malicious", http.StatusFound)
+	}))
+	defer server.Close()
+
+	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
+	if result.UpdateAvailable {
+		t.Fatal("expected no update when redirect to HTTP is rejected")
+	}
+}
+
 func TestCheck_OversizedResponse(t *testing.T) {
 	// Server returns a response body larger than 1MB.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

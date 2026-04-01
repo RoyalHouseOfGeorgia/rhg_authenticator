@@ -520,5 +520,119 @@ func TestEntryCellText_InvalidColumn(t *testing.T) {
 	}
 }
 
+// --- ClientForHistory tests ---
+
+func TestClientForHistory_NotLoggedIn(t *testing.T) {
+	rt := &RegistryTab{state: &appState{loggedIn: false}}
+	if rt.ClientForHistory() != nil {
+		t.Error("expected nil when not logged in")
+	}
+}
+
+func TestClientForHistory_EmptyAccessToken(t *testing.T) {
+	rt := &RegistryTab{state: &appState{
+		loggedIn:   true,
+		githubUser: "testuser",
+		githubToken: ghapi.Token{AccessToken: ""},
+	}}
+	if rt.ClientForHistory() != nil {
+		t.Error("expected nil when AccessToken is empty")
+	}
+}
+
+func TestClientForHistory_EmptyUsername(t *testing.T) {
+	rt := &RegistryTab{state: &appState{
+		loggedIn:   true,
+		githubUser: "",
+		githubToken: ghapi.Token{AccessToken: "tok-123"},
+	}}
+	if rt.ClientForHistory() != nil {
+		t.Error("expected nil when githubUser is empty")
+	}
+}
+
+func TestClientForHistory_AllConditionsMet(t *testing.T) {
+	rt := &RegistryTab{state: &appState{
+		loggedIn:   true,
+		githubUser: "testuser",
+		githubToken: ghapi.Token{AccessToken: "tok-123"},
+	}}
+	client := rt.ClientForHistory()
+	if client == nil {
+		t.Fatal("expected non-nil client when all conditions met")
+	}
+	if client.Owner != ghapi.DefaultOwner {
+		t.Errorf("Owner = %q, want %q", client.Owner, ghapi.DefaultOwner)
+	}
+	if client.Repo != ghapi.DefaultRepo {
+		t.Errorf("Repo = %q, want %q", client.Repo, ghapi.DefaultRepo)
+	}
+}
+
+// --- userFacingError fork error test ---
+
+func TestUserFacingError_ForkError(t *testing.T) {
+	err := &ghapi.ForkError{Phase: "create", Wrapped: fmt.Errorf("network error")}
+	got := userFacingError(err)
+	want := "Could not set up your GitHub fork. Check your network connection and try again."
+	if got != want {
+		t.Errorf("userFacingError(ForkError) = %q, want %q", got, want)
+	}
+}
+
+func TestUserFacingError_WrappedForkError(t *testing.T) {
+	inner := &ghapi.ForkError{Phase: "poll", Wrapped: fmt.Errorf("timeout")}
+	err := fmt.Errorf("request failed: %w", inner)
+	got := userFacingError(err)
+	want := "Could not set up your GitHub fork. Check your network connection and try again."
+	if got != want {
+		t.Errorf("userFacingError(wrapped ForkError) = %q, want %q", got, want)
+	}
+}
+
+// --- isSafeGitHubURL tests ---
+
+func TestIsSafeGitHubURL_GitHubHTTPS(t *testing.T) {
+	_, ok := isSafeGitHubURL("https://github.com/org/repo/pull/1")
+	if !ok {
+		t.Error("expected true for https://github.com URL")
+	}
+}
+
+func TestIsSafeGitHubURL_GitHubSubdomain(t *testing.T) {
+	_, ok := isSafeGitHubURL("https://gist.github.com/user/123")
+	if !ok {
+		t.Error("expected true for https://gist.github.com URL")
+	}
+}
+
+func TestIsSafeGitHubURL_NonGitHub(t *testing.T) {
+	_, ok := isSafeGitHubURL("https://evil.com/phishing")
+	if ok {
+		t.Error("expected false for non-GitHub host")
+	}
+}
+
+func TestIsSafeGitHubURL_HTTP(t *testing.T) {
+	_, ok := isSafeGitHubURL("http://github.com/org/repo/pull/1")
+	if ok {
+		t.Error("expected false for http scheme")
+	}
+}
+
+func TestIsSafeGitHubURL_Empty(t *testing.T) {
+	_, ok := isSafeGitHubURL("")
+	if ok {
+		t.Error("expected false for empty URL")
+	}
+}
+
+func TestIsSafeGitHubURL_SuffixConfusion(t *testing.T) {
+	_, ok := isSafeGitHubURL("https://evil-github.com/fake")
+	if ok {
+		t.Error("expected false for evil-github.com (suffix confusion)")
+	}
+}
+
 // Verify widget.Button type is accessible (compile-time check for RegistryTab.loginBtn field).
 var _ *widget.Button

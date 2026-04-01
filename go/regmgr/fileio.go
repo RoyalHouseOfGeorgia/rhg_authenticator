@@ -32,26 +32,3 @@ func MarshalRegistry(reg core.Registry) ([]byte, error) {
 	return data, nil
 }
 
-// WriteRegistry marshals a registry to JSON and writes it atomically to the given path.
-// The output is validated before writing to prevent persisting invalid data.
-func WriteRegistry(path string, reg core.Registry) error {
-	data, err := MarshalRegistry(reg)
-	if err != nil {
-		return err
-	}
-
-	// Atomic write via temp+rename.
-	suffix, err := core.RandomHex(16)
-	if err != nil {
-		return fmt.Errorf("generating temp suffix: %w", err)
-	}
-	tmpPath := path + ".tmp." + suffix
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		return fmt.Errorf("writing temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("renaming temp file: %w", err)
-	}
-	return nil
-}

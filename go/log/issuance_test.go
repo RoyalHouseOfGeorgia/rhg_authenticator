@@ -418,22 +418,3 @@ func TestCleanStaleTmpFiles_DirectoryWithSubdirs(t *testing.T) {
 	}
 }
 
-func TestRandomHex_Length(t *testing.T) {
-	h, err := randomHex(8)
-	if err != nil {
-		t.Fatalf("randomHex failed: %v", err)
-	}
-	if len(h) != 8 {
-		t.Errorf("expected 8 hex chars, got %d: %q", len(h), h)
-	}
-}
-
-func TestRandomHex_OddLength(t *testing.T) {
-	h, err := randomHex(7)
-	if err != nil {
-		t.Fatalf("randomHex failed: %v", err)
-	}
-	if len(h) != 7 {
-		t.Errorf("expected 7 hex chars, got %d: %q", len(h), h)
-	}
-}

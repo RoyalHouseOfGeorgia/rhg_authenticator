@@ -146,7 +146,8 @@ jobs:
     needs: [build, security, gitleaks]
     runs-on: ubuntu-latest
     # id-token and attestations needed only by attest-build-provenance step,
-    # but GitHub Actions requires job-level permissions. All actions are SHA-pinned.
+    # but GitHub Actions requires job-level permissions. All actions are SHA-pinned;
+    # a compromised action would require a commit-SHA collision to execute.
     permissions:
       contents: write
       id-token: write

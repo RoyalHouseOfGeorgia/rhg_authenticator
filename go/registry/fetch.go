@@ -51,22 +51,11 @@ func readLimitedBody(resp *http.Response, maxBytes int64) ([]byte, error) {
 	return body, nil
 }
 
-// safeRedirect rejects non-HTTPS redirects and enforces a 10-redirect limit.
-func safeRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return fmt.Errorf("stopped after 10 redirects")
-	}
-	if req.URL.Scheme != "https" {
-		return fmt.Errorf("redirect to non-HTTPS URL rejected")
-	}
-	return nil
-}
-
 // Security note: uses default TLS (system CA bundle). Certificate pinning is
 // intentionally omitted — it breaks on cert rotation and requires app updates.
 // Registry integrity is ultimately verified by matching signing keys against
 // the registry, not by TLS alone.
-var registryClient = &http.Client{Timeout: FetchTimeout, CheckRedirect: safeRedirect}
+var registryClient = &http.Client{Timeout: FetchTimeout, CheckRedirect: core.SafeRedirect}
 
 // fetchRemote does an HTTP GET with timeout and body size limit.
 func fetchRemote(url string) ([]byte, error) {
@@ -85,7 +74,7 @@ func fetchRemote(url string) ([]byte, error) {
 	ct := resp.Header.Get("Content-Type")
 	mediaType, _, parseErr := mime.ParseMediaType(ct)
 	if parseErr != nil || mediaType != "application/json" {
-		return nil, fmt.Errorf("unexpected Content-Type: %q", ct)
+		return nil, fmt.Errorf("unexpected Content-Type: %q", core.SanitizeForLog(ct))
 	}
 
 	return readLimitedBody(resp, maxRegistryBytes)
@@ -115,7 +104,7 @@ func fetchRemoteAllowNotFound(url string) ([]byte, error) {
 	ct := resp.Header.Get("Content-Type")
 	mediaType, _, parseErr := mime.ParseMediaType(ct)
 	if parseErr != nil || (mediaType != "application/json" && mediaType != "application/vnd.github.raw+json") {
-		return nil, fmt.Errorf("unexpected Content-Type: %q", ct)
+		return nil, fmt.Errorf("unexpected Content-Type: %q", core.SanitizeForLog(ct))
 	}
 
 	return readLimitedBody(resp, maxRegistryBytes)

@@ -489,7 +489,7 @@ func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 	}
 }
 
-func TestFriendlyYubiKeyError_GenericError_RawLog(t *testing.T) {
+func TestFriendlyYubiKeyError_GenericError_SanitizedLog(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "debug.log")
 	logger := &debugLogger{path: logPath}
@@ -501,12 +501,12 @@ func TestFriendlyYubiKeyError_GenericError_RawLog(t *testing.T) {
 		t.Fatalf("debug log file not created: %v", err)
 	}
 	content := string(data)
-	// The debug log must contain the RAW error string, not sanitized to "unexpected error".
-	if !strings.Contains(content, "unexpected failure") {
-		t.Errorf("debug log should contain raw error 'unexpected failure', got: %q", content)
+	// The debug log must contain a sanitized classification, NOT the raw error.
+	if !strings.Contains(content, "YubiKey: unexpected error") {
+		t.Errorf("debug log should contain sanitized classification, got: %q", content)
 	}
-	if strings.Contains(content, "unexpected error") {
-		t.Errorf("debug log should NOT contain sanitized 'unexpected error', got: %q", content)
+	if strings.Contains(content, "unexpected failure") {
+		t.Errorf("debug log should NOT contain raw error 'unexpected failure', got: %q", content)
 	}
 }
 
@@ -649,14 +649,16 @@ func TestDebugLogger_TruncatesLongMessage(t *testing.T) {
 // --- signFlowErrorMessage tests ---
 
 func TestSignFlowErrorMessage_ExportPublicKey(t *testing.T) {
-	got := signFlowErrorMessage(fmt.Errorf("export public key: hardware failure"), nil)
+	err := &SignFlowError{Phase: PhaseExportKey, Err: fmt.Errorf("hardware failure")}
+	got := signFlowErrorMessage(err, nil)
 	if !strings.Contains(got, "Failed to read YubiKey") {
 		t.Errorf("expected YubiKey read failure message, got: %q", got)
 	}
 }
 
 func TestSignFlowErrorMessage_QRGeneration(t *testing.T) {
-	got := signFlowErrorMessage(fmt.Errorf("QR generation: encode failed"), nil)
+	err := &SignFlowError{Phase: PhaseQR, Err: fmt.Errorf("encode failed")}
+	got := signFlowErrorMessage(err, nil)
 	if !strings.Contains(got, "QR generation failed") {
 		t.Errorf("expected QR failure message, got: %q", got)
 	}
@@ -672,7 +674,8 @@ func TestSignFlowErrorMessage_YubiKeyAdapter(t *testing.T) {
 func TestSignFlowErrorMessage_SignError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
-	got := signFlowErrorMessage(fmt.Errorf("sign: hardware fault"), logger)
+	sfe := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("hardware fault")}
+	got := signFlowErrorMessage(sfe, logger)
 	if !strings.Contains(got, "Signing failed") {
 		t.Errorf("expected 'Signing failed' message, got: %q", got)
 	}
@@ -689,15 +692,16 @@ func TestSignFlowErrorMessage_SignError(t *testing.T) {
 func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
-	signFlowErrorMessage(fmt.Errorf("sign: some error"), logger)
+	sfe := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("some error")}
+	signFlowErrorMessage(sfe, logger)
 	data, err := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
 	if err != nil {
 		t.Fatalf("debug log not created: %v", err)
 	}
 	content := string(data)
-	// Should NOT have "sign flow: sign:" double prefix.
+	// Should NOT have "sign flow:" prefix for typed sign errors.
 	if strings.Contains(content, "sign flow:") {
-		t.Errorf("should not have 'sign flow:' prefix for sign: errors, got: %q", content)
+		t.Errorf("should not have 'sign flow:' prefix for sign errors, got: %q", content)
 	}
 }
 

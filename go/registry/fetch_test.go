@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -136,6 +135,23 @@ func TestFetchRegistry_WrongContentType(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Content-Type") {
 		t.Errorf("error should mention Content-Type, got: %v", err)
+	}
+}
+
+func TestFetchRegistry_ContentTypeControlChars(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html\r\nInjected-Header: evil")
+		w.Write(validRegistryJSON())
+	}))
+	defer srv.Close()
+
+	_, err := FetchRegistry(srv.URL)
+	if err == nil {
+		t.Fatal("expected error for wrong Content-Type")
+	}
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "\r") || strings.Contains(errMsg, "\n") {
+		t.Errorf("error message should not contain control characters, got: %q", errMsg)
 	}
 }
 
@@ -745,37 +761,3 @@ func TestReadLimitedBody_EmptyBody(t *testing.T) {
 	}
 }
 
-// --- safeRedirect tests ---
-
-func TestSafeRedirect_RejectsHTTP(t *testing.T) {
-	target, _ := url.Parse("http://evil.com/path")
-	req := &http.Request{URL: target}
-	via := []*http.Request{{}}
-	err := safeRedirect(req, via)
-	if err == nil {
-		t.Fatal("expected error for HTTP redirect")
-	}
-}
-
-func TestSafeRedirect_AllowsHTTPS(t *testing.T) {
-	target, _ := url.Parse("https://cdn.example.com/path")
-	req := &http.Request{URL: target}
-	via := []*http.Request{{}}
-	err := safeRedirect(req, via)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestSafeRedirect_RejectsExcessiveRedirects(t *testing.T) {
-	target, _ := url.Parse("https://example.com/path")
-	req := &http.Request{URL: target}
-	via := make([]*http.Request, 10)
-	for i := range via {
-		via[i] = &http.Request{}
-	}
-	err := safeRedirect(req, via)
-	if err == nil {
-		t.Fatal("expected error after 10 redirects")
-	}
-}

@@ -5,11 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"time"
 
 	"golang.org/x/text/unicode/norm"
-
-	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
 // VerifyBaseURL is the base URL for credential verification pages.
@@ -41,7 +38,6 @@ type SignResponse struct {
 	Payload       string // base64url-encoded canonical JSON
 	URL           string // full verification URL
 	PayloadSHA256 string // hex-encoded SHA-256 of raw canonical JSON bytes (pre-base64url)
-	Record        issuancelog.IssuanceRecord // populated issuance record for caller to log
 }
 
 // HandleSign validates, signs, and produces a verification URL for a credential.
@@ -90,18 +86,9 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte) (SignR
 	sigB64 := Encode(signature)
 	url := VerifyBaseURL + "?p=" + payloadB64 + "&s=" + sigB64
 
-	// 8. Build issuance record for caller to log.
+	// 8. Compute payload hash.
 	sha256sum := sha256.Sum256(payloadBytes)
 	sha256hex := hex.EncodeToString(sha256sum[:])
-	record := issuancelog.IssuanceRecord{
-		Timestamp:       time.Now().UTC().Format(time.RFC3339),
-		Recipient:       safeString(credObj, "recipient"),
-		Honor:           safeString(credObj, "honor"),
-		Detail:          safeString(credObj, "detail"),
-		Date:            safeString(credObj, "date"),
-		PayloadSHA256:   sha256hex,
-		SignatureB64URL: sigB64,
-	}
 
 	// 9. Return response.
 	return SignResponse{
@@ -109,13 +96,5 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte) (SignR
 		Payload:       payloadB64,
 		URL:           url,
 		PayloadSHA256: sha256hex,
-		Record:        record,
 	}, nil
-}
-
-// safeString extracts a string from a map without panicking on type mismatch.
-// Returns "" if the key is missing or the value is not a string.
-func safeString(m map[string]any, key string) string {
-	s, _ := m[key].(string)
-	return s
 }

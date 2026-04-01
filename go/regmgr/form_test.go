@@ -1,6 +1,7 @@
 package regmgr
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -170,6 +171,40 @@ func TestValidateEntryForm_NoExpirySkipsToValidation(t *testing.T) {
 	err := validateEntryForm("Auth", "2026-01-01", "key", true, "garbage")
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEntryForm_ToRequiredWhenNoExpiryUnchecked(t *testing.T) {
+	err := validateEntryForm("Auth", "2026-01-01", "key", false, "")
+	if err == nil {
+		t.Fatal("expected error when noExpiry=false and to is empty")
+	}
+	if !strings.Contains(err.Error(), "To date is required") {
+		t.Errorf("error = %v, want containing %q", err, "To date is required")
+	}
+}
+
+func TestValidateEntryForm_ToBeforeFrom(t *testing.T) {
+	err := validateEntryForm("Auth", "2026-06-01", "key", false, "2025-01-01")
+	if err == nil {
+		t.Fatal("expected error when to < from")
+	}
+	if !strings.Contains(err.Error(), "must not be before") {
+		t.Errorf("error = %v, want containing %q", err, "must not be before")
+	}
+}
+
+func TestValidateEntryForm_ToEqualsFrom(t *testing.T) {
+	err := validateEntryForm("Auth", "2026-01-01", "key", false, "2026-01-01")
+	if err != nil {
+		t.Errorf("unexpected error when to == from: %v", err)
+	}
+}
+
+func TestValidateEntryForm_NoExpiryBypassesToCheck(t *testing.T) {
+	err := validateEntryForm("Auth", "2026-01-01", "key", true, "")
+	if err != nil {
+		t.Errorf("unexpected error when noExpiry=true and to is empty: %v", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package gui
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -132,8 +133,12 @@ func TestExecuteSignFlow_ExportKeyError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from ExportPublicKey")
 	}
-	if got := err.Error(); !strings.Contains(got, "export public key") {
-		t.Errorf("error should contain 'export public key', got: %q", got)
+	var sfe *SignFlowError
+	if !errors.As(err, &sfe) {
+		t.Fatalf("expected *SignFlowError, got %T", err)
+	}
+	if sfe.Phase != PhaseExportKey {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseExportKey)
 	}
 }
 
@@ -159,8 +164,12 @@ func TestExecuteSignFlow_SignError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from SignBytes")
 	}
-	if got := err.Error(); !strings.Contains(got, "signing") {
-		t.Errorf("error should relate to signing, got: %q", got)
+	var sfe *SignFlowError
+	if !errors.As(err, &sfe) {
+		t.Fatalf("expected *SignFlowError, got %T", err)
+	}
+	if sfe.Phase != PhaseSign {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseSign)
 	}
 }
 
@@ -210,6 +219,51 @@ func TestExecuteSignFlow_LogFileWritten(t *testing.T) {
 	}
 	if records[0].Timestamp == "" {
 		t.Error("Timestamp should not be empty")
+	}
+}
+
+func TestExecuteSignFlow_RecordFieldsNFCNormalized(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	adapter := &mockSignAdapter{secretKey: priv}
+
+	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return adapter, nopCloser{}, nil
+	}
+
+	tmpDir := t.TempDir()
+	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logPath := filepath.Join(tmpDir, "issuances.json")
+
+	// NFD input: e + combining acute accent.
+	req := core.SignRequest{
+		Recipient: "Caf\u0065\u0301",
+		Honor:     "Order of the Crown of Georgia",
+		Detail:    "re\u0301sume\u0301",
+		Date:      "2026-03-14",
+	}
+
+	_, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, logger)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	records, err := issuancelog.ReadLog(logPath)
+	if err != nil {
+		t.Fatalf("ReadLog error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+
+	// Record fields should be NFC-normalized.
+	if records[0].Recipient != "Caf\u00e9" {
+		t.Errorf("Recipient = %q, want NFC-normalized %q", records[0].Recipient, "Caf\u00e9")
+	}
+	if records[0].Detail != "r\u00e9sum\u00e9" {
+		t.Errorf("Detail = %q, want NFC-normalized %q", records[0].Detail, "r\u00e9sum\u00e9")
+	}
+	if records[0].Date != "2026-03-14" {
+		t.Errorf("Date = %q, want %q", records[0].Date, "2026-03-14")
 	}
 }
 
@@ -281,5 +335,34 @@ func TestExecuteSignFlow_LogWriteFailureNonFatal(t *testing.T) {
 	}
 	if !strings.Contains(string(debugData), "log append failed") {
 		t.Errorf("debug log should contain 'log append failed', got: %s", string(debugData))
+	}
+}
+
+func TestSignFlowError_Unwrap(t *testing.T) {
+	inner := fmt.Errorf("hardware fault")
+	sfe := &SignFlowError{Phase: PhaseSign, Err: inner}
+	if errors.Unwrap(sfe) != inner {
+		t.Errorf("Unwrap returned %v, want %v", errors.Unwrap(sfe), inner)
+	}
+}
+
+func TestSignFlowError_Phase(t *testing.T) {
+	inner := fmt.Errorf("timeout")
+	sfe := &SignFlowError{Phase: PhaseExportKey, Err: inner}
+
+	var extracted *SignFlowError
+	if !errors.As(sfe, &extracted) {
+		t.Fatal("errors.As failed")
+	}
+	if extracted.Phase != PhaseExportKey {
+		t.Errorf("Phase = %q, want %q", extracted.Phase, PhaseExportKey)
+	}
+}
+
+func TestSignFlowError_ErrorString(t *testing.T) {
+	sfe := &SignFlowError{Phase: PhaseQR, Err: fmt.Errorf("encode failed")}
+	want := "qr: encode failed"
+	if got := sfe.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }

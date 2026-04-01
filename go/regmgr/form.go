@@ -84,8 +84,16 @@ func validateEntryForm(authority, from, key string, noExpiry bool, to string) er
 	if !core.IsValidDate(from) {
 		return fmt.Errorf("Invalid from date format")
 	}
+	if !noExpiry && to == "" {
+		return fmt.Errorf("To date is required when 'No expiry' is not checked")
+	}
 	if !noExpiry && to != "" && !core.IsValidDate(to) {
 		return fmt.Errorf("Invalid to date format")
+	}
+	// Lexicographic comparison is correct for ISO 8601 (YYYY-MM-DD) format,
+	// which is validated by the IsValidDate check above.
+	if !noExpiry && to != "" && from != "" && to < from {
+		return fmt.Errorf("To date must not be before From date")
 	}
 	if key == "" {
 		return fmt.Errorf("Import a public key first")

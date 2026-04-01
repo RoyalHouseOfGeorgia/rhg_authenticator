@@ -315,7 +315,7 @@ func TestHandleSign_InvalidDate(t *testing.T) {
 	}
 }
 
-func TestHandleSign_RecordPopulated(t *testing.T) {
+func TestHandleSign_PayloadSHA256Populated(t *testing.T) {
 	sk := testSecretKey()
 	pubKey := testPubKey()
 	adapter := &mockAdapter{secretKey: sk}
@@ -336,36 +336,6 @@ func TestHandleSign_RecordPopulated(t *testing.T) {
 	}
 	if _, err := hex.DecodeString(resp.PayloadSHA256); err != nil {
 		t.Errorf("PayloadSHA256 is not valid hex: %v", err)
-	}
-
-	// Verify the Record field is populated with correct values.
-	rec := resp.Record
-	if rec.Recipient != "John Doe" {
-		t.Errorf("Record.Recipient = %q, want %q", rec.Recipient, "John Doe")
-	}
-	if rec.Honor != "Test Honor" {
-		t.Errorf("Record.Honor = %q, want %q", rec.Honor, "Test Honor")
-	}
-	if rec.Detail != "For service" {
-		t.Errorf("Record.Detail = %q, want %q", rec.Detail, "For service")
-	}
-	if rec.Date != "2026-03-13" {
-		t.Errorf("Record.Date = %q, want %q", rec.Date, "2026-03-13")
-	}
-	if rec.PayloadSHA256 == "" {
-		t.Error("Record.PayloadSHA256 should not be empty")
-	}
-	if rec.PayloadSHA256 != resp.PayloadSHA256 {
-		t.Errorf("Record.PayloadSHA256 = %q, want %q (matching response)", rec.PayloadSHA256, resp.PayloadSHA256)
-	}
-	if rec.SignatureB64URL == "" {
-		t.Error("Record.SignatureB64URL should not be empty")
-	}
-	if rec.SignatureB64URL != resp.Signature {
-		t.Errorf("Record.SignatureB64URL = %q, want %q (matching response)", rec.SignatureB64URL, resp.Signature)
-	}
-	if rec.Timestamp == "" {
-		t.Error("Record.Timestamp should not be empty")
 	}
 }
 
@@ -395,12 +365,6 @@ func TestHandleSign_PayloadSHA256MatchesCanonical(t *testing.T) {
 
 	if resp.PayloadSHA256 != expectedHex {
 		t.Errorf("PayloadSHA256 mismatch:\n  got  %s\n  want %s", resp.PayloadSHA256, expectedHex)
-	}
-
-	// Also verify it matches the Record's PayloadSHA256.
-	if resp.PayloadSHA256 != resp.Record.PayloadSHA256 {
-		t.Errorf("response PayloadSHA256 %q != Record.PayloadSHA256 %q",
-			resp.PayloadSHA256, resp.Record.PayloadSHA256)
 	}
 }
 

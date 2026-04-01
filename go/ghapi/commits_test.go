@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 )
@@ -153,37 +152,3 @@ func TestFetchRegistryCommits_RateLimit(t *testing.T) {
 	}
 }
 
-// --- safeRedirect tests ---
-
-func TestSafeRedirect_RejectsHTTP(t *testing.T) {
-	target, _ := url.Parse("http://evil.com/path")
-	req := &http.Request{URL: target}
-	via := []*http.Request{{}}
-	err := safeRedirect(req, via)
-	if err == nil {
-		t.Fatal("expected error for HTTP redirect")
-	}
-}
-
-func TestSafeRedirect_AllowsHTTPS(t *testing.T) {
-	target, _ := url.Parse("https://cdn.example.com/path")
-	req := &http.Request{URL: target}
-	via := []*http.Request{{}}
-	err := safeRedirect(req, via)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestSafeRedirect_RejectsExcessiveRedirects(t *testing.T) {
-	target, _ := url.Parse("https://example.com/path")
-	req := &http.Request{URL: target}
-	via := make([]*http.Request, 10)
-	for i := range via {
-		via[i] = &http.Request{}
-	}
-	err := safeRedirect(req, via)
-	if err == nil {
-		t.Fatal("expected error after 10 redirects")
-	}
-}

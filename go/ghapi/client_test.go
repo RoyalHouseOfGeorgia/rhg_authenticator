@@ -17,6 +17,38 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
+// --- SafeRedirect tests ---
+
+func TestSafeRedirect_AllowsHTTPS(t *testing.T) {
+	target, _ := url.Parse("https://cdn.example.com/path")
+	req := &http.Request{URL: target}
+	via := []*http.Request{{}}
+	if err := SafeRedirect(req, via); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSafeRedirect_RejectsHTTP(t *testing.T) {
+	target, _ := url.Parse("http://evil.com/path")
+	req := &http.Request{URL: target}
+	via := []*http.Request{{}}
+	if err := SafeRedirect(req, via); err == nil {
+		t.Fatal("expected error for HTTP redirect")
+	}
+}
+
+func TestSafeRedirect_RejectsExcessiveRedirects(t *testing.T) {
+	target, _ := url.Parse("https://example.com/path")
+	req := &http.Request{URL: target}
+	via := make([]*http.Request, 10)
+	for i := range via {
+		via[i] = &http.Request{}
+	}
+	if err := SafeRedirect(req, via); err == nil {
+		t.Fatal("expected error after 10 redirects")
+	}
+}
+
 // --- NewClient ---
 
 func TestNewClient(t *testing.T) {
@@ -219,15 +251,36 @@ func TestCreateRegistryPR_Success(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
-			callSequence = append(callSequence, "getRef")
-			w.WriteHeader(200)
-			json.NewEncoder(w).Encode(map[string]any{
-				"ref":    "refs/heads/main",
-				"object": map[string]string{"sha": "main-sha-000"},
-			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			callSequence = append(callSequence, "forkRepo")
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
 
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/"):
+			if strings.Contains(r.URL.Path, "/git/refs/heads/main") {
+				callSequence = append(callSequence, "getRef")
+				w.WriteHeader(200)
+				json.NewEncoder(w).Encode(map[string]any{
+					"ref":    "refs/heads/main",
+					"object": map[string]string{"sha": "main-sha-000"},
+				})
+			} else if strings.Contains(r.URL.Path, "/contents/") {
+				callSequence = append(callSequence, "getContents")
+				w.WriteHeader(200)
+				json.NewEncoder(w).Encode(map[string]string{"sha": "file-sha-abc"})
+			} else {
+				// waitForFork: GET /repos/testuser/rhg_authenticator
+				callSequence = append(callSequence, "waitForFork")
+				w.WriteHeader(200)
+				w.Write([]byte(`{}`))
+			}
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/repos/testuser/") && strings.HasSuffix(r.URL.Path, "/merge-upstream"):
+			callSequence = append(callSequence, "syncFork")
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/repos/testuser/") && strings.HasSuffix(r.URL.Path, "/git/refs"):
 			callSequence = append(callSequence, "createRef")
 			body, _ := io.ReadAll(r.Body)
 			var req map[string]string
@@ -238,18 +291,20 @@ func TestCreateRegistryPR_Success(t *testing.T) {
 			w.WriteHeader(201)
 			w.Write([]byte(`{}`))
 
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
-			callSequence = append(callSequence, "getContents")
-			w.WriteHeader(200)
-			json.NewEncoder(w).Encode(map[string]string{"sha": "file-sha-abc"})
-
-		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/repos/testuser/") && strings.Contains(r.URL.Path, "/contents/"):
 			callSequence = append(callSequence, "updateContents")
 			w.WriteHeader(200)
 			w.Write([]byte(`{}`))
 
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
 			callSequence = append(callSequence, "createPR")
+			// Verify cross-repo head format.
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]string
+			json.Unmarshal(body, &req)
+			if !strings.HasPrefix(req["head"], "testuser:") {
+				t.Errorf("PR head = %q, want prefix 'testuser:'", req["head"])
+			}
 			w.WriteHeader(201)
 			json.NewEncoder(w).Encode(PRResult{Number: 42, HTMLURL: "https://github.com/test/pr/42"})
 
@@ -260,7 +315,7 @@ func TestCreateRegistryPR_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	pr, err := c.CreateRegistryPR(context.Background(), content, "Update registry")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -272,7 +327,7 @@ func TestCreateRegistryPR_Success(t *testing.T) {
 		t.Errorf("PR URL = %q, want https://github.com/test/pr/42", pr.HTMLURL)
 	}
 
-	expected := []string{"getRef", "createRef", "getContents", "updateContents", "createPR"}
+	expected := []string{"forkRepo", "waitForFork", "syncFork", "getRef", "createRef", "getContents", "updateContents", "createPR"}
 	if len(callSequence) != len(expected) {
 		t.Fatalf("call sequence = %v, want %v", callSequence, expected)
 	}
@@ -280,6 +335,11 @@ func TestCreateRegistryPR_Success(t *testing.T) {
 		if callSequence[i] != want {
 			t.Errorf("call[%d] = %q, want %q", i, callSequence[i], want)
 		}
+	}
+
+	// Verify c.Owner is unchanged after the fork flow.
+	if c.Owner != DefaultOwner {
+		t.Errorf("Owner after fork flow = %q, want %q", c.Owner, DefaultOwner)
 	}
 }
 
@@ -309,6 +369,18 @@ func TestCreateRegistryPR_BranchCollision422(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -344,7 +416,7 @@ func TestCreateRegistryPR_BranchCollision422(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -357,6 +429,18 @@ func TestCreateRegistryPR_BranchCollision422(t *testing.T) {
 func TestCreateRegistryPR_BranchCollision422_Exhausted(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -374,7 +458,7 @@ func TestCreateRegistryPR_BranchCollision422_Exhausted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
 	if err == nil {
 		t.Fatal("expected error after exhausted retries")
@@ -393,6 +477,18 @@ func TestCreateRegistryPR_StaleFileSHA409(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -433,7 +529,7 @@ func TestCreateRegistryPR_StaleFileSHA409(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	pr, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -453,6 +549,18 @@ func TestCreateRegistryPR_StaleFileSHA409(t *testing.T) {
 func TestCreateRegistryPR_StaleFileSHA409_RetryExhausted(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -481,13 +589,13 @@ func TestCreateRegistryPR_StaleFileSHA409_RetryExhausted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
 	if err == nil {
 		t.Fatal("expected error after 409 retry exhausted")
 	}
-	if !strings.Contains(err.Error(), "updating registry file") {
-		t.Errorf("error = %q, want to contain 'updating registry file'", err.Error())
+	if !strings.Contains(err.Error(), "updating file") {
+		t.Errorf("error = %q, want to contain 'updating file'", err.Error())
 	}
 }
 
@@ -496,6 +604,18 @@ func TestCreateRegistryPR_CleanupOnFailure(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -529,7 +649,7 @@ func TestCreateRegistryPR_CleanupOnFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
 	if err == nil {
 		t.Fatal("expected error from createPR failure")
@@ -544,6 +664,18 @@ func TestCreateRegistryPR_CleanupOnUpdateFailure(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -574,7 +706,7 @@ func TestCreateRegistryPR_CleanupOnUpdateFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
 	if err == nil {
 		t.Fatal("expected error from updateContents failure")
@@ -587,6 +719,18 @@ func TestCreateRegistryPR_CleanupOnUpdateFailure(t *testing.T) {
 func TestCreateRegistryPR_CleanupFailsGracefully(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -622,7 +766,7 @@ func TestCreateRegistryPR_CleanupFailsGracefully(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
 	if err == nil {
 		t.Fatal("expected error")
@@ -643,6 +787,18 @@ func TestCreateRegistryPR_CleanupFailsGracefully(t *testing.T) {
 func TestCreateRegistryPR_RateLimited(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -668,7 +824,7 @@ func TestCreateRegistryPR_RateLimited(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
 	if err == nil {
 		t.Fatal("expected error for rate limit")
@@ -701,6 +857,18 @@ func TestCreateRegistryPR_Base64RoundTrip(t *testing.T) {
 	var receivedContent []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -738,7 +906,7 @@ func TestCreateRegistryPR_Base64RoundTrip(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err = c.CreateRegistryPR(context.Background(), content, "title")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -762,6 +930,18 @@ func TestCreateRegistryPR_422RetryAnyMessage(t *testing.T) {
 	var refAttempts int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -781,7 +961,7 @@ func TestCreateRegistryPR_422RetryAnyMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
@@ -808,6 +988,21 @@ func TestCreateRevocationPR_Success(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			callSequence = append(callSequence, "forkRepo")
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			callSequence = append(callSequence, "waitForFork")
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			callSequence = append(callSequence, "syncFork")
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			callSequence = append(callSequence, "getRef")
 			w.WriteHeader(200)
@@ -827,14 +1022,12 @@ func TestCreateRevocationPR_Success(t *testing.T) {
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
 			callSequence = append(callSequence, "getContents")
-			// Verify path targets revocations.json
 			capturedContentsPath = r.URL.Path
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]string{"sha": "file-sha-rev"})
 
 		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
 			callSequence = append(callSequence, "updateContents")
-			// Verify PUT targets revocations.json
 			if !strings.Contains(r.URL.Path, "revocations.json") {
 				t.Errorf("PUT path = %s, want to contain revocations.json", r.URL.Path)
 			}
@@ -858,7 +1051,7 @@ func TestCreateRevocationPR_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	pr, err := c.CreateRevocationPR(context.Background(), content, fullHash)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -871,7 +1064,7 @@ func TestCreateRevocationPR_Success(t *testing.T) {
 	}
 
 	// Verify call sequence.
-	expected := []string{"getRef", "createRef", "getContents", "updateContents", "createPR"}
+	expected := []string{"forkRepo", "waitForFork", "syncFork", "getRef", "createRef", "getContents", "updateContents", "createPR"}
 	if len(callSequence) != len(expected) {
 		t.Fatalf("call sequence = %v, want %v", callSequence, expected)
 	}
@@ -944,6 +1137,18 @@ func TestCreateRevocationPR_LongHash(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -977,7 +1182,7 @@ func TestCreateRevocationPR_LongHash(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRevocationPR(context.Background(), content, longHash)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1005,6 +1210,18 @@ func TestCreateRevocationPR_ShortHash(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
+			w.WriteHeader(202)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -1042,7 +1259,7 @@ func TestCreateRevocationPR_ShortHash(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(srv, "tok")
+	c := newTestClientWithUser(srv, "tok", "testuser")
 	_, err := c.CreateRevocationPR(context.Background(), content, shortHash)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1076,6 +1293,13 @@ func newTestClient(srv *httptest.Server, token string) *Client {
 		base:      origTransport,
 		targetURL: srv.URL,
 	}
+	return c
+}
+
+// newTestClientWithUser creates a Client with a username, pointing at the given test server.
+func newTestClientWithUser(srv *httptest.Server, token, username string) *Client {
+	c := newTestClient(srv, token)
+	c.username = username
 	return c
 }
 
@@ -1118,30 +1342,33 @@ func unwrapAll(err error) error {
 func TestDoJSON_RedirectStripsAuth(t *testing.T) {
 	// Server B records whether it received an Authorization header.
 	var gotAuth string
-	srvB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srvB := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		w.WriteHeader(200)
 		w.Write([]byte(`{}`))
 	}))
 	defer srvB.Close()
 
-	// Server A redirects to server B.
-	srvA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Server A redirects to server B (cross-host).
+	srvA := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, srvB.URL+"/target", http.StatusFound)
 	}))
 	defer srvA.Close()
+
+	// Build a transport that trusts both TLS test servers.
+	transport := srvA.Client().Transport.(*http.Transport).Clone()
+	transport.TLSClientConfig.InsecureSkipVerify = true
 
 	c := &Client{
 		token: "secret-token",
 		HTTPClient: &http.Client{
 			CheckRedirect: safeCheckRedirect,
+			Transport:     transport,
 		},
 		Owner: DefaultOwner,
 		Repo:  DefaultRepo,
 	}
 
-	// Make a direct request to server A (bypassing rewriteTransport so
-	// the redirect crosses real host boundaries).
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srvA.URL+"/start", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1162,7 +1389,7 @@ func TestDoJSON_RedirectStripsAuth(t *testing.T) {
 func TestDoJSON_SameHostRedirectKeepsAuth(t *testing.T) {
 	var gotAuth string
 	var reqCount int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqCount++
 		if reqCount == 1 {
 			http.Redirect(w, r, "/redirected", http.StatusFound)
@@ -1178,6 +1405,7 @@ func TestDoJSON_SameHostRedirectKeepsAuth(t *testing.T) {
 		token: "keep-me",
 		HTTPClient: &http.Client{
 			CheckRedirect: safeCheckRedirect,
+			Transport:     srv.Client().Transport,
 		},
 		Owner: DefaultOwner,
 		Repo:  DefaultRepo,
@@ -1239,7 +1467,26 @@ func TestSafeCheckRedirect_GitHubSubdomain(t *testing.T) {
 	}
 }
 
-// --- isGitHubHost tests ---
+func TestSafeCheckRedirect_RejectsHTTP(t *testing.T) {
+	origURL, _ := url.Parse("https://api.github.com/original")
+	targetURL, _ := url.Parse("http://api.github.com/path")
+
+	origReq := &http.Request{URL: origURL, Header: http.Header{}}
+	req := &http.Request{
+		URL:    targetURL,
+		Header: http.Header{"Authorization": {"Bearer tok"}},
+	}
+
+	err := safeCheckRedirect(req, []*http.Request{origReq})
+	if err == nil {
+		t.Fatal("expected error for HTTP redirect")
+	}
+	if !strings.Contains(err.Error(), "non-HTTPS") {
+		t.Errorf("error should mention non-HTTPS, got: %v", err)
+	}
+}
+
+// --- IsGitHubHost tests ---
 
 func TestIsGitHubHost(t *testing.T) {
 	tests := []struct {
@@ -1260,9 +1507,9 @@ func TestIsGitHubHost(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
-			got := isGitHubHost(tt.host)
+			got := IsGitHubHost(tt.host)
 			if got != tt.want {
-				t.Errorf("isGitHubHost(%q) = %v, want %v", tt.host, got, tt.want)
+				t.Errorf("IsGitHubHost(%q) = %v, want %v", tt.host, got, tt.want)
 			}
 		})
 	}

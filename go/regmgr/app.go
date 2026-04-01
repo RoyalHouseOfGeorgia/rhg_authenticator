@@ -64,14 +64,25 @@ func (rt *RegistryTab) IsDirty() bool {
 	return rt.state.dirty
 }
 
+// ClientForHistory returns a configured ghapi.Client if logged in, or nil.
+// Must be called on the Fyne main thread (reads rt.state).
+func (rt *RegistryTab) ClientForHistory() *ghapi.Client {
+	if !rt.state.loggedIn || rt.state.githubToken.AccessToken == "" || rt.state.githubUser == "" {
+		return nil
+	}
+	return ghapi.NewClientWithUser(rt.state.githubToken.AccessToken, rt.state.githubUser)
+}
+
 // Fetch fetches the registry from the remote server asynchronously.
+// Must be called on the Fyne main thread (updates UI widgets before spawning goroutine).
 func (rt *RegistryTab) Fetch() {
 	rt.statusLabel.SetText("Fetching...")
 	go func() {
 		reg, err := registry.FetchRegistry(registry.DefaultRegistryURL)
 		fyne.Do(func() {
 			if err != nil {
-				rt.statusLabel.SetText("Failed to load: " + err.Error())
+				log.Printf("error: registry fetch failed: %s", core.SanitizeForLog(err.Error()))
+				rt.statusLabel.SetText("Failed to load registry")
 				return
 			}
 			rt.state.registry = reg
@@ -195,13 +206,13 @@ func (rt *RegistryTab) startLogin() {
 		defer valCancel()
 		username, valErr := ghapi.ValidateToken(valCtx, tok)
 		if valErr != nil {
-			log.Printf("warning: token validation failed: %v", valErr)
+			log.Printf("warning: token validation failed: %s", core.SanitizeForLog(valErr.Error()))
 		}
 
 		// Save token only if validation didn't return 401 (unauthorized).
 		if !ghapi.IsUnauthorized(valErr) {
 			if saveErr := ghapi.SaveToken(rt.kr, rt.configDir, tok); saveErr != nil {
-				log.Printf("warning: failed to save token: %v", saveErr)
+				log.Printf("warning: failed to save token: %s", core.SanitizeForLog(saveErr.Error()))
 			}
 		}
 
@@ -216,7 +227,7 @@ func (rt *RegistryTab) showLoginDialog(ctx context.Context, cancel context.Cance
 	codeLabel.Alignment = fyne.TextAlignCenter
 
 	copyBtn := widget.NewButton("Copy Code", func() {
-		rt.window.Clipboard().SetContent(dcr.UserCode)
+		fyne.CurrentApp().Clipboard().SetContent(dcr.UserCode)
 	})
 
 	parsedURL, urlErr := url.Parse(dcr.VerificationURI)
@@ -259,6 +270,9 @@ func userFacingError(err error) string {
 	if ghapi.IsForbidden(err) {
 		return "Permission denied. Check your GitHub account permissions."
 	}
+	if ghapi.IsForkError(err) {
+		return "Could not set up your GitHub fork. Check your network connection and try again."
+	}
 	// Network/timeout errors
 	return "An error occurred. Please try again later."
 }
@@ -275,11 +289,24 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 		rt.updateLoginUI()
 		rt.statusLabel.SetText("Session expired. Please log in again.")
 		rt.startLogin()
+	} else if ghapi.IsForkError(err) {
+		log.Printf("error: fork setup failed: %s", core.SanitizeForLog(err.Error()))
+		dialog.ShowError(fmt.Errorf("Could not set up your GitHub fork. Check your network connection and try again."), rt.window)
+		rt.statusLabel.SetText("")
 	} else {
-		log.Printf("error: PR submission failed: %v", err)
+		log.Printf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
 		dialog.ShowError(fmt.Errorf("%s", userFacingError(err)), rt.window)
 		rt.statusLabel.SetText("")
 	}
+}
+
+// isSafeGitHubURL checks whether a URL points to GitHub over HTTPS and is safe to open.
+func isSafeGitHubURL(rawURL string) (*url.URL, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, false
+	}
+	return u, u.Scheme == "https" && ghapi.IsGitHubHost(u.Host)
 }
 
 // handleSubmitSuccess parses the PR URL and shows a success dialog.
@@ -288,8 +315,8 @@ func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
 	rt.state.dirty = false
 	rt.statusLabel.SetText(fmt.Sprintf("PR #%d created", pr.Number))
 
-	prURL, urlErr := url.Parse(pr.HTMLURL)
-	if urlErr == nil && prURL.Scheme == "https" {
+	prURL, ok := isSafeGitHubURL(pr.HTMLURL)
+	if ok {
 		dialog.ShowConfirm("Pull Request Created",
 			fmt.Sprintf("PR #%d has been created.\n\nOpen in browser?", pr.Number),
 			func(ok bool) {
@@ -326,6 +353,14 @@ func (rt *RegistryTab) submitForReview() {
 			return
 		}
 		token := rt.state.githubToken.AccessToken
+		username := rt.state.githubUser
+
+		if username == "" {
+			rt.submitting.Store(false)
+			dialog.ShowError(fmt.Errorf("GitHub username not available. Please log out and log in again."), rt.window)
+			return
+		}
+
 		rt.statusLabel.SetText("Creating pull request...")
 
 		go func() {
@@ -334,7 +369,7 @@ func (rt *RegistryTab) submitForReview() {
 			submitCtx, submitCancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer submitCancel()
 
-			client := ghapi.NewClient(token)
+			client := ghapi.NewClientWithUser(token, username)
 			pr, err := client.CreateRegistryPR(submitCtx, content, "Registry update")
 			if err != nil {
 				fyne.Do(func() { rt.handleSubmitError(err) })
@@ -544,7 +579,7 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 		defer cancel()
 		tok, username, loggedIn, offline, err := ghapi.RestoreSession(ctx, rt.kr, rt.configDir)
 		if err != nil {
-			log.Printf("warning: token restore failed: %v", err)
+			log.Printf("warning: token restore failed: %s", core.SanitizeForLog(err.Error()))
 		}
 		fyne.Do(func() {
 			rt.state.githubToken = tok

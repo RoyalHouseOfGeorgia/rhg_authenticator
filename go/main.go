@@ -69,8 +69,8 @@ func main() {
 		LogPath: logPath,
 		DataDir: dataDir,
 	}, window)
-	historyContent := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, nil, window)
 	regTab := regmgr.NewRegistryTab(window, dataDir)
+	historyContent := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, regTab.ClientForHistory, window)
 	lastUpdateCh := make(chan string, 1)
 	auditContent := gui.NewAuditTab(window, lastUpdateCh)
 	yubiKeyContent := gui.NewYubiKeyTab(reg, regOnline, window)
@@ -106,9 +106,7 @@ func main() {
 	})
 
 	// 8. Non-blocking registry tab fetch.
-	go func() {
-		regTab.Fetch()
-	}()
+	regTab.Fetch()
 
 	// 9. Non-blocking version check.
 	go func() {

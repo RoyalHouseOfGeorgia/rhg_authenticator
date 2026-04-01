@@ -31,9 +31,7 @@ const revocationTimeout = 180 * time.Second
 const revocationCacheUnavailableMsg = "Revocation data not loaded. Try refreshing."
 
 // NewHistoryTab creates the issuance history tab UI.
-func NewHistoryTab(logPath string, revocationURL string, ghClient *ghapi.Client, window fyne.Window) *fyne.Container {
-	canRevoke := ghClient != nil
-
+func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghapi.Client, window fyne.Window) *fyne.Container {
 	var allRecords []log.IssuanceRecord
 	var filtered []log.IssuanceRecord
 	var selectedRecord *log.IssuanceRecord
@@ -77,8 +75,8 @@ func NewHistoryTab(logPath string, revocationURL string, ghClient *ghapi.Client,
 		rec := filtered[id]
 		selectedRecord = &rec
 
-		// Enable/disable revoke button based on revocation status.
-		if !canRevoke || revokedHashes[strings.ToLower(rec.PayloadSHA256)] {
+		// Enable/disable revoke button based on login + revocation status.
+		if ghClientFn() == nil || revokedHashes[strings.ToLower(rec.PayloadSHA256)] {
 			revokeButton.Disable()
 		} else {
 			revokeButton.Enable()
@@ -94,6 +92,11 @@ func NewHistoryTab(logPath string, revocationURL string, ghClient *ghapi.Client,
 		if selectedRecord == nil {
 			return
 		}
+		client := ghClientFn() // capture once on main thread, BEFORE ShowConfirm
+		if client == nil {
+			dialog.ShowError(fmt.Errorf("not logged in to GitHub"), window)
+			return
+		}
 		rec := *selectedRecord // local copy on main thread
 		cached := cachedRevocationList
 
@@ -105,11 +108,6 @@ func NewHistoryTab(logPath string, revocationURL string, ghClient *ghapi.Client,
 
 		if cached == nil {
 			dialog.ShowError(fmt.Errorf("%s", revocationCacheUnavailableMsg), window)
-			return
-		}
-
-		if ghClient == nil {
-			dialog.ShowError(fmt.Errorf("not logged in to GitHub"), window)
 			return
 		}
 
@@ -145,7 +143,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClient *ghapi.Client,
 				}
 				content = append(content, '\n')
 
-				pr, err := ghClient.CreateRevocationPR(ctx, content, rec.PayloadSHA256)
+				pr, err := client.CreateRevocationPR(ctx, content, rec.PayloadSHA256)
 				if err != nil {
 					fyne.Do(func() {
 						dialog.ShowError(fmt.Errorf("failed to submit revocation"), window)
@@ -189,7 +187,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClient *ghapi.Client,
 				revocationStatus.SetText("")
 				list.Refresh()
 				// Re-evaluate revoke button based on current selection.
-				if canRevoke && selectedRecord != nil && !revokedHashes[strings.ToLower(selectedRecord.PayloadSHA256)] {
+				if ghClientFn() != nil && selectedRecord != nil && !revokedHashes[strings.ToLower(selectedRecord.PayloadSHA256)] {
 					revokeButton.Enable()
 				} else {
 					revokeButton.Disable()
