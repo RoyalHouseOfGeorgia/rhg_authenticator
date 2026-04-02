@@ -7,6 +7,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/qr"
 )
@@ -43,12 +44,12 @@ func executeSignFlow(
 	logPath string,
 	openAdapter func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error),
 	readPin func() (string, error),
-	logger *debugLogger,
+	logger *debuglog.Logger,
 ) (SignFlowResult, error) {
 	// 1. Open adapter.
 	adapter, closer, err := openAdapter(readPin)
 	if err != nil {
-		logger.log("connect: " + core.SanitizeForLog(err.Error()))
+		logger.Log("connect: " + core.SanitizeForLog(err.Error()))
 		return SignFlowResult{}, err
 	}
 	defer closer.Close()
@@ -56,14 +57,14 @@ func executeSignFlow(
 	// 2. Export public key.
 	pubKey, err := adapter.ExportPublicKey()
 	if err != nil {
-		logger.log(sanitizeError("ExportPublicKey", err))
+		logger.Log(sanitizeError("ExportPublicKey", err))
 		return SignFlowResult{}, &SignFlowError{Phase: PhaseExportKey, Err: err}
 	}
 
 	// 3. Sign.
 	resp, err := core.HandleSign(req, adapter, pubKey)
 	if err != nil {
-		logger.log(sanitizeError("HandleSign", err))
+		logger.Log(sanitizeError("HandleSign", err))
 		return SignFlowResult{}, &SignFlowError{Phase: PhaseSign, Err: err}
 	}
 
@@ -82,14 +83,14 @@ func executeSignFlow(
 	// 5. Log issuance record (non-fatal — signing already succeeded).
 	if logPath != "" {
 		if logErr := issuancelog.AppendRecord(logPath, record); logErr != nil {
-			logger.log("log append failed: " + logErr.Error())
+			logger.Log("log append failed: " + logErr.Error())
 		}
 	}
 
 	// 6. Generate QR preview.
 	pngData, err := qr.GeneratePNG(resp.URL, qrPreviewPx)
 	if err != nil {
-		logger.log(sanitizeError("QR", err))
+		logger.Log(sanitizeError("QR", err))
 		return SignFlowResult{}, &SignFlowError{Phase: PhaseQR, Err: err}
 	}
 

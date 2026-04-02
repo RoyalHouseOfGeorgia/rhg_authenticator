@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
@@ -72,7 +73,7 @@ func TestExecuteSignFlow_HappyPath(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	logPath := filepath.Join(tmpDir, "issuance.log")
 
 	req := core.SignRequest{
@@ -127,7 +128,7 @@ func TestExecuteSignFlow_ExportKeyError(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 
 	_, err := executeSignFlow(core.SignRequest{}, "", openAdapter, dummyReadPin, logger)
 	if err == nil {
@@ -150,7 +151,7 @@ func TestExecuteSignFlow_SignError(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	logPath := filepath.Join(tmpDir, "issuance.log")
 
 	req := core.SignRequest{
@@ -182,7 +183,7 @@ func TestExecuteSignFlow_LogFileWritten(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	logPath := filepath.Join(tmpDir, "issuances.json")
 
 	req := core.SignRequest{
@@ -231,7 +232,7 @@ func TestExecuteSignFlow_RecordFieldsNFCNormalized(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	logPath := filepath.Join(tmpDir, "issuances.json")
 
 	// NFD input: e + combining acute accent.
@@ -276,7 +277,7 @@ func TestExecuteSignFlow_NoLogWhenPathEmpty(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 
 	req := core.SignRequest{
 		Recipient: "John Doe",
@@ -307,7 +308,7 @@ func TestExecuteSignFlow_LogWriteFailureNonFatal(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 
 	// Use a log path in a non-existent directory to force a write error.
 	logPath := filepath.Join(tmpDir, "nonexistent", "subdir", "issuances.json")

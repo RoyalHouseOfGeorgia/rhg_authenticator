@@ -28,7 +28,7 @@ The binary embeds the version from `git describe --tags`.
 
 ## Usage
 
-1. Run `./release/rhg-authenticator`
+1. Run `./release/rhg-authenticator` (or `./release/rhg-authenticator --version` to print the version and exit)
 2. The app opens immediately with five tabs: **Sign**, **History**, **Registry**, **Audit**, and **YubiKey** (no YubiKey needed yet)
 
 ### Sign Tab
@@ -46,7 +46,7 @@ The binary embeds the version from `git describe --tags`.
 6. Click **Save SVG** (primary — vector for print) or **Save PNG** (2048px alternative)
 7. Copy the verification URL to clipboard via **Copy URL**
 
-If signing fails, the status area shows a diagnostic message. Details are written to `debug.log` — see [Troubleshooting](#troubleshooting) below.
+If signing fails, the status area shows a diagnostic message and a **Report Issue** button (files a GitHub issue automatically if logged in, or opens a pre-filled browser form). In debug builds, details are also written to `debug.log` — see [Troubleshooting](#troubleshooting) below.
 
 ### History Tab
 
@@ -123,7 +123,7 @@ The app fetches the revocation list (`revocations.json`) alongside the registry 
 
 ## Troubleshooting
 
-Errors during signing are logged to `debug.log` in the app's data directory:
+In **debug builds** (any non-release version, i.e. not a tagged `vX.Y.Z`), the app writes a debug log that is truncated at startup and accumulates entries for the session. On exit, you are prompted to review it. In **release builds**, debug logging is a no-op.
 
 | Platform | Path |
 |----------|------|
@@ -155,12 +155,16 @@ Errors during signing are logged to `debug.log` in the app's data directory:
 - **GitHub token in OS keychain**: OAuth tokens are stored via `go-keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). File fallback on Linux only (0600 permissions). Token redacted from `fmt.Sprintf` output via `String()`/`GoString()` methods. Tokens expire after 90 days (enforced locally on session restore).
 - **Redirect protection**: HTTP client strips `Authorization` header on cross-origin redirects (allows `*.github.com` only).
 - **Input sanitization**: All untrusted GitHub API responses are sanitized before logging (control characters replaced, truncated to 500 runes). User-facing error messages are mapped to safe generic text.
+- **Panic recovery**: The main goroutine and all spawned goroutines (`safeGo`) catch panics, write a stack trace to `debug.log` and stderr, and show an error dialog instead of silently crashing.
+- **Auto error reporting**: Fatal errors and signing failures offer to file a GitHub issue automatically (via `errorreport` package). If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS, error type, and the last 50 lines of the debug log (sanitized).
 
 ## Architecture
 
 ```
 go/
-├── main.go              # App entry point, Fyne window, startup sequence
+├── main.go              # App entry point, Fyne window, panic recovery, safeGo, --version
+├── buildinfo/           # Build metadata
+│   └── buildinfo.go     # Version (set via ldflags), IsRelease/IsDebug helpers
 ├── core/                # Credential logic (must match TypeScript byte-for-byte)
 │   ├── canonical.go     # Deterministic JSON (key-sort, NFC, no whitespace)
 │   ├── base64url.go     # Base64URL encode/decode
@@ -172,14 +176,17 @@ go/
 │   ├── registry.go      # Key registry schema, lookup, fingerprint
 │   ├── revocation.go    # RevocationEntry, RevocationList, ValidateRevocationList, BuildRevocationSet, IsRevoked
 │   ├── revocation_test.go
-│   ├── sanitize.go      # SanitizeForLog: C0, C1, DEL, bidi (shared by gui + ghapi)
+│   ├── sanitize.go      # SanitizeForLog + StripControlChars: C0, C1, DEL, bidi (shared by gui + ghapi + debuglog)
 │   └── sign.go          # Signing orchestrator
+├── debuglog/            # Debug logging (active in non-release builds only)
+│   └── debuglog.go      # Append-only timestamped file logger; no-op when path is empty
+├── errorreport/         # Auto error reporting
+│   └── report.go        # Build issue title/body, file via GitHub API or browser fallback
 ├── gui/                 # Fyne GUI (signing app)
 │   ├── audit_tab.go     # Registry audit (renders commit history from ghapi/commits)
 │   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi)
-│   ├── history_tab_test.go
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
-│   ├── sign_tab.go      # Credential form + QR display
+│   ├── sign_tab.go      # Credential form + QR display + Report Issue button
 │   ├── signflow.go      # Extracted signing workflow (testable)
 │   ├── statusbar.go     # Bottom status bar (key stats, online status, lastUpdateCh coordination, revocationStatus label)
 │   └── yubikey_tab.go   # YubiKey registry check (no PIN)
@@ -188,7 +195,8 @@ go/
 │   ├── auth.go          # OAuth device flow, token storage, session restore
 │   ├── client.go        # GitHub REST API (branches, contents, PRs); safeRedirect, Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath
 │   ├── commits.go       # FetchRegistryCommits(baseURL, perPage, etag); commitClient with safeRedirect
-│   └── commits_test.go
+│   ├── commits_test.go
+│   └── issues.go        # CreateIssue (used by errorreport)
 ├── regmgr/              # Registry Manager (tab in main app)
 │   ├── app.go           # Main UI: toolbar, table, login, submit, state management
 │   ├── form.go          # Add/Edit entry dialogs (cert import, calendar)

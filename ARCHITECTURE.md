@@ -30,6 +30,7 @@ The system has three independent components:
 
 - **Timing side channel in verification diagnostics**: Date-mismatch diagnostics reveal whether a valid signature exists outside the date range. This is intentional UX — the registry is public anyway.
 - **Public key registry is public**: By design. The security property is that only the holder of the YubiKey private key can produce valid signatures.
+- **Auto-reported issues include debug log tail**: The last 50 lines of the debug log are included in auto-reported GitHub issues. The debug log contains only sanitized internal state (timestamps, error types, stack traces) — no credential data, PINs, or tokens.
 
 ## Data Flow
 
@@ -213,3 +214,6 @@ Verification operates on the original payload bytes, not a re-canonicalized form
 - **Registry fetch**: remote only (10s timeout), no cache or embedded fallback. If the server is unreachable, the app opens in offline mode (signing still works, but registry-dependent features are unavailable).
 - **Token lifecycle**: OAuth tokens stored in OS keychain (Linux: file fallback with 0600). 90-day local TTL enforced on session restore; expired tokens are cleared and require re-authentication. Tokens validated live against GitHub API on each app startup.
 - **Cross-language compatibility**: Go `core/` package produces byte-identical canonical JSON to TypeScript. Verified by test vectors (ASCII, Georgian, NFC edge cases).
+- **Build info separation**: Version string lives in `buildinfo.Version` (set via `-ldflags` at build time). `buildinfo.IsDebug()` / `buildinfo.IsRelease()` gate debug-only behavior (e.g., debug logging, log-review prompt on exit).
+- **Panic recovery over silent crash**: Main goroutine and all spawned goroutines use `safeGo` with `recover()`. Panics are written to debug log + stderr and surfaced via an error dialog, so the user is never left staring at a frozen or disappeared window.
+- **Auto error reporting**: The `errorreport` package builds sanitized issue bodies (version, OS, error, debug log tail) and files them via the GitHub API if the user is logged in, or falls back to a pre-filled browser URL. Issue titles are prefixed `[Auto]` with labels `bug` + `auto-reported`.

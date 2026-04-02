@@ -3,6 +3,18 @@ package core
 // MaxLogRunes is the maximum number of runes kept in sanitized log output.
 const MaxLogRunes = 500
 
+// StripControlChars replaces control characters (C0, DEL, C1) and Unicode bidi
+// overrides/isolates with spaces. Unlike SanitizeForLog, it does not truncate.
+func StripControlChars(s string) string {
+	runes := []rune(s)
+	for i, r := range runes {
+		if isControlOrBidi(r) {
+			runes[i] = ' '
+		}
+	}
+	return string(runes)
+}
+
 // SanitizeForLog replaces control characters (C0, DEL, C1) and Unicode bidi
 // overrides/isolates with spaces, and truncates to MaxLogRunes runes.
 // Prevents log injection and unbounded log output from untrusted sources.

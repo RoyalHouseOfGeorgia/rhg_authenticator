@@ -25,7 +25,7 @@
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-1034 tests passing (649 Go + 385 TypeScript).
+1161 tests passing (772 Go + 389 TypeScript).
 
 ## Quick Start — Signing App (Go)
 

@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
@@ -479,7 +478,7 @@ func TestFriendlyYubiKeyError_SCARDError(t *testing.T) {
 
 func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	got := friendlyYubiKeyError(fmt.Errorf("unexpected failure"), logger)
 	if !strings.Contains(got, "Failed to connect") {
 		t.Errorf("expected 'Failed to connect' message, got: %q", got)
@@ -492,7 +491,7 @@ func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 func TestFriendlyYubiKeyError_LogsActualError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "debug.log")
-	logger := &debugLogger{path: logPath}
+	logger := debuglog.New(logPath)
 
 	friendlyYubiKeyError(fmt.Errorf("unexpected failure"), logger)
 
@@ -510,7 +509,7 @@ func TestFriendlyYubiKeyError_LogsActualError(t *testing.T) {
 func TestFriendlyYubiKeyError_LogsHardwareError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "debug.log")
-	logger := &debugLogger{path: logPath}
+	logger := debuglog.New(logPath)
 
 	friendlyYubiKeyError(fmt.Errorf("failed to open YubiKey: no YubiKey found among 0 smart card(s)"), logger)
 
@@ -522,142 +521,6 @@ func TestFriendlyYubiKeyError_LogsHardwareError(t *testing.T) {
 	// Classified hardware errors must also be logged for diagnosis.
 	if !strings.Contains(content, "no YubiKey found") {
 		t.Errorf("debug log should contain actual error, got: %q", content)
-	}
-}
-
-// --- debugLogger tests ---
-
-func TestDebugLogger_CreatesFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
-	logger.log("test message")
-
-	data, err := os.ReadFile(logger.path)
-	if err != nil {
-		t.Fatalf("debug log file not created: %v", err)
-	}
-	if !strings.Contains(string(data), "test message") {
-		t.Errorf("debug log missing message, got: %q", string(data))
-	}
-}
-
-func TestDebugLogger_FilePermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix file permissions not supported on Windows")
-	}
-	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
-	logger.log("perm check")
-
-	info, err := os.Stat(logger.path)
-	if err != nil {
-		t.Fatalf("stat failed: %v", err)
-	}
-	perm := info.Mode().Perm()
-	if perm != 0o600 {
-		t.Errorf("file permissions = %o, want 0600", perm)
-	}
-}
-
-func TestDebugLogger_AppendMode(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
-
-	logger.log("first message")
-	logger.log("second message")
-
-	data, err := os.ReadFile(logger.path)
-	if err != nil {
-		t.Fatalf("read failed: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, "first message") {
-		t.Errorf("missing first message, got: %q", content)
-	}
-	if !strings.Contains(content, "second message") {
-		t.Errorf("missing second message, got: %q", content)
-	}
-	lines := strings.Split(strings.TrimSpace(content), "\n")
-	if len(lines) != 2 {
-		t.Errorf("expected 2 lines, got %d", len(lines))
-	}
-}
-
-func TestDebugLogger_EmptyPath(t *testing.T) {
-	logger := &debugLogger{path: ""}
-	// Should not panic or create any file.
-	logger.log("should be a no-op")
-}
-
-func TestDebugLogger_NilLogger(t *testing.T) {
-	var logger *debugLogger
-	// Should not panic.
-	logger.log("should not panic")
-}
-
-func TestDebugLogger_TimestampFormat(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
-	logger.log("ts check")
-
-	data, err := os.ReadFile(logger.path)
-	if err != nil {
-		t.Fatalf("read failed: %v", err)
-	}
-	content := string(data)
-	// RFC3339 timestamps contain a "T" between date and time.
-	if !strings.Contains(content, "T") || !strings.Contains(content, "Z") {
-		t.Errorf("expected RFC3339 timestamp, got: %q", content)
-	}
-	// Line should be bracketed: [timestamp] message
-	if !strings.HasPrefix(content, "[") {
-		t.Errorf("expected line to start with '[', got: %q", content)
-	}
-}
-
-func TestDebugLogger_SanitizesControlChars(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
-	logger.log("line1\ninjected\r\x00hidden")
-
-	data, err := os.ReadFile(logger.path)
-	if err != nil {
-		t.Fatalf("read failed: %v", err)
-	}
-	content := string(data)
-	// The file should contain exactly one line (timestamp + sanitized message + newline).
-	lines := strings.Split(strings.TrimSpace(content), "\n")
-	if len(lines) != 1 {
-		t.Errorf("expected 1 line, got %d: %q", len(lines), content)
-	}
-	// No control chars except the trailing newline from Fprintf format.
-	for _, r := range strings.TrimSpace(content) {
-		if r < 0x20 {
-			t.Errorf("found control char U+%04X in log output: %q", r, content)
-			break
-		}
-	}
-}
-
-func TestDebugLogger_TruncatesLongMessage(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
-	longMsg := strings.Repeat("x", 600)
-	logger.log(longMsg)
-
-	data, err := os.ReadFile(logger.path)
-	if err != nil {
-		t.Fatalf("read failed: %v", err)
-	}
-	content := string(data)
-	// The message portion (after "] ") should be at most 500 chars.
-	idx := strings.Index(content, "] ")
-	if idx < 0 {
-		t.Fatalf("unexpected format: %q", content)
-	}
-	msgPart := strings.TrimSpace(content[idx+2:])
-	if len([]rune(msgPart)) > core.MaxLogRunes {
-		t.Errorf("message not truncated: %d runes, want <= %d", len([]rune(msgPart)), core.MaxLogRunes)
 	}
 }
 
@@ -688,7 +551,7 @@ func TestSignFlowErrorMessage_YubiKeyAdapter(t *testing.T) {
 
 func TestSignFlowErrorMessage_SignError(t *testing.T) {
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	sfe := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("hardware fault")}
 	got := signFlowErrorMessage(sfe, logger)
 	if !strings.Contains(got, "Signing failed") {
@@ -706,7 +569,7 @@ func TestSignFlowErrorMessage_SignError(t *testing.T) {
 
 func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	sfe := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("some error")}
 	signFlowErrorMessage(sfe, logger)
 	data, err := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
@@ -742,7 +605,7 @@ func TestSignFlowErrorMessage_CancelledRaw(t *testing.T) {
 
 func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	got := signFlowErrorMessage(fmt.Errorf("something unexpected"), logger)
 	if !strings.Contains(got, "Signing failed") {
 		t.Errorf("expected signing failed message, got: %q", got)
@@ -751,7 +614,7 @@ func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 
 func TestSignFlowErrorMessage_CertificateError(t *testing.T) {
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: object not found"), logger)
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
@@ -762,7 +625,7 @@ func TestSignFlowErrorMessage_CertificateWithSmartCardInError(t *testing.T) {
 	// piv-go may include "smart card" in the error when slot 9c is empty.
 	// This must NOT be misclassified as "YubiKey not detected".
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: smart card error: data object not found"), logger)
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
@@ -771,7 +634,7 @@ func TestSignFlowErrorMessage_CertificateWithSmartCardInError(t *testing.T) {
 
 func TestSignFlowErrorMessage_NotEd25519Error(t *testing.T) {
 	tmpDir := t.TempDir()
-	logger := &debugLogger{path: filepath.Join(tmpDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	got := signFlowErrorMessage(fmt.Errorf("certificate does not contain an Ed25519 public key"), logger)
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)

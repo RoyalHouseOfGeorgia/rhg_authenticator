@@ -2,9 +2,11 @@
 package gui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +21,11 @@ import (
 	"fyne.io/fyne/v2/widget"
 	xwidget "fyne.io/x/fyne/widget"
 
+	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/errorreport"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/qr"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
@@ -37,6 +43,8 @@ var honorTitles = []string{
 type SignTabConfig struct {
 	LogPath string
 	DataDir string
+	Keyring ghapi.Keyring  // for issue reporting (may be nil)
+	SafeGo  func(func())  // panic-safe goroutine launcher (may be nil — falls back to plain go)
 }
 
 // QR code output sizes.
@@ -45,29 +53,11 @@ const (
 	qrSavePx    = 2048
 )
 
-// debugLogger appends timestamped messages to a log file. A nil or
-// zero-value logger silently discards all messages.
-type debugLogger struct {
-	path string
-}
-
-func (d *debugLogger) log(msg string) {
-	if d == nil || d.path == "" {
-		return
-	}
-	f, err := os.OpenFile(d.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "[%s] %s\n", time.Now().UTC().Format(time.RFC3339), core.SanitizeForLog(msg))
-}
-
 // NewSignTab creates the credential signing tab UI. The returned cleanup
 // function must be called on application shutdown to securely clear the
 // PIN cache.
 func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func()) {
-	logger := &debugLogger{path: filepath.Join(config.DataDir, "debug.log")}
+	logger := debuglog.New(filepath.Join(config.DataDir, "debug.log"))
 	pinCache := yubikey.NewPinCache()
 
 	recipientEntry := widget.NewEntry()
@@ -119,7 +109,11 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 			Date:      dateEntry.Text,
 		}
 
-		go func() {
+		launchGo := func(fn func()) { go fn() }
+		if config.SafeGo != nil {
+			launchGo = config.SafeGo
+		}
+		launchGo(func() {
 			defer fyne.Do(func() { signButton.Enable() })
 
 			openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
@@ -133,7 +127,22 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 			result, err := executeSignFlow(req, config.LogPath, openAdapter, MakePinReader(window, pinCache), logger)
 			if err != nil {
 				fyne.Do(func() {
-					statusLabel.SetText(signFlowErrorMessage(err, logger))
+					msg := signFlowErrorMessage(err, logger)
+					statusLabel.SetText(msg)
+					// Offer "Report Issue" for real errors, not cancellations.
+					if !strings.Contains(err.Error(), ErrSigningCancelled.Error()) && config.Keyring != nil {
+						reportBtn := widget.NewButton("Report Issue", func() {
+							title := errorreport.BuildIssueTitle("signing", msg)
+							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error(), logger.Path())
+							resultURL, _ := errorreport.ReportIssue(context.Background(), config.Keyring, config.DataDir, title, body)
+							if resultURL != "" {
+								if u, parseErr := url.Parse(resultURL); parseErr == nil {
+									fyne.CurrentApp().OpenURL(u)
+								}
+							}
+						})
+						resultContainer.Add(reportBtn)
+					}
 				})
 				return
 			}
@@ -159,7 +168,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 						}
 						defer writer.Close()
 						if saveErr := qr.SaveSVG(result.Response.URL, writer.URI().Path()); saveErr != nil {
-							logger.log("SVG save failed: " + saveErr.Error())
+							logger.Log("SVG save failed: " + saveErr.Error())
 							dialog.ShowError(fmt.Errorf("failed to save SVG file"), window)
 						}
 					}, window)
@@ -177,12 +186,12 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 						defer writer.Close()
 						pngHiRes, pngErr := qr.GeneratePNG(result.Response.URL, qrSavePx)
 						if pngErr != nil {
-							logger.log("PNG generation failed: " + pngErr.Error())
+							logger.Log("PNG generation failed: " + pngErr.Error())
 							dialog.ShowError(fmt.Errorf("failed to generate PNG"), window)
 							return
 						}
 						if writeErr := os.WriteFile(writer.URI().Path(), pngHiRes, 0o600); writeErr != nil {
-							logger.log("PNG save failed: " + writeErr.Error())
+							logger.Log("PNG save failed: " + writeErr.Error())
 							dialog.ShowError(fmt.Errorf("failed to save PNG file"), window)
 						}
 					}, window)
@@ -202,7 +211,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 				resultContainer.Add(actionButtons)
 				resultContainer.Refresh()
 			})
-		}()
+		})
 	})
 
 	form := container.NewVBox(
@@ -260,12 +269,12 @@ func sanitizeError(prefix string, err error) string {
 
 // friendlyYubiKeyError returns a user-friendly error message for YubiKey
 // connection failures.
-func friendlyYubiKeyError(err error, logger *debugLogger) string {
+func friendlyYubiKeyError(err error, logger *debuglog.Logger) string {
 	if err == nil {
 		return "Unknown YubiKey error"
 	}
 	// Always log the actual error for diagnosis.
-	logger.log("yubikey: " + core.SanitizeForLog(err.Error()))
+	logger.Log("yubikey: " + core.SanitizeForLog(err.Error()))
 	switch core.ClassifyHardwareError(err) {
 	case core.HwErrSmartcard:
 		return "Smart card service not available. On macOS this is built-in; on Windows check the Smart Card service is running."
@@ -278,7 +287,7 @@ func friendlyYubiKeyError(err error, logger *debugLogger) string {
 
 // signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
 // status message.
-func signFlowErrorMessage(err error, logger *debugLogger) string {
+func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	// User cancelled the PIN dialog — not an error.
 	// Use string match because piv-go wraps PINPrompt errors with %v,
 	// breaking the errors.Is chain for our sentinel.
@@ -293,10 +302,10 @@ func signFlowErrorMessage(err error, logger *debugLogger) string {
 		case PhaseQR:
 			return "QR generation failed. Check debug.log for details."
 		case PhaseSign:
-			logger.log(sfe.Error())
+			logger.Log(sfe.Error())
 			return "Signing failed. Check debug.log for details."
 		default:
-			logger.log(sfe.Error())
+			logger.Log(sfe.Error())
 			return "Unexpected error. Check debug.log for details."
 		}
 	}
@@ -306,7 +315,7 @@ func signFlowErrorMessage(err error, logger *debugLogger) string {
 	// contain "smart card" from piv-go, which would misclassify as
 	// HwErrHardware ("YubiKey not detected") if checked later.
 	errMsg := err.Error()
-	logger.log("sign flow: " + core.SanitizeForLog(errMsg))
+	logger.Log("sign flow: " + core.SanitizeForLog(errMsg))
 	if strings.Contains(errMsg, "certificate") || strings.Contains(errMsg, "slot 9c") {
 		return "No signing certificate found on YubiKey (PIV slot 9c). Generate an Ed25519 key first."
 	}

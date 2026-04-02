@@ -370,7 +370,7 @@ func (c *Client) createBranchWithRetryFor(ctx context.Context, owner, repo, sha,
 		}
 		return "", fmt.Errorf("creating branch: %w", err)
 	}
-	return "", fmt.Errorf("branch creation failed")
+	panic("unreachable: loop always returns") // maxBranchRetries > 0
 }
 
 // createBranchWithRetry generates a unique branch name and creates the ref,
@@ -442,7 +442,7 @@ func (c *Client) waitForFork(ctx context.Context, forkOwner, repo string) error 
 		// Non-404 error — fail fast.
 		return &ForkError{Phase: "poll", Wrapped: err}
 	}
-	return &ForkError{Phase: "poll", Wrapped: fmt.Errorf("fork not ready after %d attempts", forkMaxPollAttempts)}
+	panic("unreachable: loop always returns") // forkMaxPollAttempts > 0
 }
 
 // syncFork calls merge-upstream to bring the fork's main up to date with upstream.

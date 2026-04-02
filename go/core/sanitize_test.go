@@ -117,3 +117,79 @@ func TestSanitizeForLog(t *testing.T) {
 		})
 	}
 }
+
+func TestStripControlChars(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		check func(t *testing.T, result string)
+	}{
+		{
+			name:  "control characters replaced with spaces",
+			input: "line1\nline2\rline3\ttab\x00null",
+			check: func(t *testing.T, result string) {
+				if strings.ContainsAny(result, "\n\r\t\x00") {
+					t.Errorf("result contains control chars: %q", result)
+				}
+				if result != "line1 line2 line3 tab null" {
+					t.Errorf("result = %q, want %q", result, "line1 line2 line3 tab null")
+				}
+			},
+		},
+		{
+			name:  "clean string unchanged",
+			input: "hello world 123",
+			check: func(t *testing.T, result string) {
+				if result != "hello world 123" {
+					t.Errorf("result = %q, want %q", result, "hello world 123")
+				}
+			},
+		},
+		{
+			name:  "empty string returns empty",
+			input: "",
+			check: func(t *testing.T, result string) {
+				if result != "" {
+					t.Errorf("result = %q, want empty", result)
+				}
+			},
+		},
+		{
+			name:  "long string NOT truncated",
+			input: strings.Repeat("a", 650),
+			check: func(t *testing.T, result string) {
+				if len(result) != 650 {
+					t.Errorf("length = %d, want 650 (should not truncate)", len(result))
+				}
+				if result != strings.Repeat("a", 650) {
+					t.Errorf("result was modified unexpectedly")
+				}
+			},
+		},
+		{
+			name:  "bidi characters replaced",
+			input: "left\u202aright\u2069end\u200e",
+			check: func(t *testing.T, result string) {
+				if result != "left right end " {
+					t.Errorf("result = %q, want %q", result, "left right end ")
+				}
+			},
+		},
+		{
+			name:  "DEL character replaced",
+			input: "hello\x7fworld",
+			check: func(t *testing.T, result string) {
+				if result != "hello world" {
+					t.Errorf("result = %q, want %q", result, "hello world")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := StripControlChars(tt.input)
+			tt.check(t, result)
+		})
+	}
+}
