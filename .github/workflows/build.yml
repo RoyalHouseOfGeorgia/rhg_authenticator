@@ -146,7 +146,9 @@ jobs:
       - name: Verify version embedding
         if: runner.os == 'Windows'
         run: |
-          $VERSION = (& release/rhg-authenticator-${{ matrix.suffix }}.exe --version 2>&1).Trim()
+          Start-Process -FilePath "release/rhg-authenticator-${{ matrix.suffix }}.exe" -ArgumentList "--version" -Wait -RedirectStandardOutput "version.txt" -RedirectStandardError "version_err.txt" -WindowStyle Hidden
+          if (Test-Path "version_err.txt") { $stderr = Get-Content "version_err.txt" -Raw; if ($stderr) { Write-Host "stderr: $stderr" } }
+          $VERSION = (Get-Content "version.txt" -Raw).Trim()
           Write-Host "Binary reports version: $VERSION"
           if ($VERSION -ne "${{ github.ref_name }}") { Write-Error "Version mismatch: expected '${{ github.ref_name }}', got '$VERSION'"; exit 1 }
         shell: pwsh
