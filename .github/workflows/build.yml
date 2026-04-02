@@ -145,10 +145,10 @@ jobs:
           [ "$VERSION" = "${{ github.ref_name }}" ] || (echo "Version mismatch: expected '${{ github.ref_name }}', got '$VERSION'" && exit 1)
       - name: Verify version embedding
         if: runner.os == 'Windows'
-        working-directory: go
         run: |
-          go version -m ../release/rhg-authenticator-${{ matrix.suffix }}.exe | findstr "buildinfo.Version=${{ github.ref_name }}"
-          if ($LASTEXITCODE -ne 0) { Write-Error "Version not found in binary build info"; exit 1 }
+          $VERSION = (& release/rhg-authenticator-${{ matrix.suffix }}.exe --version 2>&1).Trim()
+          Write-Host "Binary reports version: $VERSION"
+          if ($VERSION -ne "${{ github.ref_name }}") { Write-Error "Version mismatch: expected '${{ github.ref_name }}', got '$VERSION'"; exit 1 }
         shell: pwsh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
