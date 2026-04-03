@@ -31,7 +31,7 @@ permissions:
 
 env:
   GO_VERSION: '1.25.8'
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
 
 jobs:
   test-typescript:
