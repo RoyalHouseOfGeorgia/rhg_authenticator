@@ -93,8 +93,14 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 		// Clear previous results.
 		resultContainer.RemoveAll()
 
+		// Trim all text inputs before validation and use.
+		recipient := strings.TrimSpace(recipientEntry.Text)
+		honor := strings.TrimSpace(honorSelect.Selected)
+		detail := strings.TrimSpace(detailEntry.Text)
+		date := strings.TrimSpace(dateEntry.Text)
+
 		// Validate form.
-		if err := validateSignForm(recipientEntry.Text, honorSelect.Selected, detailEntry.Text, dateEntry.Text); err != nil {
+		if err := validateSignForm(recipient, honor, detail, date); err != nil {
 			statusLabel.SetText(err.Error())
 			return
 		}
@@ -103,10 +109,10 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 		statusLabel.SetText("Connecting to YubiKey...")
 
 		req := core.SignRequest{
-			Recipient: recipientEntry.Text,
-			Honor:     honorSelect.Selected,
-			Detail:    detailEntry.Text,
-			Date:      dateEntry.Text,
+			Recipient: recipient,
+			Honor:     honor,
+			Detail:    detail,
+			Date:      date,
 		}
 
 		launchGo := func(fn func()) { go fn() }
