@@ -1,3 +1,8 @@
 {
-  "revocations": []
+  "revocations": [
+    {
+      "hash": "cbbf6180437e4061aaf58d242b2b7e963c3a6e84e9361ad87a15e180c47c8719",
+      "revoked_on": "2026-04-03"
+    }
+  ]
 }
