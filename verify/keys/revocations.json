@@ -3,6 +3,10 @@
     {
       "hash": "cbbf6180437e4061aaf58d242b2b7e963c3a6e84e9361ad87a15e180c47c8719",
       "revoked_on": "2026-04-03"
+    },
+    {
+      "hash": "ed398a747a7237c38d9fc334df7b6cac8850402aa3a76a745a0a0c51da85ed30",
+      "revoked_on": "2026-04-03"
     }
   ]
 }
