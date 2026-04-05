@@ -59,7 +59,7 @@ npm run lint          # tsc --noEmit
 npm run build:verify  # Bundle verification page JS
 ```
 
-Requires Node.js 20+.
+Requires Node.js 24+.
 
 ## Documentation
 

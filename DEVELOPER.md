@@ -4,7 +4,7 @@ This guide covers the **TypeScript verification library**. For the Go signing ap
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 24+
 - npm (ships with Node.js)
 
 ## Setup
