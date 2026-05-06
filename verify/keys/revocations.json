@@ -7,6 +7,10 @@
     {
       "hash": "ed398a747a7237c38d9fc334df7b6cac8850402aa3a76a745a0a0c51da85ed30",
       "revoked_on": "2026-04-03"
+    },
+    {
+      "hash": "934f77b628613c35f89f83eb8ac0e18eb5e700c8a43fc3a7e4e36da87c996d6a",
+      "revoked_on": "2026-05-06"
     }
   ]
 }
