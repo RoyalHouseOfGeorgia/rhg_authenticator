@@ -60,3 +60,4 @@ terraform.tfstate.backup
 issuances.json
 issuances.json.tmp.*
 **/debug.log
+/go/rhg-authenticator
