@@ -1,6 +1,6 @@
 module github.com/royalhouseofgeorgia/rhg-authenticator
 
-go 1.25.8
+go 1.25.11
 
 require (
 	fyne.io/x/fyne v0.0.0-20260219123538-e09698d18b34
@@ -53,7 +53,7 @@ require (
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
-	golang.org/x/image v0.38.0 // indirect
+	golang.org/x/image v0.41.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 )
