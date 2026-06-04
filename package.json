@@ -27,7 +27,7 @@
   "devDependencies": {
     "@types/node": "^25",
     "esbuild": "^0.28.0",
-    "happy-dom": "^20.9.0",
+    "happy-dom": "^20.10.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   }
