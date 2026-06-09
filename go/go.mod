@@ -6,7 +6,7 @@ require (
 	fyne.io/x/fyne v0.0.0-20260219123538-e09698d18b34
 	github.com/go-piv/piv-go/v2 v2.6.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // unmaintained (2020); TODO(2027): evaluate maintained alternative. Security audit 2026-03: no known CVEs, input is app-controlled.
-	golang.org/x/text v0.37.0
+	golang.org/x/text v0.38.0
 )
 
 require github.com/zalando/go-keyring v0.2.8
@@ -26,11 +26,11 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
-	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect
-	golang.org/x/tools v0.44.0 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/mod v0.36.0 // indirect
+	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260508192327-42602be52be6 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated // indirect
 	golang.org/x/vuln v1.1.4 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -54,8 +54,8 @@ require (
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
 	golang.org/x/image v0.41.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 )
 
 tool golang.org/x/vuln/cmd/govulncheck
