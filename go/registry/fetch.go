@@ -57,8 +57,10 @@ func readLimitedBody(resp *http.Response, maxBytes int64) ([]byte, error) {
 // the registry, not by TLS alone.
 var registryClient = &http.Client{Timeout: FetchTimeout, CheckRedirect: core.SafeRedirect}
 
-// fetchRemote does an HTTP GET with timeout and body size limit.
-func fetchRemote(url string) ([]byte, error) {
+// doFetch does an HTTP GET with timeout and body size limit, validating the
+// response Content-Type against acceptedMediaTypes. When allow404 is true, a
+// 404 returns (nil, nil) — the resource may not exist yet.
+func doFetch(url string, allow404 bool, acceptedMediaTypes ...string) ([]byte, error) {
 	client := registryClient
 
 	resp, err := client.Get(url)
@@ -67,31 +69,7 @@ func fetchRemote(url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	ct := resp.Header.Get("Content-Type")
-	mediaType, _, parseErr := mime.ParseMediaType(ct)
-	if parseErr != nil || mediaType != "application/json" {
-		return nil, fmt.Errorf("unexpected Content-Type: %q", core.SanitizeForLog(ct))
-	}
-
-	return readLimitedBody(resp, maxRegistryBytes)
-}
-
-// fetchRemoteAllowNotFound does an HTTP GET like fetchRemote but returns
-// nil, nil on 404 (resource may not exist yet). Non-404 errors are hard failures.
-func fetchRemoteAllowNotFound(url string) ([]byte, error) {
-	client := registryClient
-
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP GET failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
+	if allow404 && resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
 
@@ -99,15 +77,32 @@ func fetchRemoteAllowNotFound(url string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	// Content-Type: accept both application/json and application/vnd.github.raw+json
-	// (GitHub Contents API may return the latter)
 	ct := resp.Header.Get("Content-Type")
 	mediaType, _, parseErr := mime.ParseMediaType(ct)
-	if parseErr != nil || (mediaType != "application/json" && mediaType != "application/vnd.github.raw+json") {
+	accepted := false
+	for _, mt := range acceptedMediaTypes {
+		if mediaType == mt {
+			accepted = true
+			break
+		}
+	}
+	if parseErr != nil || !accepted {
 		return nil, fmt.Errorf("unexpected Content-Type: %q", core.SanitizeForLog(ct))
 	}
 
 	return readLimitedBody(resp, maxRegistryBytes)
+}
+
+// fetchRemote does an HTTP GET with timeout and body size limit.
+func fetchRemote(url string) ([]byte, error) {
+	return doFetch(url, false, "application/json")
+}
+
+// fetchRemoteAllowNotFound does an HTTP GET like fetchRemote but returns
+// nil, nil on 404 (resource may not exist yet). Non-404 errors are hard failures.
+// It also accepts application/vnd.github.raw+json (GitHub Contents API).
+func fetchRemoteAllowNotFound(url string) ([]byte, error) {
+	return doFetch(url, true, "application/json", "application/vnd.github.raw+json")
 }
 
 // FetchRevocationList fetches and validates the revocation list.

@@ -37,7 +37,11 @@ function sortAndNormalize(value: JsonValue, depth: number): JsonValue {
       if (Array.isArray(value)) {
         return value.map((el) => sortAndNormalize(el, depth + 1));
       }
-      // Plain object — sort keys and recurse.
+      // Plain object — sort keys and recurse. Keys are sorted but intentionally
+      // NOT NFC-normalized: a verifier matches JSON object keys byte-for-byte, so
+      // normalizing them would break the cross-language (Go/TS) canonical-byte
+      // parity that signatures depend on. String *values* ARE NFC-normalized (see
+      // the 'string' case above). Keep this in agreement with go/core/canonical.go.
       const sorted = Object.create(null) as JsonObject;
       for (const key of Object.keys(value).sort()) {
         if (key === '__proto__') {

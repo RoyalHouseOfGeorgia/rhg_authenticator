@@ -103,14 +103,15 @@ func TestCrossLanguageVectors(t *testing.T) {
 	pubKey := testPubKey()
 	adapter := &mockAdapter{secretKey: sk}
 
-	// Verify public key hex matches.
 	pubHex := hex.EncodeToString(pubKey[:])
-	if pubHex != vectors[0].PubKeyHex {
-		t.Fatalf("public key mismatch: got %s, want %s", pubHex, vectors[0].PubKeyHex)
-	}
 
 	for _, vec := range vectors {
 		t.Run(vec.Name, func(t *testing.T) {
+			// Verify this vector's public key matches the signing key.
+			if pubHex != vec.PubKeyHex {
+				t.Fatalf("public key mismatch: got %s, want %s", pubHex, vec.PubKeyHex)
+			}
+
 			// Reconstruct the credential map with the same types Go would use.
 			cred := vec.Credential
 
@@ -201,6 +202,73 @@ func TestHandleSign_PayloadTooLarge(t *testing.T) {
 	}
 }
 
+// TestHandleSign_PayloadSizeBoundary pins the exact `len > MaxPayloadBytes`
+// (strict) boundary: a canonical payload of exactly MaxPayloadBytes must sign,
+// MaxPayloadBytes+1 must fail. Landing exactly on the boundary is the only form
+// that distinguishes `>` from `>=`. The payload is sized by padding `detail`
+// with single-byte ASCII (no JSON escaping, no NFC change), so canonical length
+// scales 1:1 with the pad.
+func TestHandleSign_PayloadSizeBoundary(t *testing.T) {
+	sk := testSecretKey()
+	pubKey := testPubKey()
+	adapter := &mockAdapter{secretKey: sk}
+
+	buildCred := func(detail string) map[string]any {
+		return map[string]any{
+			"version":   float64(1),
+			"recipient": "John Doe",
+			"honor":     "Test Honor",
+			"detail":    detail,
+			"date":      "2026-03-13",
+		}
+	}
+
+	// Measure canonical overhead with an empty detail, then pad to the limit.
+	base, err := Canonicalize(buildCred(""))
+	if err != nil {
+		t.Fatalf("Canonicalize(baseline) error: %v", err)
+	}
+	pad := MaxPayloadBytes - len(base)
+	if pad <= 0 {
+		t.Fatalf("baseline canonical length %d leaves no room to pad to %d", len(base), MaxPayloadBytes)
+	}
+	atLimitDetail := strings.Repeat("x", pad)
+
+	// Sanity-check the realized canonical length is exactly MaxPayloadBytes
+	// before relying on the pass/fail assertions below.
+	atLimit, err := Canonicalize(buildCred(atLimitDetail))
+	if err != nil {
+		t.Fatalf("Canonicalize(at-limit) error: %v", err)
+	}
+	if len(atLimit) != MaxPayloadBytes {
+		t.Fatalf("expected canonical length exactly %d, got %d", MaxPayloadBytes, len(atLimit))
+	}
+
+	// Exactly MaxPayloadBytes must sign (check is strict `>`).
+	if _, err := HandleSign(SignRequest{
+		Recipient: "John Doe",
+		Honor:     "Test Honor",
+		Detail:    atLimitDetail,
+		Date:      "2026-03-13",
+	}, adapter, pubKey); err != nil {
+		t.Errorf("payload of exactly MaxPayloadBytes (%d) should sign, got error: %v", MaxPayloadBytes, err)
+	}
+
+	// One byte over must fail with the size error specifically.
+	_, err = HandleSign(SignRequest{
+		Recipient: "John Doe",
+		Honor:     "Test Honor",
+		Detail:    atLimitDetail + "x",
+		Date:      "2026-03-13",
+	}, adapter, pubKey)
+	if err == nil {
+		t.Fatal("payload of MaxPayloadBytes+1 should fail")
+	}
+	if !strings.Contains(err.Error(), "payload exceeds maximum size") {
+		t.Errorf("expected 'payload exceeds maximum size', got: %v", err)
+	}
+}
+
 func TestHandleSign_SignatureWrongLength(t *testing.T) {
 	sk := testSecretKey()
 	pubKey := testPubKey()
@@ -272,6 +340,56 @@ func TestHandleSign_NFCNormalization(t *testing.T) {
 
 	if resp.URL != nfcVec.URL {
 		t.Errorf("NFC normalization URL mismatch:\n  got  %s\n  want %s", resp.URL, nfcVec.URL)
+	}
+}
+
+// TestHandleSign_NFCIdempotent verifies that signing an already-NFC input is a
+// pure pass-through: deterministic across calls AND leaving the input bytes
+// unchanged (not merely deterministically mangled). Distinct from
+// TestHandleSign_NFCNormalization, which exercises the NFD->NFC conversion.
+func TestHandleSign_NFCIdempotent(t *testing.T) {
+	sk := testSecretKey()
+	pubKey := testPubKey()
+	adapter := &mockAdapter{secretKey: sk}
+
+	// Precomposed é (U+00E9) — already NFC, so NFC(x) == x.
+	req := SignRequest{
+		Recipient: "Café",
+		Honor:     "Test Honor",
+		Detail:    "résumé",
+		Date:      "2026-03-13",
+	}
+
+	resp1, err := HandleSign(req, adapter, pubKey)
+	if err != nil {
+		t.Fatalf("HandleSign (first) error: %v", err)
+	}
+	resp2, err := HandleSign(req, adapter, pubKey)
+	if err != nil {
+		t.Fatalf("HandleSign (second) error: %v", err)
+	}
+	if resp1.Payload != resp2.Payload {
+		t.Errorf("payload not deterministic across calls:\n  first  %s\n  second %s", resp1.Payload, resp2.Payload)
+	}
+
+	// Decode the payload and confirm normalization left the already-NFC fields
+	// byte-for-byte unchanged.
+	raw, err := Decode(resp1.Payload)
+	if err != nil {
+		t.Fatalf("Decode payload error: %v", err)
+	}
+	var cred map[string]any
+	if err := json.Unmarshal(raw, &cred); err != nil {
+		t.Fatalf("Unmarshal payload error: %v", err)
+	}
+	if got, _ := cred["recipient"].(string); got != req.Recipient {
+		t.Errorf("recipient changed by normalization: got %q, want %q", got, req.Recipient)
+	}
+	if got, _ := cred["detail"].(string); got != req.Detail {
+		t.Errorf("detail changed by normalization: got %q, want %q", got, req.Detail)
+	}
+	if got, _ := cred["honor"].(string); got != req.Honor {
+		t.Errorf("honor changed by normalization: got %q, want %q", got, req.Honor)
 	}
 }
 

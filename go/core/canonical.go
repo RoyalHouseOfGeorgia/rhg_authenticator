@@ -98,7 +98,12 @@ func writeValue(buf *bytes.Buffer, v any, depth int) error {
 			} else {
 				buf.WriteByte(',')
 			}
-			// Keys are NOT NFC-normalized per spec.
+			// Keys are intentionally NOT NFC-normalized: a verifier matches
+			// JSON object keys byte-for-byte, so normalizing them here would
+			// break the cross-language (Go/TS) canonical-byte parity that
+			// signatures depend on. String *values* ARE NFC-normalized (see the
+			// string case above) for human-input consistency. Keep this in
+			// agreement with src/canonical.ts.
 			if err := writeJSONString(buf, k); err != nil {
 				return err
 			}

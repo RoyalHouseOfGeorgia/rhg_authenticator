@@ -693,6 +693,31 @@ func TestPollForToken_Success(t *testing.T) {
 	}
 }
 
+// TestPollForToken_CreatedAtUsesInjectableClock verifies that token creation
+// stamps CreatedAt via the injectable timeNow seam, consistent with the
+// isTokenExpired age check — so token-age behavior is deterministically
+// testable rather than tied to wall-clock time.
+func TestPollForToken_CreatedAtUsesInjectableClock(t *testing.T) {
+	want := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"access_token":"gho_new","token_type":"bearer","scope":"public_repo"}`)
+	}))
+	defer srv.Close()
+	withAuthOverrides(t, func() {
+		accessTokenEndpoint = srv.URL
+		timeNow = func() time.Time { return want }
+	})
+
+	tok, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !tok.CreatedAt.Equal(want.UTC()) {
+		t.Errorf("CreatedAt = %v, want %v (injected clock must govern token creation)", tok.CreatedAt, want.UTC())
+	}
+}
+
 func TestPollForToken_Pending(t *testing.T) {
 	var count atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

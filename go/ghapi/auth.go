@@ -404,7 +404,7 @@ func pollForTokenInternal(ctx context.Context, deviceCode string, interval, expi
 				AccessToken: pr.AccessToken,
 				TokenType:   pr.TokenType,
 				Scope:       pr.Scope,
-				CreatedAt:   time.Now().UTC(),
+				CreatedAt:   timeNow().UTC(),
 			}, nil
 		}
 
