@@ -43,7 +43,7 @@ func FetchRegistryCommits(baseURL string, perPage int, etag string) ([]RegistryC
 	apiURL := fmt.Sprintf("%s/repos/%s/%s/commits?path=%s&per_page=%d",
 		baseURL, DefaultOwner, DefaultRepo, RegistryFilePath, perPage)
 
-	req, err := http.NewRequest("GET", apiURL, nil)
+	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("creating request: %w", err)
 	}

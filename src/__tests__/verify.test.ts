@@ -211,6 +211,25 @@ describe("verifyCredential", () => {
     expect((result as VerificationFailure).reason).toContain("JSON");
   });
 
+  // 9b. Invalid UTF-8 bytes inside an otherwise JSON-shaped payload
+  it("rejects payload with invalid UTF-8 bytes as not valid JSON", () => {
+    const { publicKey } = makeKeypair();
+    const entry = makeKeyEntry(publicKey);
+    const registry = makeRegistry(entry);
+
+    // A lone 0xFF byte is invalid UTF-8. The fatal decoder throws rather than
+    // substituting U+FFFD, so JSON parsing fails before the JSON-object check.
+    const badPayload = new Uint8Array([0x22, 0xff, 0x22]);
+    const fakeSig = new Uint8Array(64);
+
+    const result = verifyCredential(badPayload, fakeSig, registry);
+
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toBe(
+      "payload is not valid JSON",
+    );
+  });
+
   // 10. Malformed credential (missing fields)
   it("returns failure for credential with missing fields", () => {
     const { publicKey } = makeKeypair();

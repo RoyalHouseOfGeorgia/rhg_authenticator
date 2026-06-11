@@ -1,7 +1,7 @@
 //go:build ignore
 
 // gen_vectors.go regenerates the cross-language test vectors for the RHG Authenticator.
-// Run from the repo root: go run ./go/testdata/gen_vectors.go
+// Run from the go/ directory: go run ./testdata/gen_vectors.go > /tmp/vectors.json && mv /tmp/vectors.json testdata/vectors.json, then copy the result to src/__tests__/fixtures/vectors.json (see DEVELOPER.md)
 package main
 
 import (

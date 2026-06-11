@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -502,6 +503,49 @@ func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 	}
 	if len(sig) != 64 {
 		t.Fatalf("expected 64-byte signature, got %d", len(sig))
+	}
+}
+
+func TestIsPINAuthError_Cases(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "bare AuthErr",
+			err:  piv.AuthErr{},
+			want: true,
+		},
+		{
+			name: "single-wrapped AuthErr",
+			err:  fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 2}),
+			want: true,
+		},
+		{
+			name: "double-wrapped AuthErr",
+			err: fmt.Errorf("signing failed: %w",
+				fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 1})),
+			want: true,
+		},
+		{
+			name: "non-auth error",
+			err:  errors.New("pcsc daemon not running"),
+			want: false,
+		},
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsPINAuthError(tt.err); got != tt.want {
+				t.Errorf("IsPINAuthError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 

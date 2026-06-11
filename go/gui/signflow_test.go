@@ -10,9 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-piv/piv-go/v2/piv"
+
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
 // mockSignAdapter mirrors core/sign_test.go's mockAdapter.
@@ -336,6 +339,76 @@ func TestExecuteSignFlow_LogWriteFailureNonFatal(t *testing.T) {
 	}
 	if !strings.Contains(string(debugData), "log append failed") {
 		t.Errorf("debug log should contain 'log append failed', got: %s", string(debugData))
+	}
+}
+
+// seedEnabledCache returns an enabled PinCache primed with a PIN, asserting the
+// PIN is retrievable before the caller exercises clearPINCacheOnAuthError. Set
+// silently no-ops on a disabled cache, so seeding via SetEnabled(true) and
+// verifying Get() up front prevents a vacuously-passing post-clear assertion.
+func seedEnabledCache(t *testing.T) *yubikey.PinCache {
+	t.Helper()
+	cache := yubikey.NewPinCache()
+	cache.SetEnabled(true)
+	if err := cache.Set("123456"); err != nil {
+		t.Fatalf("seeding cache: %v", err)
+	}
+	if _, ok := cache.Get(); !ok {
+		t.Fatal("cache should hold a PIN before clear")
+	}
+	return cache
+}
+
+func TestClearPINCacheOnAuthError_SignFlowErrorClears(t *testing.T) {
+	cache := seedEnabledCache(t)
+
+	err := &SignFlowError{
+		Phase: PhaseSign,
+		Err:   fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2}),
+	}
+	clearPINCacheOnAuthError(err, cache)
+
+	if _, ok := cache.Get(); ok {
+		t.Error("expected cache to be cleared after auth error")
+	}
+}
+
+func TestClearPINCacheOnAuthError_NonAuthErrorPreserves(t *testing.T) {
+	cache := seedEnabledCache(t)
+
+	// PCSC / "no card" style error — not a PIN authentication failure.
+	err := errors.New("connecting to smart card: the smart card has been removed")
+	clearPINCacheOnAuthError(err, cache)
+
+	if _, ok := cache.Get(); !ok {
+		t.Error("expected cached PIN to survive a non-auth error")
+	}
+}
+
+func TestClearPINCacheOnAuthError_NilAndAuthOnEmptyCache(t *testing.T) {
+	// Empty (disabled) cache: nil error must not panic or clear.
+	cache := yubikey.NewPinCache()
+	clearPINCacheOnAuthError(nil, cache)
+	if _, ok := cache.Get(); ok {
+		t.Error("disabled cache should never report a PIN")
+	}
+
+	// Auth error against an empty cache: clearLocked nil-guards, so no panic.
+	authErr := &SignFlowError{Phase: PhaseSign, Err: piv.AuthErr{}}
+	clearPINCacheOnAuthError(authErr, cache)
+	if _, ok := cache.Get(); ok {
+		t.Error("disabled cache should never report a PIN")
+	}
+}
+
+func TestClearPINCacheOnAuthError_BareAuthErrClears(t *testing.T) {
+	cache := seedEnabledCache(t)
+
+	// Bare, unwrapped piv.AuthErr — no SignFlowError, no %w chain.
+	clearPINCacheOnAuthError(piv.AuthErr{}, cache)
+
+	if _, ok := cache.Get(); ok {
+		t.Error("expected cache to be cleared for a bare AuthErr")
 	}
 }
 

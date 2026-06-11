@@ -132,6 +132,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 
 			result, err := executeSignFlow(req, config.LogPath, openAdapter, MakePinReader(window, pinCache), logger)
 			if err != nil {
+				clearPINCacheOnAuthError(err, pinCache)
 				fyne.Do(func() {
 					msg := signFlowErrorMessage(err, logger)
 					statusLabel.SetText(msg)
@@ -308,10 +309,10 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 		case PhaseQR:
 			return "QR generation failed. Check debug.log for details."
 		case PhaseSign:
-			logger.Log(sfe.Error())
+			logger.Log(core.SanitizeForLog(sfe.Error()))
 			return "Signing failed. Check debug.log for details."
 		default:
-			logger.Log(sfe.Error())
+			logger.Log(core.SanitizeForLog(sfe.Error()))
 			return "Unexpected error. Check debug.log for details."
 		}
 	}

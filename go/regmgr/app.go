@@ -264,14 +264,17 @@ func (rt *RegistryTab) showLoginDialog(ctx context.Context, cancel context.Cance
 
 // userFacingError maps API errors to safe, user-friendly messages.
 func userFacingError(err error) string {
+	// Fork errors are checked first: a ForkError unwraps to its wrapped
+	// *APIError, so a fork failure caused by a 403/429 must still surface the
+	// fork message rather than the rate-limit/permission message.
+	if ghapi.IsForkError(err) {
+		return "Could not set up your GitHub fork. Check your network connection and try again."
+	}
 	if ghapi.IsRateLimited(err) {
 		return "GitHub rate limit reached. Try again in a few minutes."
 	}
 	if ghapi.IsForbidden(err) {
 		return "Permission denied. Check your GitHub account permissions."
-	}
-	if ghapi.IsForkError(err) {
-		return "Could not set up your GitHub fork. Check your network connection and try again."
 	}
 	// Network/timeout errors
 	return "An error occurred. Please try again later."
@@ -291,7 +294,7 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 		rt.startLogin()
 	} else if ghapi.IsForkError(err) {
 		log.Printf("error: fork setup failed: %s", core.SanitizeForLog(err.Error()))
-		dialog.ShowError(fmt.Errorf("Could not set up your GitHub fork. Check your network connection and try again."), rt.window)
+		dialog.ShowError(fmt.Errorf("%s", userFacingError(err)), rt.window)
 		rt.statusLabel.SetText("")
 	} else {
 		log.Printf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))

@@ -28,7 +28,7 @@ export type RevocationCheck = {
   payloadHash: string;
 };
 
-const decoder = new TextDecoder();
+const decoder = new TextDecoder('utf-8', { fatal: true });
 
 /** Maximum allowed payload size in bytes. */
 export const MAX_PAYLOAD_BYTES = 2048;

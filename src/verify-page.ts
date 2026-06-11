@@ -92,6 +92,9 @@ const FETCH_TIMEOUT_MS = 10_000;
 /** Maximum response size for fetched JSON resources (1 MiB). */
 const MAX_RESPONSE_BYTES = 1 << 20;
 
+/** Shared encoder for measuring UTF-8 byte lengths. */
+const textEncoder = new TextEncoder();
+
 /**
  * Fetch a JSON resource, enforce size limits, parse, and validate.
  *
@@ -146,7 +149,7 @@ async function fetchAndValidate<T>(
       throw new Error(`Failed to read ${dataName} response`, { cause: err });
     }
 
-    if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
+    if (textEncoder.encode(text).byteLength > MAX_RESPONSE_BYTES) {
       throw new Error(`${dataName} response exceeds size limit`);
     }
 

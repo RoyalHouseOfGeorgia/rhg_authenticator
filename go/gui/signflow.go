@@ -10,6 +10,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/qr"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
 // SignFlowPhase identifies a step in the signing flow for error classification.
@@ -102,4 +103,20 @@ func executeSignFlow(
 		PNGPreview: pngData,
 		Hash8:      hash8,
 	}, nil
+}
+
+// clearPINCacheOnAuthError clears the cached PIN when err is a PIV PIN
+// authentication failure. MakePinReader caches the PIN at dialog submission,
+// before the YubiKey verifies it; on an authentication failure the cached
+// (wrong) PIN must be cleared so it is not silently replayed on retry — each
+// replay decrements the PIV retry counter and can lock the applet.
+//
+// This lives at package level so the behavior is unit-testable without driving
+// the Fyne closure. PinCache.Clear() is mutex-protected and callable off the UI
+// thread; it invalidates-and-zeroes without flipping the user's "remember"
+// preference.
+func clearPINCacheOnAuthError(err error, cache *yubikey.PinCache) {
+	if err != nil && yubikey.IsPINAuthError(err) {
+		cache.Clear()
+	}
 }

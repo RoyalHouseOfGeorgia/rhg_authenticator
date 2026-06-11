@@ -182,6 +182,7 @@ YubiKey PIV slot 9c via `go-piv/piv-go` v2 — direct PCSC access, Ed25519 (algo
 
 - PIN is prompted via a GUI dialog on each sign operation (default)
 - Opt-in caching: PIN stored in `mlock`'d memory (non-swappable), protected by `sync.Mutex` with generation counter (prevents TOCTOU race on timer expiry), auto-zeroed after 5 minutes of inactivity or app close
+- Cached PIN is cleared immediately when the YubiKey rejects it (wrong or blocked PIN), so a mistyped PIN is never silently replayed against the hardware retry counter
 - Platform-specific mlock: `syscall.Mlock` on macOS/Linux, `VirtualLock` via `kernel32.dll` on Windows
 - YubiKey's built-in 3-attempt PIN retry counter is enforced by the hardware
 

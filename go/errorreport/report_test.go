@@ -4,6 +4,7 @@ package errorreport
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -407,15 +408,7 @@ func TestReadTail_FewerThanNLines(t *testing.T) {
 // --- helpers ---
 
 func lineN(n int) string {
-	s := ""
-	if n < 10 {
-		s = "0000" + string(rune('0'+n))
-	} else if n < 100 {
-		s = "000" + string(rune('0'+n/10)) + string(rune('0'+n%10))
-	} else {
-		s = "00" + string(rune('0'+n/100)) + string(rune('0'+(n/10)%10)) + string(rune('0'+n%10))
-	}
-	return "line-" + s
+	return fmt.Sprintf("line-%05d", n)
 }
 
 func assertContains(t *testing.T, s, sub string) {

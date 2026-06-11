@@ -25,7 +25,7 @@
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-1161 tests passing (772 Go + 389 TypeScript).
+1173 tests passing (781 Go + 392 TypeScript).
 
 ## Quick Start — Signing App (Go)
 
@@ -54,7 +54,7 @@ See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
 ```bash
 npm install
-npm test              # 385 tests
+npm test              # 392 tests
 npm run lint          # tsc --noEmit
 npm run build:verify  # Bundle verification page JS
 ```

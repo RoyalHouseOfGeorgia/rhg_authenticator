@@ -590,6 +590,29 @@ func TestUserFacingError_WrappedForkError(t *testing.T) {
 	}
 }
 
+// TestUserFacingError_ForkErrorPrecedence pins the precedence: a ForkError
+// wrapping a 403/429 *APIError must yield the fork message (fork wins over
+// permission/rate-limit), while a bare 403 still yields the forbidden message.
+func TestUserFacingError_ForkErrorPrecedence(t *testing.T) {
+	forkMsg := "Could not set up your GitHub fork. Check your network connection and try again."
+	forbiddenMsg := "Permission denied. Check your GitHub account permissions."
+
+	forkOver403 := &ghapi.ForkError{Phase: "create", Wrapped: &ghapi.APIError{StatusCode: 403, Message: "forbidden"}}
+	if got := userFacingError(forkOver403); got != forkMsg {
+		t.Errorf("userFacingError(ForkError wrapping 403) = %q, want %q", got, forkMsg)
+	}
+
+	forkOver429 := &ghapi.ForkError{Phase: "poll", Wrapped: &ghapi.APIError{StatusCode: 429, Message: "rate limited"}}
+	if got := userFacingError(forkOver429); got != forkMsg {
+		t.Errorf("userFacingError(ForkError wrapping 429) = %q, want %q", got, forkMsg)
+	}
+
+	bare403 := &ghapi.APIError{StatusCode: 403, Message: "forbidden"}
+	if got := userFacingError(bare403); got != forbiddenMsg {
+		t.Errorf("userFacingError(bare 403) = %q, want %q", got, forbiddenMsg)
+	}
+}
+
 // --- isSafeGitHubURL tests ---
 
 func TestIsSafeGitHubURL_GitHubHTTPS(t *testing.T) {

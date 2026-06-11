@@ -155,6 +155,20 @@ func (a *YubiKeyAdapter) Close() error {
 	return a.yk.Close()
 }
 
+// IsPINAuthError reports whether err is a PIV PIN authentication failure —
+// either a wrong PIN or a blocked PIN (retry counter exhausted). Both unwrap
+// to piv.AuthErr, so errors.As is the intended check (piv-go propagates the
+// card's wrong-PIN error through the wrap chain with %w, never %v).
+//
+// CONTRACT NOTE: do not build "re-enter your PIN" UX on this predicate without
+// inspecting piv.AuthErr.Retries — this returns true for the blocked case too.
+// Per piv-go, AuthErr.Retries == 0 means "blocked OR retry count unavailable",
+// so do not infer "blocked" from Retries == 0 alone.
+func IsPINAuthError(err error) bool {
+	var ae piv.AuthErr
+	return errors.As(err, &ae)
+}
+
 // ReadPublicKey opens a YubiKey, reads the Ed25519 public key from PIV slot 9c,
 // and returns it as a base64-encoded string suitable for a registry entry's
 // public_key field. No PIN required — only reads the certificate.

@@ -14,7 +14,6 @@ for (let i = 0; i < 32; i++) secretKey[i] = (42 + i * 7) & 0xff;
 const publicKey = getPublicKey(secretKey);
 
 const credential = {
-  authority: 'Test Authority',
   date: '2026-03-11',
   detail: 'Test Detail',
   honor: 'Test Honor',
@@ -35,7 +34,6 @@ console.log(`Recipient: ${credential.recipient}`);
 console.log(`Honor:     ${credential.honor}`);
 console.log(`Detail:    ${credential.detail}`);
 console.log(`Date:      ${credential.date}`);
-console.log(`Authority: ${credential.authority}`);
 console.log();
 console.log(`Public key (base64): ${btoa(String.fromCharCode(...publicKey))}`);
 console.log();
