@@ -6,6 +6,26 @@ export type JsonObject = { [key: string]: JsonValue };
 export const MAX_DEPTH = 4;
 
 /**
+ * Compare strings by Unicode code point. Go's sort.Strings orders by UTF-8
+ * byte, which is equivalent to code-point order — but the default
+ * Array.prototype.sort comparison uses UTF-16 code units, which orders
+ * characters above U+FFFF (surrogate pairs) differently. Keys must sort
+ * identically in both languages or canonical bytes (and signatures) diverge.
+ */
+function compareCodePoints(a: string, b: string): number {
+  let i = 0;
+  while (i < a.length && i < b.length) {
+    const ca = a.codePointAt(i) as number;
+    const cb = b.codePointAt(i) as number;
+    if (ca !== cb) {
+      return ca - cb;
+    }
+    i += ca > 0xffff ? 2 : 1;
+  }
+  return a.length - b.length;
+}
+
+/**
  * Recursively sort object keys and normalize values for deterministic
  * JSON serialization.
  */
@@ -43,7 +63,7 @@ function sortAndNormalize(value: JsonValue, depth: number): JsonValue {
       // parity that signatures depend on. String *values* ARE NFC-normalized (see
       // the 'string' case above). Keep this in agreement with go/core/canonical.go.
       const sorted = Object.create(null) as JsonObject;
-      for (const key of Object.keys(value).sort()) {
+      for (const key of Object.keys(value).sort(compareCodePoints)) {
         if (key === '__proto__') {
           throw new TypeError('"__proto__" is not allowed as a JSON key');
         }

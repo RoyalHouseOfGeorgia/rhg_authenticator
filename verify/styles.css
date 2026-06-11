@@ -123,6 +123,7 @@ main {
 /* --- Result States --- */
 .result-valid,
 .result-invalid,
+.result-revoked,
 .result-error,
 .result-info {
   background: var(--color-white);
@@ -135,7 +136,8 @@ main {
   border-left-color: var(--color-valid-border);
 }
 
-.result-invalid {
+.result-invalid,
+.result-revoked {
   border-left-color: var(--color-invalid-border);
 }
 
@@ -160,7 +162,8 @@ main {
   color: var(--color-valid);
 }
 
-.result-invalid .status-banner {
+.result-invalid .status-banner,
+.result-revoked .status-banner {
   color: var(--color-invalid);
 }
 
@@ -179,7 +182,8 @@ main {
   content: "\2713"; /* ✓ */
 }
 
-.result-invalid .status-banner::before {
+.result-invalid .status-banner::before,
+.result-revoked .status-banner::before {
   content: "\2717"; /* ✗ */
 }
 
@@ -225,6 +229,15 @@ main {
   font-size: 0.875rem;
   color: var(--color-text-muted);
   padding-top: 8px;
+}
+
+.revocation-unknown {
+  font-size: 0.875rem;
+  color: var(--color-error);
+  background: var(--color-error-bg);
+  border-left: 3px solid var(--color-error-border);
+  padding: 8px 12px;
+  margin-top: 12px;
 }
 
 /* --- Info Page --- */
@@ -337,6 +350,7 @@ footer a:hover {
 
   .result-valid,
   .result-invalid,
+  .result-revoked,
   .result-error,
   .result-info {
     padding: 32px 28px;

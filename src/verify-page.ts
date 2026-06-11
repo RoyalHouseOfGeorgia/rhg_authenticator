@@ -119,6 +119,7 @@ async function fetchAndValidate<T>(
         signal: controller.signal,
         credentials: 'omit',
         referrerPolicy: 'no-referrer',
+        cache: 'no-store',
       });
     } catch (err) {
       throw new Error(`Failed to contact ${serviceName} service`, { cause: err });

@@ -209,4 +209,18 @@ describe('canonicalize', () => {
       expect(result).toContain('"hasOwnProperty"');
     });
   });
+
+  describe('key sorting', () => {
+    it('sorts keys above U+FFFF by code point, matching Go byte order', () => {
+      // Default .sort() compares UTF-16 code units, which would place
+      // "\u{10000}" (high surrogate 0xD800) before "｡" (U+FF61) — the
+      // opposite of Go's sort.Strings UTF-8 byte order.
+      const result = toJson({ '\u{10000}': 1, '｡': 2 });
+      expect(result.indexOf('｡')).toBeLessThan(result.indexOf('\u{10000}'));
+    });
+
+    it('sorts a key before its extensions', () => {
+      expect(toJson({ ab: 1, a: 2 })).toBe('{"a":2,"ab":1}');
+    });
+  });
 });
