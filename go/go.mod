@@ -6,7 +6,7 @@ require (
 	fyne.io/x/fyne v0.0.0-20260219123538-e09698d18b34
 	github.com/go-piv/piv-go/v2 v2.6.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // unmaintained (2020); TODO(2027): evaluate maintained alternative. Security audit 2026-03: no known CVEs, input is app-controlled.
-	golang.org/x/text v0.39.0
+	golang.org/x/text v0.40.0
 )
 
 require github.com/zalando/go-keyring v0.2.8
@@ -28,7 +28,7 @@ require (
 	github.com/stretchr/testify v1.11.1 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260625142307-59b4966ccb57 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated // indirect
