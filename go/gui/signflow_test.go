@@ -412,6 +412,27 @@ func TestClearPINCacheOnAuthError_BareAuthErrClears(t *testing.T) {
 	}
 }
 
+// TestClearPINCacheOnAuthError_RealisticVerifyPinChain pins the lockout-prevention
+// invariant against the exact error shape piv-go produces: a card VERIFY failure
+// wrapped "verify pin: %w", re-wrapped by the adapter/HandleSign, then boxed in a
+// SignFlowError. If a future piv-go bump changes its %w wrap to %v, errors.As
+// breaks and this fails in CI — before a wrong PIN can be silently replayed into
+// the PIV retry counter (a signing-key lockout DoS).
+func TestClearPINCacheOnAuthError_RealisticVerifyPinChain(t *testing.T) {
+	cache := seedEnabledCache(t)
+
+	err := &SignFlowError{
+		Phase: PhaseSign,
+		Err: fmt.Errorf("signing failed: %w",
+			fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})),
+	}
+	clearPINCacheOnAuthError(err, cache)
+
+	if _, ok := cache.Get(); ok {
+		t.Error("expected cache cleared for a realistically-wrapped verify-pin AuthErr")
+	}
+}
+
 func TestSignFlowError_Unwrap(t *testing.T) {
 	inner := fmt.Errorf("hardware fault")
 	sfe := &SignFlowError{Phase: PhaseSign, Err: inner}

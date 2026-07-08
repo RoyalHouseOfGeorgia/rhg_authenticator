@@ -84,7 +84,7 @@ func executeSignFlow(
 	// 5. Log issuance record (non-fatal — signing already succeeded).
 	if logPath != "" {
 		if logErr := issuancelog.AppendRecord(logPath, record); logErr != nil {
-			logger.Log("log append failed: " + logErr.Error())
+			logger.Log("log append failed: " + core.SanitizeForLog(logErr.Error()))
 		}
 	}
 

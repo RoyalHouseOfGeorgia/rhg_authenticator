@@ -529,6 +529,16 @@ func TestIsPINAuthError_Cases(t *testing.T) {
 			want: true,
 		},
 		{
+			// Pins the exact shape piv-go produces on a wrong-PIN VERIFY
+			// ("verify pin: %w"), re-wrapped by adapter/HandleSign. If a future
+			// piv-go bump changes this to %v, errors.As breaks and this fails —
+			// before a wrong PIN can be silently replayed into the retry counter.
+			name: "realistic verify-pin wrapped chain",
+			err: fmt.Errorf("signing failed: %w",
+				fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})),
+			want: true,
+		},
+		{
 			name: "non-auth error",
 			err:  errors.New("pcsc daemon not running"),
 			want: false,
@@ -584,4 +594,3 @@ func TestYubiKeyAdapter_ConcurrentSignAndSetReadPin(t *testing.T) {
 
 	wg.Wait()
 }
-

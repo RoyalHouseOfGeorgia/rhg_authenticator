@@ -43,7 +43,7 @@ var honorTitles = []string{
 type SignTabConfig struct {
 	LogPath string
 	DataDir string
-	Keyring ghapi.Keyring  // for issue reporting (may be nil)
+	Keyring ghapi.Keyring // for issue reporting (may be nil)
 	SafeGo  func(func())  // panic-safe goroutine launcher (may be nil — falls back to plain go)
 }
 
@@ -175,7 +175,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 						}
 						defer writer.Close()
 						if saveErr := qr.SaveSVG(result.Response.URL, writer.URI().Path()); saveErr != nil {
-							logger.Log("SVG save failed: " + saveErr.Error())
+							logger.Log("SVG save failed: " + core.SanitizeForLog(saveErr.Error()))
 							dialog.ShowError(fmt.Errorf("failed to save SVG file"), window)
 						}
 					}, window)
@@ -193,12 +193,12 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 						defer writer.Close()
 						pngHiRes, pngErr := qr.GeneratePNG(result.Response.URL, qrSavePx)
 						if pngErr != nil {
-							logger.Log("PNG generation failed: " + pngErr.Error())
+							logger.Log("PNG generation failed: " + core.SanitizeForLog(pngErr.Error()))
 							dialog.ShowError(fmt.Errorf("failed to generate PNG"), window)
 							return
 						}
 						if writeErr := os.WriteFile(writer.URI().Path(), pngHiRes, 0o600); writeErr != nil {
-							logger.Log("PNG save failed: " + writeErr.Error())
+							logger.Log("PNG save failed: " + core.SanitizeForLog(writeErr.Error()))
 							dialog.ShowError(fmt.Errorf("failed to save PNG file"), window)
 						}
 					}, window)
@@ -267,6 +267,8 @@ func sanitizeError(prefix string, err error) string {
 		return prefix + ": smart card service error"
 	case core.HwErrPIN:
 		return prefix + ": PIN error"
+	case core.HwErrTransient:
+		return prefix + ": card reset"
 	case core.HwErrHardware:
 		return prefix + ": hardware device error"
 	default:
@@ -283,6 +285,11 @@ func friendlyYubiKeyError(err error, logger *debuglog.Logger) string {
 	// Always log the actual error for diagnosis.
 	logger.Log("yubikey: " + core.SanitizeForLog(err.Error()))
 	switch core.ClassifyHardwareError(err) {
+	// signFlowErrorMessage handles transient card resets upstream and returns before
+	// calling this helper, so this case is unreachable via that path. It is kept so the
+	// helper's error→message mapping stays complete for any direct or future caller.
+	case core.HwErrTransient:
+		return core.MsgYubiKeyReset
 	case core.HwErrSmartcard:
 		return "Smart card service not available. On macOS this is built-in; on Windows check the Smart Card service is running."
 	case core.HwErrHardware:
@@ -300,6 +307,14 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	// breaking the errors.Is chain for our sentinel.
 	if strings.Contains(err.Error(), ErrSigningCancelled.Error()) {
 		return ""
+	}
+	// Transient PC/SC contention (card reset) can surface in any phase and via
+	// the raw adapter-open path. Hoist the check so it wins over the PIN
+	// misclassification even when "verify pin" appears in the wrapped chain.
+	cat := core.ClassifyHardwareError(err)
+	if cat == core.HwErrTransient {
+		logger.Log(core.SanitizeForLog(err.Error()))
+		return core.MsgYubiKeyReset
 	}
 	var sfe *SignFlowError
 	if errors.As(err, &sfe) {
@@ -326,7 +341,7 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	if strings.Contains(errMsg, "certificate") || strings.Contains(errMsg, "slot 9c") {
 		return "No signing certificate found on YubiKey (PIV slot 9c). Generate an Ed25519 key first."
 	}
-	if core.ClassifyHardwareError(err) != "" {
+	if cat != "" {
 		return friendlyYubiKeyError(err, logger)
 	}
 	return "Signing failed. Check debug.log for details."
@@ -342,4 +357,3 @@ func buildFilename(date, hash8, ext string) string {
 	}
 	return fmt.Sprintf("rhg-credential-%s-%s-%s.%s", date, hash8, suffix, ext)
 }
-

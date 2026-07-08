@@ -1,15 +1,25 @@
 package gui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
+
+// resetErr is the real wrapped error chain seen when a PC/SC card reset
+// interrupts a signing operation. It contains BOTH "verify pin" (which the old
+// classifier misread as a PIN error) AND the smart-card reset phrase, proving
+// the transient path wins.
+func resetErr() error {
+	return errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid")
+}
 
 // --- validateSignForm tests ---
 
@@ -439,6 +449,18 @@ func TestSanitizeError_EmptyMessage(t *testing.T) {
 	}
 }
 
+func TestSanitizeError_Transient(t *testing.T) {
+	// A card reset must classify as transient ("card reset"), NOT "PIN error",
+	// even though "verify pin" appears in the wrapped chain.
+	got := sanitizeError("HandleSign", resetErr())
+	if !strings.HasSuffix(got, ": card reset") {
+		t.Errorf("got %q, want suffix %q", got, ": card reset")
+	}
+	if strings.HasSuffix(got, ": PIN error") {
+		t.Errorf("transient error misclassified as PIN error: %q", got)
+	}
+}
+
 // --- friendlyYubiKeyError tests ---
 
 func TestFriendlyYubiKeyError_Nil(t *testing.T) {
@@ -473,6 +495,15 @@ func TestFriendlyYubiKeyError_SCARDError(t *testing.T) {
 	got := friendlyYubiKeyError(fmt.Errorf("scard: service not available"), nil)
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected 'Smart card service' message, got: %q", got)
+	}
+}
+
+func TestFriendlyYubiKeyError_Transient(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	got := friendlyYubiKeyError(resetErr(), logger)
+	if got != core.MsgYubiKeyReset {
+		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
 	}
 }
 
@@ -612,6 +643,29 @@ func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 	}
 }
 
+func TestSignFlowErrorMessage_Transient_WrappedInSignFlowError(t *testing.T) {
+	// A reset during the sign phase must yield the canonical reset message,
+	// not the generic "Signing failed" message.
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	sfe := &SignFlowError{Phase: PhaseSign, Err: resetErr()}
+	got := signFlowErrorMessage(sfe, logger)
+	if got != core.MsgYubiKeyReset {
+		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
+	}
+}
+
+func TestSignFlowErrorMessage_Transient_RawAdapterOpen(t *testing.T) {
+	// The raw adapter-open path (not wrapped in SignFlowError) must also route
+	// a reset to the canonical message.
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	got := signFlowErrorMessage(resetErr(), logger)
+	if got != core.MsgYubiKeyReset {
+		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
+	}
+}
+
 func TestSignFlowErrorMessage_CertificateError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
@@ -748,4 +802,3 @@ func TestFormatRecordSummaryWithRevocation_EmptyHash(t *testing.T) {
 		t.Errorf("empty hash should not match revoked set, got: %q", got)
 	}
 }
-

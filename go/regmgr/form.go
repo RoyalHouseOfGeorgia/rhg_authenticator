@@ -18,6 +18,19 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
+// importKeyErrorMessage maps a YubiKey read error to a user-facing message for the
+// "Import from YubiKey" flow.
+func importKeyErrorMessage(err error) string {
+	switch core.ClassifyHardwareError(err) {
+	case core.HwErrSmartcard:
+		return "Smart card service not available"
+	case core.HwErrTransient:
+		return core.MsgYubiKeyReset
+	default:
+		return "No YubiKey detected — plug in and try again"
+	}
+}
+
 // buildEntry constructs a KeyEntry from form values.
 func buildEntry(authority, from string, to *string, publicKey, note string) core.KeyEntry {
 	return core.KeyEntry{
@@ -25,7 +38,7 @@ func buildEntry(authority, from string, to *string, publicKey, note string) core
 		From:      from,
 		To:        to,
 		Algorithm: core.SupportedAlgorithm,
-		PublicKey:  publicKey,
+		PublicKey: publicKey,
 		Note:      note,
 	}
 }
@@ -119,7 +132,7 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	importBtn := widget.NewButton("Import Certificate", func() {
 		d := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 			if err != nil {
-				errorLabel.SetText(err.Error())
+				errorLabel.SetText(core.StripControlChars(err.Error()))
 				return
 			}
 			if reader == nil {
@@ -129,7 +142,7 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 
 			data, err := os.ReadFile(reader.URI().Path())
 			if err != nil {
-				errorLabel.SetText("Failed to read file: " + err.Error())
+				errorLabel.SetText("Failed to read file: " + core.StripControlChars(err.Error()))
 				keyLabel.SetText("No key imported")
 				importedKey = ""
 				return
@@ -137,7 +150,7 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 
 			key, err := ExtractEd25519Key(data)
 			if err != nil {
-				errorLabel.SetText(err.Error())
+				errorLabel.SetText(core.StripControlChars(err.Error()))
 				keyLabel.SetText("No key imported")
 				importedKey = ""
 				return
@@ -154,12 +167,7 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	importYubiKeyBtn := widget.NewButton("Import from YubiKey", func() {
 		key, err := yubikey.ReadPublicKey()
 		if err != nil {
-			switch core.ClassifyHardwareError(err) {
-			case core.HwErrSmartcard:
-				keyLabel.SetText("Smart card service not available")
-			default:
-				keyLabel.SetText("No YubiKey detected — plug in and try again")
-			}
+			keyLabel.SetText(importKeyErrorMessage(err))
 			importedKey = ""
 			errorLabel.SetText("")
 			return

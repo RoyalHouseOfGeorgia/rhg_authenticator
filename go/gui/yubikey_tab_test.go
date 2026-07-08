@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -86,6 +87,19 @@ func TestFormatKeyResult_Error_NoYubiKey(t *testing.T) {
 	}
 }
 
+func TestFormatKeyResult_Error_Transient(t *testing.T) {
+	// A card reset must surface the canonical reset message, even though
+	// "verify pin" appears in the wrapped error chain.
+	result := KeyCheckResult{Error: errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid")}
+	status, details := formatKeyResult(result)
+	if status != core.MsgYubiKeyReset {
+		t.Errorf("status = %q, want %q", status, core.MsgYubiKeyReset)
+	}
+	if details != nil {
+		t.Errorf("details should be nil on error, got: %v", details)
+	}
+}
+
 func TestFormatKeyResult_NoExpiry(t *testing.T) {
 	entry := &core.KeyEntry{
 		Authority: "Test Authority",
@@ -161,4 +175,3 @@ func TestFormatKeyResult_EmptyNote(t *testing.T) {
 		}
 	}
 }
-

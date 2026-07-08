@@ -56,11 +56,15 @@ func checkYubiKey(reg core.Registry) KeyCheckResult {
 func formatKeyResult(result KeyCheckResult) (status string, details []string) {
 	if result.Error != nil {
 		switch core.ClassifyHardwareError(result.Error) {
+		case core.HwErrTransient:
+			status = core.MsgYubiKeyReset
 		case core.HwErrSmartcard:
 			status = "Smart card service not available"
 		case core.HwErrHardware:
 			status = "Please plug in your YubiKey and try again"
 		default:
+			// HwErrPIN cannot occur here: the key check reads the slot-9c public
+			// key/cert, which requires no PIN (readPin is a no-op).
 			status = "Failed to read YubiKey"
 		}
 		return status, nil

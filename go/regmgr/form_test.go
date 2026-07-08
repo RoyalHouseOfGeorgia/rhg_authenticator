@@ -1,8 +1,11 @@
 package regmgr
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
 func TestBuildEntry_Basic(t *testing.T) {
@@ -212,5 +215,36 @@ func TestValidateEntryForm_EmptyKey(t *testing.T) {
 	err := validateEntryForm("Auth", "2026-01-01", "", true, "")
 	if err == nil {
 		t.Fatal("expected error for empty key")
+	}
+}
+
+func TestImportKeyErrorMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "reset error (wrapped verify pin chain)",
+			err:  errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid"),
+			want: core.MsgYubiKeyReset,
+		},
+		{
+			name: "pcsc error",
+			err:  errors.New("pcsc daemon not running"),
+			want: "Smart card service not available",
+		},
+		{
+			name: "generic error",
+			err:  errors.New("something else"),
+			want: "No YubiKey detected — plug in and try again",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := importKeyErrorMessage(tt.err); got != tt.want {
+				t.Errorf("importKeyErrorMessage(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
 	}
 }
