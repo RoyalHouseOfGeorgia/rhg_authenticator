@@ -18,10 +18,10 @@ import (
 const (
 	repoOwner           = "RoyalHouseOfGeorgia"
 	repoName            = "rhg_authenticator"
-	maxTitleLen          = 256
-	maxBrowserBodyBytes  = 1500
-	debugLogTailLines    = 50
-	issueNewURL          = "https://github.com/" + repoOwner + "/" + repoName + "/issues/new"
+	maxTitleLen         = 256
+	maxBrowserBodyBytes = 1500
+	debugLogTailLines   = 50
+	issueNewURL         = "https://github.com/" + repoOwner + "/" + repoName + "/issues/new"
 )
 
 // Package-level function variables for test injection.

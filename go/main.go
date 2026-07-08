@@ -26,8 +26,8 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/regmgr"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/regmgr"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/update"
 )
 

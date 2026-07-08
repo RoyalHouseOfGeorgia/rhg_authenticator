@@ -14,13 +14,13 @@ import (
 // sampleRecord returns a valid IssuanceRecord for testing.
 func sampleRecord() IssuanceRecord {
 	return IssuanceRecord{
-		Timestamp:     time.Now().UTC().Format(time.RFC3339),
-		Recipient:     "John Doe",
-		Honor:         "Order of the Golden Fleece",
-		Detail:        "Awarded for distinguished service",
-		Date:          "2026-03-13",
-		PayloadSHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-		SignatureB64URL:  "c2lnbmF0dXJl",
+		Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		Recipient:       "John Doe",
+		Honor:           "Order of the Golden Fleece",
+		Detail:          "Awarded for distinguished service",
+		Date:            "2026-03-13",
+		PayloadSHA256:   "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		SignatureB64URL: "c2lnbmF0dXJl",
 	}
 }
 
@@ -218,13 +218,13 @@ func TestCleanStaleTmpFiles_NonexistentDirectory(t *testing.T) {
 
 func TestIssuanceRecord_JSONKeys(t *testing.T) {
 	rec := IssuanceRecord{
-		Timestamp:     "2026-03-13T10:30:00Z",
-		Recipient:     "Jane",
-		Honor:         "Medal",
-		Detail:        "For valor",
-		Date:          "2026-03-13",
-		PayloadSHA256: "aabbccdd",
-		SignatureB64URL:  "c2ln",
+		Timestamp:       "2026-03-13T10:30:00Z",
+		Recipient:       "Jane",
+		Honor:           "Medal",
+		Detail:          "For valor",
+		Date:            "2026-03-13",
+		PayloadSHA256:   "aabbccdd",
+		SignatureB64URL: "c2ln",
 	}
 
 	data, err := json.Marshal(rec)
@@ -417,4 +417,3 @@ func TestCleanStaleTmpFiles_DirectoryWithSubdirs(t *testing.T) {
 		t.Errorf("subdirectory should still exist: %v", err)
 	}
 }
-

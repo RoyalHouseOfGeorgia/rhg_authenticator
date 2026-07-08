@@ -95,6 +95,15 @@ jobs:
           cache-dependency-path: go/go.sum
       - name: Toolchain versions
         run: uname -m && sw_vers && xcodebuild -version && go version
+      - name: Check gofmt
+        working-directory: go
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-formatted (run 'gofmt -w .' in go/):"
+            echo "$unformatted"
+            exit 1
+          fi
       - working-directory: go
         run: go test -race ./... -count=1
 

@@ -60,7 +60,7 @@ func main() {
 			name: "nfc_edge_case",
 			cred: map[string]any{
 				"version":   float64(1),
-				"recipient": "Caf\u00e9",   // NFC form
+				"recipient": "Caf\u00e9", // NFC form
 				"honor":     "Test Honor",
 				"detail":    "r\u00e9sum\u00e9", // NFC form
 				"date":      "2026-03-13",

@@ -19,14 +19,14 @@ import (
 )
 
 const (
-	DefaultOwner     = "RoyalHouseOfGeorgia"
-	DefaultRepo      = "rhg_authenticator"
-	RegistryFilePath = "verify/keys/registry.json"
-	revocationPath   = "verify/keys/revocations.json"
+	DefaultOwner      = "RoyalHouseOfGeorgia"
+	DefaultRepo       = "rhg_authenticator"
+	RegistryFilePath  = "verify/keys/registry.json"
+	revocationPath    = "verify/keys/revocations.json"
 	defaultAPIBaseURL = "https://api.github.com"
-	maxResponseBytes = 2 * 1024 * 1024 // 2 MiB
-	clientTimeout    = 30 * time.Second
-	maxBranchRetries = 3
+	maxResponseBytes  = 2 * 1024 * 1024 // 2 MiB
+	clientTimeout     = 30 * time.Second
+	maxBranchRetries  = 3
 )
 
 var (
@@ -240,7 +240,6 @@ func extractErrorMessage(data []byte, statusCode int) string {
 		return http.StatusText(statusCode)
 	}
 }
-
 
 // getRefFor returns the SHA of the given ref (e.g. "heads/main") for the specified owner/repo.
 func (c *Client) getRefFor(ctx context.Context, owner, repo, ref string) (string, error) {

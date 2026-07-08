@@ -316,7 +316,7 @@ func TestHandleSign_NFCNormalization(t *testing.T) {
 
 	// Pass NFD input (e + combining acute = é in NFD).
 	resp, err := HandleSign(SignRequest{
-		Recipient: "Caf\u0065\u0301",  // NFD
+		Recipient: "Caf\u0065\u0301", // NFD
 		Honor:     "Test Honor",
 		Detail:    "re\u0301sume\u0301", // NFD
 		Date:      "2026-03-13",
@@ -456,7 +456,6 @@ func TestHandleSign_PayloadSHA256Populated(t *testing.T) {
 		t.Errorf("PayloadSHA256 is not valid hex: %v", err)
 	}
 }
-
 
 func TestHandleSign_PayloadSHA256MatchesCanonical(t *testing.T) {
 	sk := testSecretKey()

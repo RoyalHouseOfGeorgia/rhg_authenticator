@@ -51,7 +51,7 @@ func TestBuildIssueTitle_MultibyteTruncation(t *testing.T) {
 	// Place a 4-byte emoji so the 256-byte cut falls mid-rune.
 	prefix := "[Auto] internal: "
 	filler := strings.Repeat("A", maxTitleLen-len(prefix)-2) // leaves 2 bytes
-	desc := filler + "\U0001F600"                             // 4-byte emoji, cut after 2 bytes
+	desc := filler + "\U0001F600"                            // 4-byte emoji, cut after 2 bytes
 	got := BuildIssueTitle("internal", desc)
 	if !isValidUTF8(got) {
 		t.Error("truncated title is not valid UTF-8")

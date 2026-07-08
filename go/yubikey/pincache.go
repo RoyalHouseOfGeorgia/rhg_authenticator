@@ -22,7 +22,7 @@ type PinCache struct {
 	pin     []byte // mlock'd buffer
 	valid   bool
 	timer   *time.Timer
-	enabled bool   // whether caching is enabled (checkbox state)
+	enabled bool // whether caching is enabled (checkbox state)
 	timeout time.Duration
 	gen     uint64 // generation counter; guards against TOCTOU race in Set
 }

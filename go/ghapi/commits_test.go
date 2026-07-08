@@ -158,4 +158,3 @@ func TestFetchRegistryCommits_NonOKStatus(t *testing.T) {
 		t.Errorf("error = %q, want it to contain 'HTTP 500'", err.Error())
 	}
 }
-

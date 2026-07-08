@@ -868,7 +868,7 @@ func TestCreateRegistryPR_Base64RoundTrip(t *testing.T) {
 			From:      "2025-01-01",
 			To:        nil,
 			Algorithm: "Ed25519",
-			PublicKey:  "/PjT+j342wWZypb0m/4MSBsFhHrrqzpoTe2rZ9hf0XU=",
+			PublicKey: "/PjT+j342wWZypb0m/4MSBsFhHrrqzpoTe2rZ9hf0XU=",
 			Note:      "Test key",
 		}},
 	}

@@ -760,4 +760,3 @@ func TestReadLimitedBody_EmptyBody(t *testing.T) {
 		t.Errorf("body length = %d, want 0", len(data))
 	}
 }
-

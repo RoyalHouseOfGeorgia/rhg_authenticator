@@ -16,12 +16,12 @@ import (
 // sensitivity beyond what is already public. Stored with 0o600 on the
 // user's local filesystem.
 type IssuanceRecord struct {
-	Timestamp     string `json:"timestamp"`       // RFC 3339 (e.g., "2026-03-13T10:30:00Z")
-	Recipient     string `json:"recipient"`
-	Honor         string `json:"honor"`
-	Detail        string `json:"detail"`
-	Date          string `json:"date"`
-	PayloadSHA256 string `json:"payload_sha256"`  // lowercase hex
+	Timestamp       string `json:"timestamp"` // RFC 3339 (e.g., "2026-03-13T10:30:00Z")
+	Recipient       string `json:"recipient"`
+	Honor           string `json:"honor"`
+	Detail          string `json:"detail"`
+	Date            string `json:"date"`
+	PayloadSHA256   string `json:"payload_sha256"` // lowercase hex
 	SignatureB64URL string `json:"signature_b64url"`
 }
 
@@ -116,4 +116,3 @@ func CleanStaleTmpFiles(logPath string) error {
 
 	return nil
 }
-

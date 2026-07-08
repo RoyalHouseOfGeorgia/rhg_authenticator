@@ -31,4 +31,3 @@ func MarshalRegistry(reg core.Registry) ([]byte, error) {
 	}
 	return data, nil
 }
-

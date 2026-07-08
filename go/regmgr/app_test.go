@@ -531,8 +531,8 @@ func TestClientForHistory_NotLoggedIn(t *testing.T) {
 
 func TestClientForHistory_EmptyAccessToken(t *testing.T) {
 	rt := &RegistryTab{state: &appState{
-		loggedIn:   true,
-		githubUser: "testuser",
+		loggedIn:    true,
+		githubUser:  "testuser",
 		githubToken: ghapi.Token{AccessToken: ""},
 	}}
 	if rt.ClientForHistory() != nil {
@@ -542,8 +542,8 @@ func TestClientForHistory_EmptyAccessToken(t *testing.T) {
 
 func TestClientForHistory_EmptyUsername(t *testing.T) {
 	rt := &RegistryTab{state: &appState{
-		loggedIn:   true,
-		githubUser: "",
+		loggedIn:    true,
+		githubUser:  "",
 		githubToken: ghapi.Token{AccessToken: "tok-123"},
 	}}
 	if rt.ClientForHistory() != nil {
@@ -553,8 +553,8 @@ func TestClientForHistory_EmptyUsername(t *testing.T) {
 
 func TestClientForHistory_AllConditionsMet(t *testing.T) {
 	rt := &RegistryTab{state: &appState{
-		loggedIn:   true,
-		githubUser: "testuser",
+		loggedIn:    true,
+		githubUser:  "testuser",
 		githubToken: ghapi.Token{AccessToken: "tok-123"},
 	}}
 	client := rt.ClientForHistory()
