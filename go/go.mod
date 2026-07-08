@@ -1,6 +1,6 @@
 module github.com/royalhouseofgeorgia/rhg-authenticator
 
-go 1.25.11
+go 1.25.12
 
 require (
 	fyne.io/x/fyne v0.0.0-20260219123538-e09698d18b34
