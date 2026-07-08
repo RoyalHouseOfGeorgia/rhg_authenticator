@@ -45,31 +45,53 @@ func executeSignFlow(
 	logPath string,
 	openAdapter func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error),
 	readPin func() (string, error),
+	onConnecting func(),
 	logger *debuglog.Logger,
 ) (SignFlowResult, error) {
-	// 1. Open adapter.
-	adapter, closer, err := openAdapter(readPin)
+	// 1. Resolve the PIN up-front, BEFORE opening the card. piv-go holds an
+	//    exclusive PCSC transaction (SCARD_SHARE_EXCLUSIVE + an open transaction)
+	//    for the whole connection lifetime, and its lazy PINPrompt fires inside
+	//    that transaction. Prompting for the PIN after Open would hold the
+	//    exclusive transaction open across human PIN entry, inviting a PC/SC
+	//    card reset on the subsequent VERIFY/sign APDU. Resolving first shrinks
+	//    the held-transaction window to cert-read + login + sign.
+	pin, err := readPin()
+	if err != nil {
+		// ErrSigningCancelled / ErrPINEntryTimedOut / ErrPINCacheUnavailable are
+		// surfaced as-is; signFlowErrorMessage maps them via errors.Is.
+		return SignFlowResult{}, err
+	}
+
+	if onConnecting != nil {
+		onConnecting()
+	}
+
+	// 2. Open adapter with the pre-resolved PIN; piv-go's PINPrompt returns it
+	//    instantly. This assumes a fresh per-sign Open/Close (the production
+	//    openAdapter builds a new adapter each call) — a long-lived adapter would
+	//    reintroduce the whole-app held transaction this fix avoids.
+	adapter, closer, err := openAdapter(func() (string, error) { return pin, nil })
 	if err != nil {
 		logger.Log("connect: " + core.SanitizeForLog(err.Error()))
 		return SignFlowResult{}, err
 	}
 	defer closer.Close()
 
-	// 2. Export public key.
+	// 3. Export public key.
 	pubKey, err := adapter.ExportPublicKey()
 	if err != nil {
 		logger.Log(sanitizeError("ExportPublicKey", err))
 		return SignFlowResult{}, &SignFlowError{Phase: PhaseExportKey, Err: err}
 	}
 
-	// 3. Sign.
+	// 4. Sign.
 	resp, err := core.HandleSign(req, adapter, pubKey)
 	if err != nil {
 		logger.Log(sanitizeError("HandleSign", err))
 		return SignFlowResult{}, &SignFlowError{Phase: PhaseSign, Err: err}
 	}
 
-	// 4. Build issuance record from request + response fields.
+	// 5. Build issuance record from request + response fields.
 	// NFC-normalize to match what HandleSign signed (raw req fields may differ).
 	record := issuancelog.IssuanceRecord{
 		Timestamp:       time.Now().UTC().Format(time.RFC3339),
@@ -81,21 +103,21 @@ func executeSignFlow(
 		SignatureB64URL: resp.Signature,
 	}
 
-	// 5. Log issuance record (non-fatal — signing already succeeded).
+	// 6. Log issuance record (non-fatal — signing already succeeded).
 	if logPath != "" {
 		if logErr := issuancelog.AppendRecord(logPath, record); logErr != nil {
 			logger.Log("log append failed: " + core.SanitizeForLog(logErr.Error()))
 		}
 	}
 
-	// 6. Generate QR preview.
+	// 7. Generate QR preview.
 	pngData, err := qr.GeneratePNG(resp.URL, qrPreviewPx)
 	if err != nil {
 		logger.Log(sanitizeError("QR", err))
 		return SignFlowResult{}, &SignFlowError{Phase: PhaseQR, Err: err}
 	}
 
-	// 7. First 8 hex chars of the SHA-256 hash, used as a short identifier in filenames.
+	// 8. First 8 hex chars of the SHA-256 hash, used as a short identifier in filenames.
 	hash8 := resp.PayloadSHA256[:8]
 
 	return SignFlowResult{

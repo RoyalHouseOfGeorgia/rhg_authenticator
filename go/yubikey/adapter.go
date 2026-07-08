@@ -165,8 +165,22 @@ func (a *YubiKeyAdapter) Close() error {
 // Per piv-go, AuthErr.Retries == 0 means "blocked OR retry count unavailable",
 // so do not infer "blocked" from Retries == 0 alone.
 func IsPINAuthError(err error) bool {
+	_, ok := PINRetries(err)
+	return ok
+}
+
+// PINRetries returns the number of PIN attempts remaining after a PIV PIN auth
+// failure, and whether err was such a failure at all. It is the single source
+// of truth for piv.AuthErr detection (IsPINAuthError delegates to it). Per
+// piv.AuthErr, a Retries value of 0 means "blocked OR retry count unavailable"
+// — callers MUST NOT report "blocked" from 0 alone. A transient card reset
+// returns an apdu/scard error (never piv.AuthErr), so it can never match here.
+func PINRetries(err error) (retries int, ok bool) {
 	var ae piv.AuthErr
-	return errors.As(err, &ae)
+	if errors.As(err, &ae) {
+		return ae.Retries, true
+	}
+	return 0, false
 }
 
 // ReadPublicKey opens a YubiKey, reads the Ed25519 public key from PIV slot 9c,

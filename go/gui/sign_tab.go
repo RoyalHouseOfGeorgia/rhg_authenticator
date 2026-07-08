@@ -106,7 +106,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 		}
 
 		signButton.Disable()
-		statusLabel.SetText("Connecting to YubiKey...")
+		statusLabel.SetText("Preparing to sign...")
 
 		req := core.SignRequest{
 			Recipient: recipient,
@@ -130,14 +130,21 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 				return a, a, nil
 			}
 
-			result, err := executeSignFlow(req, config.LogPath, openAdapter, MakePinReader(window, pinCache), logger)
+			// Set after the PIN is resolved (Item 1 prompts before Open), so the
+			// "Connecting" status doesn't show while the PIN dialog is up.
+			onConnecting := func() {
+				fyne.Do(func() { statusLabel.SetText("Connecting to YubiKey...") })
+			}
+
+			result, err := executeSignFlow(req, config.LogPath, openAdapter, MakePinReader(window, pinCache), onConnecting, logger)
 			if err != nil {
 				clearPINCacheOnAuthError(err, pinCache)
 				fyne.Do(func() {
 					msg := signFlowErrorMessage(err, logger)
 					statusLabel.SetText(msg)
-					// Offer "Report Issue" for real errors, not cancellations.
-					if !strings.Contains(err.Error(), ErrSigningCancelled.Error()) && config.Keyring != nil {
+					// Offer "Report Issue" for real errors, not cancellations or
+					// benign PIN-entry timeouts.
+					if !errors.Is(err, ErrSigningCancelled) && !errors.Is(err, ErrPINEntryTimedOut) && config.Keyring != nil {
 						reportBtn := widget.NewButton("Report Issue", func() {
 							title := errorreport.BuildIssueTitle("signing", msg)
 							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error(), logger.Path())
@@ -302,11 +309,20 @@ func friendlyYubiKeyError(err error, logger *debuglog.Logger) string {
 // signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
 // status message.
 func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
-	// User cancelled the PIN dialog — not an error.
-	// Use string match because piv-go wraps PINPrompt errors with %v,
-	// breaking the errors.Is chain for our sentinel.
-	if strings.Contains(err.Error(), ErrSigningCancelled.Error()) {
+	// PIN-flow sentinels are returned bare from readPin (executeSignFlow resolves
+	// the PIN before openAdapter, so piv-go never %v-wraps them), matched via
+	// errors.Is. These MUST be checked before ClassifyHardwareError, whose \bpin\b
+	// regex would otherwise misclassify the timeout/mlock messages as HwErrPIN.
+	// This depends on the prompt-before-open ordering in executeSignFlow —
+	// reintroducing a lazy PINPrompt would break the errors.Is match.
+	if errors.Is(err, ErrSigningCancelled) {
 		return ""
+	}
+	if errors.Is(err, ErrPINEntryTimedOut) {
+		return "PIN entry timed out. Click Sign to try again."
+	}
+	if errors.Is(err, ErrPINCacheUnavailable) {
+		return "Could not secure the PIN in memory. Please restart the app."
 	}
 	// Transient PC/SC contention (card reset) can surface in any phase and via
 	// the raw adapter-open path. Hoist the check so it wins over the PIN
@@ -315,6 +331,16 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	if cat == core.HwErrTransient {
 		logger.Log(core.SanitizeForLog(err.Error()))
 		return core.MsgYubiKeyReset
+	}
+	// Wrong or blocked PIN: give an actionable retry count so the operator does
+	// not drain the PIV counter by re-entering the same wrong PIN. Typed check
+	// (errors.As on piv.AuthErr), so a transient reset can never reach it.
+	if retries, ok := yubikey.PINRetries(err); ok {
+		logger.Log(core.SanitizeForLog(err.Error()))
+		if retries > 0 {
+			return fmt.Sprintf("Incorrect PIN — %d attempt(s) left before the YubiKey locks.", retries)
+		}
+		return "Incorrect PIN, or the YubiKey PIV applet is locked. No remaining-attempt count was reported — verify with your YubiKey tool before retrying."
 	}
 	var sfe *SignFlowError
 	if errors.As(err, &sfe) {

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-piv/piv-go/v2/piv"
+
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
@@ -615,13 +617,12 @@ func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 }
 
 func TestSignFlowErrorMessage_Cancelled(t *testing.T) {
-	// piv-go wraps PINPrompt errors with %v (not %w), breaking errors.Is.
-	// Simulate the real chain: piv-go(%v) → SignBytes(%w) → HandleSign(%w) → SignFlowError.
-	pivWrapped := fmt.Errorf("piv: pin prompt: %v", ErrSigningCancelled) // piv-go uses %v
-	signBytes := fmt.Errorf("failed to get private key handle: %w", pivWrapped)
-	handleSign := fmt.Errorf("signing failed: %w", signBytes)
-	sfe := &SignFlowError{Phase: PhaseSign, Err: handleSign}
-	got := signFlowErrorMessage(sfe, nil)
+	// After the prompt-before-open reorder, cancellation is returned bare from
+	// readPin — piv-go no longer %v-wraps it — and is matched via errors.Is,
+	// which also traverses any %w wrap. The old %v-wrapped-in-SignFlowError
+	// chain can no longer be produced.
+	wrapped := fmt.Errorf("outer: %w", ErrSigningCancelled)
+	got := signFlowErrorMessage(wrapped, nil)
 	if got != "" {
 		t.Errorf("expected empty string for cancellation, got: %q", got)
 	}
@@ -631,6 +632,59 @@ func TestSignFlowErrorMessage_CancelledRaw(t *testing.T) {
 	got := signFlowErrorMessage(ErrSigningCancelled, nil)
 	if got != "" {
 		t.Errorf("expected empty string for cancellation, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_Timeout(t *testing.T) {
+	// The timeout sentinel must yield a timeout message, NOT a hardware message
+	// (the literal "PIN entry timed out" matches the \bpin\b classifier).
+	got := signFlowErrorMessage(ErrPINEntryTimedOut, nil)
+	if !strings.Contains(got, "timed out") {
+		t.Errorf("expected timeout message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_MlockFailure(t *testing.T) {
+	// The %w-wrapped mlock sentinel must yield the restart message, not a
+	// misclassified hardware PIN error.
+	err := fmt.Errorf("%w: mlock failed", ErrPINCacheUnavailable)
+	got := signFlowErrorMessage(err, nil)
+	if !strings.Contains(got, "secure the PIN") {
+		t.Errorf("expected mlock/restart message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_WrongPINWithRetries(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	err := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2})}
+	got := signFlowErrorMessage(err, logger)
+	if !strings.Contains(got, "2 attempt") {
+		t.Errorf("expected remaining-attempts count in message, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_WrongPINBlocked(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	// Retries == 0 must NOT claim "blocked" outright — it means blocked OR count
+	// unavailable.
+	err := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 0})}
+	got := signFlowErrorMessage(err, logger)
+	if !strings.Contains(got, "locked") || strings.Contains(got, "attempt(s) left") {
+		t.Errorf("expected ambiguous locked message without a positive count, got: %q", got)
+	}
+}
+
+func TestSignFlowErrorMessage_TransientWinsOverPINRetries(t *testing.T) {
+	// A transient reset never carries piv.AuthErr, so PINRetries can't fire; the
+	// reset must map to MsgYubiKeyReset even though resetErr()'s text contains
+	// "verify pin".
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	got := signFlowErrorMessage(resetErr(), logger)
+	if got != core.MsgYubiKeyReset {
+		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
 	}
 }
 

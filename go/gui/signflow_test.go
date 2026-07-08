@@ -67,6 +67,135 @@ func (nopCloser) Close() error { return nil }
 
 func dummyReadPin() (string, error) { return "123456", nil }
 
+// TestExecuteSignFlow_PreResolvedPINThreadedToOpen proves the fix's core wiring:
+// the PIN resolved up-front is the value handed to openAdapter's readPin closure
+// (i.e. what piv-go's PINPrompt would receive), so the transaction is never held
+// across human PIN entry.
+func TestExecuteSignFlow_PreResolvedPINThreadedToOpen(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	adapter := &mockSignAdapter{secretKey: priv}
+
+	readPin := func() (string, error) { return "998877", nil }
+
+	var pinSeenByOpen string
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		pinSeenByOpen, _ = rp()
+		return adapter, nopCloser{}, nil
+	}
+
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	req := core.SignRequest{Recipient: "A", Honor: "Order of the Crown of Georgia", Detail: "x", Date: "2026-03-14"}
+
+	if _, err := executeSignFlow(req, filepath.Join(tmpDir, "issuance.log"), openAdapter, readPin, nil, logger); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pinSeenByOpen != "998877" {
+		t.Errorf("openAdapter's readPin returned %q, want the pre-resolved PIN %q", pinSeenByOpen, "998877")
+	}
+}
+
+// TestExecuteSignFlow_PromptsBeforeOpen pins the ordering: readPin → onConnecting
+// → openAdapter.
+func TestExecuteSignFlow_PromptsBeforeOpen(t *testing.T) {
+	var order []string
+	readPin := func() (string, error) { order = append(order, "readPin"); return "123456", nil }
+	onConnecting := func() { order = append(order, "onConnecting") }
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	adapter := &mockSignAdapter{secretKey: priv}
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		order = append(order, "openAdapter")
+		return adapter, nopCloser{}, nil
+	}
+
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	req := core.SignRequest{Recipient: "A", Honor: "Order of the Crown of Georgia", Detail: "x", Date: "2026-03-14"}
+	if _, err := executeSignFlow(req, filepath.Join(tmpDir, "issuance.log"), openAdapter, readPin, onConnecting, logger); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.Join(order, ","); got != "readPin,onConnecting,openAdapter" {
+		t.Errorf("call order = %q, want readPin,onConnecting,openAdapter", got)
+	}
+}
+
+// TestExecuteSignFlow_ReadPINErrorShortCircuits verifies a readPin failure is
+// surfaced before any card Open and before onConnecting fires.
+func TestExecuteSignFlow_ReadPINErrorShortCircuits(t *testing.T) {
+	sentinel := errors.New("pin dialog boom")
+	readPin := func() (string, error) { return "", sentinel }
+	openCalled := false
+	onConnectingCalled := false
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		openCalled = true
+		return nil, nil, nil
+	}
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	req := core.SignRequest{Recipient: "A", Honor: "Order of the Crown of Georgia", Detail: "x", Date: "2026-03-14"}
+	_, err := executeSignFlow(req, "", openAdapter, readPin, func() { onConnectingCalled = true }, logger)
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected readPin error, got %v", err)
+	}
+	if openCalled {
+		t.Error("openAdapter must not be called after a readPin error")
+	}
+	if onConnectingCalled {
+		t.Error("onConnecting must not be called after a readPin error")
+	}
+}
+
+// TestExecuteSignFlow_PINSentinelsSurviveAndClassify pins the load-bearing
+// invariant behind the prompt-before-open reorder: a PIN sentinel returned from
+// readPin survives executeSignFlow with errors.Is intact, openAdapter is never
+// called (so piv-go can never %v-wrap the sentinel), and signFlowErrorMessage
+// classifies it correctly rather than as a hardware error. A regression to lazy
+// PINPrompt (passing readPin into openAdapter) would set openCalled and/or break
+// errors.Is, failing this test in CI.
+func TestExecuteSignFlow_PINSentinelsSurviveAndClassify(t *testing.T) {
+	cases := []struct {
+		name        string
+		readPinErr  error
+		base        error  // sentinel that errors.Is must still match afterwards
+		wantMsgPart string // substring of signFlowErrorMessage output ("" = exactly "")
+	}{
+		{"cancelled", ErrSigningCancelled, ErrSigningCancelled, ""},
+		{"timed out", ErrPINEntryTimedOut, ErrPINEntryTimedOut, "timed out"},
+		{"cache unavailable", fmt.Errorf("%w: mlock failed", ErrPINCacheUnavailable), ErrPINCacheUnavailable, "secure the PIN"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			openCalled := false
+			openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+				openCalled = true
+				return nil, nil, nil
+			}
+			readPin := func() (string, error) { return "", tc.readPinErr }
+			tmpDir := t.TempDir()
+			logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+			req := core.SignRequest{Recipient: "A", Honor: "Order of the Crown of Georgia", Detail: "x", Date: "2026-03-14"}
+
+			_, err := executeSignFlow(req, "", openAdapter, readPin, nil, logger)
+
+			if !errors.Is(err, tc.base) {
+				t.Errorf("sentinel lost through executeSignFlow: errors.Is(%v, %v) = false", err, tc.base)
+			}
+			if openCalled {
+				t.Error("openAdapter must not be called after a readPin error (keeps piv-go from value-wrapping the sentinel)")
+			}
+			got := signFlowErrorMessage(err, logger)
+			if tc.wantMsgPart == "" {
+				if got != "" {
+					t.Errorf("signFlowErrorMessage = %q, want empty", got)
+				}
+			} else if !strings.Contains(got, tc.wantMsgPart) {
+				t.Errorf("signFlowErrorMessage = %q, want substring %q", got, tc.wantMsgPart)
+			}
+		})
+	}
+}
+
 func TestExecuteSignFlow_HappyPath(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	adapter := &mockSignAdapter{secretKey: priv}
@@ -86,7 +215,7 @@ func TestExecuteSignFlow_HappyPath(t *testing.T) {
 		Date:      "2026-03-14",
 	}
 
-	result, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, logger)
+	result, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, nil, logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +244,7 @@ func TestExecuteSignFlow_AdapterOpenError(t *testing.T) {
 		return nil, nil, fmt.Errorf("pcsc daemon not running")
 	}
 
-	_, err := executeSignFlow(core.SignRequest{}, "", openAdapter, dummyReadPin, nil)
+	_, err := executeSignFlow(core.SignRequest{}, "", openAdapter, dummyReadPin, nil, nil)
 	if err == nil {
 		t.Fatal("expected error from adapter open")
 	}
@@ -133,7 +262,7 @@ func TestExecuteSignFlow_ExportKeyError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 
-	_, err := executeSignFlow(core.SignRequest{}, "", openAdapter, dummyReadPin, logger)
+	_, err := executeSignFlow(core.SignRequest{}, "", openAdapter, dummyReadPin, nil, logger)
 	if err == nil {
 		t.Fatal("expected error from ExportPublicKey")
 	}
@@ -164,7 +293,7 @@ func TestExecuteSignFlow_SignError(t *testing.T) {
 		Date:      "2026-03-14",
 	}
 
-	_, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, logger)
+	_, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, nil, logger)
 	if err == nil {
 		t.Fatal("expected error from SignBytes")
 	}
@@ -196,7 +325,7 @@ func TestExecuteSignFlow_LogFileWritten(t *testing.T) {
 		Date:      "2026-03-14",
 	}
 
-	_, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, logger)
+	_, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, nil, logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -246,7 +375,7 @@ func TestExecuteSignFlow_RecordFieldsNFCNormalized(t *testing.T) {
 		Date:      "2026-03-14",
 	}
 
-	_, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, logger)
+	_, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, nil, logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -290,7 +419,7 @@ func TestExecuteSignFlow_NoLogWhenPathEmpty(t *testing.T) {
 	}
 
 	// Pass empty logPath — no log file should be created.
-	_, err := executeSignFlow(req, "", openAdapter, dummyReadPin, logger)
+	_, err := executeSignFlow(req, "", openAdapter, dummyReadPin, nil, logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -324,7 +453,7 @@ func TestExecuteSignFlow_LogWriteFailureNonFatal(t *testing.T) {
 	}
 
 	// Should succeed — log failure is non-fatal.
-	result, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, logger)
+	result, err := executeSignFlow(req, logPath, openAdapter, dummyReadPin, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error (log failure is non-fatal), got: %v", err)
 	}
