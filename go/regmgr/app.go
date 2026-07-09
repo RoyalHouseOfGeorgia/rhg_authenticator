@@ -57,6 +57,23 @@ type RegistryTab struct {
 	kr           ghapi.Keyring
 	submitting   atomic.Bool
 	loggingIn    atomic.Bool
+	// onLoginChanged, if set, is invoked on the Fyne main thread whenever login
+	// state changes (login, logout, session restore, 401 expiry). Lets other
+	// tabs (History) react to auth changes without polling. nil in tests.
+	onLoginChanged func()
+}
+
+// SetOnLoginChanged registers a callback fired on the Fyne main thread whenever
+// login state changes. Must be set before ShowAndRun (all reads happen on the
+// main thread inside updateLoginUI).
+func (rt *RegistryTab) SetOnLoginChanged(fn func()) {
+	rt.onLoginChanged = fn
+}
+
+// StartLogin initiates the GitHub device authorization flow. Exported wrapper
+// so other tabs can trigger login through the single source of truth.
+func (rt *RegistryTab) StartLogin() {
+	rt.startLogin()
 }
 
 // IsDirty returns whether the registry has unsubmitted changes.
@@ -120,6 +137,12 @@ func (rt *RegistryTab) updateLoginUI() {
 		rt.loginBtn.SetText("Logged in (offline)")
 	} else {
 		rt.loginBtn.SetText("@" + rt.state.githubUser + " \u25BE")
+	}
+	// Notify observers (e.g. History tab) of the login-state change. This is the
+	// single choke point: every state mutation (completeLogin, logout, restore,
+	// 401 expiry) calls updateLoginUI.
+	if rt.onLoginChanged != nil {
+		rt.onLoginChanged()
 	}
 }
 

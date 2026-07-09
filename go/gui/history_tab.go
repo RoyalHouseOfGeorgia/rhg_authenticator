@@ -30,8 +30,22 @@ const revocationTimeout = 180 * time.Second
 // list is nil at revoke time.
 const revocationCacheUnavailableMsg = "Revocation data not loaded. Try refreshing."
 
-// NewHistoryTab creates the issuance history tab UI.
-func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghapi.Client, window fyne.Window) *fyne.Container {
+// shouldEnableRevoke reports whether the Revoke button should be enabled: a
+// usable GitHub client exists, the revocation list has loaded, a record is
+// selected, and that record is not already revoked. cacheReady keeps the button
+// state in sync with the OnTapped precondition (which needs cachedRevocationList
+// != nil) — without it, selecting a row after a failed fetch would enable a
+// button whose tap dead-ends in the "Revocation unavailable" error. Pure and
+// nil-safe — callable with selected == nil (the login-state refresh case).
+func shouldEnableRevoke(clientNil, cacheReady bool, selected *log.IssuanceRecord, revoked map[string]bool) bool {
+	return !clientNil && cacheReady && selected != nil && !revoked[strings.ToLower(selected.PayloadSHA256)]
+}
+
+// NewHistoryTab creates the issuance history tab UI. It returns the tab content
+// and a refreshLoginState closure that re-syncs the login-dependent UI (the
+// sign-in button's visibility and the Revoke button's enablement); the caller
+// invokes it whenever GitHub login state changes.
+func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghapi.Client, loginFn func(), window fyne.Window) (*fyne.Container, func()) {
 	var allRecords []log.IssuanceRecord
 	var filtered []log.IssuanceRecord
 	var selectedRecord *log.IssuanceRecord
@@ -66,6 +80,16 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	revokeButton := widget.NewButton("Revoke", nil)
 	revokeButton.Disable() // Disabled until an entry is selected.
 
+	// updateRevokeButton applies the shared enable rule. clientNil is passed in
+	// so each caller reads ghClientFn() exactly once (ClientForHistory allocates).
+	updateRevokeButton := func(clientNil bool) {
+		if shouldEnableRevoke(clientNil, cachedRevocationList != nil, selectedRecord, revokedHashes) {
+			revokeButton.Enable()
+		} else {
+			revokeButton.Disable()
+		}
+	}
+
 	list.OnSelected = func(id widget.ListItemID) {
 		if id < 0 || id >= len(filtered) {
 			selectedRecord = nil
@@ -76,11 +100,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		selectedRecord = &rec
 
 		// Enable/disable revoke button based on login + revocation status.
-		if ghClientFn() == nil || revokedHashes[strings.ToLower(rec.PayloadSHA256)] {
-			revokeButton.Disable()
-		} else {
-			revokeButton.Enable()
-		}
+		updateRevokeButton(ghClientFn() == nil)
 
 		// Show detail dialog (existing behavior).
 		detail := formatRecordDetail(rec)
@@ -180,11 +200,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				revocationStatus.SetText("")
 				list.Refresh()
 				// Re-evaluate revoke button based on current selection.
-				if ghClientFn() != nil && selectedRecord != nil && !revokedHashes[strings.ToLower(selectedRecord.PayloadSHA256)] {
-					revokeButton.Enable()
-				} else {
-					revokeButton.Disable()
-				}
+				updateRevokeButton(ghClientFn() == nil)
 			})
 		}()
 	}
@@ -217,13 +233,30 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		fetchRevocations()
 	})
 
+	// signInButton lets an unauthenticated operator start GitHub login without
+	// leaving the History tab. Shown only when no usable client exists; login is
+	// owned by the Registry tab (the single source of login-state truth).
+	signInButton := widget.NewButton("Login to GitHub", func() { loginFn() })
+
+	// refreshLoginState re-syncs the login-dependent UI. Reads ghClientFn() once
+	// and reuses the result for both the button visibility and the Revoke gate.
+	refreshLoginState := func() {
+		clientNil := ghClientFn() == nil
+		if clientNil {
+			signInButton.Show()
+		} else {
+			signInButton.Hide()
+		}
+		updateRevokeButton(clientNil)
+	}
+
 	// Initial load.
 	loadRecords()
 	fetchRevocations()
 
-	buttonBar := container.NewHBox(refreshButton, revokeButton, revocationStatus)
+	buttonBar := container.NewHBox(refreshButton, signInButton, revokeButton, revocationStatus)
 	topBar := container.NewBorder(nil, nil, nil, buttonBar, searchEntry)
-	return container.NewBorder(topBar, nil, nil, nil, list)
+	return container.NewBorder(topBar, nil, nil, nil, list), refreshLoginState
 }
 
 // filterRecords returns records matching the query (case-insensitive substring

@@ -569,6 +569,82 @@ func TestClientForHistory_AllConditionsMet(t *testing.T) {
 	}
 }
 
+// --- onLoginChanged observer tests ---
+
+// TestUpdateLoginUI_FiresObserver verifies the login-state choke point invokes a
+// registered observer, so other tabs (History) react to auth changes.
+func TestUpdateLoginUI_FiresObserver(t *testing.T) {
+	rt := newTestRegistryTab(t)
+	fired := 0
+	rt.SetOnLoginChanged(func() { fired++ })
+
+	rt.updateLoginUI()
+
+	if fired != 1 {
+		t.Fatalf("onLoginChanged fired %d times, want 1", fired)
+	}
+}
+
+// TestUpdateLoginUI_NilObserverNoPanic verifies updateLoginUI is safe when no
+// observer is registered (the test / early-construction case) and still runs its
+// primary work (setting the login button text for the logged-out state).
+func TestUpdateLoginUI_NilObserverNoPanic(t *testing.T) {
+	rt := newTestRegistryTab(t)
+	// Seed a distinct value so the post-call assertion can only pass if
+	// updateLoginUI genuinely rewrote the button text.
+	rt.loginBtn.SetText("stale")
+	// onLoginChanged is nil (never set) — must not panic.
+	rt.updateLoginUI()
+	if rt.loginBtn.Text != "Login to GitHub" {
+		t.Errorf("loginBtn.Text = %q, want %q (method must run its work path)",
+			rt.loginBtn.Text, "Login to GitHub")
+	}
+}
+
+// TestCompleteLogin_FiresObserver locks the load-bearing invariant that the
+// login-state transitions route through updateLoginUI (and therefore fire the
+// observer). Testing updateLoginUI directly is not enough: a future transition
+// that mutates login state without calling updateLoginUI would leave the History
+// tab stale. Driving the real completeLogin path pins that guarantee for the
+// online, offline, and unauthorized outcomes.
+func TestCompleteLogin_FiresObserver(t *testing.T) {
+	tests := []struct {
+		name         string
+		username     string
+		valErr       error
+		wantLoggedIn bool
+		wantOffline  bool
+		wantToken    string // expected persisted AccessToken ("" = cleared)
+	}{
+		{"online", "octocat", nil, true, false, "tok-123"},
+		{"offline (non-401 error)", "octocat", errors.New("network unreachable"), true, true, "tok-123"},
+		{"unauthorized (401)", "", &ghapi.APIError{StatusCode: 401, Message: "bad credentials"}, false, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := newTestRegistryTab(t)
+			fired := 0
+			rt.SetOnLoginChanged(func() { fired++ })
+
+			rt.completeLogin(ghapi.Token{AccessToken: "tok-123"}, tt.username, tt.valErr, func() {})
+
+			if fired != 1 {
+				t.Errorf("onLoginChanged fired %d times, want 1", fired)
+			}
+			if rt.state.loggedIn != tt.wantLoggedIn {
+				t.Errorf("loggedIn = %v, want %v", rt.state.loggedIn, tt.wantLoggedIn)
+			}
+			if rt.state.offline != tt.wantOffline {
+				t.Errorf("offline = %v, want %v", rt.state.offline, tt.wantOffline)
+			}
+			if rt.state.githubToken.AccessToken != tt.wantToken {
+				t.Errorf("githubToken.AccessToken = %q, want %q (persist/clear invariant)",
+					rt.state.githubToken.AccessToken, tt.wantToken)
+			}
+		})
+	}
+}
+
 // --- userFacingError fork error test ---
 
 func TestUserFacingError_ForkError(t *testing.T) {
