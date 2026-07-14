@@ -8,6 +8,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 )
 
@@ -47,6 +48,11 @@ func TestRhgTheme_Colors(t *testing.T) {
 }
 
 func TestRhgTheme_FallbackColor(t *testing.T) {
+	// As of fyne 2.8.0, the built-in theme's Color() dereferences the current
+	// Fyne app (theme.go:109), so the DefaultTheme() fallback path panics unless
+	// an app is registered. Provide a test app for the duration of this test.
+	test.NewTempApp(t)
+
 	th := &rhgTheme{}
 	got := th.Color(theme.ColorNameError, theme.VariantDark)
 	want := theme.DefaultTheme().Color(theme.ColorNameError, theme.VariantDark)
