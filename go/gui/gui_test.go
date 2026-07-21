@@ -329,8 +329,8 @@ func TestFormatRecordDetail(t *testing.T) {
 // --- honorTitles constant tests ---
 
 func TestHonorTitles_Count(t *testing.T) {
-	if len(honorTitles) != 5 {
-		t.Errorf("honorTitles count = %d, want 5", len(honorTitles))
+	if len(honorTitles) != 7 {
+		t.Errorf("honorTitles count = %d, want 7", len(honorTitles))
 	}
 }
 

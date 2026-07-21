@@ -37,6 +37,8 @@ var honorTitles = []string{
 	"Order of the Crown of Georgia",
 	"Medal of Merit of the Royal House of Georgia",
 	"Ennoblement",
+	"Appointment",
+	"Other",
 }
 
 // SignTabConfig holds the dependencies for the sign tab.
