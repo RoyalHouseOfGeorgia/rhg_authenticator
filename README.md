@@ -67,6 +67,7 @@ Requires Node.js 24+.
 - **[go/README.md](go/README.md)** — Go signing app: build, usage, YubiKey setup, platform notes
 - **[DEVELOPER.md](DEVELOPER.md)** — TypeScript library: setup, API reference, testing conventions
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — System design, security model, data flows
+- **[CHANGELOG.md](CHANGELOG.md)** — Release history
 
 ## Binary Integrity
 

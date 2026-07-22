@@ -26,6 +26,8 @@ make clean          # Remove release directory
 
 The binary embeds the version from `git describe --tags`.
 
+See [../CHANGELOG.md](../CHANGELOG.md) for release history.
+
 ## Usage
 
 1. Run `./release/rhg-authenticator` (or `./release/rhg-authenticator --version` to print the version and exit)
@@ -35,7 +37,7 @@ The binary embeds the version from `git describe --tags`.
 
 1. Fill in the credential form:
    - **Recipient**: full name
-   - **Honor**: select from the dropdown (5 recognized titles)
+   - **Honor**: select from the dropdown of recognized titles
    - **Detail**: specific distinction or rank
    - **Date**: YYYY-MM-DD (defaults to today)
 2. Plug in your YubiKey
