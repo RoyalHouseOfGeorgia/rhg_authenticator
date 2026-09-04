@@ -47,12 +47,10 @@ jobs:
         run: diff go/testdata/vectors.json src/__tests__/fixtures/vectors.json
       - run: npm run lint
       - run: npm test
+      # scripts/update-sri.sh --check: single source of truth for the hash, shared
+      # with the pre-commit hook. Prints the exact command to fix a mismatch.
       - name: Verify verify.js SRI hash
-        run: |
-          set -euo pipefail
-          npm run build:verify
-          HASH=$(openssl dgst -sha384 -binary < verify/verify.js | openssl base64 -A)
-          grep -q "sha384-$HASH" verify/index.html || (echo "SRI hash mismatch — rebuild verify.js and update index.html" && exit 1)
+        run: npm run check:sri
       - run: npm audit --audit-level=moderate
 
   security:
