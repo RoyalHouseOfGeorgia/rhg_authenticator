@@ -29,7 +29,7 @@
 
 ## Quick Start — Signing App (Go)
 
-**Requirements**: Go 1.25.8+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
+**Requirements**: Go 1.26+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
 ```bash
 cd go

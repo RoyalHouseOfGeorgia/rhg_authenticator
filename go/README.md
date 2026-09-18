@@ -4,7 +4,7 @@ Self-contained desktop application for signing Royal House of Georgia credential
 
 ## Requirements
 
-- Go 1.25.8+
+- Go 1.26+
 - YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
 ### Platform-Specific

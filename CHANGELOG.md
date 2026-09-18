@@ -5,6 +5,14 @@ All notable changes to the RHG Authenticator are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses two-component version tags (`v1.0`, `v1.1`, …).
 
+## [Unreleased]
+
+### Security
+- **Go toolchain bumped to 1.27.1.** Go 1.25 left the two-release support
+  window when 1.27 shipped, so `go1.25.14` is its final patch and no further
+  stdlib security fixes will land for it. The build now uses a supported
+  toolchain, and the documented minimum for building from source is Go 1.26.
+
 ## [v1.2] — 2026-07-22
 
 ### Added
@@ -90,6 +98,7 @@ verifying Royal honors.
 - SLSA build provenance attestations and `SHA256SUMS.txt` on all release
   binaries.
 
+[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.2...HEAD
 [v1.2]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.1...v1.2
 [v1.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.0...v1.1
 [v1.0]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/releases/tag/v1.0
