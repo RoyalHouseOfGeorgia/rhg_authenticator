@@ -59,7 +59,14 @@ Sign many credentials in one session from a CSV file.
    name,honor,detail,date
    Jane Doe,Order of the Crown of Georgia,Knight Commander,2026-09-24
    ```
-   - **honor** must exactly match one of the Sign tab's dropdown titles
+   - **honor** must be one of these titles, copied exactly (spelling, punctuation and capitalisation matter):
+     - `Order of the Eagle of Georgia and the Seamless Tunic of Our Lord Jesus Christ`
+     - `Order of the St. Queen Tamar of Georgia`
+     - `Order of the Crown of Georgia`
+     - `Medal of Merit of the Royal House of Georgia`
+     - `Ennoblement`
+     - `Appointment`
+     - `Other`
    - **date** must be `YYYY-MM-DD`
    - Limits: 500 rows, 2 MB
 2. Plug in your YubiKey and click **Bulk Sign from File…** on the Sign tab
@@ -67,7 +74,7 @@ Sign many credentials in one session from a CSV file.
 4. Click **Sign** and enter your PIN once for the whole batch. If your key requires touch, touch it when it blinks for each row. Expect roughly 0.5–1 s per row
 5. When the batch ends, the summary shows how many rows were processed and how many succeeded. Click **Export Results CSV…** to save `name,honor,detail,date,url,status,error` for every row — `url` is the verification URL encoded in the QR code
 
-Each newly signed row is added to the issuance log (History tab). Row statuses in the results file:
+Each newly signed row is added to the issuance log — click **Refresh** on the History tab to see the new entries. Row statuses in the results file:
 
 | Status | Meaning |
 |---|---|
@@ -77,9 +84,9 @@ Each newly signed row is added to the issuance log (History tab). Row statuses i
 | `failed` | Signing error on this row; the batch stopped here |
 | `not_attempted` | The batch was cancelled or stopped before this row |
 
-A wrong PIN, a YubiKey error, or a failure to write the issuance log stops the batch; rows already signed stay signed and logged. **Cancel** stops after the current row. Fix the problem and open the same file again: rows already signed are reported as `already_issued`, so only the remaining rows are signed.
+A wrong PIN, a YubiKey error, or a failure to write the issuance log stops the batch. Rows signed before the stop stay signed and logged; if the stop was a log-write failure, the row that hit it is signed but not logged, and its `error` column says so. **Cancel** stops after the current row. Fix the problem and open the same file again: rows already signed are reported as `already_issued`, so only the remaining rows are signed.
 
-**Excel tips:** use *Save As → CSV UTF-8* (plain "CSV" can turn Georgian text into `????` — check the name preview before signing); format the date column as Text so Excel doesn't rewrite it; keep each cell on one line (no Alt+Enter); if your Excel saves with `;` separators, change the list separator to `,` or the app will reject the file.
+**Excel tips:** use *Save As → CSV UTF-8* (plain "CSV" turns Georgian text into `????`; rows containing `??` are rejected as mis-encoded); format the date column as Text so Excel doesn't rewrite it; keep each cell on one line (no Alt+Enter); if your Excel saves with `;` separators, change the list separator to `,` or the app will reject the file.
 
 ### History Tab
 

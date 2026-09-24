@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
@@ -60,6 +61,10 @@ func Plan(rows []Row, allowedHonors []string, issued map[string]string) []Result
 			results[i].Err = row.ParseErr
 			continue
 		}
+		if looksMisencoded(res.Req) {
+			results[i].Err = "text looks mis-encoded (contains \"??\") — re-save the file as CSV UTF-8"
+			continue
+		}
 		if !slices.Contains(allowedHonors, res.Req.Honor) {
 			results[i].Err = "honor: not one of the allowed honor titles"
 			continue
@@ -84,6 +89,19 @@ func Plan(rows []Row, allowedHonors []string, issued map[string]string) []Result
 		results[i].Status = StatusToSign
 	}
 	return results
+}
+
+// looksMisencoded reports whether any field shows the marks of text that lost
+// its encoding: Excel's plain "CSV" save turns non-Latin script (e.g. Georgian)
+// into runs of "?", and a failed decode leaves U+FFFD. Such text is valid, so
+// without this check it would be signed irreversibly.
+func looksMisencoded(req core.SignRequest) bool {
+	for _, f := range []string{req.Recipient, req.Honor, req.Detail, req.Date} {
+		if strings.Contains(f, "??") || strings.ContainsRune(f, utf8.RuneError) {
+			return true
+		}
+	}
+	return false
 }
 
 // Run signs every to_sign row in order, updating results in place. It stops

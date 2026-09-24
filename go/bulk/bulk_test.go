@@ -73,6 +73,9 @@ func TestPlanClassification(t *testing.T) {
 		{"empty name", row(2, "  ", crown, "d", "2026-03-15"), StatusInvalid, "recipient must not be empty"},
 		{"over-length recipient", row(2, strings.Repeat("ბ", 501), crown, "d", "2026-03-15"), StatusInvalid, "recipient exceeds maximum length of 500"},
 		{"parse error", Row{Line: 2, Name: "A", ParseErr: "missing value for detail"}, StatusInvalid, "missing value for detail"},
+		{"mis-encoded Georgian name", row(2, "????? ??????", crown, "d", "2026-03-15"), StatusInvalid, "looks mis-encoded"},
+		{"replacement char in detail", row(2, "Davit", crown, "a\uFFFDb", "2026-03-15"), StatusInvalid, "looks mis-encoded"},
+		{"single question mark allowed", row(2, "Davit", crown, "Why not?", "2026-03-15"), StatusToSign, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
