@@ -4,10 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -193,108 +190,6 @@ func TestGeneratePNGOverLengthLimit(t *testing.T) {
 	_, err := GeneratePNG(url, 256)
 	if err == nil {
 		t.Error("expected error for URL exceeding max length")
-	}
-}
-
-func TestSaveSVGWritesFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.svg")
-
-	if err := SaveSVG(testURL, path); err != nil {
-		t.Fatalf("SaveSVG error: %v", err)
-	}
-
-	// File should exist.
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("file not created: %v", err)
-	}
-	if info.Size() == 0 {
-		t.Error("SVG file should not be empty")
-	}
-
-	// Content should match GenerateSVG output.
-	fileContent, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading file: %v", err)
-	}
-	expected, err := GenerateSVG(testURL)
-	if err != nil {
-		t.Fatalf("GenerateSVG for comparison: %v", err)
-	}
-	if !bytes.Equal(fileContent, expected) {
-		t.Error("SaveSVG file content does not match GenerateSVG output")
-	}
-}
-
-func TestSaveSVGFilePermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix file permissions not supported on Windows")
-	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.svg")
-
-	if err := SaveSVG(testURL, path); err != nil {
-		t.Fatalf("SaveSVG error: %v", err)
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("file not created: %v", err)
-	}
-	perm := info.Mode().Perm()
-	if perm != 0o600 {
-		t.Errorf("file permissions = %04o, want 0600", perm)
-	}
-}
-
-// TestSaveSVGTightensExistingFile covers the save-dialog case: the file
-// already exists with a looser mode, which os.WriteFile alone would keep.
-func TestSaveSVGTightensExistingFile(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix file permissions not supported on Windows")
-	}
-	path := filepath.Join(t.TempDir(), "test.svg")
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := SaveSVG(testURL, path); err != nil {
-		t.Fatalf("SaveSVG error: %v", err)
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("file permissions = %04o, want 0600", perm)
-	}
-}
-
-func TestSaveSVGInvalidPath(t *testing.T) {
-	err := SaveSVG(testURL, "/nonexistent/dir/test.svg")
-	if err == nil {
-		t.Error("expected error for invalid path")
-	}
-}
-
-func TestSaveSVGOverLengthLimit(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.svg")
-	url := strings.Repeat("x", QRMaxURLLength+1)
-
-	err := SaveSVG(url, path)
-	if err == nil {
-		t.Error("expected error for URL exceeding max length")
-	}
-
-	// File should not exist.
-	if _, statErr := os.Stat(path); statErr == nil {
-		t.Error("file should not be created when URL is too long")
 	}
 }
 

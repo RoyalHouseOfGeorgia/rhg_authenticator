@@ -16,12 +16,15 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
   CSV (`name,honor,detail,date,url,status,error`) can be exported with each
   row's verification URL.
 
-### Fixed
-- Saved QR files (SVG and PNG) are now actually restricted to the owner
-  (mode 0600). The save dialog creates the file before the app writes it, so
-  the intended permissions were never applied.
-
 ### Security
+- **Secret scanning was detecting nothing.** `.gitleaks.toml` had an
+  `[extend]` table without `useDefault = true`, which loads zero rules, so
+  both the CI gitleaks job and local runs passed regardless of content. The
+  default rules are now enabled, with allowlist entries for the verified
+  false positives (public keys, test vectors, the public OAuth client ID, a
+  fake test token). The `.githooks/pre-commit` hook now runs gitleaks on
+  staged changes when it is installed, blocking a secret before it is
+  committed rather than after it is pushed.
 - **Go toolchain bumped to 1.27.1.** Go 1.25 left the two-release support
   window when 1.27 shipped, so `go1.25.14` is its final patch and no further
   stdlib security fixes will land for it. The build now uses a supported

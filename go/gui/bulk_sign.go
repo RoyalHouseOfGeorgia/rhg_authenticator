@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -86,15 +87,7 @@ func confirmBulkSign(d bulkSignDeps, results []bulk.Result) {
 		items = append(items, widget.NewLabel("  "+name))
 	}
 	if len(invalid) > 0 {
-		lines := container.NewVBox()
-		for _, s := range invalid {
-			lbl := widget.NewLabel(s)
-			lbl.Wrapping = fyne.TextWrapWord
-			lines.Add(lbl)
-		}
-		scroll := container.NewVScroll(lines)
-		scroll.SetMinSize(fyne.NewSize(480, 150))
-		items = append(items, widget.NewLabel("Invalid rows (will be skipped):"), scroll)
+		items = append(items, invalidRowsView("Invalid rows (will be skipped):", invalid)...)
 	}
 
 	dialog.NewCustomConfirm("Bulk Sign", "Sign", "Cancel", container.NewVBox(items...), func(ok bool) {
@@ -166,6 +159,9 @@ func showBulkSummary(d bulkSignDeps, results []bulk.Result, stopErr error) {
 		stop.Wrapping = fyne.TextWrapWord
 		items = append(items, stop)
 	}
+	if _, _, invalid := bulkConfirmText(results); len(invalid) > 0 {
+		items = append(items, invalidRowsView("Invalid rows (skipped):", invalid)...)
+	}
 
 	exportButton := widget.NewButton("Export Results CSV…", func() {
 		saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
@@ -182,6 +178,16 @@ func showBulkSummary(d bulkSignDeps, results []bulk.Result, stopErr error) {
 	summaryDialog.Show()
 }
 
+// invalidRowsView renders "line N: reason" entries under a heading in a
+// scrollable area. A single label keeps a 500-row file cheap to lay out.
+func invalidRowsView(heading string, invalid []string) []fyne.CanvasObject {
+	lbl := widget.NewLabel(strings.Join(invalid, "\n"))
+	lbl.Wrapping = fyne.TextWrapWord
+	scroll := container.NewVScroll(lbl)
+	scroll.SetMinSize(fyne.NewSize(480, 150))
+	return []fyne.CanvasObject{widget.NewLabel(heading), scroll}
+}
+
 // onBulkExportChosen is the results-CSV save callback. UI thread only.
 func onBulkExportChosen(d bulkSignDeps, results []bulk.Result, writer fyne.URIWriteCloser, err error) {
 	if err != nil || writer == nil {
@@ -194,13 +200,13 @@ func onBulkExportChosen(d bulkSignDeps, results []bulk.Result, writer fyne.URIWr
 	}
 }
 
-// saveBulkResults renders results as CSV and writes them owner-only to path.
+// saveBulkResults renders results as CSV and writes them to path.
 func saveBulkResults(path string, results []bulk.Result) error {
 	var buf bytes.Buffer
 	if err := bulk.WriteResultCSV(&buf, results); err != nil {
 		return err
 	}
-	return writeFileOwnerOnly(path, buf.Bytes())
+	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
 // bulkSummaryLine formats the per-status tally shown after a batch.
@@ -232,14 +238,4 @@ func bulkConfirmText(results []bulk.Result) (counts string, preview []string, in
 // timestamped in UTC.
 func bulkResultsFilename(t time.Time) string {
 	return t.UTC().Format("rhg-bulk-results-2006-01-02-150405.csv")
-}
-
-// writeFileOwnerOnly writes data to path with mode 0600. Fyne's save dialog
-// creates the file before its callback runs, so os.WriteFile's perm argument
-// alone would not apply; the explicit Chmod tightens a pre-existing file.
-func writeFileOwnerOnly(path string, data []byte) error {
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
 }

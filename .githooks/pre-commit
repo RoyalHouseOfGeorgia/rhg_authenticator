@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Block commits that stage secrets (same rules/allowlist as CI's gitleaks job).
+# Skipped with a notice if gitleaks isn't installed; CI still scans every push.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --no-banner -c .gitleaks.toml
+else
+  printf 'pre-commit: gitleaks not installed — skipping local secret scan\n' >&2
+fi
+
 # If verify-page.ts or its output are staged, ensure SRI hash is current.
 if git diff --cached --name-only | grep -qE '(src/verify-page\.ts|verify/verify\.js|verify/index\.html)'; then
   printf 'pre-commit: checking SRI hash...\n'

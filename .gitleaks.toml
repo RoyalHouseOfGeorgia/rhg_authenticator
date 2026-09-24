@@ -1,9 +1,21 @@
 [extend]
-# Use default gitleaks rules, with path-based allowlist below.
+# Use default gitleaks rules, with the allowlist below. useDefault is required:
+# an [extend] table without it loads no rules at all, so nothing is detected.
+useDefault = true
 
 [allowlist]
 description = "Known false positives"
 paths = [
   # RFC 8032 Ed25519 test vectors — public specification, not secrets.
   '''src/__tests__/crypto\.test\.ts''',
+  # Cross-language test vectors: public keys and signed URLs from a fixed test seed.
+  '''(src/__tests__/fixtures|go/testdata)/vectors\.json''',
+  # Key registry: Ed25519 PUBLIC keys, published by design.
+  '''verify/keys/registry\.json''',
+]
+regexes = [
+  # GitHub OAuth App client ID (device flow) — public, there is no client secret.
+  '''Ov23li5iKh6JEcL1Vj3d''',
+  # Fake access token used in ghapi tests.
+  '''gho_secret123''',
 ]

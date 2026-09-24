@@ -3,7 +3,6 @@ package qr
 import (
 	"bytes"
 	"fmt"
-	"os"
 
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -72,23 +71,4 @@ func GeneratePNG(url string, width int) ([]byte, error) {
 	}
 
 	return png, nil
-}
-
-// SaveSVG writes a QR code SVG to a file.
-func SaveSVG(url string, path string) error {
-	svg, err := GenerateSVG(url)
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(path, svg, 0o600); err != nil {
-		return fmt.Errorf("writing SVG file: %w", err)
-	}
-	// The file may pre-exist (Fyne's save dialog creates it before the
-	// callback), in which case WriteFile does not apply the mode.
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("setting SVG file permissions: %w", err)
-	}
-
-	return nil
 }

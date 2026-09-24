@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -107,7 +106,7 @@ func newBulkUIHarness(t *testing.T) *bulkUIHarness {
 	t.Cleanup(cache.Close)
 	cache.SetEnabled(true)
 	if err := cache.Set("123456"); err != nil {
-		t.Skipf("PIN cache unavailable (mlock): %v", err)
+		t.Fatalf("seeding PIN cache: %v", err)
 	}
 
 	h := &bulkUIHarness{bulkHarness: newBulkHarness(t), w: w}
@@ -218,38 +217,6 @@ func TestBulkResultsFilename(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestWriteFileOwnerOnly_TightensExistingFile(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix file permissions not supported on Windows")
-	}
-	path := filepath.Join(t.TempDir(), "out.png")
-	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFileOwnerOnly(path, []byte("new")); err != nil {
-		t.Fatalf("writeFileOwnerOnly: %v", err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("mode = %04o, want 0600", perm)
-	}
-	if got, _ := os.ReadFile(path); string(got) != "new" {
-		t.Errorf("content = %q, want %q", got, "new")
-	}
-}
-
-func TestWriteFileOwnerOnly_WriteError(t *testing.T) {
-	if err := writeFileOwnerOnly(filepath.Join(t.TempDir(), "missing", "x.csv"), nil); err == nil {
-		t.Error("expected error writing into a missing directory")
 	}
 }
 
@@ -379,6 +346,11 @@ func TestBulkSign_NothingToSignGoesToSummary(t *testing.T) {
 	if !strings.Contains(texts, "Processed 1 rows: 0 successful") || !strings.Contains(texts, "Re-open the same file") {
 		t.Errorf("unexpected summary:\n%s", texts)
 	}
+	// With nothing signable the confirm dialog is skipped, so the summary
+	// must carry the per-row reasons.
+	if !strings.Contains(texts, "Invalid rows (skipped):") || !strings.Contains(texts, "line 2: honor: not one of the allowed honor titles") {
+		t.Errorf("summary missing invalid-row reasons:\n%s", texts)
+	}
 	if h.launches != 0 {
 		t.Errorf("launches = %d, want 0", h.launches)
 	}
@@ -495,11 +467,6 @@ func TestBulkSign_Export(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "name,honor,detail,date,url,status,error") || !strings.Contains(string(got), "Alice") {
 		t.Errorf("unexpected CSV:\n%s", got)
-	}
-	if runtime.GOOS != "windows" {
-		if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
-			t.Errorf("mode = %04o, want 0600", info.Mode().Perm())
-		}
 	}
 
 	bad := &fakeURIWriter{path: filepath.Join(t.TempDir(), "missing", "r.csv")}

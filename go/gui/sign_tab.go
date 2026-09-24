@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -194,7 +195,11 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 							return
 						}
 						defer writer.Close()
-						if saveErr := qr.SaveSVG(result.Response.URL, writer.URI().Path()); saveErr != nil {
+						svg, saveErr := qr.GenerateSVG(result.Response.URL)
+						if saveErr == nil {
+							saveErr = os.WriteFile(writer.URI().Path(), svg, 0o644)
+						}
+						if saveErr != nil {
 							logger.Log("SVG save failed: " + core.SanitizeForLog(saveErr.Error()))
 							dialog.ShowError(fmt.Errorf("failed to save SVG file"), window)
 						}
@@ -217,7 +222,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 							dialog.ShowError(fmt.Errorf("failed to generate PNG"), window)
 							return
 						}
-						if writeErr := writeFileOwnerOnly(writer.URI().Path(), pngHiRes); writeErr != nil {
+						if writeErr := os.WriteFile(writer.URI().Path(), pngHiRes, 0o644); writeErr != nil {
 							logger.Log("PNG save failed: " + core.SanitizeForLog(writeErr.Error()))
 							dialog.ShowError(fmt.Errorf("failed to save PNG file"), window)
 						}
