@@ -856,3 +856,23 @@ func TestFormatRecordSummaryWithRevocation_EmptyHash(t *testing.T) {
 		t.Errorf("empty hash should not match revoked set, got: %q", got)
 	}
 }
+
+func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	pathErr := &os.PathError{Op: "open", Path: "/nonexistent/dir/log.json.tmp", Err: errors.New("no such file or directory")}
+	err := &SignFlowError{Phase: PhaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, pathErr)}
+
+	got := signFlowErrorMessage(err, logger)
+	want := "Credential signed but NOT recorded in the audit log — check disk space/permissions."
+	if got != want {
+		t.Errorf("signFlowErrorMessage = %q, want %q", got, want)
+	}
+	data, readErr := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
+	if readErr != nil {
+		t.Fatalf("debug log not created: %v", readErr)
+	}
+	if !strings.Contains(string(data), "signed but not recorded in audit log") {
+		t.Errorf("debug log should contain the wrapped error, got: %q", string(data))
+	}
+}

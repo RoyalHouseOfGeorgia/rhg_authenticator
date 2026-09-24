@@ -326,6 +326,12 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	if errors.Is(err, ErrPINCacheUnavailable) {
 		return "Could not secure the PIN in memory. Please restart the app."
 	}
+	// Checked before ClassifyHardwareError, whose regex could misread the
+	// wrapped OS file error (e.g. a path or errno text) as a hardware fault.
+	if errors.Is(err, core.ErrNotLogged) {
+		logger.Log(core.SanitizeForLog(err.Error()))
+		return "Credential signed but NOT recorded in the audit log — check disk space/permissions."
+	}
 	// Transient PC/SC contention (card reset) can surface in any phase and via
 	// the raw adapter-open path. Hoist the check so it wins over the PIN
 	// misclassification even when "verify pin" appears in the wrapped chain.

@@ -1,6 +1,8 @@
 package gui
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -20,6 +22,7 @@ const (
 	PhaseExportKey SignFlowPhase = "export_key"
 	PhaseSign      SignFlowPhase = "sign"
 	PhaseQR        SignFlowPhase = "qr"
+	PhaseLog       SignFlowPhase = "log"
 )
 
 // SignFlowError wraps an error with the phase it occurred in.
@@ -38,8 +41,69 @@ type SignFlowResult struct {
 	Hash8      string
 }
 
-// executeSignFlow runs the signing workflow: open adapter, export key,
-// sign, generate QR, compute hash8.
+// signAndLog opens the adapter with a pre-resolved PIN, exports the public
+// key, signs, and appends an NFC-normalized issuance record to logPath (skipped
+// when logPath is empty).
+//
+// Adapter-open failures are returned unwrapped; export-key and sign failures
+// are wrapped in a *SignFlowError with PhaseExportKey / PhaseSign. If the
+// record append fails, the successful SignResponse is returned TOGETHER WITH a
+// *SignFlowError{Phase: PhaseLog} wrapping core.ErrNotLogged and the underlying
+// append error — callers decide whether an unlogged signature is fatal.
+func signAndLog(
+	req core.SignRequest,
+	logPath string,
+	openAdapter func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error),
+	pin string,
+	logger *debuglog.Logger,
+) (core.SignResponse, error) {
+	// Open adapter with the pre-resolved PIN; piv-go's PINPrompt returns it
+	// instantly. This assumes a fresh per-sign Open/Close (the production
+	// openAdapter builds a new adapter each call) — a long-lived adapter would
+	// reintroduce the whole-app held transaction this ordering avoids.
+	adapter, closer, err := openAdapter(func() (string, error) { return pin, nil })
+	if err != nil {
+		logger.Log("connect: " + core.SanitizeForLog(err.Error()))
+		return core.SignResponse{}, err
+	}
+	defer closer.Close()
+
+	pubKey, err := adapter.ExportPublicKey()
+	if err != nil {
+		logger.Log(sanitizeError("ExportPublicKey", err))
+		return core.SignResponse{}, &SignFlowError{Phase: PhaseExportKey, Err: err}
+	}
+
+	resp, err := core.HandleSign(req, adapter, pubKey)
+	if err != nil {
+		logger.Log(sanitizeError("HandleSign", err))
+		return core.SignResponse{}, &SignFlowError{Phase: PhaseSign, Err: err}
+	}
+
+	// Build issuance record from request + response fields.
+	// NFC-normalize to match what HandleSign signed (raw req fields may differ).
+	record := issuancelog.IssuanceRecord{
+		Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		Recipient:       norm.NFC.String(req.Recipient),
+		Honor:           norm.NFC.String(req.Honor),
+		Detail:          norm.NFC.String(req.Detail),
+		Date:            req.Date,
+		PayloadSHA256:   resp.PayloadSHA256,
+		SignatureB64URL: resp.Signature,
+	}
+
+	if logPath != "" {
+		if logErr := issuancelog.AppendRecord(logPath, record); logErr != nil {
+			logger.Log("log append failed: " + core.SanitizeForLog(logErr.Error()))
+			return resp, &SignFlowError{Phase: PhaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, logErr)}
+		}
+	}
+
+	return resp, nil
+}
+
+// executeSignFlow runs the signing workflow: resolve PIN, open adapter, export
+// key, sign, log, generate QR, compute hash8.
 func executeSignFlow(
 	req core.SignRequest,
 	logPath string,
@@ -66,58 +130,23 @@ func executeSignFlow(
 		onConnecting()
 	}
 
-	// 2. Open adapter with the pre-resolved PIN; piv-go's PINPrompt returns it
-	//    instantly. This assumes a fresh per-sign Open/Close (the production
-	//    openAdapter builds a new adapter each call) — a long-lived adapter would
-	//    reintroduce the whole-app held transaction this fix avoids.
-	adapter, closer, err := openAdapter(func() (string, error) { return pin, nil })
-	if err != nil {
-		logger.Log("connect: " + core.SanitizeForLog(err.Error()))
+	// 2. Open (fresh per sign, with the pre-resolved PIN), export key, sign,
+	//    and append the issuance record.
+	resp, err := signAndLog(req, logPath, openAdapter, pin, logger)
+	if err != nil && !errors.Is(err, core.ErrNotLogged) {
 		return SignFlowResult{}, err
 	}
-	defer closer.Close()
+	// A log-append failure is non-fatal for single-sign: the credential is
+	// already signed and signAndLog has recorded the failure in the debug log.
 
-	// 3. Export public key.
-	pubKey, err := adapter.ExportPublicKey()
-	if err != nil {
-		logger.Log(sanitizeError("ExportPublicKey", err))
-		return SignFlowResult{}, &SignFlowError{Phase: PhaseExportKey, Err: err}
-	}
-
-	// 4. Sign.
-	resp, err := core.HandleSign(req, adapter, pubKey)
-	if err != nil {
-		logger.Log(sanitizeError("HandleSign", err))
-		return SignFlowResult{}, &SignFlowError{Phase: PhaseSign, Err: err}
-	}
-
-	// 5. Build issuance record from request + response fields.
-	// NFC-normalize to match what HandleSign signed (raw req fields may differ).
-	record := issuancelog.IssuanceRecord{
-		Timestamp:       time.Now().UTC().Format(time.RFC3339),
-		Recipient:       norm.NFC.String(req.Recipient),
-		Honor:           norm.NFC.String(req.Honor),
-		Detail:          norm.NFC.String(req.Detail),
-		Date:            req.Date,
-		PayloadSHA256:   resp.PayloadSHA256,
-		SignatureB64URL: resp.Signature,
-	}
-
-	// 6. Log issuance record (non-fatal — signing already succeeded).
-	if logPath != "" {
-		if logErr := issuancelog.AppendRecord(logPath, record); logErr != nil {
-			logger.Log("log append failed: " + core.SanitizeForLog(logErr.Error()))
-		}
-	}
-
-	// 7. Generate QR preview.
+	// 3. Generate QR preview.
 	pngData, err := qr.GeneratePNG(resp.URL, qrPreviewPx)
 	if err != nil {
 		logger.Log(sanitizeError("QR", err))
 		return SignFlowResult{}, &SignFlowError{Phase: PhaseQR, Err: err}
 	}
 
-	// 8. First 8 hex chars of the SHA-256 hash, used as a short identifier in filenames.
+	// 4. First 8 hex chars of the SHA-256 hash, used as a short identifier in filenames.
 	hash8 := resp.PayloadSHA256[:8]
 
 	return SignFlowResult{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -588,5 +589,259 @@ func TestSignFlowError_ErrorString(t *testing.T) {
 	want := "qr: encode failed"
 	if got := sfe.Error(); got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+// countingCloser records how many times Close is called.
+type countingCloser struct{ n int }
+
+func (c *countingCloser) Close() error { c.n++; return nil }
+
+func validSignRequest() core.SignRequest {
+	return core.SignRequest{
+		Recipient: "John Doe",
+		Honor:     "Order of the Crown of Georgia",
+		Detail:    "Distinguished service",
+		Date:      "2026-03-14",
+	}
+}
+
+func TestSignAndLog_Success(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	closer := &countingCloser{}
+	var pinSeen string
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		pinSeen, _ = rp()
+		return &mockSignAdapter{secretKey: priv}, closer, nil
+	}
+
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	logPath := filepath.Join(tmpDir, "issuances.json")
+
+	// NFD input: e + combining acute accent.
+	req := core.SignRequest{
+		Recipient: "Café",
+		Honor:     "Order of the Crown of Georgia",
+		Detail:    "résumé",
+		Date:      "2026-03-14",
+	}
+
+	resp, err := signAndLog(req, logPath, openAdapter, "112233", logger)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.URL == "" || resp.Signature == "" || resp.PayloadSHA256 == "" {
+		t.Errorf("incomplete response: %+v", resp)
+	}
+	if pinSeen != "112233" {
+		t.Errorf("openAdapter readPin returned %q, want %q", pinSeen, "112233")
+	}
+	if closer.n != 1 {
+		t.Errorf("closer.Close called %d times, want 1", closer.n)
+	}
+
+	records, err := issuancelog.ReadLog(logPath)
+	if err != nil {
+		t.Fatalf("ReadLog error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	r := records[0]
+	if r.Recipient != "Café" {
+		t.Errorf("Recipient = %q, want NFC %q", r.Recipient, "Café")
+	}
+	if r.Detail != "résumé" {
+		t.Errorf("Detail = %q, want NFC %q", r.Detail, "résumé")
+	}
+	if r.Honor != req.Honor || r.Date != req.Date {
+		t.Errorf("Honor/Date = %q/%q, want %q/%q", r.Honor, r.Date, req.Honor, req.Date)
+	}
+	if r.PayloadSHA256 != resp.PayloadSHA256 {
+		t.Errorf("PayloadSHA256 = %q, want %q", r.PayloadSHA256, resp.PayloadSHA256)
+	}
+	if r.SignatureB64URL != resp.Signature {
+		t.Errorf("SignatureB64URL = %q, want %q", r.SignatureB64URL, resp.Signature)
+	}
+	if r.Timestamp == "" {
+		t.Error("Timestamp should not be empty")
+	}
+}
+
+func TestSignAndLog_EmptyLogPathSkipsAppend(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	closer := &countingCloser{}
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return &mockSignAdapter{secretKey: priv}, closer, nil
+	}
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+
+	resp, err := signAndLog(validSignRequest(), "", openAdapter, "123456", logger)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.URL == "" {
+		t.Error("expected non-empty URL")
+	}
+	if closer.n != 1 {
+		t.Errorf("closer.Close called %d times, want 1", closer.n)
+	}
+}
+
+func TestSignAndLog_LogAppendFailureReturnsResponseAndPhaseLog(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	closer := &countingCloser{}
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return &mockSignAdapter{secretKey: priv}, closer, nil
+	}
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	// ReadLog treats a missing file as empty; AppendRecord's temp-file write
+	// then fails on every OS because the parent directory does not exist.
+	logPath := filepath.Join(tmpDir, "missing", "log.json")
+
+	resp, err := signAndLog(validSignRequest(), logPath, openAdapter, "123456", logger)
+	if resp.URL == "" || resp.Signature == "" || resp.PayloadSHA256 == "" {
+		t.Errorf("expected a valid response despite log failure, got %+v", resp)
+	}
+	if !errors.Is(err, core.ErrNotLogged) {
+		t.Fatalf("errors.Is(err, ErrNotLogged) = false; err = %v", err)
+	}
+	var sfe *SignFlowError
+	if !errors.As(err, &sfe) {
+		t.Fatalf("expected *SignFlowError, got %T", err)
+	}
+	if sfe.Phase != PhaseLog {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseLog)
+	}
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		t.Errorf("underlying *fs.PathError missing from chain: %v", err)
+	}
+	if closer.n != 1 {
+		t.Errorf("closer.Close called %d times, want 1", closer.n)
+	}
+
+	debugData, readErr := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
+	if readErr != nil {
+		t.Fatalf("ReadFile debug.log: %v", readErr)
+	}
+	if !strings.Contains(string(debugData), "log append failed") {
+		t.Errorf("debug log should contain 'log append failed', got: %s", debugData)
+	}
+}
+
+func TestSignAndLog_ExportKeyError(t *testing.T) {
+	closer := &countingCloser{}
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return &errorExportAdapter{}, closer, nil
+	}
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	logPath := filepath.Join(tmpDir, "issuances.json")
+
+	resp, err := signAndLog(validSignRequest(), logPath, openAdapter, "123456", logger)
+	var sfe *SignFlowError
+	if !errors.As(err, &sfe) {
+		t.Fatalf("expected *SignFlowError, got %T (%v)", err, err)
+	}
+	if sfe.Phase != PhaseExportKey {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseExportKey)
+	}
+	if resp.URL != "" {
+		t.Errorf("expected zero response, got %+v", resp)
+	}
+	if closer.n != 1 {
+		t.Errorf("closer.Close called %d times, want 1", closer.n)
+	}
+	if _, statErr := os.Stat(logPath); !os.IsNotExist(statErr) {
+		t.Errorf("no log record should be written on export failure, stat: %v", statErr)
+	}
+}
+
+func TestSignAndLog_SignError(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	closer := &countingCloser{}
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return &errorSignAdapter{secretKey: priv}, closer, nil
+	}
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	logPath := filepath.Join(tmpDir, "issuances.json")
+
+	resp, err := signAndLog(validSignRequest(), logPath, openAdapter, "123456", logger)
+	var sfe *SignFlowError
+	if !errors.As(err, &sfe) {
+		t.Fatalf("expected *SignFlowError, got %T (%v)", err, err)
+	}
+	if sfe.Phase != PhaseSign {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseSign)
+	}
+	if resp.URL != "" {
+		t.Errorf("expected zero response, got %+v", resp)
+	}
+	if closer.n != 1 {
+		t.Errorf("closer.Close called %d times, want 1", closer.n)
+	}
+	if _, statErr := os.Stat(logPath); !os.IsNotExist(statErr) {
+		t.Errorf("no log record should be written on sign failure, stat: %v", statErr)
+	}
+}
+
+func TestSignAndLog_OpenError(t *testing.T) {
+	openErr := errors.New("pcsc daemon not running")
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return nil, nil, openErr
+	}
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	logPath := filepath.Join(tmpDir, "issuances.json")
+
+	_, err := signAndLog(validSignRequest(), logPath, openAdapter, "123456", logger)
+	if err != openErr {
+		t.Errorf("expected the unwrapped open error, got %v", err)
+	}
+	var sfe *SignFlowError
+	if errors.As(err, &sfe) {
+		t.Errorf("open error must not be wrapped in SignFlowError, got phase %q", sfe.Phase)
+	}
+	if _, statErr := os.Stat(logPath); !os.IsNotExist(statErr) {
+		t.Errorf("log file should not exist after open failure, stat: %v", statErr)
+	}
+	debugData, readErr := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
+	if readErr != nil {
+		t.Fatalf("ReadFile debug.log: %v", readErr)
+	}
+	if !strings.Contains(string(debugData), "connect: pcsc daemon not running") {
+		t.Errorf("debug log should contain connect error, got: %s", debugData)
+	}
+}
+
+// TestExecuteSignFlow_LogPathMissingDirIsNonFatal pins that executeSignFlow
+// swallows signAndLog's PhaseLog error: single-sign still returns a full
+// result (including the QR PNG) when the audit-log append fails.
+func TestExecuteSignFlow_LogPathMissingDirIsNonFatal(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return &mockSignAdapter{secretKey: priv}, nopCloser{}, nil
+	}
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	logPath := filepath.Join(tmpDir, "missing", "log.json")
+
+	result, err := executeSignFlow(validSignRequest(), logPath, openAdapter, dummyReadPin, nil, logger)
+	if err != nil {
+		t.Fatalf("expected nil error (log failure non-fatal), got: %v", err)
+	}
+	if len(result.PNGPreview) == 0 {
+		t.Error("expected non-empty PNGPreview")
+	}
+	if result.Response.URL == "" {
+		t.Error("expected non-empty URL")
+	}
+	if len(result.Hash8) != 8 {
+		t.Errorf("Hash8 length = %d, want 8", len(result.Hash8))
 	}
 }
