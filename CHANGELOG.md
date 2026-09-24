@@ -22,6 +22,9 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
   `name,honor,detail,date,url` CSV. Standard-library Python only; entries are
   checked structurally (log entries against their stored hash), signatures are
   not verified.
+- **Python CI workflow** (`python.yml`): runs the script's tests, CodeQL for
+  Python, and gitleaks. Changes that touch only `scripts/*.py` no longer run
+  the Go/TypeScript build pipeline.
 
 ### Security
 - **Secret scanning was detecting nothing.** `.gitleaks.toml` had an

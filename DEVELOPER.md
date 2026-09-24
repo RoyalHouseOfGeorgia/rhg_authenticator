@@ -67,6 +67,8 @@ verify/
     └── revocations.json  # Revocation list (SHA-256 hashes of revoked credentials)
 scripts/
 ├── generate-test-url.ts  # Generate signed test URLs for UI preview
+├── rebuild_urls.py       # Rebuild verification URLs from a payload+signature, issuance log, or CSV
+├── test_rebuild_urls.py  # unittest suite for rebuild_urls.py (reads go/testdata/vectors.json)
 └── update-sri.sh         # Rebuild verify.js and update SRI hash in index.html
 ```
 
