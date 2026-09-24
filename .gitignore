@@ -59,5 +59,9 @@ terraform.tfstate.backup
 # Runtime data
 issuances.json
 issuances.json.tmp.*
+*-urls.csv
 **/debug.log
 /go/rhg-authenticator
+
+# Python
+__pycache__/

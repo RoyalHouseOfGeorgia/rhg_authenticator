@@ -16,6 +16,15 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
   same file. The summary reports rows processed and successful, and a results
   CSV (`name,honor,detail,date,url,status,error`) can be exported with each
   row's verification URL.
+- **`scripts/rebuild_urls.py`**: rebuild verification URLs without a YubiKey
+  from a payload + signature, a signer's issuance log (`issuances.json`), or a
+  CSV of payloads and signatures. File input produces a
+  `name,honor,detail,date,url` CSV. Standard-library Python only; entries are
+  checked structurally (log entries against their stored hash), signatures are
+  not verified.
+- **Python CI workflow** (`python.yml`): runs the script's tests, CodeQL for
+  Python, and gitleaks. Changes that touch only `scripts/*.py` no longer run
+  the Go/TypeScript build pipeline.
 
 ### Security
 - **Secret scanning was detecting nothing.** `.gitleaks.toml` had an

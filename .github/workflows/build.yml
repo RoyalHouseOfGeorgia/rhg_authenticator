@@ -10,6 +10,8 @@ on:
       - 'LICENSE'
       - '.reqs/**'
       - 'verify/keys/**'
+      - 'scripts/*.py'  # Python tools: covered by python.yml
+      - '.github/workflows/python.yml'
   pull_request:
     branches: [main]
     paths-ignore:
@@ -18,6 +20,8 @@ on:
       - 'LICENSE'
       - '.reqs/**'
       - 'verify/keys/**'
+      - 'scripts/*.py'  # Python tools: covered by python.yml
+      - '.github/workflows/python.yml'
 
 # Deduplicate: when a tag push and branch push fire simultaneously,
 # each event type gets its own group so a release run is never cancelled

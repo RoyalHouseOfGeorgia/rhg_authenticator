@@ -12,11 +12,12 @@ No blockchain, no third-party verification services. Trust is rooted in Ed25519 
 
 ## Components
 
-The system has three independent components:
+The system has three independent components, plus a standalone helper:
 
 1. **Verification library + page (TypeScript)** — core crypto, credential validation, key registry, and the public-facing verification page on GitHub Pages. This is what the world sees.
 2. **Signing app (Go)** — self-contained desktop application with Fyne GUI. Talks directly to YubiKey via PCSC (`piv-go`), signs credentials, generates QR codes (SVG/PNG). Also signs credentials in bulk from a CSV file (one PIN entry per batch; each row still opens a fresh card session; rows already in the issuance log are skipped). Single binary, no external tools required. See [go/README.md](go/README.md) for details.
 3. **Registry manager (Go, tab in signing app)** — integrated tab for managing the key registry. Imports Ed25519 public keys directly from an inserted YubiKey or from `.crt`/`.pem` certificate files, supports add/edit of registry entries with date pickers (entries cannot be deleted — revoke by setting an expiry date), fetches the live registry from the server. Changes are submitted as GitHub pull requests for admin review via the `ghapi` package (OAuth Device Flow, token stored in OS keychain with 90-day local TTL). Table cells show truncated text with ellipsis; click any cell to see the full value in the status bar.
+4. **URL rebuild tool (Python, `scripts/rebuild_urls.py`)** — standard-library script that rebuilds verification URLs from data already signed (a payload + signature, the signing app's issuance log, or a CSV). It reproduces the canonical JSON to check each entry but holds no keys and does not verify signatures; the verification page remains the only authenticity check.
 
 ## Threat Model
 
@@ -116,9 +117,9 @@ Before signing, the credential is serialized to canonical JSON:
 1. Object keys sorted lexicographically at all levels
 2. String values NFC-normalized (Unicode normalization); keys are serialized as-is (not normalized)
 3. No whitespace between tokens
-4. Standard JSON escaping per RFC 8259 §7 (including U+2028/U+2029)
+4. Standard JSON escaping per RFC 8259 §7, as `JSON.stringify` does: `\" \\ \b \f \n \r \t`, other control characters as lowercase `\u00xx`; everything else (including U+2028/U+2029 and non-ASCII) is emitted raw
 
-The canonical bytes are what gets signed and included in the URL (not a re-serialization).
+The canonical bytes are what gets signed and included in the URL (not a re-serialization). Three implementations must agree byte-for-byte — Go (signer), TypeScript (verifier) and Python (`scripts/rebuild_urls.py`) — and all three are tested against `go/testdata/vectors.json`.
 
 ### URL Encoding
 

@@ -67,6 +67,8 @@ verify/
     └── revocations.json  # Revocation list (SHA-256 hashes of revoked credentials)
 scripts/
 ├── generate-test-url.ts  # Generate signed test URLs for UI preview
+├── rebuild_urls.py       # Rebuild verification URLs from a payload+signature, issuance log, or CSV
+├── test_rebuild_urls.py  # unittest suite for rebuild_urls.py (reads go/testdata/vectors.json)
 └── update-sri.sh         # Rebuild verify.js and update SRI hash in index.html
 ```
 
@@ -243,7 +245,9 @@ cp testdata/vectors.json ../src/__tests__/fixtures/vectors.json
 
 Both `go/testdata/vectors.json` and `src/__tests__/fixtures/vectors.json` must be
 byte-identical: `TestCrossLanguageVectors` (Go) and the vitest
-`cross-language.test.ts` suite each consume one copy.
+`cross-language.test.ts` suite each consume one copy. A third consumer,
+`scripts/test_rebuild_urls.py`, reads `go/testdata/vectors.json` directly; run
+`python3 -m unittest discover -s scripts` after regenerating.
 
 ## Deployment Checklist — Verification Page
 
