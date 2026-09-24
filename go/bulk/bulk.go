@@ -66,7 +66,7 @@ func Plan(rows []Row, allowedHonors []string, issued map[string]string) []Result
 			continue
 		}
 		if !slices.Contains(allowedHonors, res.Req.Honor) {
-			results[i].Err = "honor: not one of the allowed honor titles"
+			results[i].Err = `honor: not one of the allowed honor titles: "` + strings.Join(allowedHonors, `", "`) + `"`
 			continue
 		}
 		payload, err := core.BuildPayload(res.Req)

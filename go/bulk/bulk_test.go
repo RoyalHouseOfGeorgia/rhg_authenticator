@@ -66,7 +66,7 @@ func TestPlanClassification(t *testing.T) {
 	}{
 		{"valid", row(2, "Davit", crown, "For service", "2026-03-15"), StatusToSign, ""},
 		{"padded cells", row(2, "  Davit ", "\tOther ", " d ", " 2026-03-15 "), StatusToSign, ""},
-		{"honor case near-miss", row(2, "Davit", "order of the crown of georgia", "d", "2026-03-15"), StatusInvalid, "honor: not one of the allowed honor titles"},
+		{"honor case near-miss", row(2, "Davit", "order of the crown of georgia", "d", "2026-03-15"), StatusInvalid, `honor: not one of the allowed honor titles: "` + strings.Join(testHonors, `", "`) + `"`},
 		{"US date", row(2, "Davit", crown, "d", "3/15/2026"), StatusInvalid, "invalid credential data: invalid date: 3/15/2026"},
 		{"impossible date", row(2, "Davit", crown, "d", "2026-02-30"), StatusInvalid, "invalid date"},
 		{"control char in detail", row(2, "Davit", crown, "a\x07b", "2026-03-15"), StatusInvalid, "detail contains invalid control characters"},

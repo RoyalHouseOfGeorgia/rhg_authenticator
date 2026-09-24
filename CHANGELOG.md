@@ -10,7 +10,8 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
 ### Added
 - **Bulk Sign from File…** on the Sign tab: sign every row of a CSV
   (`name,honor,detail,date`) in one session with a single PIN entry. Invalid
-  rows are skipped and listed before signing; rows already in the issuance log
+  rows are skipped and listed before signing, each with the reason (an
+  unrecognized honor lists the allowed titles); rows already in the issuance log
   are not signed again, so a stopped batch can be resumed by re-opening the
   same file. The summary reports rows processed and successful, and a results
   CSV (`name,honor,detail,date,url,status,error`) can be exported with each

@@ -67,6 +67,8 @@ Sign many credentials in one session from a CSV file.
      - `Ennoblement`
      - `Appointment`
      - `Other`
+
+     A row whose honor doesn't match is listed as invalid, and the error lists the allowed titles.
    - **date** must be `YYYY-MM-DD`
    - Limits: 500 rows, 2 MB
 2. Plug in your YubiKey and click **Bulk Sign from File…** on the Sign tab
