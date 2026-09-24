@@ -7,6 +7,20 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
 
 ## [Unreleased]
 
+### Added
+- **Bulk Sign from File…** on the Sign tab: sign every row of a CSV
+  (`name,honor,detail,date`) in one session with a single PIN entry. Invalid
+  rows are skipped and listed before signing; rows already in the issuance log
+  are not signed again, so a stopped batch can be resumed by re-opening the
+  same file. The summary reports rows processed and successful, and a results
+  CSV (`name,honor,detail,date,url,status,error`) can be exported with each
+  row's verification URL.
+
+### Fixed
+- Saved QR files (SVG and PNG) are now actually restricted to the owner
+  (mode 0600). The save dialog creates the file before the app writes it, so
+  the intended permissions were never applied.
+
 ### Security
 - **Go toolchain bumped to 1.27.1.** Go 1.25 left the two-release support
   window when 1.27 shipped, so `go1.25.14` is its final patch and no further
