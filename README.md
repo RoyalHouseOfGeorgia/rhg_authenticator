@@ -25,7 +25,7 @@
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-1257 tests passing (865 Go + 392 TypeScript).
+1290 tests passing (865 Go + 392 TypeScript + 33 Python).
 
 ## Quick Start — Signing App (Go)
 
@@ -60,6 +60,27 @@ npm run build:verify  # Bundle verification page JS
 ```
 
 Requires Node.js 24+.
+
+## Rebuilding Verification URLs (Python)
+
+`scripts/rebuild_urls.py` rebuilds verification URLs from data you already have — no YubiKey, no network, standard library only (Python 3.9+):
+
+```bash
+# One credential: prints the URL
+python3 scripts/rebuild_urls.py --payload=<p> --signature=<s>
+
+# Every entry in a signer's issuance log → issuances-urls.csv
+python3 scripts/rebuild_urls.py issuances.json
+
+# A CSV with payload and signature columns → credentials-urls.csv
+python3 scripts/rebuild_urls.py credentials.csv -o urls.csv
+```
+
+- Use the `--payload=…` / `--signature=…` form: a signature can start with `-`, which the space-separated form rejects.
+- The issuance log is `~/Library/Application Support/rhg-authenticator/issuances.json` (macOS) or `%APPDATA%\rhg-authenticator\issuances.json` (Windows).
+- File output is a UTF-8 CSV with columns `name,honor,detail,date,url`; it can be opened in Excel or fed back into **Bulk Sign from File…**. An existing output file is never overwritten.
+- Each entry is checked structurally: a log entry must rebuild to its stored `payload_sha256`, and a payload must be in canonical form. Entries that fail are skipped and reported by line/entry number (exit code 1). Signatures are **not** verified — the verification page does that when the URL is opened.
+- Tests: `python3 -m unittest discover -s scripts`
 
 ## Documentation
 
