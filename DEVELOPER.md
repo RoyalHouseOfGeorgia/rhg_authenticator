@@ -243,7 +243,9 @@ cp testdata/vectors.json ../src/__tests__/fixtures/vectors.json
 
 Both `go/testdata/vectors.json` and `src/__tests__/fixtures/vectors.json` must be
 byte-identical: `TestCrossLanguageVectors` (Go) and the vitest
-`cross-language.test.ts` suite each consume one copy.
+`cross-language.test.ts` suite each consume one copy. A third consumer,
+`scripts/test_rebuild_urls.py`, reads `go/testdata/vectors.json` directly; run
+`python3 -m unittest discover -s scripts` after regenerating.
 
 ## Deployment Checklist — Verification Page
 

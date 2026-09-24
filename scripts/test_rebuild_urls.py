@@ -80,7 +80,8 @@ class EncodingTest(unittest.TestCase):
     def test_nfd_input_normalized(self):
         v = next(v for v in VECTORS if v["name"] == "nfc_edge_case")
         c = v["credential"]
-        payload = ru.canonical_payload("Café", c["honor"], "résumé", c["date"])
+        nfd_detail = "re\u0301sume\u0301"
+        payload = ru.canonical_payload("Cafe\u0301", c["honor"], nfd_detail, c["date"])
         self.assertEqual(payload.hex(), v["canonical_hex"])
 
     def test_escapes(self):
@@ -115,7 +116,9 @@ class RowFromPayloadTest(unittest.TestCase):
     def assert_rejected(self, obj_or_bytes, sig: str = SIG64):
         raw = obj_or_bytes
         if not isinstance(raw, bytes):
-            raw = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
+            raw = json.dumps(
+                raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode()
         with self.assertRaises(ru.ROW_ERRORS):
             ru.row_from_payload(ru.b64url_encode(raw), sig)
 
@@ -128,7 +131,7 @@ class RowFromPayloadTest(unittest.TestCase):
             "extra key": {**base, "extra": "x"},
             "missing key": {k: val for k, val in base.items() if k != "detail"},
             "non-string field": {**base, "honor": 5},
-            "non-NFC": {**base, "recipient": "Café"},
+            "non-NFC": {**base, "recipient": "Cafe\u0301"},
             "not an object": [],
             "whitespace": json.dumps(base, sort_keys=True).encode(),
             "invalid utf-8": b"\xff\xfe",
@@ -257,11 +260,12 @@ class LogFileTest(CliTestBase):
         out = self.dir / "issuances-urls.csv"
         self.assertTrue(out.read_bytes().startswith(b"\xef\xbb\xbf"))
         rows = read_rows(out)
-        self.assertEqual(rows[:3], [expected_row(v) for v in VECTORS])
-        self.assertEqual(rows[3]["name"], 'Jane, "JJ" Roe')
-        self.assertEqual(rows[3]["detail"], 'For "valor", and more')
-        self.assertEqual(rows[3]["url"], ru.row_from_log_record(extra)["url"])
-        self.assertIn("Wrote 4 rows", r.stderr)
+        n = len(VECTORS)
+        self.assertEqual(rows[:n], [expected_row(v) for v in VECTORS])
+        self.assertEqual(rows[n]["name"], 'Jane, "JJ" Roe')
+        self.assertEqual(rows[n]["detail"], 'For "valor", and more')
+        self.assertEqual(rows[n]["url"], ru.row_from_log_record(extra)["url"])
+        self.assertIn(f"Wrote {n + 1} rows", r.stderr)
 
     def test_tampered_entry_skipped(self):
         records = [vector_record(v) for v in VECTORS]
@@ -272,7 +276,7 @@ class LogFileTest(CliTestBase):
         self.assertIn("entry 2:", r.stderr)
         self.assertNotIn("tampered", r.stderr)
         self.assertIn("skipped 1.", r.stderr)
-        expected = [expected_row(VECTORS[0]), expected_row(VECTORS[2])]
+        expected = [expected_row(v) for i, v in enumerate(VECTORS) if i != 1]
         self.assertEqual(read_rows(out), expected)
 
     def test_all_skipped_writes_header_only(self):
@@ -286,7 +290,7 @@ class LogFileTest(CliTestBase):
 
 class CsvFileTest(CliTestBase):
     def test_good_file(self):
-        lines = ["﻿id,payload,signature,notes"]
+        lines = ["id,payload,signature,notes"]
         for i, v in enumerate(VECTORS):
             lines.append(f"{i}, {v['payload_b64url']} ,{v['signature_b64url']},n")
         lines.insert(2, ",,,")
@@ -296,6 +300,13 @@ class CsvFileTest(CliTestBase):
         rows = read_rows(self.dir / "in-urls.csv")
         self.assertEqual(rows, [expected_row(v) for v in VECTORS])
         self.assertIn("skipped 0.", r.stderr)
+
+    def test_excel_bom_on_payload_column(self):
+        v = VECTORS[0]
+        src = self.write("in.csv", f"\ufeffpayload,signature\r\n{csv_line(v)}\r\n")
+        r = run(str(src))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(read_rows(self.dir / "in-urls.csv"), [expected_row(v)])
 
     def test_blank_row_with_extra_cell(self):
         v = VECTORS[0]
@@ -344,7 +355,7 @@ class FileErrorTest(CliTestBase):
         self.assert_file_error(self.write("a.csv", "payload,sig\nx,y\n"), "signature")
 
     def test_csv_field_too_large(self):
-        big = "x" * 200_000
+        big = "x" * (csv.field_size_limit() + 1)
         self.assert_file_error(self.write("a.csv", f"payload,signature\n{big},y\n"))
 
     def test_cp1252_csv(self):
@@ -372,6 +383,7 @@ class FileErrorTest(CliTestBase):
         src = self.write("in.csv", "payload,signature\n")
         r = run(str(src), "-o", str(src))
         self.assertEqual(r.returncode, 1)
+        self.assertIn("choose another -o", r.stderr)
         self.assertEqual(src.read_text(encoding="utf-8"), "payload,signature\n")
 
 

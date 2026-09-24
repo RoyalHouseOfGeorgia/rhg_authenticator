@@ -2,6 +2,7 @@
 """Rebuild credential verification URLs from already-signed data.
 
 Needs no YubiKey and does NOT verify signatures (the verify page does that).
+Python 3, standard library only.
 
 Usage:
     python3 scripts/rebuild_urls.py --payload=P --signature=S
@@ -31,8 +32,11 @@ import sys
 import unicodedata
 from pathlib import Path
 
+# Mirrors core.VerifyBaseURL in go/core/sign.go (guarded by the "url" field of
+# go/testdata/vectors.json). Log field names mirror log.IssuanceRecord.
 VERIFY_BASE_URL = "https://verify.royalhouseofgeorgia.ge/"
 HEADER = ("name", "honor", "detail", "date", "url")
+# ValueError also covers UnicodeError, json.JSONDecodeError and binascii.Error.
 ROW_ERRORS = (KeyError, TypeError, ValueError)
 
 
@@ -60,7 +64,9 @@ def canonical_payload(recipient: str, honor: str, detail: str, date: str) -> byt
         "recipient": unicodedata.normalize("NFC", recipient),
         "version": 1,
     }
-    # For this fixed ASCII key set this is byte-identical to Go's writer.
+    # Byte-identical to go/core/canonical.go because json.dumps(ensure_ascii=False)
+    # escapes exactly what writeJSONString does (\" \\ \b \f \n \r \t, other C0
+    # as lowercase \u00xx) and the keys are ASCII, so sort orders agree.
     text = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return text.encode("utf-8")
 
@@ -191,17 +197,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         rows, skipped = load(src)
         write_csv(out, rows)
+    except FileExistsError:
+        fix = "delete it or pass -o" if args.output is None else "choose another -o"
+        print(f"error: {out} already exists; {fix}", file=sys.stderr)
+        return 1
     except (OSError, ValueError, csv.Error) as e:
-        msg = f"error: {e}"
+        hint = ""
         if isinstance(e, UnicodeDecodeError) and suffix == ".csv":
-            msg += " (save the file as CSV UTF-8)"
-        elif isinstance(e, FileExistsError):
-            msg = f"error: {out} already exists; delete it or pass -o"
-        print(msg, file=sys.stderr)
+            hint = " (save the file as CSV UTF-8)"
+        print(f"error: {e}{hint}", file=sys.stderr)
         return 1
 
-    for msg in skipped:
-        print(f"skipped {msg}", file=sys.stderr)
+    for skip in skipped:
+        print(f"skipped {skip}", file=sys.stderr)
     print(f"Wrote {len(rows)} rows to {out}; skipped {len(skipped)}.", file=sys.stderr)
     return 1 if skipped else 0
 
