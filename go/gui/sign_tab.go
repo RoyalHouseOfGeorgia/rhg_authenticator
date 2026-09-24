@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -90,7 +89,31 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 	// Container for QR preview and action buttons (shown after signing).
 	resultContainer := container.NewVBox()
 
-	var signButton *widget.Button
+	launchGo := func(fn func()) { go fn() }
+	if config.SafeGo != nil {
+		launchGo = config.SafeGo
+	}
+
+	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		a, err := yubikey.NewYubiKeyAdapter(readPin)
+		if err != nil {
+			return nil, nil, err
+		}
+		return a, a, nil
+	}
+
+	var signButton, bulkButton *widget.Button
+	// setBusy disables or enables both signing entry points. UI thread only.
+	setBusy := func(busy bool) {
+		if busy {
+			signButton.Disable()
+			bulkButton.Disable()
+		} else {
+			signButton.Enable()
+			bulkButton.Enable()
+		}
+	}
+
 	signButton = widget.NewButton("Sign Credential", func() {
 		// Clear previous results.
 		resultContainer.RemoveAll()
@@ -107,7 +130,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 			return
 		}
 
-		signButton.Disable()
+		setBusy(true)
 		statusLabel.SetText("Preparing to sign...")
 
 		req := core.SignRequest{
@@ -117,20 +140,8 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 			Date:      date,
 		}
 
-		launchGo := func(fn func()) { go fn() }
-		if config.SafeGo != nil {
-			launchGo = config.SafeGo
-		}
 		launchGo(func() {
-			defer fyne.Do(func() { signButton.Enable() })
-
-			openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
-				a, err := yubikey.NewYubiKeyAdapter(readPin)
-				if err != nil {
-					return nil, nil, err
-				}
-				return a, a, nil
-			}
+			defer fyne.Do(func() { setBusy(false) })
 
 			// Set after the PIN is resolved (Item 1 prompts before Open), so the
 			// "Connecting" status doesn't show while the PIN dialog is up.
@@ -206,7 +217,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 							dialog.ShowError(fmt.Errorf("failed to generate PNG"), window)
 							return
 						}
-						if writeErr := os.WriteFile(writer.URI().Path(), pngHiRes, 0o600); writeErr != nil {
+						if writeErr := writeFileOwnerOnly(writer.URI().Path(), pngHiRes); writeErr != nil {
 							logger.Log("PNG save failed: " + core.SanitizeForLog(writeErr.Error()))
 							dialog.ShowError(fmt.Errorf("failed to save PNG file"), window)
 						}
@@ -230,6 +241,18 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 		})
 	})
 
+	bulkButton = widget.NewButton("Bulk Sign from File…", func() {
+		startBulkSign(bulkSignDeps{
+			window:      window,
+			logPath:     config.LogPath,
+			launchGo:    launchGo,
+			openAdapter: openAdapter,
+			pinCache:    pinCache,
+			logger:      logger,
+			setBusy:     setBusy,
+		})
+	})
+
 	form := container.NewVBox(
 		widget.NewLabel("Recipient"),
 		recipientEntry,
@@ -241,6 +264,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 		dateRow,
 		layout.NewSpacer(),
 		signButton,
+		bulkButton,
 		statusLabel,
 		resultContainer,
 	)

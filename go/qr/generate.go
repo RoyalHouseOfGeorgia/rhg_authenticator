@@ -84,6 +84,11 @@ func SaveSVG(url string, path string) error {
 	if err := os.WriteFile(path, svg, 0o600); err != nil {
 		return fmt.Errorf("writing SVG file: %w", err)
 	}
+	// The file may pre-exist (Fyne's save dialog creates it before the
+	// callback), in which case WriteFile does not apply the mode.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("setting SVG file permissions: %w", err)
+	}
 
 	return nil
 }

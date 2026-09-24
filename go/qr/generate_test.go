@@ -248,6 +248,33 @@ func TestSaveSVGFilePermissions(t *testing.T) {
 	}
 }
 
+// TestSaveSVGTightensExistingFile covers the save-dialog case: the file
+// already exists with a looser mode, which os.WriteFile alone would keep.
+func TestSaveSVGTightensExistingFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "test.svg")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveSVG(testURL, path); err != nil {
+		t.Fatalf("SaveSVG error: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("file permissions = %04o, want 0600", perm)
+	}
+}
+
 func TestSaveSVGInvalidPath(t *testing.T) {
 	err := SaveSVG(testURL, "/nonexistent/dir/test.svg")
 	if err == nil {
