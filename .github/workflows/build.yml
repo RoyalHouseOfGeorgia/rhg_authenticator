@@ -10,6 +10,8 @@ on:
       - 'LICENSE'
       - '.reqs/**'
       - 'verify/keys/**'
+      - 'scripts/*.py'  # Python tools: covered by python.yml
+      - '.github/workflows/python.yml'
   pull_request:
     branches: [main]
     paths-ignore:
@@ -18,6 +20,8 @@ on:
       - 'LICENSE'
       - '.reqs/**'
       - 'verify/keys/**'
+      - 'scripts/*.py'  # Python tools: covered by python.yml
+      - '.github/workflows/python.yml'
 
 # Deduplicate: when a tag push and branch push fire simultaneously,
 # each event type gets its own group so a release run is never cancelled
@@ -53,13 +57,6 @@ jobs:
         run: npm run check:sri
       - run: npm audit --audit-level=moderate
 
-  test-python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      # Runner's system python3; the script and tests are stdlib-only.
-      - run: python3 -m unittest discover -s scripts -v
-
   security:
     runs-on: ubuntu-latest
     permissions:
@@ -70,7 +67,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
         with:
-          languages: go, javascript, python
+          languages: go, javascript
       - run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libgl1-mesa-dev xorg-dev
       - uses: github/codeql-action/autobuild@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
       - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
