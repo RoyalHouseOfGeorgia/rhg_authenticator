@@ -50,6 +50,46 @@ See [../CHANGELOG.md](../CHANGELOG.md) for release history.
 
 If signing fails, the status area shows a diagnostic message and a **Report Issue** button (files a GitHub issue automatically if logged in, or opens a pre-filled browser form). In debug builds, details are also written to `debug.log` — see [Troubleshooting](#troubleshooting) below.
 
+### Bulk Sign
+
+Sign many credentials in one session from a CSV file.
+
+1. Prepare a CSV with a header row containing `name`, `honor`, `detail`, `date` (any order, any letter case; extra columns are ignored):
+   ```csv
+   name,honor,detail,date
+   Jane Doe,Order of the Crown of Georgia,Knight Commander,2026-09-24
+   ```
+   - **honor** must be one of these titles, copied exactly (spelling, punctuation and capitalisation matter):
+     - `Order of the Eagle of Georgia and the Seamless Tunic of Our Lord Jesus Christ`
+     - `Order of the St. Queen Tamar of Georgia`
+     - `Order of the Crown of Georgia`
+     - `Medal of Merit of the Royal House of Georgia`
+     - `Ennoblement`
+     - `Appointment`
+     - `Other`
+
+     A row whose honor doesn't match is listed as invalid, and the error lists the allowed titles.
+   - **date** must be `YYYY-MM-DD`
+   - Limits: 500 rows, 2 MB
+2. Plug in your YubiKey and click **Bulk Sign from File…** on the Sign tab
+3. Review the confirmation: row counts, the first few names to be signed, and any invalid rows (with line numbers) that will be skipped
+4. Click **Sign** and enter your PIN once for the whole batch. If your key requires touch, touch it when it blinks for each row. Expect roughly 0.5–1 s per row
+5. When the batch ends, the summary shows how many rows were processed and how many succeeded. Click **Export Results CSV…** to save `name,honor,detail,date,url,status,error` for every row — `url` is the verification URL encoded in the QR code
+
+Each newly signed row is added to the issuance log — click **Refresh** on the History tab to see the new entries. Row statuses in the results file:
+
+| Status | Meaning |
+|---|---|
+| `signed` | Signed in this run |
+| `already_issued` | Already in the issuance log — not signed again; URL rebuilt from the logged signature |
+| `invalid` | Skipped: failed validation, or duplicates an earlier row in the same file |
+| `failed` | Signing error on this row; the batch stopped here |
+| `not_attempted` | The batch was cancelled or stopped before this row |
+
+A wrong PIN, a YubiKey error, or a failure to write the issuance log stops the batch. Rows signed before the stop stay signed and logged; if the stop was a log-write failure, the row that hit it is signed but not logged, and its `error` column says so. **Cancel** stops after the current row. Fix the problem and open the same file again: rows already signed are reported as `already_issued`, so only the remaining rows are signed.
+
+**Excel tips:** use *Save As → CSV UTF-8* (plain "CSV" turns Georgian text into `????`; rows containing `??` are rejected as mis-encoded); format the date column as Text so Excel doesn't rewrite it; keep each cell on one line (no Alt+Enter); if your Excel saves with `;` separators, change the list separator to `,` or the app will reject the file.
+
 ### History Tab
 
 Browse previously issued credentials. Search by recipient name. Click any entry for full details. **Revoke** a credential via the Revoke button — this submits a GitHub PR to add the credential's SHA-256 hash to the revocation list.
@@ -167,6 +207,9 @@ go/
 ├── main.go              # App entry point, Fyne window, panic recovery, safeGo, --version
 ├── buildinfo/           # Build metadata
 │   └── buildinfo.go     # Version (set via ldflags), IsRelease/IsDebug helpers
+├── bulk/                # Bulk signing: CSV input, row planning, sign loop, results CSV
+│   ├── input.go         # ReadInput (2 MB cap, UTF-8/BOM) + ParseCSV (header mapping, row checks)
+│   └── bulk.go          # Plan (validate, dedup vs log + file), Run, WriteResultCSV, Summarize
 ├── core/                # Credential logic (must match TypeScript byte-for-byte)
 │   ├── canonical.go     # Deterministic JSON (key-sort, NFC, no whitespace)
 │   ├── base64url.go     # Base64URL encode/decode
@@ -179,13 +222,15 @@ go/
 │   ├── revocation.go    # RevocationEntry, RevocationList, ValidateRevocationList, BuildRevocationSet, IsRevoked
 │   ├── revocation_test.go
 │   ├── sanitize.go      # SanitizeForLog + StripControlChars: C0, C1, DEL, bidi (shared by gui + ghapi + debuglog)
-│   └── sign.go          # Signing orchestrator
+│   └── sign.go          # Signing orchestrator (BuildPayload, HandleSign, BuildVerifyURL)
 ├── debuglog/            # Debug logging (active in non-release builds only)
 │   └── debuglog.go      # Append-only timestamped file logger; no-op when path is empty
 ├── errorreport/         # Auto error reporting
 │   └── report.go        # Build issue title/body, file via GitHub API or browser fallback
 ├── gui/                 # Fyne GUI (signing app)
 │   ├── audit_tab.go     # Registry audit (renders commit history from ghapi/commits)
+│   ├── bulk_flow.go     # Bulk sign orchestration (Fyne-free): load plan, PIN once, run
+│   ├── bulk_sign.go     # Bulk sign dialogs: file pick, confirm, progress, summary + export
 │   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi)
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display + Report Issue button

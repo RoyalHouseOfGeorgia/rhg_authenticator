@@ -7,7 +7,25 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
 
 ## [Unreleased]
 
+### Added
+- **Bulk Sign from File…** on the Sign tab: sign every row of a CSV
+  (`name,honor,detail,date`) in one session with a single PIN entry. Invalid
+  rows are skipped and listed before signing, each with the reason (an
+  unrecognized honor lists the allowed titles); rows already in the issuance log
+  are not signed again, so a stopped batch can be resumed by re-opening the
+  same file. The summary reports rows processed and successful, and a results
+  CSV (`name,honor,detail,date,url,status,error`) can be exported with each
+  row's verification URL.
+
 ### Security
+- **Secret scanning was detecting nothing.** `.gitleaks.toml` had an
+  `[extend]` table without `useDefault = true`, which loads zero rules, so
+  both the CI gitleaks job and local runs passed regardless of content. The
+  default rules are now enabled, with allowlist entries for the verified
+  false positives (public keys, test vectors, the public OAuth client ID, a
+  fake test token). The `.githooks/pre-commit` hook now runs gitleaks on
+  staged changes when it is installed, blocking a secret before it is
+  committed rather than after it is pushed.
 - **Go toolchain bumped to 1.27.1.** Go 1.25 left the two-release support
   window when 1.27 shipped, so `go1.25.14` is its final patch and no further
   stdlib security fixes will land for it. The build now uses a supported

@@ -25,7 +25,7 @@
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 
-1173 tests passing (781 Go + 392 TypeScript).
+1257 tests passing (865 Go + 392 TypeScript).
 
 ## Quick Start — Signing App (Go)
 
@@ -38,7 +38,7 @@ make build          # → release/rhg-authenticator
 ```
 
 The app has five tabs:
-- **Sign** — fill in credential form, sign with YubiKey, generate QR code
+- **Sign** — fill in credential form, sign with YubiKey, generate QR code; or **Bulk Sign from File…** to sign every row of a CSV in one session
 - **History** — browse previously issued credentials, search by recipient
 - **Registry** — manage the key registry (import from YubiKey or .crt/.pem, add/edit entries, submit as PR for review)
 - **Audit** — view GitHub commit history of the registry file (tamper detection)

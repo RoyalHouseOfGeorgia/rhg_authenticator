@@ -15,7 +15,7 @@ No blockchain, no third-party verification services. Trust is rooted in Ed25519 
 The system has three independent components:
 
 1. **Verification library + page (TypeScript)** — core crypto, credential validation, key registry, and the public-facing verification page on GitHub Pages. This is what the world sees.
-2. **Signing app (Go)** — self-contained desktop application with Fyne GUI. Talks directly to YubiKey via PCSC (`piv-go`), signs credentials, generates QR codes (SVG/PNG). Single binary, no external tools required. See [go/README.md](go/README.md) for details.
+2. **Signing app (Go)** — self-contained desktop application with Fyne GUI. Talks directly to YubiKey via PCSC (`piv-go`), signs credentials, generates QR codes (SVG/PNG). Also signs credentials in bulk from a CSV file (one PIN entry per batch; each row still opens a fresh card session; rows already in the issuance log are skipped). Single binary, no external tools required. See [go/README.md](go/README.md) for details.
 3. **Registry manager (Go, tab in signing app)** — integrated tab for managing the key registry. Imports Ed25519 public keys directly from an inserted YubiKey or from `.crt`/`.pem` certificate files, supports add/edit of registry entries with date pickers (entries cannot be deleted — revoke by setting an expiry date), fetches the live registry from the server. Changes are submitted as GitHub pull requests for admin review via the `ghapi` package (OAuth Device Flow, token stored in OS keychain with 90-day local TTL). Table cells show truncated text with ellipsis; click any cell to see the full value in the status bar.
 
 ## Threat Model
@@ -44,6 +44,8 @@ The system has three independent components:
 6. App canonicalizes credential → signs via YubiKey → verifies round-trip → logs
 7. App generates QR code (SVG for print, PNG for preview)
 8. Operator saves SVG, gives to diploma designer for printing
+
+**Bulk variant:** the operator selects a CSV instead of filling the form. Every row is validated before the PIN prompt (invalid rows are skipped; rows whose payload hash is already in the issuance log are reported as already issued, with the URL rebuilt from the logged signature). The PIN is entered once; each remaining row is then signed and logged as in steps 6–7, minus the QR preview. A failed log write stops the batch, so every signed row is either logged or reported as not logged. The operator can export a results CSV containing each row's verification URL.
 
 ### Verification Flow
 
