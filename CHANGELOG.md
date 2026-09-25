@@ -22,9 +22,10 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
   `name,honor,detail,date,url` CSV. Standard-library Python only; entries are
   checked structurally (log entries against their stored hash), signatures are
   not verified.
-- **Python CI workflow** (`python.yml`): runs the script's tests, CodeQL for
-  Python, and gitleaks. Changes that touch only `scripts/*.py` no longer run
-  the Go/TypeScript build pipeline.
+- **Python CI workflow** (`python.yml`): runs the script's tests and gitleaks.
+  Changes that touch only `scripts/*.py` no longer run the Go/TypeScript build
+  pipeline. CodeQL for Python (`codeql-python.yml`) runs on every PR so the
+  CodeQL PR check can compare alerts against `main`.
 - **Export Issuance Log…** on the History tab: saves a copy of the issuance
   log (`rhg-issuances-YYYY-MM-DD.json`) through a save dialog that opens on the
   Desktop, then confirms where the file went — no need to find the app's data
