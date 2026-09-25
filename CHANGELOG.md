@@ -7,6 +7,8 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
 
 ## [Unreleased]
 
+## [v1.3] — 2026-09-25
+
 ### Added
 - **Bulk Sign from File…** on the Sign tab: sign every row of a CSV
   (`name,honor,detail,date`) in one session with a single PIN entry. Invalid
@@ -49,6 +51,16 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
   window when 1.27 shipped, so `go1.25.14` is its final patch and no further
   stdlib security fixes will land for it. The build now uses a supported
   toolchain, and the documented minimum for building from source is Go 1.26.
+  (Before the move, Go 1.25.14 picked up the GO-2026-5026 and GO-2026-5972
+  stdlib fixes.)
+
+### Changed
+- **Verify page crypto library** — `@noble/curves` upgraded from 1.9.7 to
+  2.4.0 (major version); the verification bundle and its SRI hash were rebuilt.
+- The SRI update script now fails loudly instead of silently writing nothing,
+  and CI uses it as the SRI check.
+- Numerous dependency updates via Dependabot (Fyne 2.8.1, golang.org/x/text
+  0.42, vitest 5, GitHub Actions, and dev-tooling bumps).
 
 ## [v1.2] — 2026-07-22
 
@@ -135,7 +147,8 @@ verifying Royal honors.
 - SLSA build provenance attestations and `SHA256SUMS.txt` on all release
   binaries.
 
-[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.2...HEAD
+[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3...HEAD
+[v1.3]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.2...v1.3
 [v1.2]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.1...v1.2
 [v1.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.0...v1.1
 [v1.0]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/releases/tag/v1.0
