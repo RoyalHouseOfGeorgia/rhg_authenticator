@@ -26,7 +26,7 @@
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 | **URL rebuild tool** | Python | **Complete** | `scripts/rebuild_urls.py` — rebuild verification URLs from existing signatures, no YubiKey |
 
-1291 tests passing (865 Go + 392 TypeScript + 34 Python).
+1295 tests passing (869 Go + 392 TypeScript + 34 Python).
 
 ## Quick Start — Signing App (Go)
 
@@ -40,7 +40,7 @@ make build          # → release/rhg-authenticator
 
 The app has five tabs:
 - **Sign** — fill in credential form, sign with YubiKey, generate QR code; or **Bulk Sign from File…** to sign every row of a CSV in one session
-- **History** — browse previously issued credentials, search by recipient
+- **History** — browse previously issued credentials, search by recipient; **Export Issuance Log…** saves a copy of the log (e.g. to the Desktop)
 - **Registry** — manage the key registry (import from YubiKey or .crt/.pem, add/edit entries, submit as PR for review)
 - **Audit** — view GitHub commit history of the registry file (tamper detection)
 - **YubiKey** — check if the inserted YubiKey is authorized in the registry
@@ -70,15 +70,15 @@ Requires Node.js 24+.
 # One credential: prints the URL
 python3 scripts/rebuild_urls.py --payload=<p> --signature=<s>
 
-# Every entry in a signer's issuance log → issuances-urls.csv
-python3 scripts/rebuild_urls.py issuances.json
+# Every entry in a signer's issuance log → rhg-issuances-2026-09-25-urls.csv
+python3 scripts/rebuild_urls.py rhg-issuances-2026-09-25.json
 
 # A CSV with payload and signature columns → credentials-urls.csv
 python3 scripts/rebuild_urls.py credentials.csv
 ```
 
 - Use the `--payload=…` / `--signature=…` form: a signature can start with `-`, which the space-separated form rejects.
-- The issuance log is `~/Library/Application Support/rhg-authenticator/issuances.json` (macOS) or `%APPDATA%\rhg-authenticator\issuances.json` (Windows).
+- To get the signer's issuance log, have them click **Export Issuance Log…** on the History tab and send you the saved file (`rhg-issuances-YYYY-MM-DD.json`). It holds every recipient's details, so keep it out of commits — `rhg-issuances-*.json` and the script's `*-urls.csv` output are gitignored if you work on them inside the checkout. The raw file is `~/Library/Application Support/rhg-authenticator/issuances.json` (macOS) or `%APPDATA%\rhg-authenticator\issuances.json` (Windows).
 - File output is a UTF-8 CSV with columns `name,honor,detail,date,url` that opens in Excel. An existing output file is never overwritten.
 - Each entry is checked structurally: a log entry must rebuild to its stored `payload_sha256`, and a payload must be in canonical form. Entries that fail are skipped and reported by line/entry number (exit code 1). The hash check catches corruption, not tampering — anyone who can edit the log can recompute it. Signatures are **not** verified; only the verification page proves a URL is genuine. Don't feed the output into **Bulk Sign** unless every URL in it verifies.
 - Tests: `python3 -m unittest discover -s scripts`

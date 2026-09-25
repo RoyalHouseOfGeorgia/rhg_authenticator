@@ -59,6 +59,7 @@ terraform.tfstate.backup
 # Runtime data
 issuances.json
 issuances.json.tmp.*
+rhg-issuances-*.json
 *-urls.csv
 **/debug.log
 /go/rhg-authenticator

@@ -1,0 +1,33 @@
+name: CodeQL (Python)
+
+# No path filter on purpose: GitHub's CodeQL PR check can only compare new
+# alerts when every CodeQL configuration on main also runs on the PR. Running
+# this one always (~1 min, no build) makes that true for Go/JS PRs. Python-only
+# and docs-only PRs skip build.yml's go/javascript analysis, so their CodeQL
+# check stays neutral; results still reach the Security tab (accepted).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: codeql-python-${{ github.sha }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  codeql-python:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0

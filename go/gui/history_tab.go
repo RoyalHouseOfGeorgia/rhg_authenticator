@@ -1,16 +1,21 @@
 package gui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -250,11 +255,15 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		updateRevokeButton(clientNil)
 	}
 
+	exportButton := widget.NewButton("Export Issuance Log…", func() {
+		onIssuanceExportTapped(logPath, window)
+	})
+
 	// Initial load.
 	loadRecords()
 	fetchRevocations()
 
-	buttonBar := container.NewHBox(refreshButton, signInButton, revokeButton, revocationStatus)
+	buttonBar := container.NewHBox(refreshButton, signInButton, revokeButton, exportButton, revocationStatus)
 	topBar := container.NewBorder(nil, nil, nil, buttonBar, searchEntry)
 	return container.NewBorder(topBar, nil, nil, nil, list), refreshLoginState
 }
@@ -298,4 +307,95 @@ func formatRecordDetail(rec log.IssuanceRecord) string {
 		rec.Timestamp, rec.Recipient, rec.Honor, rec.Detail, core.FormatDateDisplay(rec.Date),
 		rec.PayloadSHA256, rec.SignatureB64URL,
 	)
+}
+
+// onIssuanceExportTapped hands the raw log file to a non-technical operator
+// via a save dialog. The log is read before the dialog opens because Fyne
+// truncates the destination before the save callback runs; that keeps the log
+// intact if it is picked as the destination, as long as the write succeeds.
+func onIssuanceExportTapped(logPath string, window fyne.Window) {
+	data, readErr := os.ReadFile(logPath)
+	if errors.Is(readErr, fs.ErrNotExist) {
+		showNothingToExport(window)
+		return
+	}
+	if readErr != nil {
+		fmt.Fprintf(os.Stderr, "history: failed to read log for export: %v\n", readErr)
+		dialog.ShowError(errors.New("could not read the issuance log"), window)
+		return
+	}
+	if !hasRecords(data) {
+		showNothingToExport(window)
+		return
+	}
+	saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+		onIssuanceExportChosen(data, window, writer, err)
+	}, window)
+	saveDialog.SetFileName(time.Now().Format("rhg-issuances-2006-01-02.json"))
+	saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
+	if desktop, ok := desktopDir(); ok {
+		saveDialog.SetLocation(desktop)
+	}
+	saveDialog.Show()
+}
+
+func showNothingToExport(window fyne.Window) {
+	dialog.ShowInformation("Nothing to Export", "No credentials have been signed on this computer yet.", window)
+}
+
+// onIssuanceExportChosen is the export save-dialog callback: it writes data
+// (the log bytes read at click time) through the writer Fyne opened.
+func onIssuanceExportChosen(data []byte, window fyne.Window, writer fyne.URIWriteCloser, err error) {
+	// Fyne reports an uncreatable destination as a writer plus a non-nil
+	// error, so err must be checked before writer.
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "history: export save failed: %v\n", err)
+		showIssuanceExportError(window)
+		return
+	}
+	if writer == nil {
+		return // cancelled
+	}
+	_, werr := writer.Write(data)
+	cerr := writer.Close()
+	if werr != nil || cerr != nil {
+		fmt.Fprintf(os.Stderr, "history: export write failed: %v\n", errors.Join(werr, cerr))
+		showIssuanceExportError(window)
+		return
+	}
+	dialog.ShowInformation("Issuance Log Exported",
+		"Saved to:\n"+filepath.FromSlash(writer.URI().Path())+"\n\nYou can attach this file to an email.", window)
+}
+
+// showIssuanceExportError points macOS users at the Files and Folders
+// permission, the usual cause of a failed save to the Desktop.
+func showIssuanceExportError(window fyne.Window) {
+	dialog.ShowError(errors.New("could not save the issuance log — on a Mac, check System Settings → Privacy & Security → Files and Folders"), window)
+}
+
+// hasRecords reports whether a log file's contents hold at least one record.
+// Unparseable contents count as records so a corrupt log can still be
+// exported for inspection.
+func hasRecords(data []byte) bool {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	var records []json.RawMessage
+	if err := json.Unmarshal(data, &records); err != nil {
+		return true
+	}
+	return len(records) > 0
+}
+
+// desktopDir returns the user's Desktop folder as a dialog start location.
+func desktopDir() (fyne.ListableURI, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, false
+	}
+	desktop, err := storage.ListerForURI(storage.NewFileURI(filepath.Join(home, "Desktop")))
+	if err != nil {
+		return nil, false
+	}
+	return desktop, true
 }

@@ -1,7 +1,14 @@
 package gui
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/test"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
@@ -52,5 +59,148 @@ func TestShouldEnableRevoke(t *testing.T) {
 					tt.clientNil, tt.cacheReady, tt.selected, tt.revoked, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestOnIssuanceExportChosen covers the export save callback: success,
+// save-dialog error, cancel, and a failed write. Each case gets its own
+// window so overlays don't leak between cases.
+func TestOnIssuanceExportChosen(t *testing.T) {
+	test.NewTempApp(t)
+	data := []byte(`[{"recipient":"ქართველი"}]`)
+	dest := filepath.Join(t.TempDir(), "rhg-issuances.json")
+
+	tests := []struct {
+		name      string
+		writer    *fakeURIWriter
+		err       error
+		wantText  string // "" = no dialog expected
+		wantBytes bool
+	}{
+		{"success", &fakeURIWriter{path: dest}, nil, "Saved to:", true},
+		// Fyne passes a writer alongside the error when it can't create the file.
+		{"save dialog error", &fakeURIWriter{path: dest}, errors.New("permission denied"), "could not save the issuance log", false},
+		{"cancelled", nil, nil, "", false},
+		{"write fails", &fakeURIWriter{path: dest, failWrite: true}, nil, "could not save the issuance log", false},
+		{"close fails", &fakeURIWriter{path: dest, failClose: true}, nil, "could not save the issuance log", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := test.NewWindow(nil)
+			defer w.Close()
+			var writer fyne.URIWriteCloser
+			if tc.writer != nil {
+				writer = tc.writer
+			}
+			onIssuanceExportChosen(data, w, writer, tc.err)
+
+			if tc.wantText == "" {
+				if w.Canvas().Overlays().Top() != nil {
+					t.Fatal("expected no dialog")
+				}
+				return
+			}
+			texts := strings.Join(labelTexts(t, topOverlay(t, w)), "\n")
+			if !strings.Contains(strings.ToLower(texts), strings.ToLower(tc.wantText)) {
+				t.Errorf("dialog missing %q:\n%s", tc.wantText, texts)
+			}
+			if tc.err != nil {
+				if tc.writer.buf.Len() != 0 || tc.writer.closed {
+					t.Error("writer used despite save-dialog error")
+				}
+			} else if tc.writer != nil && !tc.writer.closed {
+				t.Error("writer not closed")
+			}
+			if tc.wantBytes {
+				if got := tc.writer.buf.Bytes(); string(got) != string(data) {
+					t.Errorf("wrote %q, want %q", got, data)
+				}
+				if !strings.Contains(texts, filepath.FromSlash(dest)) {
+					t.Errorf("confirmation missing path %q:\n%s", dest, texts)
+				}
+			}
+		})
+	}
+}
+
+// TestOnIssuanceExportTapped covers the click-time checks: nothing to export,
+// an unreadable log, and a log with records opening the save dialog.
+func TestOnIssuanceExportTapped(t *testing.T) {
+	test.NewTempApp(t)
+	dir := t.TempDir()
+	// Keep the save dialog's Desktop lookup off the real home directory.
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	tests := []struct {
+		name           string
+		logPath        string
+		wantText       string
+		wantSaveDialog bool
+	}{
+		{"missing log", filepath.Join(dir, "absent.json"), "No credentials have been signed", false},
+		{"empty array", write("empty.json", "[]\n"), "No credentials have been signed", false},
+		{"whitespace", write("blank.json", "  \n"), "No credentials have been signed", false},
+		{"unreadable", dir, "could not read the issuance log", false}, // a directory can't be read as a file
+		{"has records", write("log.json", `[{"recipient":"x"}]`), "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := test.NewWindow(nil)
+			defer w.Close()
+			onIssuanceExportTapped(tc.logPath, w)
+			texts := strings.Join(labelTexts(t, topOverlay(t, w)), "\n")
+			if tc.wantSaveDialog {
+				if findButton(t, topOverlay(t, w), "Save") == nil {
+					t.Errorf("save dialog not shown:\n%s", texts)
+				}
+				return
+			}
+			if !strings.Contains(strings.ToLower(texts), strings.ToLower(tc.wantText)) {
+				t.Errorf("dialog missing %q:\n%s", tc.wantText, texts)
+			}
+		})
+	}
+}
+
+func TestHasRecords(t *testing.T) {
+	tests := map[string]bool{
+		"":                       false,
+		" \n\t":                  false,
+		"[]":                     false,
+		"[\n  {},\n  {}\n]":      true,
+		"not json":               true, // exported anyway for inspection
+		`{"recipient":"object"}`: true,
+	}
+	for in, want := range tests {
+		if got := hasRecords([]byte(in)); got != want {
+			t.Errorf("hasRecords(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// TestDesktopDir: the Desktop folder is used when it exists and skipped when
+// it doesn't. t.Setenv makes this test non-parallel by design.
+func TestDesktopDir(t *testing.T) {
+	test.NewTempApp(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	if _, ok := desktopDir(); ok {
+		t.Error("desktopDir() = true without a Desktop folder")
+	}
+	if err := os.Mkdir(filepath.Join(home, "Desktop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := desktopDir(); !ok {
+		t.Error("desktopDir() = false with a Desktop folder")
 	}
 }
