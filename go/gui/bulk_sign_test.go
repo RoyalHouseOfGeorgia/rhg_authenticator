@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -432,19 +433,34 @@ func TestBulkSign_FileChosen(t *testing.T) {
 	})
 }
 
-// fakeURIWriter is a fyne.URIWriteCloser whose URI points at path. Writes
-// are discarded: the export writes by path, as the real save dialog flow does.
+// fakeURIWriter is a fyne.URIWriteCloser whose URI points at path. Exports
+// that write by path (bulk results) ignore buf; the issuance-log export writes
+// through Write into buf. failWrite / failClose make Write / Close fail.
 type fakeURIWriter struct {
-	path   string
-	closed bool
+	path      string
+	buf       bytes.Buffer
+	failWrite bool
+	failClose bool
+	closed    bool
 }
 
-func (f *fakeURIWriter) Write(p []byte) (int, error) { return len(p), nil }
-func (f *fakeURIWriter) Close() error                { f.closed = true; return nil }
-func (f *fakeURIWriter) URI() fyne.URI               { return storage.NewFileURI(f.path) }
+func (f *fakeURIWriter) Write(p []byte) (int, error) {
+	if f.failWrite {
+		return 0, errors.New("write failed")
+	}
+	return f.buf.Write(p)
+}
+func (f *fakeURIWriter) Close() error {
+	f.closed = true
+	if f.failClose {
+		return errors.New("close failed")
+	}
+	return nil
+}
+func (f *fakeURIWriter) URI() fyne.URI { return storage.NewFileURI(f.path) }
 
 // TestBulkSign_Export covers the summary's export button and the save
-// callback: dismissed, success (owner-only file), and write failure.
+// callback: dismissed, save-dialog error, success, and write failure.
 func TestBulkSign_Export(t *testing.T) {
 	h := newBulkUIHarness(t)
 	results := h.plan(t, threeRowCSV)
@@ -452,8 +468,19 @@ func TestBulkSign_Export(t *testing.T) {
 	tapOverlayButton(t, h.w, "Export Results CSV…")
 	tapOverlayButton(t, h.w, "Cancel") // dismiss the save dialog: nil writer
 
+	before := len(h.w.Canvas().Overlays().List())
 	onBulkExportChosen(h.deps, results, nil, nil)
+	if n := len(h.w.Canvas().Overlays().List()); n != before {
+		t.Fatalf("cancel changed overlay count %d → %d", before, n)
+	}
+
+	// Fyne reports an uncreatable destination as a writer plus a non-nil error.
 	onBulkExportChosen(h.deps, results, &fakeURIWriter{}, errors.New("boom"))
+	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
+	if !strings.Contains(strings.ToLower(texts), "failed to save results file") {
+		t.Errorf("save-dialog error not shown:\n%s", texts)
+	}
+	tapOverlayButton(t, h.w, "OK")
 
 	path := filepath.Join(t.TempDir(), "results.csv")
 	w := &fakeURIWriter{path: path}
@@ -474,7 +501,7 @@ func TestBulkSign_Export(t *testing.T) {
 	if !bad.closed {
 		t.Error("writer not closed on failure")
 	}
-	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
+	texts = strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
 	if !strings.Contains(strings.ToLower(texts), "failed to save results file") {
 		t.Errorf("error dialog not shown:\n%s", texts)
 	}

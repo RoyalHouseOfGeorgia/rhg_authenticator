@@ -190,7 +190,12 @@ func invalidRowsView(heading string, invalid []string) []fyne.CanvasObject {
 
 // onBulkExportChosen is the results-CSV save callback. UI thread only.
 func onBulkExportChosen(d bulkSignDeps, results []bulk.Result, writer fyne.URIWriteCloser, err error) {
-	if err != nil || writer == nil {
+	if err != nil {
+		d.logger.Log("bulk results save failed: " + core.SanitizeForLog(err.Error()))
+		dialog.ShowError(fmt.Errorf("failed to save results file"), d.window)
+		return
+	}
+	if writer == nil {
 		return
 	}
 	defer writer.Close()

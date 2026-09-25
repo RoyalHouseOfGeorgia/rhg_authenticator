@@ -94,6 +94,8 @@ A wrong PIN, a YubiKey error, or a failure to write the issuance log stops the b
 
 Browse previously issued credentials. Search by recipient name. Click any entry for full details. **Revoke** a credential via the Revoke button — this submits a GitHub PR to add the credential's SHA-256 hash to the revocation list.
 
+**Export Issuance Log…** saves a copy of the issuance log. The save dialog opens on the Desktop with a dated name (`rhg-issuances-YYYY-MM-DD.json`); after saving, a message shows exactly where the file went so it can be attached to an email. On a Mac, the first export may ask whether the app can access the Desktop — click **Allow**. If nothing has been signed yet, the button says so instead of opening the dialog.
+
 ## YubiKey Setup
 
 ### Generate Ed25519 Key (one-time)
@@ -231,7 +233,7 @@ go/
 │   ├── audit_tab.go     # Registry audit (renders commit history from ghapi/commits)
 │   ├── bulk_flow.go     # Bulk sign orchestration (Fyne-free): load plan, PIN once, run
 │   ├── bulk_sign.go     # Bulk sign dialogs: file pick, confirm, progress, summary + export
-│   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi)
+│   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi), Export Issuance Log
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display + Report Issue button
 │   ├── signflow.go      # Extracted signing workflow (testable)

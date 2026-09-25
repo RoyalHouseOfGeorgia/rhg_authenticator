@@ -191,7 +191,12 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 				saveSVGButton := widget.NewButton("Save SVG", func() {
 					defaultName := buildFilename(req.Date, result.Hash8, "svg")
 					saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
-						if err != nil || writer == nil {
+						if err != nil {
+							logger.Log("SVG save failed: " + core.SanitizeForLog(err.Error()))
+							dialog.ShowError(fmt.Errorf("failed to save SVG file"), window)
+							return
+						}
+						if writer == nil {
 							return
 						}
 						defer writer.Close()
@@ -212,7 +217,12 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 				savePNGButton := widget.NewButton("Save PNG", func() {
 					defaultName := buildFilename(req.Date, result.Hash8, "png")
 					saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
-						if err != nil || writer == nil {
+						if err != nil {
+							logger.Log("PNG save failed: " + core.SanitizeForLog(err.Error()))
+							dialog.ShowError(fmt.Errorf("failed to save PNG file"), window)
+							return
+						}
+						if writer == nil {
 							return
 						}
 						defer writer.Close()
