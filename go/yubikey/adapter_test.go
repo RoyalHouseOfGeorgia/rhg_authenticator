@@ -506,6 +506,37 @@ func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 	}
 }
 
+func TestPINRetries_Cases(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantRetries int
+		wantOK      bool
+	}{
+		{name: "bare AuthErr Retries 2", err: piv.AuthErr{Retries: 2}, wantRetries: 2, wantOK: true},
+		{name: "bare AuthErr Retries 0 (blocked or unavailable)", err: piv.AuthErr{}, wantRetries: 0, wantOK: true},
+		{
+			name:        "realistic wrapped chain",
+			err:         fmt.Errorf("signing failed: %w", fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 1})),
+			wantRetries: 1,
+			wantOK:      true,
+		},
+		{name: "non-auth error", err: errors.New("pcsc daemon not running"), wantRetries: 0, wantOK: false},
+		{name: "nil error", err: nil, wantRetries: 0, wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRetries, gotOK := PINRetries(tt.err)
+			if gotOK != tt.wantOK {
+				t.Errorf("PINRetries ok = %v, want %v", gotOK, tt.wantOK)
+			}
+			if gotRetries != tt.wantRetries {
+				t.Errorf("PINRetries retries = %d, want %d", gotRetries, tt.wantRetries)
+			}
+		})
+	}
+}
+
 func TestIsPINAuthError_Cases(t *testing.T) {
 	tests := []struct {
 		name string

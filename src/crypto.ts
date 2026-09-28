@@ -5,7 +5,7 @@
  * they are working with Ed25519 keys and signatures.
  */
 
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 /**
  * Sign a message with an Ed25519 secret key.

@@ -1,16 +1,21 @@
 package gui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -30,8 +35,22 @@ const revocationTimeout = 180 * time.Second
 // list is nil at revoke time.
 const revocationCacheUnavailableMsg = "Revocation data not loaded. Try refreshing."
 
-// NewHistoryTab creates the issuance history tab UI.
-func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghapi.Client, window fyne.Window) *fyne.Container {
+// shouldEnableRevoke reports whether the Revoke button should be enabled: a
+// usable GitHub client exists, the revocation list has loaded, a record is
+// selected, and that record is not already revoked. cacheReady keeps the button
+// state in sync with the OnTapped precondition (which needs cachedRevocationList
+// != nil) — without it, selecting a row after a failed fetch would enable a
+// button whose tap dead-ends in the "Revocation unavailable" error. Pure and
+// nil-safe — callable with selected == nil (the login-state refresh case).
+func shouldEnableRevoke(clientNil, cacheReady bool, selected *log.IssuanceRecord, revoked map[string]bool) bool {
+	return !clientNil && cacheReady && selected != nil && !revoked[strings.ToLower(selected.PayloadSHA256)]
+}
+
+// NewHistoryTab creates the issuance history tab UI. It returns the tab content
+// and a refreshLoginState closure that re-syncs the login-dependent UI (the
+// sign-in button's visibility and the Revoke button's enablement); the caller
+// invokes it whenever GitHub login state changes.
+func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghapi.Client, loginFn func(), window fyne.Window) (*fyne.Container, func()) {
 	var allRecords []log.IssuanceRecord
 	var filtered []log.IssuanceRecord
 	var selectedRecord *log.IssuanceRecord
@@ -66,6 +85,16 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	revokeButton := widget.NewButton("Revoke", nil)
 	revokeButton.Disable() // Disabled until an entry is selected.
 
+	// updateRevokeButton applies the shared enable rule. clientNil is passed in
+	// so each caller reads ghClientFn() exactly once (ClientForHistory allocates).
+	updateRevokeButton := func(clientNil bool) {
+		if shouldEnableRevoke(clientNil, cachedRevocationList != nil, selectedRecord, revokedHashes) {
+			revokeButton.Enable()
+		} else {
+			revokeButton.Disable()
+		}
+	}
+
 	list.OnSelected = func(id widget.ListItemID) {
 		if id < 0 || id >= len(filtered) {
 			selectedRecord = nil
@@ -76,11 +105,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		selectedRecord = &rec
 
 		// Enable/disable revoke button based on login + revocation status.
-		if ghClientFn() == nil || revokedHashes[strings.ToLower(rec.PayloadSHA256)] {
-			revokeButton.Disable()
-		} else {
-			revokeButton.Enable()
-		}
+		updateRevokeButton(ghClientFn() == nil)
 
 		// Show detail dialog (existing behavior).
 		detail := formatRecordDetail(rec)
@@ -180,11 +205,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				revocationStatus.SetText("")
 				list.Refresh()
 				// Re-evaluate revoke button based on current selection.
-				if ghClientFn() != nil && selectedRecord != nil && !revokedHashes[strings.ToLower(selectedRecord.PayloadSHA256)] {
-					revokeButton.Enable()
-				} else {
-					revokeButton.Disable()
-				}
+				updateRevokeButton(ghClientFn() == nil)
 			})
 		}()
 	}
@@ -217,13 +238,34 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		fetchRevocations()
 	})
 
+	// signInButton lets an unauthenticated operator start GitHub login without
+	// leaving the History tab. Shown only when no usable client exists; login is
+	// owned by the Registry tab (the single source of login-state truth).
+	signInButton := widget.NewButton("Login to GitHub", func() { loginFn() })
+
+	// refreshLoginState re-syncs the login-dependent UI. Reads ghClientFn() once
+	// and reuses the result for both the button visibility and the Revoke gate.
+	refreshLoginState := func() {
+		clientNil := ghClientFn() == nil
+		if clientNil {
+			signInButton.Show()
+		} else {
+			signInButton.Hide()
+		}
+		updateRevokeButton(clientNil)
+	}
+
+	exportButton := widget.NewButton("Export Issuance Log…", func() {
+		onIssuanceExportTapped(logPath, window)
+	})
+
 	// Initial load.
 	loadRecords()
 	fetchRevocations()
 
-	buttonBar := container.NewHBox(refreshButton, revokeButton, revocationStatus)
+	buttonBar := container.NewHBox(refreshButton, signInButton, revokeButton, exportButton, revocationStatus)
 	topBar := container.NewBorder(nil, nil, nil, buttonBar, searchEntry)
-	return container.NewBorder(topBar, nil, nil, nil, list)
+	return container.NewBorder(topBar, nil, nil, nil, list), refreshLoginState
 }
 
 // filterRecords returns records matching the query (case-insensitive substring
@@ -265,4 +307,95 @@ func formatRecordDetail(rec log.IssuanceRecord) string {
 		rec.Timestamp, rec.Recipient, rec.Honor, rec.Detail, core.FormatDateDisplay(rec.Date),
 		rec.PayloadSHA256, rec.SignatureB64URL,
 	)
+}
+
+// onIssuanceExportTapped hands the raw log file to a non-technical operator
+// via a save dialog. The log is read before the dialog opens because Fyne
+// truncates the destination before the save callback runs; that keeps the log
+// intact if it is picked as the destination, as long as the write succeeds.
+func onIssuanceExportTapped(logPath string, window fyne.Window) {
+	data, readErr := os.ReadFile(logPath)
+	if errors.Is(readErr, fs.ErrNotExist) {
+		showNothingToExport(window)
+		return
+	}
+	if readErr != nil {
+		fmt.Fprintf(os.Stderr, "history: failed to read log for export: %v\n", readErr)
+		dialog.ShowError(errors.New("could not read the issuance log"), window)
+		return
+	}
+	if !hasRecords(data) {
+		showNothingToExport(window)
+		return
+	}
+	saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+		onIssuanceExportChosen(data, window, writer, err)
+	}, window)
+	saveDialog.SetFileName(time.Now().Format("rhg-issuances-2006-01-02.json"))
+	saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
+	if desktop, ok := desktopDir(); ok {
+		saveDialog.SetLocation(desktop)
+	}
+	saveDialog.Show()
+}
+
+func showNothingToExport(window fyne.Window) {
+	dialog.ShowInformation("Nothing to Export", "No credentials have been signed on this computer yet.", window)
+}
+
+// onIssuanceExportChosen is the export save-dialog callback: it writes data
+// (the log bytes read at click time) through the writer Fyne opened.
+func onIssuanceExportChosen(data []byte, window fyne.Window, writer fyne.URIWriteCloser, err error) {
+	// Fyne reports an uncreatable destination as a writer plus a non-nil
+	// error, so err must be checked before writer.
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "history: export save failed: %v\n", err)
+		showIssuanceExportError(window)
+		return
+	}
+	if writer == nil {
+		return // cancelled
+	}
+	_, werr := writer.Write(data)
+	cerr := writer.Close()
+	if werr != nil || cerr != nil {
+		fmt.Fprintf(os.Stderr, "history: export write failed: %v\n", errors.Join(werr, cerr))
+		showIssuanceExportError(window)
+		return
+	}
+	dialog.ShowInformation("Issuance Log Exported",
+		"Saved to:\n"+filepath.FromSlash(writer.URI().Path())+"\n\nYou can attach this file to an email.", window)
+}
+
+// showIssuanceExportError points macOS users at the Files and Folders
+// permission, the usual cause of a failed save to the Desktop.
+func showIssuanceExportError(window fyne.Window) {
+	dialog.ShowError(errors.New("could not save the issuance log — on a Mac, check System Settings → Privacy & Security → Files and Folders"), window)
+}
+
+// hasRecords reports whether a log file's contents hold at least one record.
+// Unparseable contents count as records so a corrupt log can still be
+// exported for inspection.
+func hasRecords(data []byte) bool {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	var records []json.RawMessage
+	if err := json.Unmarshal(data, &records); err != nil {
+		return true
+	}
+	return len(records) > 0
+}
+
+// desktopDir returns the user's Desktop folder as a dialog start location.
+func desktopDir() (fyne.ListableURI, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, false
+	}
+	desktop, err := storage.ListerForURI(storage.NewFileURI(filepath.Join(home, "Desktop")))
+	if err != nil {
+		return nil, false
+	}
+	return desktop, true
 }

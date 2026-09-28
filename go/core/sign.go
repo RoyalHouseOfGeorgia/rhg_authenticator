@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"golang.org/x/text/unicode/norm"
@@ -40,8 +41,14 @@ type SignResponse struct {
 	PayloadSHA256 string // hex-encoded SHA-256 of raw canonical JSON bytes (pre-base64url)
 }
 
-// HandleSign validates, signs, and produces a verification URL for a credential.
-func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte) (SignResponse, error) {
+// ErrNotLogged indicates a credential was signed but its issuance record could
+// not be appended to the audit log. Callers that require the audit guarantee
+// (bulk signing) treat it as fatal; single-sign treats it as non-fatal.
+var ErrNotLogged = errors.New("signed but not recorded in audit log")
+
+// BuildPayload NFC-normalizes and validates req, then returns its canonical
+// JSON payload bytes. It is the single source of the bytes HandleSign signs.
+func BuildPayload(req SignRequest) ([]byte, error) {
 	// 1. Construct credential with NFC-normalized fields.
 	credObj := map[string]any{
 		"version":   float64(1),
@@ -53,21 +60,41 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte) (SignR
 
 	// 2. Validate credential.
 	if _, err := ValidateCredential(credObj); err != nil {
-		return SignResponse{}, fmt.Errorf("invalid credential data: %w", err)
+		return nil, fmt.Errorf("invalid credential data: %w", err)
 	}
 
 	// 3. Canonicalize.
 	payloadBytes, err := Canonicalize(credObj)
 	if err != nil {
-		return SignResponse{}, fmt.Errorf("invalid credential data: %w", err)
+		return nil, fmt.Errorf("invalid credential data: %w", err)
 	}
 
 	// 4. Size check.
 	if len(payloadBytes) > MaxPayloadBytes {
-		return SignResponse{}, fmt.Errorf("payload exceeds maximum size")
+		return nil, fmt.Errorf("payload exceeds maximum size")
+	}
+	return payloadBytes, nil
+}
+
+// PayloadSHA256Hex returns the lowercase hex SHA-256 of the raw canonical payload.
+func PayloadSHA256Hex(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+// BuildVerifyURL returns the verification URL for base64url-encoded payload and signature.
+func BuildVerifyURL(payloadB64, sigB64 string) string {
+	return VerifyBaseURL + "?p=" + payloadB64 + "&s=" + sigB64
+}
+
+// HandleSign validates, signs, and produces a verification URL for a credential.
+func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte) (SignResponse, error) {
+	payloadBytes, err := BuildPayload(req)
+	if err != nil {
+		return SignResponse{}, err
 	}
 
-	// 5. Sign.
+	// Sign.
 	signature, err := adapter.SignBytes(payloadBytes)
 	if err != nil {
 		return SignResponse{}, fmt.Errorf("signing failed: %w", err)
@@ -76,25 +103,17 @@ func HandleSign(req SignRequest, adapter SigningAdapter, pubKey [32]byte) (SignR
 		return SignResponse{}, fmt.Errorf("expected 64-byte Ed25519 signature, got %d bytes", len(signature))
 	}
 
-	// 6. Post-sign verification.
+	// Post-sign verification.
 	if !ed25519.Verify(pubKey[:], payloadBytes, signature) {
 		return SignResponse{}, fmt.Errorf("post-sign verification failed — signature does not verify")
 	}
 
-	// 7. Build URL.
 	payloadB64 := Encode(payloadBytes)
 	sigB64 := Encode(signature)
-	url := VerifyBaseURL + "?p=" + payloadB64 + "&s=" + sigB64
-
-	// 8. Compute payload hash.
-	sha256sum := sha256.Sum256(payloadBytes)
-	sha256hex := hex.EncodeToString(sha256sum[:])
-
-	// 9. Return response.
 	return SignResponse{
 		Signature:     sigB64,
 		Payload:       payloadB64,
-		URL:           url,
-		PayloadSHA256: sha256hex,
+		URL:           BuildVerifyURL(payloadB64, sigB64),
+		PayloadSHA256: PayloadSHA256Hex(payloadBytes),
 	}, nil
 }

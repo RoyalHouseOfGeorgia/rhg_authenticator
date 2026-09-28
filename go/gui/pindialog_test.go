@@ -1,14 +1,136 @@
 package gui
 
 import (
+	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
+
+// TestShowPinDialog_Renders gives showPinDialog's rendering path positive
+// coverage: after it runs, a modal overlay is present on the canvas. Paired with
+// TestMakePinReader_Timeout (which covers close-on-timeout), this proves the
+// full show→hide lifecycle — neither test alone can.
+func TestShowPinDialog_Renders(t *testing.T) {
+	test.NewApp()
+	w := test.NewWindow(nil)
+	defer w.Close()
+
+	cache := yubikey.NewPinCache()
+	resultCh := make(chan string, 1)
+	var settled atomic.Bool
+
+	var dlg dialog.Dialog
+	fyne.Do(func() { dlg = showPinDialog(w, cache, resultCh, &settled) })
+	if dlg == nil {
+		t.Fatal("showPinDialog returned nil dialog")
+	}
+	if top := w.Canvas().Overlays().Top(); top == nil {
+		t.Error("expected the PIN dialog to render an overlay, got none")
+	}
+}
+
+// TestMakePinReader_Timeout covers the timeout path: when the dialog is left
+// unanswered, the reader returns ErrPINEntryTimedOut and leaves no lingering
+// overlay (dlg.Hide ran). It does NOT prove the dialog was rendered — that is
+// TestShowPinDialog_Renders' job. readPin runs synchronously on the test
+// goroutine; Fyne's test driver runs fyne.Do inline, so Hide completes before
+// the call returns (a goroutine reading Overlays() concurrently would data-race
+// the overlay stack under -race).
+func TestMakePinReader_Timeout(t *testing.T) {
+	test.NewApp()
+	w := test.NewWindow(nil)
+	defer w.Close()
+
+	cache := yubikey.NewPinCache() // disabled → no cache hit → dialog is shown
+	readPin := makePinReaderWithTimeout(w, cache, 10*time.Millisecond)
+
+	pin, err := readPin()
+	if !errors.Is(err, ErrPINEntryTimedOut) {
+		t.Fatalf("expected ErrPINEntryTimedOut, got pin=%q err=%v", pin, err)
+	}
+	if top := w.Canvas().Overlays().Top(); top != nil {
+		t.Errorf("expected dialog closed on timeout, overlay still present: %T", top)
+	}
+}
+
+// TestPinConfirmHandler_Confirm: a normal confirm sends the entered PIN and
+// applies the remember preference.
+func TestPinConfirmHandler_Confirm(t *testing.T) {
+	cache := yubikey.NewPinCache()
+	resultCh := make(chan string, 1)
+	entry := widget.NewEntry()
+	entry.SetText("1234")
+	remember := widget.NewCheck("", nil)
+	remember.SetChecked(true)
+	var settled atomic.Bool
+
+	pinConfirmHandler(&settled, cache, resultCh, entry, remember)(true)
+
+	select {
+	case got := <-resultCh:
+		if got != "1234" {
+			t.Errorf("got %q, want 1234", got)
+		}
+	default:
+		t.Fatal("expected PIN on resultCh")
+	}
+	if !cache.Enabled() {
+		t.Error("expected cache enabled after remember-checked confirm")
+	}
+}
+
+// TestPinConfirmHandler_Cancel: a dismiss sends the empty-string cancel signal.
+func TestPinConfirmHandler_Cancel(t *testing.T) {
+	cache := yubikey.NewPinCache()
+	resultCh := make(chan string, 1)
+	entry := widget.NewEntry()
+	remember := widget.NewCheck("", nil)
+	var settled atomic.Bool
+
+	pinConfirmHandler(&settled, cache, resultCh, entry, remember)(false)
+
+	select {
+	case got := <-resultCh:
+		if got != "" {
+			t.Errorf("got %q, want empty (cancel)", got)
+		}
+	default:
+		t.Fatal("expected empty string on resultCh for cancel")
+	}
+}
+
+// TestPinConfirmHandler_LateSubmitIgnored: a confirm after the timeout already
+// settled must neither send a PIN nor flip the remember preference.
+func TestPinConfirmHandler_LateSubmitIgnored(t *testing.T) {
+	cache := yubikey.NewPinCache()
+	resultCh := make(chan string, 1)
+	entry := widget.NewEntry()
+	entry.SetText("1234")
+	remember := widget.NewCheck("", nil)
+	remember.SetChecked(true)
+	var settled atomic.Bool
+	settled.Store(true) // timeout already fired
+
+	pinConfirmHandler(&settled, cache, resultCh, entry, remember)(true)
+
+	select {
+	case got := <-resultCh:
+		t.Fatalf("expected no send after timeout, got %q", got)
+	default:
+	}
+	if cache.Enabled() {
+		t.Error("SetEnabled must not run for a late (post-timeout) confirm")
+	}
+}
 
 // TestMakePinReader_CacheHit verifies that when the PinCache has a valid entry,
 // the readPin closure returns the cached PIN immediately without showing a dialog.

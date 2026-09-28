@@ -37,6 +37,7 @@ digraph module_architecture {
         fontcolor="#e67700";
 
         go_gui [label="gui/\n(Fyne GUI — 5 tabs)", fillcolor="#fff3bf", color="#e67700"];
+        go_bulk [label="bulk/\n(CSV bulk signing)", fillcolor="#fff3bf", color="#e67700"];
         go_core [label="core/\n(credential, canonical,\nregistry, sign)", fillcolor="#fff3bf", color="#e67700"];
         go_regmgr [label="regmgr/\n(Registry Manager tab)", fillcolor="#fff3bf", color="#e67700"];
         go_ghapi [label="ghapi/\n(GitHub OAuth +\nREST API)", fillcolor="#fff3bf", color="#e67700"];
@@ -69,6 +70,8 @@ digraph module_architecture {
 
     // Go internal deps
     go_gui -> go_core;
+    go_gui -> go_bulk;
+    go_bulk -> go_core;
     go_gui -> go_yubikey;
     go_gui -> go_qr;
     go_gui -> go_log;

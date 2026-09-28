@@ -493,3 +493,61 @@ func TestSignConstants(t *testing.T) {
 		t.Errorf("MaxPayloadBytes = %d", MaxPayloadBytes)
 	}
 }
+
+// TestBuildPayload_MatchesHandleSign pins the invariant bulk signing relies on:
+// the payload, hash, and URL computed without a signing device are identical to
+// what HandleSign produces, including after NFC normalization.
+func TestBuildPayload_MatchesHandleSign(t *testing.T) {
+	adapter := &mockAdapter{secretKey: testSecretKey()}
+	req := SignRequest{
+		Recipient: "José Dupont", // NFD — normalized to NFC by both paths
+		Honor:     "Test Honor",
+		Detail:    "For service",
+		Date:      "2026-03-13",
+	}
+
+	resp, err := HandleSign(req, adapter, testPubKey())
+	if err != nil {
+		t.Fatalf("HandleSign error: %v", err)
+	}
+	payload, err := BuildPayload(req)
+	if err != nil {
+		t.Fatalf("BuildPayload error: %v", err)
+	}
+
+	if got := Encode(payload); got != resp.Payload {
+		t.Errorf("payload mismatch:\n  got  %s\n  want %s", got, resp.Payload)
+	}
+	if got := PayloadSHA256Hex(payload); got != resp.PayloadSHA256 {
+		t.Errorf("hash mismatch: got %s, want %s", got, resp.PayloadSHA256)
+	}
+	if got := BuildVerifyURL(Encode(payload), resp.Signature); got != resp.URL {
+		t.Errorf("URL mismatch:\n  got  %s\n  want %s", got, resp.URL)
+	}
+}
+
+func TestBuildPayload_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     SignRequest
+		wantSub string
+	}{
+		{"invalid date", SignRequest{"A", "B", "C", "2026-02-30"}, "invalid credential data"},
+		{"empty recipient", SignRequest{"", "B", "C", "2026-03-13"}, "invalid credential data"},
+		{"too large", SignRequest{strings.Repeat("a", 500), strings.Repeat("b", 200), strings.Repeat("c", 2000), "2026-03-13"}, "payload exceeds maximum size"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := BuildPayload(tt.req)
+			if err == nil || !strings.Contains(err.Error(), tt.wantSub) {
+				t.Errorf("err = %v, want containing %q", err, tt.wantSub)
+			}
+		})
+	}
+}
+
+func TestBuildVerifyURL(t *testing.T) {
+	if got, want := BuildVerifyURL("PAY", "SIG"), VerifyBaseURL+"?p=PAY&s=SIG"; got != want {
+		t.Errorf("BuildVerifyURL = %q, want %q", got, want)
+	}
+}

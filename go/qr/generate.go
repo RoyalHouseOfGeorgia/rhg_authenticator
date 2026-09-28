@@ -3,7 +3,6 @@ package qr
 import (
 	"bytes"
 	"fmt"
-	"os"
 
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -72,18 +71,4 @@ func GeneratePNG(url string, width int) ([]byte, error) {
 	}
 
 	return png, nil
-}
-
-// SaveSVG writes a QR code SVG to a file.
-func SaveSVG(url string, path string) error {
-	svg, err := GenerateSVG(url)
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(path, svg, 0o600); err != nil {
-		return fmt.Errorf("writing SVG file: %w", err)
-	}
-
-	return nil
 }

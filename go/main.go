@@ -117,7 +117,16 @@ func main() {
 		SafeGo:  func(fn func()) { safeGo(fn, logger, window) },
 	}, window)
 	regTab := regmgr.NewRegistryTab(window, dataDir)
-	historyContent := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, regTab.ClientForHistory, window)
+	historyContent, refreshHistoryLogin := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, regTab.ClientForHistory, regTab.StartLogin, window)
+	// Push login-state changes (from either tab) into the History tab, then sync
+	// once now to reflect the current state. The observer nil-guard makes this
+	// correct regardless of whether the async session restore has completed.
+	// Safety of this synchronous call: fyne.Do bodies (e.g. the fetchRevocations
+	// goroutine's UI mutations) do not run until ShowAndRun starts the driver
+	// loop, so this runs strictly before them on the main goroutine — no race.
+	// Keep this before ShowAndRun; do not switch fyne.Do to fyne.DoAndWait.
+	regTab.SetOnLoginChanged(refreshHistoryLogin)
+	refreshHistoryLogin()
 	lastUpdateCh := make(chan string, 1)
 	auditContent := gui.NewAuditTab(window, lastUpdateCh)
 	yubiKeyContent := gui.NewYubiKeyTab(reg, regOnline, window)
