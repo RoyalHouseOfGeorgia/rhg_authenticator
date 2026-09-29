@@ -3,9 +3,12 @@
 All notable changes to the RHG Authenticator are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project uses two-component version tags (`v1.0`, `v1.1`, …).
+and this project uses `vMAJOR.MINOR` version tags (`v1.0`, `v1.1`, …), adding a
+patch component for fix-only releases (`v1.3.1`).
 
 ## [Unreleased]
+
+## [v1.3.1] — 2026-09-29
 
 ### Changed
 - **Mac download is now a double-clickable app.** Releases ship
@@ -15,6 +18,13 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
   Apple Developer ID, so the first launch of each downloaded version needs
   **Open Anyway** in System Settings → Privacy & Security — see
   [Download & install](README.md#download--install).
+
+### Fixed
+- **Update notifications never appeared.** The update check only understood
+  three-part versions (`v1.2.3`), but releases are tagged `v1.2`, `v1.3`, so
+  it silently reported "no update" for every release. It now accepts `v1.3`
+  and `v1.3.1`. Copies of v1.3 or earlier still carry the old check and won't
+  be told about this release — install it manually.
 
 ## [v1.3] — 2026-09-25
 
@@ -156,7 +166,8 @@ verifying Royal honors.
 - SLSA build provenance attestations and `SHA256SUMS.txt` on all release
   binaries.
 
-[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3...HEAD
+[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3.1...HEAD
+[v1.3.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3...v1.3.1
 [v1.3]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.2...v1.3
 [v1.2]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.1...v1.2
 [v1.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.0...v1.1

@@ -124,6 +124,11 @@ func TestIsNewer(t *testing.T) {
 		{"v1.0.0", "invalid", false},
 		{"v1.0", "v1.0.0", false},
 		{"v1.0.0-rc1", "v1.0.0", false},
+		{"v1.3.1", "v1.3", true},
+		{"v1.4", "v1.3", true},
+		{"v1.4", "v1.3.1", true},
+		{"v1.3", "v1.3", false},
+		{"v1.3", "v1.3.1", false},
 	}
 
 	for _, tt := range tests {
@@ -147,7 +152,10 @@ func TestParseSemver(t *testing.T) {
 		{"v0.0.0", [3]int{0, 0, 0}, true},
 		{"v1.0.0-rc1", [3]int{1, 0, 0}, true},
 		{"invalid", [3]int{}, false},
-		{"v1.0", [3]int{}, false},
+		{"v1.0", [3]int{1, 0, 0}, true},
+		{"v1.3-rc1", [3]int{1, 3, 0}, true},
+		{"v1", [3]int{}, false},
+		{"v1.2.3.4", [3]int{}, false},
 		{"v1.0.abc", [3]int{}, false},
 		{"", [3]int{}, false},
 		{"v-1.0.0", [3]int{}, false},
