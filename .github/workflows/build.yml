@@ -171,6 +171,34 @@ jobs:
           Write-Host "Binary reports version: $VERSION"
           if ($VERSION -ne $env:GITHUB_REF_NAME) { Write-Error "Version mismatch: expected '$env:GITHUB_REF_NAME', got '$VERSION'"; exit 1 }
         shell: pwsh
+      # Wrap the binary in a double-clickable .app. The ad-hoc bundle signature is
+      # required: without it, Gatekeeper on Apple Silicon reports the downloaded app
+      # as "damaged" with no "Open Anyway" option.
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="release/RHG Authenticator.app"
+          VERSION=0.0.0
+          if [ "$GITHUB_REF_TYPE" = tag ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp release/rhg-authenticator-${{ matrix.suffix }} "$APP/Contents/MacOS/rhg-authenticator"
+          cp go/packaging/macos/Info.plist "$APP/Contents/Info.plist"
+          plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
+          plutil -replace CFBundleVersion -string "$GITHUB_RUN_NUMBER" "$APP/Contents/Info.plist"
+          sips --padToHeightWidth 120 120 go/icon.png --out "$RUNNER_TEMP/icon-square.png"
+          ICONSET="$RUNNER_TEMP/icon.iconset"
+          mkdir -p "$ICONSET"
+          for s in 16 32 128 256 512; do
+            sips -z $s $s "$RUNNER_TEMP/icon-square.png" --out "$ICONSET/icon_${s}x${s}.png"
+            sips -z $((s * 2)) $((s * 2)) "$RUNNER_TEMP/icon-square.png" --out "$ICONSET/icon_${s}x${s}@2x.png"
+          done
+          iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/icon.icns"
+          codesign --force --sign - "$APP"
+          codesign --verify --strict --verbose=2 "$APP"
+          (cd release && ditto -c -k --keepParent "RHG Authenticator.app" rhg-authenticator-${{ matrix.suffix }}.zip)
+          rm -rf "$APP" release/rhg-authenticator-${{ matrix.suffix }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: rhg-authenticator-${{ matrix.suffix }}
@@ -203,4 +231,7 @@ jobs:
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           files: release/*
+          body: |
+            **Mac:** download `rhg-authenticator-darwin-arm64.zip` (Apple Silicon only). **Windows:** download the `.exe`.
+            Install steps: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator#download--install
           generate_release_notes: true

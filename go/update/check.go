@@ -94,8 +94,10 @@ func isNewer(latest, current string) bool {
 // parseSemver parses "v1.2.3" or "1.2.3" into [3]int{1, 2, 3}.
 func parseSemver(s string) ([3]int, bool) {
 	s = strings.TrimPrefix(s, "v")
-	parts := strings.SplitN(s, ".", 3)
-	if len(parts) != 3 {
+	// Release tags are two-component (v1.3) or three-component (v1.3.1);
+	// a missing patch component counts as 0.
+	parts := strings.Split(s, ".")
+	if len(parts) < 2 || len(parts) > 3 {
 		return [3]int{}, false
 	}
 	var result [3]int

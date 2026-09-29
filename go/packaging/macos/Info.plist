@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>RHG Authenticator</string>
+	<key>CFBundleDisplayName</key>
+	<string>RHG Authenticator</string>
+	<key>CFBundleExecutable</key>
+	<string>rhg-authenticator</string>
+	<key>CFBundleIdentifier</key>
+	<string>ge.royalhouseofgeorgia.rhg-authenticator</string>
+	<key>CFBundleIconFile</key>
+	<string>icon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<!-- Overwritten by the "Package macOS app" step in .github/workflows/build.yml -->
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>0</string>
+	<!-- Go 1.25+ binaries require macOS 12 -->
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
