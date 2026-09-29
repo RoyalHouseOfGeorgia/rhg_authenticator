@@ -188,7 +188,13 @@ jobs:
           plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
           plutil -replace CFBundleVersion -string "$GITHUB_RUN_NUMBER" "$APP/Contents/Info.plist"
           sips --padToHeightWidth 120 120 go/icon.png --out "$RUNNER_TEMP/icon-square.png"
-          sips -z 1024 1024 -s format icns "$RUNNER_TEMP/icon-square.png" --out "$APP/Contents/Resources/icon.icns"
+          ICONSET="$RUNNER_TEMP/icon.iconset"
+          mkdir -p "$ICONSET"
+          for s in 16 32 128 256 512; do
+            sips -z $s $s "$RUNNER_TEMP/icon-square.png" --out "$ICONSET/icon_${s}x${s}.png"
+            sips -z $((s * 2)) $((s * 2)) "$RUNNER_TEMP/icon-square.png" --out "$ICONSET/icon_${s}x${s}@2x.png"
+          done
+          iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/icon.icns"
           codesign --force --sign - "$APP"
           codesign --verify --strict --verbose=2 "$APP"
           (cd release && ditto -c -k --keepParent "RHG Authenticator.app" rhg-authenticator-${{ matrix.suffix }}.zip)
