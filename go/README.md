@@ -2,6 +2,8 @@
 
 Self-contained desktop application for signing Royal House of Georgia credentials. Produces QR codes (SVG for print, PNG for preview) that are verified by the public verification page.
 
+To install a released build instead of building from source, see [Download & install](../README.md#download--install).
+
 ## Requirements
 
 - Go 1.26+

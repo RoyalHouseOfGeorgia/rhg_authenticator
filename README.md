@@ -28,7 +28,30 @@
 
 1295 tests passing (869 Go + 392 TypeScript + 34 Python).
 
-## Quick Start — Signing App (Go)
+## Download & install
+
+Download the app from the [latest release](https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/releases/latest).
+
+### Mac
+
+Requires an Apple Silicon Mac (Apple menu → **About This Mac** → **Chip** says "Apple M…"). There is no Intel build; on an Intel Mac the app won't open.
+
+1. Download **`rhg-authenticator-darwin-arm64.zip`**.
+2. Open your **Downloads** folder. If you see a `.zip`, double-click it (Safari usually unzips it for you).
+3. Drag **RHG Authenticator** into your **Applications** folder, then double-click it.
+4. macOS says it can't verify the app. Click **Done**.
+5. Right away, open **System Settings** → **Privacy & Security**, scroll down to "RHG Authenticator was blocked…", and click **Open Anyway**.
+6. In the box that pops up, click **Open Anyway** again, then enter your Mac password (or use Touch ID).
+
+If the **Open Anyway** button isn't there, double-click the app again, then go back to System Settings.
+
+After this, the app opens normally. **Each time you install a new version you'll need to do this again:** quit the app, drag the new one into Applications, choose **Replace**, then repeat steps 4–6.
+
+### Windows
+
+Download **`rhg-authenticator-windows-amd64.exe`** and double-click it. If Windows shows "Windows protected your PC", click **More info** → **Run anyway**.
+
+## Quick Start — Signing App (build from source)
 
 **Requirements**: Go 1.26+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
@@ -97,7 +120,7 @@ Release binaries are published with SHA-256 checksums (`SHA256SUMS.txt`) and SLS
 
 **Verify on macOS/Linux:**
 ```bash
-shasum -a 256 -c SHA256SUMS.txt
+shasum -a 256 -c --ignore-missing SHA256SUMS.txt
 ```
 
 **Verify on Windows:**

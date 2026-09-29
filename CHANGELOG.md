@@ -7,6 +7,15 @@ and this project uses two-component version tags (`v1.0`, `v1.1`, …).
 
 ## [Unreleased]
 
+### Changed
+- **Mac download is now a double-clickable app.** Releases ship
+  `rhg-authenticator-darwin-arm64.zip` containing **RHG Authenticator.app**
+  (with name, icon and version) instead of a bare command-line binary, which
+  is no longer published. Apple Silicon only. The app is not signed with an
+  Apple Developer ID, so the first launch of each downloaded version needs
+  **Open Anyway** in System Settings → Privacy & Security — see
+  [Download & install](README.md#download--install).
+
 ## [v1.3] — 2026-09-25
 
 ### Added
