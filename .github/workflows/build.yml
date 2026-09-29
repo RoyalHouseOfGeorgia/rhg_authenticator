@@ -19,7 +19,7 @@ on:
       - 'docs/**'
       - 'LICENSE'
       - '.reqs/**'
-      - 'verify/keys/**'
+      - 'verify/keys/revocations.json'  # registry.json PRs run CI (committed-registry test)
       - 'scripts/*.py'  # Python tools: covered by python.yml
       - '.github/workflows/python.yml'
 

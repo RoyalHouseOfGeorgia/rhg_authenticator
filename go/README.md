@@ -159,6 +159,8 @@ Workflow:
 
 The app fetches the key registry from `https://verify.royalhouseofgeorgia.ge/keys/registry.json` on startup. **Remote only** — no cache or embedded fallback (a local copy could be tampered with). If the server is unreachable, the app opens in offline mode (signing still works, but YubiKey registry check is unavailable). Restart the app to retry.
 
+Registry fields the app doesn't recognise (such as `allowed_honors`, which only the verification page enforces) are ignored for display and preserved when the **Registry** tab writes entries back.
+
 ## Credential Revocation
 
 The app fetches the revocation list (`revocations.json`) alongside the registry on startup. The revocation list contains only SHA-256 hashes of revoked credential payloads — no personal data.

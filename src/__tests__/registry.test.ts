@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   validateRegistry,
@@ -361,6 +362,85 @@ describe('validateRegistry', () => {
 });
 
 // ---------------------------------------------------------------------------
+// allowed_honors validation
+// ---------------------------------------------------------------------------
+
+describe('validateRegistry — allowed_honors', () => {
+  function withHonors(value: unknown): Record<string, unknown> {
+    return { ...makeEntry(), allowed_honors: value };
+  }
+
+  it('accepts a valid list and returns it on the entry', () => {
+    const result = validateRegistry({ keys: [withHonors(['Order of Queen Tamar', 'Medal'])] });
+    expect(result.keys[0].allowed_honors).toEqual(['Order of Queen Tamar', 'Medal']);
+  });
+
+  it('omits the property from the returned entry when absent', () => {
+    const result = validateRegistry({ keys: [makeEntry()] });
+    expect('allowed_honors' in result.keys[0]).toBe(false);
+  });
+
+  it('rejects null (not treated as absent)', () => {
+    expect(() => validateRegistry({ keys: [withHonors(null)] })).toThrow(
+      'keys[0]: allowed_honors must be a non-empty array',
+    );
+  });
+
+  it('rejects an empty array', () => {
+    expect(() => validateRegistry({ keys: [withHonors([])] })).toThrow(
+      'keys[0]: allowed_honors must be a non-empty array',
+    );
+  });
+
+  it('rejects a non-array', () => {
+    expect(() => validateRegistry({ keys: [withHonors('Medal')] })).toThrow(
+      'keys[0]: allowed_honors must be a non-empty array',
+    );
+  });
+
+  it('rejects a non-string element', () => {
+    expect(() => validateRegistry({ keys: [withHonors(['Medal', 42])] })).toThrow(
+      'keys[0]: allowed_honors[1] must be a non-empty string',
+    );
+  });
+
+  it('rejects an empty string element', () => {
+    expect(() => validateRegistry({ keys: [withHonors([''])] })).toThrow(
+      'keys[0]: allowed_honors[0] must be a non-empty string',
+    );
+  });
+
+  it('rejects an element with control characters', () => {
+    expect(() => validateRegistry({ keys: [withHonors(['Med\u0000al'])] })).toThrow(
+      'keys[0]: allowed_honors[0] contains invalid control characters',
+    );
+  });
+
+  it('rejects an untrimmed element', () => {
+    expect(() => validateRegistry({ keys: [withHonors([' Medal'])] })).toThrow(
+      'keys[0]: allowed_honors[0] must not have leading or trailing whitespace',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Committed registry
+// ---------------------------------------------------------------------------
+
+describe('committed verify/keys/registry.json', () => {
+  it('passes validateRegistry and every key decodes', () => {
+    const raw = readFileSync(
+      new URL('../../verify/keys/registry.json', import.meta.url),
+      'utf-8',
+    );
+    const registry = validateRegistry(JSON.parse(raw));
+    for (const key of registry.keys) {
+      expect(decodePublicKey(key)).toHaveLength(32);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isDateInRange
 // ---------------------------------------------------------------------------
 
@@ -379,8 +459,8 @@ describe('isDateInRange', () => {
     expect(isDateInRange('2025-12-31', key)).toBe(true);
   });
 
-  it('returns false before the start', () => {
-    expect(isDateInRange('2025-05-31', key)).toBe(false);
+  it('returns true before from (from does not limit validity)', () => {
+    expect(isDateInRange('2025-05-31', key)).toBe(true);
   });
 
   it('returns false after the end', () => {
@@ -397,9 +477,9 @@ describe('isDateInRange', () => {
     expect(isDateInRange('2025-01-01', openKey)).toBe(true);
   });
 
-  it('returns false when to is null but date is before from', () => {
+  it('returns true when to is null and date is before from (backdated)', () => {
     const openKey = makeEntry({ from: '2025-01-01', to: null });
-    expect(isDateInRange('2024-12-31', openKey)).toBe(false);
+    expect(isDateInRange('2024-12-31', openKey)).toBe(true);
   });
 
   it('returns false for non-ISO-format date string', () => {

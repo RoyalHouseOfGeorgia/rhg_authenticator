@@ -147,19 +147,26 @@ Error correction level Q (25% recovery, `qrcode.High` in the `skip2/go-qrcode` l
 ```typescript
 type KeyEntry = {
   authority: string;        // Authority attributed when this key's signature verifies
-  from: string;             // Start of validity (YYYY-MM-DD, inclusive)
-  to: string | null;        // End of validity (inclusive) or null (no expiration)
+  from: string;             // Date the key was registered (YYYY-MM-DD) — informational
+  to: string | null;        // Last credential date this key verifies (inclusive) or null (no expiration)
   algorithm: 'Ed25519';     // Only Ed25519 supported
   public_key: string;       // Base64: 44-byte SPKI DER or 32-byte raw
   note: string;             // Human-readable description
+  allowed_honors?: string[]; // Optional: key verifies only credentials with one of these honors
 };
 
 type Registry = { keys: KeyEntry[] };
 ```
 
+### Verification Rules
+
+- **Dates:** only `to` limits validity. A credential dated after `to` fails; any earlier date verifies, including dates before `from`, so backdated honors work.
+- **`allowed_honors`:** when present, a non-empty list of exact honor titles (case-sensitive). A credential whose `honor` is not in the list fails. When absent, the key verifies any honor. The restriction is retroactive — it applies to every credential the key ever signed — and per entry: every entry sharing a public key needs its own `allowed_honors`, or the unrestricted entry verifies.
+- **Strict verifier, tolerant app:** the verification page rejects any registry field it does not recognise, so an outdated verifier fails closed instead of silently ignoring a restriction. The Go app accepts and preserves unknown fields, so new registry fields never break installed copies.
+
 ### Key Rotation
 
-The registry supports multiple keys per authority with non-overlapping date ranges. Verification tries all registry keys in a single pass, with date-mismatch diagnostics for valid-but-expired signatures.
+Rotate a key by setting the old entry's `to` and adding a new entry; `from` is informational, so ranges need not be disjoint. The old key keeps verifying credentials dated on or before its `to`; the new key verifies any date. Verification tries all registry keys in a single pass, with date-mismatch diagnostics for signatures dated after a key's `to`.
 
 ### SPKI DER Format
 

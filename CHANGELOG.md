@@ -8,6 +8,28 @@ patch component for fix-only releases (`v1.3.1`).
 
 ## [Unreleased]
 
+## [v1.4] — 2026-09-29
+
+### Added
+- **Honor-restricted keys.** A registry key can carry `allowed_honors`, a list
+  of honor titles it may sign. The verification page rejects a credential
+  signed by that key whose honor is not in the list. Keys without the field
+  are unrestricted.
+
+### Changed
+- **Backdated honors verify.** A key's `from` date no longer limits
+  verification — only its `to` date does.
+- **New registry fields no longer break the app.** The app ignores registry
+  fields it doesn't recognise and keeps them when the Registry tab saves.
+  Earlier versions show the registry as offline once a new field appears
+  (signing still works) — update to this version.
+- The verification site is served uncached, and registry changes are now
+  checked by CI.
+
+### Registry
+- New key for H.H. Tavadi Kimon Andreou, PhD (Chief Administrator and Vice
+  Chancellor), restricted to Appointment.
+
 ## [v1.3.1] — 2026-09-29
 
 ### Changed
@@ -166,7 +188,8 @@ verifying Royal honors.
 - SLSA build provenance attestations and `SHA256SUMS.txt` on all release
   binaries.
 
-[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.4...HEAD
+[v1.4]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3.1...v1.4
 [v1.3.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3...v1.3.1
 [v1.3]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.2...v1.3
 [v1.2]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.1...v1.2

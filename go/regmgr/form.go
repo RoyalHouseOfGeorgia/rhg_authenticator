@@ -282,6 +282,7 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 		}
 
 		updated := buildEntry(authorityEntry.Text, fromDP.entry.Text, to, entry.PublicKey, noteEntry.Text)
+		updated.Extra = entry.Extra
 		d.Hide()
 		onSave(updated)
 	})

@@ -3,7 +3,9 @@
  *
  * Parses a signed credential payload, iterates all keys in the registry,
  * and verifies the Ed25519 signature. The authority is determined by which
- * registry key successfully verifies the signature. Returns a typed result
+ * registry key successfully verifies the signature. A matching key must also
+ * cover the credential date (only its `to` bound applies) and, if it has an
+ * `allowed_honors` list, the credential's honor. Returns a typed result
  * indicating success (with the matching key) or failure (with a reason).
  */
 
@@ -98,6 +100,7 @@ export function verifyCredential(
 
   // Step 5: Iterate all registry keys — the authority is determined by which key verifies.
   let signatureMatchedButDateInvalid = false;
+  let signatureMatchedButHonorNotAllowed = false;
   let decodeFailures = 0;
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
@@ -118,10 +121,16 @@ export function verifyCredential(
         if (revocation && isRevoked(revocation.payloadHash, revocation.revocationSet)) {
           return { valid: false, revoked: true, reason: 'this credential has been revoked' };
         }
-        if (isDateInRange(credential.date, key)) {
+        if (!isDateInRange(credential.date, key)) {
+          signatureMatchedButDateInvalid = true;
+        } else if (
+          key.allowed_honors === undefined ||
+          key.allowed_honors.includes(credential.honor)
+        ) {
           return { valid: true, key, credential };
+        } else {
+          signatureMatchedButHonorNotAllowed = true;
         }
-        signatureMatchedButDateInvalid = true;
       }
     } catch (err) {
       // ed25519Verify should not throw on length-validated inputs.
@@ -136,6 +145,13 @@ export function verifyCredential(
       valid: false,
       revoked: false,
       reason: 'signature valid but credential date outside key validity period',
+    };
+  }
+  if (signatureMatchedButHonorNotAllowed) {
+    return {
+      valid: false,
+      revoked: false,
+      reason: 'signature valid but key not authorized for this honor',
     };
   }
   if (decodeFailures === keys.length) {

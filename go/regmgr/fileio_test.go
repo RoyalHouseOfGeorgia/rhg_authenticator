@@ -2,6 +2,7 @@ package regmgr
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +129,60 @@ func TestMarshalRegistry_RoundTrip(t *testing.T) {
 	if got.Keys[0].PublicKey != reg.Keys[0].PublicKey {
 		t.Errorf("public_key = %q, want %q", got.Keys[0].PublicKey, reg.Keys[0].PublicKey)
 	}
+	if got.Extra != nil || got.Keys[0].Extra != nil {
+		t.Errorf("Extra should be nil without unknown fields, got %v / %v", got.Extra, got.Keys[0].Extra)
+	}
+
+	t.Run("preserves unknown fields", func(t *testing.T) {
+		reg := validRegistry()
+		reg.Extra = map[string]json.RawMessage{"version": json.RawMessage(`2`)}
+		reg.Keys[0].Extra = map[string]json.RawMessage{
+			"allowed_honors": json.RawMessage(`["Order A","Order B"]`),
+			`quo"te`:         json.RawMessage(`{"a":1}`),
+		}
+
+		data, err := MarshalRegistry(reg)
+		if err != nil {
+			t.Fatalf("MarshalRegistry: %v", err)
+		}
+		got, err := core.ValidateRegistry(data)
+		if err != nil {
+			t.Fatalf("ValidateRegistry: %v", err)
+		}
+
+		if v := string(got.Extra["version"]); v != "2" {
+			t.Errorf("registry Extra[version] = %q, want %q", v, "2")
+		}
+		if len(got.Extra) != 1 {
+			t.Errorf("len(registry Extra) = %d, want 1", len(got.Extra))
+		}
+		entryExtra := got.Keys[0].Extra
+		if len(entryExtra) != 2 {
+			t.Fatalf("len(entry Extra) = %d, want 2: %v", len(entryExtra), entryExtra)
+		}
+		var honors []string
+		if err := json.Unmarshal(entryExtra["allowed_honors"], &honors); err != nil {
+			t.Fatalf("unmarshal allowed_honors: %v", err)
+		}
+		if len(honors) != 2 || honors[0] != "Order A" || honors[1] != "Order B" {
+			t.Errorf("allowed_honors = %v", honors)
+		}
+		var quoted map[string]int
+		if err := json.Unmarshal(entryExtra[`quo"te`], &quoted); err != nil {
+			t.Fatalf("unmarshal quo\"te: %v", err)
+		}
+		if quoted["a"] != 1 {
+			t.Errorf(`Extra[quo"te] = %v`, quoted)
+		}
+
+		again, err := MarshalRegistry(got)
+		if err != nil {
+			t.Fatalf("second MarshalRegistry: %v", err)
+		}
+		if !bytes.Equal(again, data) {
+			t.Errorf("round-trip not idempotent:\nfirst:\n%s\nsecond:\n%s", data, again)
+		}
+	})
 }
 
 func TestMarshalRegistry_EmptyKeys(t *testing.T) {

@@ -2,7 +2,9 @@
  * Key registry schema, validation, lookup, and public key decoding.
  *
  * A registry holds an array of key entries that map authorities to their
- * Ed25519 public keys with validity date ranges.
+ * Ed25519 public keys. A key's `to` date bounds which credential dates it
+ * verifies (`from` is informational). An optional `allowed_honors` list
+ * restricts a key to specific honors; when absent the key is unrestricted.
  */
 
 import { base64Decode } from './base64url.js';
@@ -16,6 +18,7 @@ export type KeyEntry = {
   algorithm: 'Ed25519';
   public_key: string;
   note: string;
+  allowed_honors?: string[];
 };
 
 export type Registry = { keys: KeyEntry[] };
@@ -31,6 +34,7 @@ const ENTRY_FIELDS = new Set<string>([
   'algorithm',
   'public_key',
   'note',
+  'allowed_honors',
 ]);
 
 /** Ed25519 SPKI DER prefix (12 bytes): OID 1.3.101.112 wrapped in SubjectPublicKeyInfo. */
@@ -126,7 +130,28 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
     throw new Error(`keys[${index}]: note contains invalid control characters`);
   }
 
-  return {
+  // allowed_honors: optional non-empty array of non-empty, trimmed strings.
+  // `in` (not `!== undefined`) so an explicit null is rejected, not treated as absent.
+  let allowedHonors: string[] | undefined;
+  if ('allowed_honors' in record) {
+    if (!Array.isArray(record.allowed_honors) || record.allowed_honors.length === 0) {
+      throw new Error(`keys[${index}]: allowed_honors must be a non-empty array`);
+    }
+    allowedHonors = record.allowed_honors.map((honor: unknown, j: number) => {
+      if (typeof honor !== 'string' || honor.length === 0) {
+        throw new Error(`keys[${index}]: allowed_honors[${j}] must be a non-empty string`);
+      }
+      if (CONTROL_CHAR_RE.test(honor)) {
+        throw new Error(`keys[${index}]: allowed_honors[${j}] contains invalid control characters`);
+      }
+      if (honor !== honor.trim()) {
+        throw new Error(`keys[${index}]: allowed_honors[${j}] must not have leading or trailing whitespace`);
+      }
+      return honor;
+    });
+  }
+
+  const validated: KeyEntry = {
     authority: normalizedAuthority,
     from: record.from as string,
     to: record.to as string | null,
@@ -134,6 +159,10 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
     public_key: record.public_key as string,
     note: record.note as string,
   };
+  if (allowedHonors !== undefined) {
+    validated.allowed_honors = allowedHonors;
+  }
+  return validated;
 }
 
 /** Validate an unknown value as a Registry, throwing on any violation. */
@@ -176,14 +205,14 @@ export function validateRegistry(obj: unknown): Registry {
 }
 
 /**
- * Check whether a credential date falls within a key's validity range.
+ * Check whether a credential date is within a key's validity.
  *
+ * Only `to` limits validity (inclusive; `null` means no upper bound). `from`
+ * is informational and does not restrict, so backdated credentials verify.
  * Uses lexicographic string comparison on ISO 8601 date strings.
- * `from` is inclusive, `to` is inclusive.  `to: null` means no upper bound.
  */
 export function isDateInRange(credentialDate: string, key: KeyEntry): boolean {
   if (!DATE_RE.test(credentialDate)) return false;
-  if (credentialDate < key.from) return false;
   if (key.to !== null && credentialDate > key.to) return false;
   return true;
 }
