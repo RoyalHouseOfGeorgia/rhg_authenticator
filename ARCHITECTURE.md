@@ -29,7 +29,7 @@ The system has three independent components, plus a standalone helper:
 
 ### Accepted Risks
 
-- **Timing side channel in verification diagnostics**: Date-mismatch diagnostics reveal whether a valid signature exists outside the date range. This is intentional UX — the registry is public anyway.
+- **Timing side channel in verification diagnostics**: Date- and honor-mismatch diagnostics reveal whether a valid signature exists for a key whose `to` date or `allowed_honors` excludes the credential. This is intentional UX — the registry is public anyway.
 - **Public key registry is public**: By design. The security property is that only the holder of the YubiKey private key can produce valid signatures.
 - **Auto-reported issues include debug log tail**: The last 50 lines of the debug log are included in auto-reported GitHub issues. The debug log contains only sanitized internal state (timestamps, error types, stack traces) — no credential data, PINs, or tokens.
 

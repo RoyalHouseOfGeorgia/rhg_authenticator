@@ -350,7 +350,7 @@ func onIssuanceExportChosen(data []byte, window fyne.Window, writer fyne.URIWrit
 	// error, so err must be checked before writer.
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "history: export save failed: %v\n", err)
-		showIssuanceExportError(window)
+		showSaveError(window, "issuance log")
 		return
 	}
 	if writer == nil {
@@ -360,17 +360,18 @@ func onIssuanceExportChosen(data []byte, window fyne.Window, writer fyne.URIWrit
 	cerr := writer.Close()
 	if werr != nil || cerr != nil {
 		fmt.Fprintf(os.Stderr, "history: export write failed: %v\n", errors.Join(werr, cerr))
-		showIssuanceExportError(window)
+		showSaveError(window, "issuance log")
 		return
 	}
 	dialog.ShowInformation("Issuance Log Exported",
 		"Saved to:\n"+filepath.FromSlash(writer.URI().Path())+"\n\nYou can attach this file to an email.", window)
 }
 
-// showIssuanceExportError points macOS users at the Files and Folders
-// permission, the usual cause of a failed save to the Desktop.
-func showIssuanceExportError(window fyne.Window) {
-	dialog.ShowError(errors.New("could not save the issuance log — on a Mac, check System Settings → Privacy & Security → Files and Folders"), window)
+// showSaveError reports a failed save of what (e.g. "issuance log") and points
+// macOS users at the Files and Folders permission, the usual cause of a failed
+// save to the Desktop.
+func showSaveError(window fyne.Window, what string) {
+	dialog.ShowError(errors.New("could not save the "+what+" — on a Mac, check System Settings → Privacy & Security → Files and Folders"), window)
 }
 
 // hasRecords reports whether a log file's contents hold at least one record.

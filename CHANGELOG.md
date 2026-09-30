@@ -8,7 +8,7 @@ patch component for fix-only releases (`v1.3.1`).
 
 ## [Unreleased]
 
-## [v1.4] — 2026-09-29
+## [v1.4] — 2026-09-30
 
 ### Added
 - **Honor-restricted keys.** A registry key can carry `allowed_honors`, a list
@@ -25,6 +25,13 @@ patch component for fix-only releases (`v1.3.1`).
   (signing still works) — update to this version.
 - The verification site is served uncached, and registry changes are now
   checked by CI.
+
+### Fixed
+- **QR codes save to the Desktop again.** Save SVG / Save PNG now open on the
+  Desktop, like Export Issuance Log. On a Mac, the first save asks for access to
+  the Desktop folder — click **Allow**. If a save fails, the error points to
+  System Settings → Privacy & Security → Files and Folders, where the app needs
+  Desktop access (the Mac app is a new app to macOS since v1.3.1).
 
 ### Registry
 - New key for H.H. Tavadi Kimon Andreou, PhD (Chief Administrator and Vice
