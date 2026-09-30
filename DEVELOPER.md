@@ -68,6 +68,8 @@ verify/
 scripts/
 ├── generate-test-url.ts  # Generate signed test URLs for UI preview
 ├── rebuild_urls.py       # Rebuild verification URLs from a payload+signature, issuance log, or CSV
+├── rhg_qr.py             # QR code (SVG/PNG) for a verification URL or payload+signature; needs segno, no CI
+├── rhg_revocation_hash.py  # Revocation hash for a verification URL (for revocations.json); no CI
 ├── test_rebuild_urls.py  # unittest suite for rebuild_urls.py (reads go/testdata/vectors.json)
 └── update-sri.sh         # Rebuild verify.js and update SRI hash in index.html
 ```

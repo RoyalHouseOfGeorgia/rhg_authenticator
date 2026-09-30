@@ -108,6 +108,20 @@ python3 scripts/rebuild_urls.py credentials.csv
 - Each entry is checked structurally: a log entry must rebuild to its stored `payload_sha256`, and a payload must be in canonical form. Entries that fail are skipped and reported by line/entry number (exit code 1). The hash check catches corruption, not tampering — anyone who can edit the log can recompute it. Signatures are **not** verified; only the verification page proves a URL is genuine. Don't feed the output into **Bulk Sign** unless every URL in it verifies.
 - Tests: `python3 -m unittest discover -s scripts`
 
+### QR code and revocation hash
+
+```bash
+# QR code for a URL or a payload/signature pair: SVG by default, --png for PNG
+python3 scripts/rhg_qr.py -o ~/Desktop/credential.svg '<verification URL>'
+python3 scripts/rhg_qr.py --png -o ~/Desktop/credential.png --payload=<p> --signature=<s>
+
+# Revocation hash for verify/keys/revocations.json (prints recipient | honor | date to stderr)
+python3 scripts/rhg_revocation_hash.py '<verification URL>'
+```
+
+- `rhg_qr.py` needs [segno](https://pypi.org/project/segno/): `pip install segno` (Debian: `sudo apt install python3-segno`). It never overwrites an existing file; pass `-o` so QR images of real credentials don't land in the checkout.
+- These two scripts are maintainer tools with no tests and are excluded from CI.
+
 ## Documentation
 
 - **[Royal House of Georgia — Digital Authenticator](Royal%20House%20of%20Georgia%20-%20Digital%20Authenticator.pdf)** — Non-technical overview: what the system does, how verification works, threat model, privacy

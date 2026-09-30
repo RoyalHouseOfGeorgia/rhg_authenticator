@@ -8,12 +8,16 @@ on:
     branches: [main]
     paths:
       - 'scripts/*.py'
+      - '!scripts/rhg_revocation_hash.py'  # maintainer-only tools: no CI
+      - '!scripts/rhg_qr.py'
       - 'go/testdata/vectors.json'
       - '.github/workflows/python.yml'
   pull_request:
     branches: [main]
     paths:
       - 'scripts/*.py'
+      - '!scripts/rhg_revocation_hash.py'  # maintainer-only tools: no CI
+      - '!scripts/rhg_qr.py'
       - 'go/testdata/vectors.json'
       - '.github/workflows/python.yml'
 
