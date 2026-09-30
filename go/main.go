@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"image/color"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -151,10 +150,7 @@ func main() {
 	// 7. Close intercept for unsaved registry changes + PIN cache cleanup.
 	window.SetCloseIntercept(buildCloseHandler(
 		regTab.IsDirty,
-		buildinfo.IsDebug(),
-		logger.Path(),
 		signCleanup,
-		openFileDefault,
 		a.Quit,
 		window,
 	))
@@ -225,65 +221,30 @@ func buildMainMenu(onExportErrorLog func()) *fyne.MainMenu {
 }
 
 // buildCloseHandler returns a function suitable for SetCloseIntercept that
-// handles unsaved-changes confirmation, optional debug log review, cleanup,
-// and quit. All dependencies are injected for testability.
+// handles unsaved-changes confirmation, cleanup, and quit. All dependencies
+// are injected for testability.
 func buildCloseHandler(
 	isDirty func() bool,
-	isDebug bool,
-	logPath string,
 	cleanup func(),
-	openFile func(string),
 	quit func(),
 	window fyne.Window,
 ) func() {
 	return func() {
-		afterDirtyCheck := func() {
-			if isDebug && logFileNonEmpty(logPath) {
-				showConfirmFunc("Debug Log",
-					"Debug log written to debug.log. Review it?",
-					func(open bool) {
-						if open {
-							openFile(logPath)
-						}
-						cleanup()
-						quit()
-					}, window)
-			} else {
-				cleanup()
-				quit()
-			}
+		exit := func() {
+			cleanup()
+			quit()
 		}
-
-		if isDirty() {
-			showConfirmFunc("Unsubmitted Changes",
-				"The registry has unsubmitted changes. Exit anyway?",
-				func(ok bool) {
-					if ok {
-						afterDirtyCheck()
-					}
-				}, window)
-		} else {
-			afterDirtyCheck()
+		if !isDirty() {
+			exit()
+			return
 		}
-	}
-}
-
-// logFileNonEmpty reports whether the file at path exists and has content.
-func logFileNonEmpty(path string) bool {
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && info.Size() > 0
-}
-
-// openFileDefault opens a file with the platform's default application.
-func openFileDefault(path string) {
-	switch runtime.GOOS {
-	case "darwin":
-		exec.Command("open", path).Start()
-	case "windows":
-		exec.Command("cmd", "/c", "start", "", path).Start()
+		showConfirmFunc("Unsubmitted Changes",
+			"The registry has unsubmitted changes. Exit anyway?",
+			func(ok bool) {
+				if ok {
+					exit()
+				}
+			}, window)
 	}
 }
 
@@ -300,7 +261,7 @@ func safeGo(fn func(), logger *debuglog.Logger, window fyne.Window) {
 				n := runtime.Stack(buf, false)
 				stack := string(buf[:n])
 				fmt.Fprintf(os.Stderr, "goroutine panic: %v\n%s\n", r, stack)
-				logger.Logf("PANIC (goroutine): %v\n%s", r, stack)
+				logger.Logf("PANIC (goroutine): %v %s", r, stack)
 				fyne.Do(func() {
 					dialog.ShowError(fmt.Errorf("an internal error occurred — please restart"), window)
 				})

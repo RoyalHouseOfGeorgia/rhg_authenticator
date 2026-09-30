@@ -173,9 +173,9 @@ The app fetches the revocation list (`revocations.json`) alongside the registry 
 
 ## Troubleshooting
 
-The app keeps an error log (`debug.log`) in every build. Entries older than 30 days are removed each time the app starts. In debug builds (any non-release version, i.e. not a tagged `vX.Y.Z`), you are also prompted to review it on exit.
+The app keeps an error log (`debug.log`) in every build. Entries older than 30 days are removed each time the app starts.
 
-**To send the log:** choose **Help → Export Error Log…** (or click **Export Error Log…** in a GitHub error dialog). The save dialog opens on the Desktop with a dated name (`rhg-error-log-YYYY-MM-DD.log`), ready to attach to an email. The log contains app diagnostics — it may include your GitHub username and file paths, but never PINs or keys.
+**To send the log:** choose **Help → Export Error Log…** (or click **Export Error Log…** in the Revocation Failed or Submission Failed dialog). The save dialog opens on the Desktop with a dated name (`rhg-error-log-YYYY-MM-DD.log`), ready to attach to an email. The log contains app diagnostics — it may include your GitHub username and file paths, but never PINs or keys.
 
 The file itself lives here:
 
@@ -246,6 +246,7 @@ go/
 │   ├── bulk_flow.go     # Bulk sign orchestration (Fyne-free): load plan, PIN once, run
 │   ├── bulk_sign.go     # Bulk sign dialogs: file pick, confirm, progress, summary + export
 │   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi), Export Issuance Log
+│   ├── errorlog_export.go # Help → Export Error Log… save flow; ShowErrorWithLogExport error dialog
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display + Report Issue button
 │   ├── signflow.go      # Extracted signing workflow (testable)
@@ -254,7 +255,7 @@ go/
 ├── ghapi/               # GitHub API client + OAuth device flow
 │   ├── keyring.go       # Keyring interface (OS keychain + FakeKeyring for tests)
 │   ├── auth.go          # OAuth device flow, token storage, session restore
-│   ├── client.go        # GitHub REST API (branches, contents, PRs); safeRedirect, Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath
+│   ├── client.go        # GitHub REST API (branches, contents, PRs); safeRedirect, Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath; UserMessage (safe user-facing error text)
 │   ├── commits.go       # FetchRegistryCommits(baseURL, perPage, etag); commitClient with safeRedirect
 │   ├── commits_test.go
 │   └── issues.go        # CreateIssue (used by errorreport)

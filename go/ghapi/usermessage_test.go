@@ -28,6 +28,9 @@ func TestUserMessage(t *testing.T) {
 		{"nil error", nil, msgGeneric},
 		{"fork error", &ForkError{Phase: "create", Wrapped: fmt.Errorf("network error")}, msgFork},
 		{"wrapped fork error", fmt.Errorf("request failed: %w", &ForkError{Phase: "poll", Wrapped: fmt.Errorf("timeout")}), msgFork},
+		// Fork wins over the permission/rate-limit message it wraps.
+		{"fork over 403", &ForkError{Phase: "create", Wrapped: &APIError{StatusCode: 403, Message: "forbidden"}}, msgFork},
+		{"fork over 429", &ForkError{Phase: "poll", Wrapped: &APIError{StatusCode: 429, Message: "rate limited"}}, msgFork},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -35,33 +38,5 @@ func TestUserMessage(t *testing.T) {
 				t.Errorf("UserMessage(%v) = %q, want %q", tt.err, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestUserMessage_DoesNotLeakDetails(t *testing.T) {
-	// Ensure internal error details are not exposed to the user.
-	err := errors.New("connection refused to 10.0.0.1:443: TLS handshake timeout")
-	if got := UserMessage(err); got != msgGeneric {
-		t.Errorf("UserMessage should not leak internal details, got %q", got)
-	}
-}
-
-// TestUserMessage_ForkErrorPrecedence pins the precedence: a ForkError
-// wrapping a 403/429 *APIError must yield the fork message (fork wins over
-// permission/rate-limit), while a bare 403 still yields the forbidden message.
-func TestUserMessage_ForkErrorPrecedence(t *testing.T) {
-	forkOver403 := &ForkError{Phase: "create", Wrapped: &APIError{StatusCode: 403, Message: "forbidden"}}
-	if got := UserMessage(forkOver403); got != msgFork {
-		t.Errorf("UserMessage(ForkError wrapping 403) = %q, want %q", got, msgFork)
-	}
-
-	forkOver429 := &ForkError{Phase: "poll", Wrapped: &APIError{StatusCode: 429, Message: "rate limited"}}
-	if got := UserMessage(forkOver429); got != msgFork {
-		t.Errorf("UserMessage(ForkError wrapping 429) = %q, want %q", got, msgFork)
-	}
-
-	bare403 := &APIError{StatusCode: 403, Message: "forbidden"}
-	if got := UserMessage(bare403); got != msgForbidden {
-		t.Errorf("UserMessage(bare 403) = %q, want %q", got, msgForbidden)
 	}
 }

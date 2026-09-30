@@ -2,8 +2,6 @@ package main
 
 import (
 	"image/color"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -125,110 +123,18 @@ func stubShowConfirm(t *testing.T, handler func(title, msg string, cb func(bool)
 	showConfirmFunc = handler
 }
 
-func TestBuildCloseHandler_ReleaseMode_NotDirty(t *testing.T) {
-	var cleaned, quitted bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		false, "",
-		func() { cleaned = true },
-		func(string) { t.Error("openFile called in release mode") },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_ReleaseMode_WithLogFile(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("some log data"), 0o600)
-
-	var cleaned, quitted bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		false, logFile,
-		func() { cleaned = true },
-		func(string) { t.Error("openFile called in release mode") },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_DebugMode_EmptyLog(t *testing.T) {
-	var cleaned, quitted bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		true, "",
-		func() { cleaned = true },
-		func(string) { t.Error("openFile called with empty log path") },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_DebugMode_MissingLog(t *testing.T) {
-	var cleaned, quitted bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		true, "/nonexistent/debug.log",
-		func() { cleaned = true },
-		func(string) { t.Error("openFile called with missing log") },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_DebugMode_NonEmptyLog_Open(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
+func TestBuildCloseHandler_NotDirty(t *testing.T) {
 	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
-		if title != "Debug Log" {
-			t.Errorf("dialog title = %q, want %q", title, "Debug Log")
-		}
-		cb(true) // simulate "Open File"
+		t.Errorf("unexpected dialog %q", title)
 	})
-
 	var cleaned, quitted bool
-	var openedPath string
 	h := buildCloseHandler(
 		func() bool { return false },
-		true, logFile,
 		func() { cleaned = true },
-		func(p string) { openedPath = p },
 		func() { quitted = true },
 		nil,
 	)
 	h()
-	if openedPath != logFile {
-		t.Errorf("openFile path = %q, want %q", openedPath, logFile)
-	}
 	if !cleaned {
 		t.Error("cleanup not called")
 	}
@@ -237,68 +143,22 @@ func TestBuildCloseHandler_DebugMode_NonEmptyLog_Open(t *testing.T) {
 	}
 }
 
-func TestBuildCloseHandler_DebugMode_NonEmptyLog_Dismiss(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
-	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
-		cb(false) // simulate "Dismiss"
-	})
-
-	var cleaned, quitted, opened bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		true, logFile,
-		func() { cleaned = true },
-		func(string) { opened = true },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if opened {
-		t.Error("openFile should not be called on dismiss")
-	}
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_DirtyRegistry_DebugLog(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
+func TestBuildCloseHandler_DirtyRegistry_Confirmed(t *testing.T) {
 	var dialogTitles []string
 	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
 		dialogTitles = append(dialogTitles, title)
-		cb(true) // confirm both dialogs
+		cb(true)
 	})
-
 	var cleaned, quitted bool
-	var openedPath string
 	h := buildCloseHandler(
-		func() bool { return true }, // dirty
-		true, logFile,
+		func() bool { return true },
 		func() { cleaned = true },
-		func(p string) { openedPath = p },
 		func() { quitted = true },
 		nil,
 	)
 	h()
-
-	if len(dialogTitles) != 2 {
-		t.Fatalf("got %d dialogs, want 2: %v", len(dialogTitles), dialogTitles)
-	}
-	if dialogTitles[0] != "Unsubmitted Changes" {
-		t.Errorf("first dialog = %q, want %q", dialogTitles[0], "Unsubmitted Changes")
-	}
-	if dialogTitles[1] != "Debug Log" {
-		t.Errorf("second dialog = %q, want %q", dialogTitles[1], "Debug Log")
-	}
-	if openedPath != logFile {
-		t.Errorf("openFile path = %q, want %q", openedPath, logFile)
+	if len(dialogTitles) != 1 || dialogTitles[0] != "Unsubmitted Changes" {
+		t.Errorf("dialogs = %v, want [Unsubmitted Changes]", dialogTitles)
 	}
 	if !cleaned {
 		t.Error("cleanup not called")
@@ -309,19 +169,13 @@ func TestBuildCloseHandler_DirtyRegistry_DebugLog(t *testing.T) {
 }
 
 func TestBuildCloseHandler_DirtyRegistry_Cancelled(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
 	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
 		cb(false) // user cancels unsaved changes dialog
 	})
-
 	var cleaned, quitted bool
 	h := buildCloseHandler(
-		func() bool { return true }, // dirty
-		true, logFile,
+		func() bool { return true },
 		func() { cleaned = true },
-		func(string) { t.Error("openFile should not be called") },
 		func() { quitted = true },
 		nil,
 	)
@@ -331,55 +185,6 @@ func TestBuildCloseHandler_DirtyRegistry_Cancelled(t *testing.T) {
 	}
 	if quitted {
 		t.Error("quit should not run when user cancels")
-	}
-}
-
-func TestBuildCloseHandler_CleanupAlwaysRuns(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
-	// Dismiss the debug log review — cleanup should still run.
-	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
-		cb(false)
-	})
-
-	var cleaned bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		true, logFile,
-		func() { cleaned = true },
-		func(string) {},
-		func() {},
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup must run regardless of dialog choice")
-	}
-}
-
-// --- logFileNonEmpty tests ---
-
-func TestLogFileNonEmpty(t *testing.T) {
-	if logFileNonEmpty("") {
-		t.Error("empty path should return false")
-	}
-	if logFileNonEmpty("/nonexistent/file.log") {
-		t.Error("nonexistent file should return false")
-	}
-
-	dir := t.TempDir()
-
-	empty := filepath.Join(dir, "empty.log")
-	os.WriteFile(empty, nil, 0o600)
-	if logFileNonEmpty(empty) {
-		t.Error("empty file should return false")
-	}
-
-	nonEmpty := filepath.Join(dir, "nonempty.log")
-	os.WriteFile(nonEmpty, []byte("data"), 0o600)
-	if !logFileNonEmpty(nonEmpty) {
-		t.Error("non-empty file should return true")
 	}
 }
 

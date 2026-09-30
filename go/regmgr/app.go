@@ -291,13 +291,14 @@ func (rt *RegistryTab) showLoginDialog(ctx context.Context, cancel context.Cance
 // UI, and restarts the device login flow.
 // Must be called on the Fyne main thread.
 func (rt *RegistryTab) HandleUnauthorized() {
-	_ = ghapi.ClearToken(rt.kr, rt.configDir)
+	if err := ghapi.ClearToken(rt.kr, rt.configDir); err != nil {
+		log.Printf("warning: clearing expired token failed: %s", core.SanitizeForLog(err.Error()))
+	}
 	rt.state.loggedIn = false
 	rt.state.offline = false
 	rt.state.githubToken = ghapi.Token{}
 	rt.state.githubUser = ""
 	rt.updateLoginUI()
-	rt.statusLabel.SetText("Session expired. Please log in again.")
 	rt.startLogin()
 }
 
@@ -347,6 +348,10 @@ func (rt *RegistryTab) restoreSession(interactive bool) {
 			if offline {
 				dialog.ShowInformation("GitHub Unreachable",
 					"Still can't reach GitHub. Check your connection and try again.", rt.window)
+			} else if loggedIn {
+				// Confirm success; a Submit that triggered the reconnect did not
+				// run, and a blank status would hide that anything happened.
+				rt.statusLabel.SetText("Reconnected as @" + username + ".")
 			}
 			rt.loggingIn.Store(false)
 			if !loggedIn {
@@ -362,16 +367,15 @@ func (rt *RegistryTab) restoreSession(interactive bool) {
 // Must be called on the Fyne main thread.
 func (rt *RegistryTab) handleSubmitError(err error) {
 	if ghapi.IsUnauthorized(err) {
+		dialog.ShowInformation("Session Expired",
+			"Your GitHub session expired. Log in again, then submit again.", rt.window)
 		rt.HandleUnauthorized()
-	} else if ghapi.IsForkError(err) {
-		log.Printf("error: fork setup failed: %s", core.SanitizeForLog(err.Error()))
-		gui.ShowErrorWithLogExport("Submission Failed", ghapi.UserMessage(err), filepath.Join(rt.configDir, debuglog.FileName), rt.window)
-		rt.statusLabel.SetText("")
-	} else {
-		log.Printf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
-		gui.ShowErrorWithLogExport("Submission Failed", ghapi.UserMessage(err), filepath.Join(rt.configDir, debuglog.FileName), rt.window)
-		rt.statusLabel.SetText("")
+		return
 	}
+	log.Printf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
+	// rt.configDir is the app data dir (main passes dataDir), where debug.log lives.
+	gui.ShowErrorWithLogExport("Submission Failed", ghapi.UserMessage(err), filepath.Join(rt.configDir, debuglog.FileName), rt.window)
+	rt.statusLabel.SetText("")
 }
 
 // isSafeGitHubURL checks whether a URL points to GitHub over HTTPS and is safe to open.

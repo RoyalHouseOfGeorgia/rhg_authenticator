@@ -31,7 +31,7 @@ The system has three independent components, plus a standalone helper:
 
 - **Timing side channel in verification diagnostics**: Date- and honor-mismatch diagnostics reveal whether a valid signature exists for a key whose `to` date or `allowed_honors` excludes the credential. This is intentional UX — the registry is public anyway.
 - **Public key registry is public**: By design. The security property is that only the holder of the YubiKey private key can produce valid signatures.
-- **Signing-failure reports include the error log tail**: The last 50 lines of the error log are included in signing-failure GitHub issues; fatal-error reports (posted without preview) omit it. The debug log contains only sanitized internal state (timestamps, error types, stack traces) — no credential data, PINs, or tokens.
+- **Signing-failure reports include the error log tail**: The last 50 lines of the error log are included in signing-failure GitHub issues; fatal-error reports (posted without preview) omit it. The error log contains only sanitized internal state (timestamps, error types, stack traces) — no credential data, PINs, or tokens.
 
 ## Data Flow
 
@@ -225,6 +225,6 @@ Verification operates on the original payload bytes, not a re-canonicalized form
 - **Registry fetch**: remote only (10s timeout), no cache or embedded fallback. If the server is unreachable, the app opens in offline mode (signing still works, but registry-dependent features are unavailable).
 - **Token lifecycle**: OAuth tokens stored in OS keychain (Linux: file fallback with 0600). 90-day local TTL enforced on session restore; expired tokens are cleared and require re-authentication. Tokens validated live against GitHub API on each app startup.
 - **Cross-language compatibility**: Go `core/` package produces byte-identical canonical JSON to TypeScript. Verified by test vectors (ASCII, Georgian, NFC edge cases).
-- **Build info separation**: Version string lives in `buildinfo.Version` (set via `-ldflags` at build time). `buildinfo.IsDebug()` / `buildinfo.IsRelease()` gate debug-only behavior (e.g., the log-review prompt on exit). The error log itself is always on, captures the stdlib `log` output, and is pruned to 30 days at startup.
-- **Panic recovery over silent crash**: Main goroutine and all spawned goroutines use `safeGo` with `recover()`. Panics are written to debug log + stderr and surfaced via an error dialog, so the user is never left staring at a frozen or disappeared window.
+- **Build info separation**: Version string lives in `buildinfo.Version` (set via `-ldflags` at build time). `buildinfo.IsDebug()` / `buildinfo.IsRelease()` mark debug builds (the startup log line is tagged "(debug mode)"). The error log (`debug.log`) is always on, captures the stdlib `log` output, and is pruned to 30 days at startup.
+- **Panic recovery over silent crash**: Main goroutine and all spawned goroutines use `safeGo` with `recover()`. Panics are written to the error log + stderr and surfaced via an error dialog, so the user is never left staring at a frozen or disappeared window.
 - **Auto error reporting**: The `errorreport` package builds sanitized issue bodies (version, OS, error, and — for signing failures only — the error log tail) and files them via the GitHub API if the user is logged in, or falls back to a pre-filled browser URL. Issue titles are prefixed `[Auto]` with labels `bug` + `auto-reported`.

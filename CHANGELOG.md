@@ -13,13 +13,15 @@ patch component for fix-only releases (`v1.3.1`).
   too, not just in debug builds. Entries older than 30 days are removed at
   startup.
 - **Export Error Log.** **Help → Export Error Log…** saves the log to the
-  Desktop so it can be emailed. GitHub error dialogs have the same button.
+  Desktop so it can be emailed. The Revocation Failed and Submission Failed
+  dialogs have the same button.
 
 ### Changed
 - **Reconnect after starting offline.** If GitHub couldn't be reached at
   startup, the Registry tab's button reads **Offline — Reconnect** and retries
-  when clicked. Previously it only offered to log out. The History tab's
-  button now reads **Connect to GitHub**.
+  when clicked. Previously it only offered to log out. Submit for Review does
+  the same while offline. The History tab's button now reads
+  **Connect to GitHub**.
 
 ### Fixed
 - **Revocation errors are explained.** A failed revocation now shows why (for

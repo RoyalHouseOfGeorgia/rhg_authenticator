@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 )
 
@@ -108,26 +109,9 @@ func TestHandleUnauthorized_ResetsStateAndClearsToken(t *testing.T) {
 	if !fired {
 		t.Error("onLoginChanged should fire")
 	}
-	// startLogin was a no-op because loggingIn was held; it overwrites the
-	// status with its in-progress message.
+	// Proves startLogin ran: it no-ops with this message because loggingIn is held.
 	if rt.statusLabel.Text != "Login already in progress" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "Login already in progress")
-	}
-}
-
-func TestHandleUnauthorized_StatusLabelBeforeStartLogin(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.state.loggedIn = true
-	rt.loggingIn.Store(true)
-	var labelAtUIUpdate string
-	rt.onLoginChanged = func() { labelAtUIUpdate = rt.statusLabel.Text }
-	rt.statusLabel.SetText("Creating pull request...")
-
-	rt.HandleUnauthorized()
-
-	// updateLoginUI runs before the status label is set.
-	if labelAtUIUpdate != "Creating pull request..." {
-		t.Errorf("label at updateLoginUI = %q, want pre-existing text", labelAtUIUpdate)
+		t.Errorf("statusLabel = %q, want %q (startLogin not called)", rt.statusLabel.Text, "Login already in progress")
 	}
 }
 
@@ -168,8 +152,8 @@ func TestStartLoginOrReconnect_ReconnectSuccess(t *testing.T) {
 	if !fired.Load() {
 		t.Error("onLoginChanged should fire")
 	}
-	if rt.statusLabel.Text != "" {
-		t.Errorf("statusLabel = %q, want empty", rt.statusLabel.Text)
+	if want := "Reconnected as @someuser."; rt.statusLabel.Text != want {
+		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, want)
 	}
 	if !strings.HasPrefix(rt.loginBtn.Text, "@someuser") {
 		t.Errorf("loginBtn.Text = %q, want prefix %q", rt.loginBtn.Text, "@someuser")
@@ -264,5 +248,22 @@ func TestRestoreSession_NonInteractive(t *testing.T) {
 	}
 	if rt.loggingIn.Load() {
 		t.Error("loggingIn should not be acquired by a non-interactive restore")
+	}
+}
+
+func TestSubmitForReview_OfflineReconnectsInsteadOfSubmitting(t *testing.T) {
+	calls := stubRestoreSession(t, ghapi.Token{AccessToken: "stored"}, "", true, true, nil)
+	var fired atomic.Bool
+	rt := newOfflineTab(t, &fired)
+	rt.state.registry = core.Registry{Keys: []core.KeyEntry{{Authority: "A"}}}
+
+	rt.submitForReview()
+	waitLoginReleased(t, rt)
+
+	if n := calls.Load(); n != 1 {
+		t.Errorf("restoreSessionFunc called %d times, want 1 (reconnect)", n)
+	}
+	if !rt.state.offline {
+		t.Error("state should still be offline after a failed reconnect")
 	}
 }

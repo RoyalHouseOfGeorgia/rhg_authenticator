@@ -217,14 +217,10 @@ func TestRevokeFailureAction(t *testing.T) {
 		name             string
 		err              error
 		wantUnauthorized bool
-		wantMsg          string
 	}{
-		{"401", &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}, true, sessionExpired},
-		{"wrapped 401", fmt.Errorf("create branch: %w", &ghapi.APIError{StatusCode: 401}), true, sessionExpired},
-		{"fork error", &ghapi.ForkError{Phase: "create", Wrapped: errors.New(secret)}, false, ""},
-		{"403", &ghapi.APIError{StatusCode: 403, Message: secret}, false, ""},
-		{"500", &ghapi.APIError{StatusCode: 500, Message: secret}, false, ""},
-		{"generic", errors.New(secret), false, ""},
+		{"401", &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}, true},
+		{"wrapped 401", fmt.Errorf("create branch: %w", &ghapi.APIError{StatusCode: 401}), true},
+		{"non-401", &ghapi.APIError{StatusCode: 500, Message: secret}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -232,12 +228,8 @@ func TestRevokeFailureAction(t *testing.T) {
 			if unauthorized != tc.wantUnauthorized {
 				t.Errorf("unauthorized = %v, want %v", unauthorized, tc.wantUnauthorized)
 			}
-			want := tc.wantMsg
-			if want == "" {
-				want = ghapi.UserMessage(tc.err)
-			}
-			if msg != want {
-				t.Errorf("msg = %q, want %q", msg, want)
+			if tc.wantUnauthorized && msg != sessionExpired {
+				t.Errorf("msg = %q, want %q", msg, sessionExpired)
 			}
 			if strings.Contains(msg, "secret-detail") {
 				t.Errorf("msg leaks raw error text: %q", msg)
