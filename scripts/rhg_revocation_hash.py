@@ -36,8 +36,10 @@ def main() -> int:
         return 1
     print(hashlib.sha256(payload).hexdigest())
     # Echo what the hash identifies so the right credential gets revoked.
-    print(f"  {cred.get('recipient')} | {cred.get('honor')} | {cred.get('date')}",
-          file=sys.stderr)
+    print(
+        f"  {cred.get('recipient')} | {cred.get('honor')} | {cred.get('date')}",
+        file=sys.stderr,
+    )
     return 0
 
 

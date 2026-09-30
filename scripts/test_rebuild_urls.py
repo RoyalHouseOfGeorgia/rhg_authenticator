@@ -57,7 +57,9 @@ def csv_line(v: dict) -> str:
 
 
 def run(*args: str) -> subprocess.CompletedProcess:
-    r = subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True)
+    r = subprocess.run(
+        [sys.executable, SCRIPT, *args], capture_output=True, text=True, check=False
+    )
     assert "Traceback" not in r.stderr, r.stderr
     return r
 
@@ -93,9 +95,8 @@ class EncodingTest(unittest.TestCase):
         self.assertEqual(ru.b64url_decode("AAE"), b"\x00\x01")
         self.assertEqual(ru.b64url_decode("AAE="), b"\x00\x01")
         for bad in ("AA+E", "AA&E", "AA/E", "AA E", "AA=E"):
-            with self.subTest(bad):
-                with self.assertRaises(ValueError):
-                    ru.b64url_decode(bad)
+            with self.subTest(bad), self.assertRaises(ValueError):
+                ru.b64url_decode(bad)
         with self.assertRaises(ValueError):
             ru.b64url_decode("AAAAA")  # len % 4 == 1
         with self.assertRaises(TypeError):
@@ -149,9 +150,8 @@ class RowFromPayloadTest(unittest.TestCase):
             "len%4==1": (p + "A" * (4 - len(p) % 4 + 1), s),
             "63-byte signature": (p, ru.b64url_encode(bytes(63))),
         }.items():
-            with self.subTest(name):
-                with self.assertRaises(ru.ROW_ERRORS):
-                    ru.row_from_payload(pp, ss)
+            with self.subTest(name), self.assertRaises(ru.ROW_ERRORS):
+                ru.row_from_payload(pp, ss)
 
 
 class RowFromLogRecordTest(unittest.TestCase):
@@ -171,9 +171,8 @@ class RowFromLogRecordTest(unittest.TestCase):
             "not a dict": ["x"],
         }
         for name, rec in cases.items():
-            with self.subTest(name):
-                with self.assertRaises(ru.ROW_ERRORS):
-                    ru.row_from_log_record(rec)
+            with self.subTest(name), self.assertRaises(ru.ROW_ERRORS):
+                ru.row_from_log_record(rec)
 
 
 class ReasonTest(unittest.TestCase):

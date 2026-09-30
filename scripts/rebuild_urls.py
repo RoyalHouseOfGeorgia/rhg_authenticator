@@ -119,7 +119,7 @@ def rows_from_log(path: Path) -> tuple[list[dict[str, str]], list[str]]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, list):
-        raise ValueError("audit log must be a JSON array")
+        raise TypeError("audit log must be a JSON array")
     rows, skipped = [], []
     for i, rec in enumerate(data, 1):
         try:
@@ -201,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         fix = "delete it or pass -o" if args.output is None else "choose another -o"
         print(f"error: {out} already exists; {fix}", file=sys.stderr)
         return 1
-    except (OSError, ValueError, csv.Error) as e:
+    except (OSError, TypeError, ValueError, csv.Error) as e:
         hint = ""
         if isinstance(e, UnicodeDecodeError) and suffix == ".csv":
             hint = " (save the file as CSV UTF-8)"
