@@ -9,11 +9,12 @@
   <!--
     The following response headers are enforced at the Cloudflare edge via the
     "verify-security-headers" Transform Rule on the royalhouseofgeorgia.ge zone:
-      Strict-Transport-Security: max-age=31536000; includeSubDomains
+      Strict-Transport-Security: max-age=2592000
       X-Frame-Options: DENY
       X-Content-Type-Options: nosniff
       Content-Security-Policy: frame-ancestors 'none'
       Referrer-Policy: no-referrer
+      Cache-Control: no-store
     The response-header CSP combines intersectively with the meta CSP above.
     Verify with: curl -sI https://verify.royalhouseofgeorgia.ge/
   -->
