@@ -12,10 +12,12 @@ import { sign } from "../crypto.js";
 import { canonicalize } from "../canonical.js";
 import { base64urlEncode, base64urlDecode } from "../base64url.js";
 import type { KeyEntry } from "../registry.js";
+import { validateRegistry } from "../registry.js";
 import {
   makeKeypair,
   makeKeyEntry,
   makeRegistry,
+  toBase64,
   validCredentialObj,
 } from "./helpers.js";
 
@@ -86,8 +88,8 @@ describe("verifyCredential", () => {
     );
   });
 
-  // 5. Date before key's from
-  it("returns date-mismatch failure when credential date is before key's from", () => {
+  // 5. Date before key's from — from is informational, backdated credentials verify
+  it("returns valid when credential date is before key's from", () => {
     const { secretKey, publicKey } = makeKeypair();
     const cred = validCredentialObj({ date: "2019-06-15" });
     const payload = encodeCredential(cred);
@@ -97,10 +99,7 @@ describe("verifyCredential", () => {
 
     const result = verifyCredential(payload, signature, registry);
 
-    expect(result.valid).toBe(false);
-    expect((result as VerificationFailure).reason).toContain(
-      "credential date outside key validity period",
-    );
+    expect(result.valid).toBe(true);
   });
 
   // 6. Date after key's to
@@ -801,5 +800,104 @@ describe("verifyCredential — revocation checks", () => {
     const failure = result as VerificationFailure;
     expect(failure.revoked).toBe(false);
     expect(failure.reason).toContain("JSON");
+  });
+});
+
+describe("verifyCredential — allowed_honors", () => {
+  const { secretKey, publicKey } = makeKeypair(7);
+
+  /** Build a registry through validateRegistry, as the page does. */
+  function registryFrom(overrides: Record<string, unknown> = {}) {
+    return validateRegistry({
+      keys: [
+        {
+          authority: "Test Authority",
+          from: "2020-01-01",
+          to: null,
+          algorithm: "Ed25519",
+          public_key: toBase64(publicKey),
+          note: "",
+          ...overrides,
+        },
+      ],
+    });
+  }
+
+  function signed(overrides: Record<string, unknown> = {}) {
+    const payload = encodeCredential(validCredentialObj(overrides));
+    return { payload, signature: sign(payload, secretKey) };
+  }
+
+  it("accepts a restricted key signing an allowed honor", () => {
+    const registry = registryFrom({ allowed_honors: ["Other", "Test Honor"] });
+    const { payload, signature } = signed();
+    expect(verifyCredential(payload, signature, registry).valid).toBe(true);
+  });
+
+  it("rejects a restricted key signing a different honor", () => {
+    const registry = registryFrom({ allowed_honors: ["Other"] });
+    const { payload, signature } = signed();
+    expect(verifyCredential(payload, signature, registry)).toEqual({
+      valid: false,
+      revoked: false,
+      reason: "signature valid but key not authorized for this honor",
+    });
+  });
+
+  it("accepts any honor for an unrestricted key", () => {
+    const registry = registryFrom();
+    const { payload, signature } = signed({ honor: "Anything At All" });
+    expect(verifyCredential(payload, signature, registry).valid).toBe(true);
+  });
+
+  it("reports revocation over an honor mismatch", () => {
+    const registry = registryFrom({ allowed_honors: ["Other"] });
+    const { payload, signature } = signed();
+    const hash = sha256hex(payload);
+    const result = verifyCredential(payload, signature, registry, {
+      revocationSet: new Set([hash]),
+      payloadHash: hash,
+    });
+    expect(result).toEqual({
+      valid: false,
+      revoked: true,
+      reason: "this credential has been revoked",
+    });
+  });
+
+  it("reports the date reason when date is after to and honor is wrong", () => {
+    const registry = registryFrom({ to: "2023-12-31", allowed_honors: ["Other"] });
+    const { payload, signature } = signed({ date: "2024-06-15" });
+    const result = verifyCredential(payload, signature, registry);
+    expect(result.valid).toBe(false);
+    expect((result as VerificationFailure).reason).toBe(
+      "signature valid but credential date outside key validity period",
+    );
+  });
+
+  it("date reason takes precedence across keys (honor mismatch on one, expired on another)", () => {
+    const base = {
+      authority: "Test Authority",
+      algorithm: "Ed25519",
+      public_key: toBase64(publicKey),
+      note: "",
+    };
+    const registry = validateRegistry({
+      keys: [
+        { ...base, from: "2020-01-01", to: null, allowed_honors: ["Other"] },
+        { ...base, from: "2020-01-01", to: "2023-12-31" },
+      ],
+    });
+    const { payload, signature } = signed({ date: "2024-06-15" });
+    const result = verifyCredential(payload, signature, registry);
+    expect((result as VerificationFailure).reason).toBe(
+      "signature valid but credential date outside key validity period",
+    );
+  });
+
+  it("accepts a credential dated before the key's from", () => {
+    const registry = registryFrom({ from: "2025-01-01", allowed_honors: ["Test Honor"] });
+    const { payload, signature } = signed({ date: "2010-03-01" });
+    expect(verifyCredential(payload, signature, registry).valid).toBe(true);
   });
 });

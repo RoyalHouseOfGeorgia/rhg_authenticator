@@ -193,7 +193,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 					saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 						if err != nil {
 							logger.Log("SVG save failed: " + core.SanitizeForLog(err.Error()))
-							dialog.ShowError(fmt.Errorf("failed to save SVG file"), window)
+							showSaveError(window, "SVG file")
 							return
 						}
 						if writer == nil {
@@ -206,11 +206,14 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 						}
 						if saveErr != nil {
 							logger.Log("SVG save failed: " + core.SanitizeForLog(saveErr.Error()))
-							dialog.ShowError(fmt.Errorf("failed to save SVG file"), window)
+							showSaveError(window, "SVG file")
 						}
 					}, window)
 					saveDialog.SetFileName(defaultName)
 					saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".svg"}))
+					if desktop, ok := desktopDir(); ok {
+						saveDialog.SetLocation(desktop)
+					}
 					saveDialog.Show()
 				})
 
@@ -219,7 +222,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 					saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 						if err != nil {
 							logger.Log("PNG save failed: " + core.SanitizeForLog(err.Error()))
-							dialog.ShowError(fmt.Errorf("failed to save PNG file"), window)
+							showSaveError(window, "PNG file")
 							return
 						}
 						if writer == nil {
@@ -234,11 +237,14 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 						}
 						if writeErr := os.WriteFile(writer.URI().Path(), pngHiRes, 0o644); writeErr != nil {
 							logger.Log("PNG save failed: " + core.SanitizeForLog(writeErr.Error()))
-							dialog.ShowError(fmt.Errorf("failed to save PNG file"), window)
+							showSaveError(window, "PNG file")
 						}
 					}, window)
 					saveDialog.SetFileName(defaultName)
 					saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".png"}))
+					if desktop, ok := desktopDir(); ok {
+						saveDialog.SetLocation(desktop)
+					}
 					saveDialog.Show()
 				})
 

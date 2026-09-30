@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -19,11 +20,15 @@ type KeyEntry struct {
 	Algorithm string  `json:"algorithm"`
 	PublicKey string  `json:"public_key"`
 	Note      string  `json:"note"`
+	// Extra holds unknown fields, preserved verbatim for round-trip.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
 // Registry holds the array of key entries.
 type Registry struct {
 	Keys []KeyEntry `json:"keys"`
+	// Extra holds unknown top-level fields, preserved verbatim for round-trip.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
 // MaxRegistryKeys is the maximum number of key entries allowed in a registry.
@@ -39,10 +44,10 @@ var ED25519SpkiPrefix = []byte{
 	0x70, 0x03, 0x21, 0x00,
 }
 
-// registryFields are the only allowed top-level fields.
+// registryFields are the known top-level fields; others go into Registry.Extra.
 var registryFields = map[string]bool{"keys": true}
 
-// entryFields are the only allowed fields in a key entry.
+// entryFields are the known key entry fields; others go into KeyEntry.Extra.
 var entryFields = map[string]bool{
 	"authority":  true,
 	"from":       true,
@@ -54,7 +59,7 @@ var entryFields = map[string]bool{
 
 // ValidateRegistry validates parsed JSON bytes as a key registry.
 func ValidateRegistry(data []byte) (Registry, error) {
-	// First unmarshal into a raw structure to check fields.
+	// Unmarshal into a raw map; known fields are validated below, unknown ones kept in Extra.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Registry{}, fmt.Errorf("registry must be a plain object")
@@ -64,13 +69,6 @@ func ValidateRegistry(data []byte) (Registry, error) {
 	keysRaw, ok := raw["keys"]
 	if !ok {
 		return Registry{}, fmt.Errorf("missing required field: keys")
-	}
-
-	// Reject extra top-level fields.
-	for key := range raw {
-		if !registryFields[key] {
-			return Registry{}, fmt.Errorf("unexpected field: %s", key)
-		}
 	}
 
 	// Unmarshal keys as array of raw messages.
@@ -94,21 +92,73 @@ func ValidateRegistry(data []byte) (Registry, error) {
 		entries = append(entries, entry)
 	}
 
-	return Registry{Keys: entries}, nil
+	return Registry{Keys: entries, Extra: unknownFields(raw, registryFields)}, nil
+}
+
+// unknownFields returns the entries of raw whose keys are not in known, or nil if none.
+func unknownFields(raw map[string]json.RawMessage, known map[string]bool) map[string]json.RawMessage {
+	var extra map[string]json.RawMessage
+	for key, val := range raw {
+		if known[key] {
+			continue
+		}
+		if extra == nil {
+			extra = make(map[string]json.RawMessage)
+		}
+		extra[key] = val
+	}
+	return extra
+}
+
+// appendExtra splices extra fields (sorted by key) before the closing brace of
+// the non-empty JSON object obj. Returns obj unchanged when extra is empty.
+func appendExtra(obj []byte, extra map[string]json.RawMessage) []byte {
+	if len(extra) == 0 {
+		return obj
+	}
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := append([]byte(nil), obj[:len(obj)-1]...)
+	for _, k := range keys {
+		name, _ := json.Marshal(k) // marshaling a string cannot fail
+		out = append(out, ',')
+		out = append(out, name...)
+		out = append(out, ':')
+		out = append(out, extra[k]...)
+	}
+	return append(out, '}')
+}
+
+// MarshalJSON encodes the known fields followed by Extra. Value receiver so it
+// applies when a KeyEntry is marshaled by value.
+func (e KeyEntry) MarshalJSON() ([]byte, error) {
+	type keyEntryAlias KeyEntry
+	obj, err := json.Marshal(keyEntryAlias(e))
+	if err != nil {
+		return nil, err
+	}
+	return appendExtra(obj, e.Extra), nil
+}
+
+// MarshalJSON encodes the known fields followed by Extra. Value receiver so it
+// applies when a Registry is marshaled by value.
+func (r Registry) MarshalJSON() ([]byte, error) {
+	type registryAlias Registry
+	obj, err := json.Marshal(registryAlias(r))
+	if err != nil {
+		return nil, err
+	}
+	return appendExtra(obj, r.Extra), nil
 }
 
 func validateEntry(data json.RawMessage, index int) (KeyEntry, error) {
-	// Unmarshal into map to check fields.
+	// Unmarshal into a raw map; known fields are validated below, unknown ones kept in Extra.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return KeyEntry{}, fmt.Errorf("keys[%d] must be a plain object", index)
-	}
-
-	// Reject extra fields.
-	for key := range raw {
-		if !entryFields[key] {
-			return KeyEntry{}, fmt.Errorf("keys[%d]: unexpected field: %s", index, key)
-		}
 	}
 
 	// authority: non-empty string.
@@ -202,6 +252,7 @@ func validateEntry(data json.RawMessage, index int) (KeyEntry, error) {
 		Algorithm: algorithm,
 		PublicKey: publicKey,
 		Note:      note,
+		Extra:     unknownFields(raw, entryFields),
 	}, nil
 }
 

@@ -63,7 +63,7 @@ verify/
 ├── favicon.ico           # Site favicon
 ├── royal-arms-120.png    # Royal arms crest (120x120)
 └── keys/
-    ├── registry.json     # Public key registry (development + maintenance key)
+    ├── registry.json     # Public key registry (all registered signing keys)
     └── revocations.json  # Revocation list (SHA-256 hashes of revoked credentials)
 scripts/
 ├── generate-test-url.ts  # Generate signed test URLs for UI preview
@@ -124,7 +124,8 @@ isDateInRange(credentialDate: string, key: KeyEntry): boolean
 decodePublicKey(entry: KeyEntry): Uint8Array   // SPKI DER or raw → 32 bytes
 ```
 
-- `validateRegistry` rejects extra fields at both top-level and entry-level
+- `validateRegistry` rejects extra fields at both top-level and entry-level; the optional `allowed_honors` must be a non-empty array of non-empty, trimmed strings
+- `isDateInRange` checks only the key's `to` (inclusive); `from` is informational, so backdated credentials verify
 - `decodePublicKey` accepts 44-byte SPKI DER (strips 12-byte prefix) or 32-byte raw keys
 
 ### Revocation
@@ -158,7 +159,7 @@ Full verification pipeline:
 1. Enforce payload size limit (`MAX_PAYLOAD_BYTES = 2048`)
 2. Parse JSON, validate credential schema
 3. Try all registry keys; authority derived from matching key
-4. Single-pass: verify signature against all keys; track date-mismatch diagnostics
+4. Single-pass: verify signature against all keys; a matching key must also cover the credential date (`to` only) and, if it has `allowed_honors`, the credential's honor (exact match); track date- and honor-mismatch diagnostics (date reason wins)
 5. If revocation check provided, mark result as revoked when applicable
 6. Return typed result with matching key or failure reason
 
@@ -264,12 +265,14 @@ GitHub Pages provides HTTPS and `X-Content-Type-Options` automatically. For HSTS
 
 ## Key Registry Format
 
-The `verify/keys/registry.json` file contains the development/maintenance key. To add a production key:
+The `verify/keys/registry.json` file contains all registered signing keys. To add a production key:
 
 1. Generate an Ed25519 key on YubiKey PIV slot 9c (see [go/README.md](go/README.md#yubikey-setup))
 2. Open the **Registry** tab in the signing app
 3. Log in to GitHub (one-time — click "Login to GitHub" and enter the code in your browser)
 4. Click **"Import from YubiKey"** to read the key directly, or **"Import Certificate"** for a `.crt`/`.pem` file
-5. Set `authority` to the formal title, `from` to the activation date, `to` to `null` for an active key
+5. Set `authority` to the formal title, `from` to the registration date (informational), `to` to `null` for an active key
 6. Click **"Submit for Review"** — this creates a GitHub pull request
 7. The repository admin reviews and merges the PR; the updated registry deploys automatically via GitHub Pages
+
+To restrict a key to specific honors, add `"allowed_honors": ["<exact title>", …]` to its entry by hand in the PR (the Registry tab has no field for it, but preserves it on later edits). Registry PRs run CI, which validates the committed file.

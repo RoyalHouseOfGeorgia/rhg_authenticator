@@ -15,6 +15,17 @@
       "algorithm": "Ed25519",
       "public_key": "YJLjyix5YIGMYjNIry1nNd08VAg4EafDjc1KC408Hlc=",
       "note": ""
+    },
+    {
+      "authority": "H.H. Tavadi Kimon Andreou, PhD",
+      "from": "2026-09-29",
+      "to": null,
+      "algorithm": "Ed25519",
+      "public_key": "22Y4BFgqJJhMq3j2ki/9Dy5hSAQLeWVaiJE8tem1Xl8=",
+      "note": "Chief Administrator and Vice Chancellor - YubiKey PIV 9c, generated 2026-09-29",
+      "allowed_honors": [
+        "Appointment"
+      ]
     }
   ]
 }

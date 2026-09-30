@@ -47,7 +47,7 @@ See [../CHANGELOG.md](../CHANGELOG.md) for release history.
 4. Enter your YubiKey PIN when prompted
    - Check "Remember PIN for this session" to cache the PIN (opt-in, mlock'd memory, auto-clears after 5 minutes)
 5. The QR code appears as a preview
-6. Click **Save SVG** (primary — vector for print) or **Save PNG** (2048px alternative)
+6. Click **Save SVG** (primary — vector for print) or **Save PNG** (2048px alternative). The save dialog opens on the Desktop; on a Mac, the first save may ask whether the app can access the Desktop — click **Allow**
 7. Copy the verification URL to clipboard via **Copy URL**
 
 If signing fails, the status area shows a diagnostic message and a **Report Issue** button (files a GitHub issue automatically if logged in, or opens a pre-filled browser form). In debug builds, details are also written to `debug.log` — see [Troubleshooting](#troubleshooting) below.
@@ -159,6 +159,8 @@ Workflow:
 
 The app fetches the key registry from `https://verify.royalhouseofgeorgia.ge/keys/registry.json` on startup. **Remote only** — no cache or embedded fallback (a local copy could be tampered with). If the server is unreachable, the app opens in offline mode (signing still works, but YubiKey registry check is unavailable). Restart the app to retry.
 
+Registry fields the app doesn't recognise (such as `allowed_honors`, which only the verification page enforces) are ignored for display and preserved when the **Registry** tab writes entries back.
+
 ## Credential Revocation
 
 The app fetches the revocation list (`revocations.json`) alongside the registry on startup. The revocation list contains only SHA-256 hashes of revoked credential payloads — no personal data.
@@ -184,6 +186,7 @@ In **debug builds** (any non-release version, i.e. not a tagged `vX.Y.Z`), the a
 | **Smart card service not available** | OS smart card service not running | macOS: built-in, should always work. Windows: ensure the "Smart Card" service is running (`services.msc`) |
 | **No signing certificate found on YubiKey (PIV slot 9c)** | Slot 9c has no certificate, or the certificate does not contain an Ed25519 key | Follow [YubiKey Setup](#yubikey-setup) to generate a key and import the certificate. Ed25519 requires firmware >= 5.7 — check with `ykman info` |
 | **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | Check `debug.log` for the actual error message |
+| **Could not save the SVG file / PNG file / issuance log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop**. May be needed again after installing a new version |
 
 ### Verifying YubiKey readiness
 

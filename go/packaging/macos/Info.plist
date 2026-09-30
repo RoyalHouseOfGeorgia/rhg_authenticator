@@ -26,5 +26,8 @@
 	<string>12.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<!-- Shown in the macOS Files and Folders prompt on first Desktop access (Fyne draws its own save dialog) -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>RHG Authenticator saves QR codes and exported logs to your Desktop.</string>
 </dict>
 </plist>

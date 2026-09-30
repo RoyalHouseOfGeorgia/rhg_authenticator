@@ -545,9 +545,9 @@ describe('runVerification', () => {
   });
 
   it('returns invalid with date-mismatch reason', async () => {
-    const restrictedEntry = makeKeyEntry(publicKey, { from: '2025-01-01', to: '2025-12-31' });
+    const restrictedEntry = makeKeyEntry(publicKey, { from: '2020-01-01', to: '2023-12-31' });
     const restrictedRegistry = makeRegistry(restrictedEntry);
-    // Credential date is 2024-06-15, key valid from 2025
+    // Credential date is 2024-06-15, key expired end of 2023
     const params = makeSignedParams(secretKey);
     const result = await runVerification(params, restrictedRegistry);
     expect(result.status).toBe('invalid');

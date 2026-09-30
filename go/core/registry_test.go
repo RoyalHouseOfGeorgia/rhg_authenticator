@@ -104,9 +104,19 @@ func TestValidateRegistry_KeysNotArray(t *testing.T) {
 }
 
 func TestValidateRegistry_ExtraTopLevelField(t *testing.T) {
-	_, err := ValidateRegistry([]byte(`{"keys": [], "extra": true}`))
-	if err == nil || err.Error() != "unexpected field: extra" {
-		t.Fatalf("expected unexpected field error, got %v", err)
+	data := `{"keys": [{"authority":"A","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"AAAA","note":""}], "extra": true}`
+	reg, err := ValidateRegistry([]byte(data))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := string(reg.Extra["extra"]); got != "true" {
+		t.Errorf("Extra[extra] = %q, want %q", got, "true")
+	}
+	if len(reg.Extra) != 1 {
+		t.Errorf("len(Extra) = %d, want 1", len(reg.Extra))
+	}
+	if reg.Keys[0].Extra != nil {
+		t.Errorf("entry Extra = %v, want nil", reg.Keys[0].Extra)
 	}
 }
 
@@ -118,10 +128,23 @@ func TestValidateRegistry_EntryNotObject(t *testing.T) {
 }
 
 func TestValidateRegistry_EntryExtraField(t *testing.T) {
-	data := `{"keys": [{"authority":"A","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"AAAA","note":"","extra":"x"}]}`
-	_, err := ValidateRegistry([]byte(data))
-	if err == nil || !strings.Contains(err.Error(), "unexpected field: extra") {
-		t.Fatalf("expected unexpected field error, got %v", err)
+	data := `{"keys": [{"authority":"A","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"AAAA","note":"","extra":"x","allowed_honors":["Order A","Order B"]}]}`
+	reg, err := ValidateRegistry([]byte(data))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	extra := reg.Keys[0].Extra
+	if got := string(extra["extra"]); got != `"x"` {
+		t.Errorf("Extra[extra] = %q, want %q", got, `"x"`)
+	}
+	if got := string(extra["allowed_honors"]); got != `["Order A","Order B"]` {
+		t.Errorf("Extra[allowed_honors] = %q", got)
+	}
+	if len(extra) != 2 {
+		t.Errorf("len(Extra) = %d, want 2", len(extra))
+	}
+	if reg.Extra != nil {
+		t.Errorf("registry Extra = %v, want nil", reg.Extra)
 	}
 }
 

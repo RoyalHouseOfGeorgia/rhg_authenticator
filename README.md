@@ -26,7 +26,7 @@
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 | **URL rebuild tool** | Python | **Complete** | `scripts/rebuild_urls.py` — rebuild verification URLs from existing signatures, no YubiKey |
 
-1295 tests passing (869 Go + 392 TypeScript + 34 Python).
+1312 tests passing (869 Go + 409 TypeScript + 34 Python).
 
 ## Download & install
 
@@ -46,6 +46,8 @@ Requires an Apple Silicon Mac (Apple menu → **About This Mac** → **Chip** sa
 If the **Open Anyway** button isn't there, double-click the app again, then go back to System Settings.
 
 After this, the app opens normally. **Each time you install a new version you'll need to do this again:** quit the app, drag the new one into Applications, choose **Replace**, then repeat steps 4–6.
+
+The first time you save a QR code, macOS asks whether RHG Authenticator can access your Desktop folder — click **Allow**.
 
 ### Windows
 
