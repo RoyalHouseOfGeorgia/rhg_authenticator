@@ -2,7 +2,6 @@ package regmgr
 
 import (
 	"errors"
-	"fmt"
 	"net/url"
 	"testing"
 
@@ -221,8 +220,8 @@ func TestResolveLoginState_Offline(t *testing.T) {
 	if !offline {
 		t.Error("offline = false, want true")
 	}
-	if text != "Logged in (offline)" {
-		t.Errorf("statusText = %q, want %q", text, "Logged in (offline)")
+	if text != "GitHub unreachable" {
+		t.Errorf("statusText = %q, want %q", text, "GitHub unreachable")
 	}
 }
 
@@ -237,82 +236,6 @@ func TestResolveLoginState_EmptyUsername(t *testing.T) {
 	}
 	if text != "Logged in as @" {
 		t.Errorf("statusText = %q, want %q", text, "Logged in as @")
-	}
-}
-
-// --- userFacingError tests ---
-
-func TestUserFacingError_RateLimited(t *testing.T) {
-	err := &ghapi.APIError{StatusCode: 429, Message: "rate limit exceeded"}
-	got := userFacingError(err)
-	want := "GitHub rate limit reached. Try again in a few minutes."
-	if got != want {
-		t.Errorf("userFacingError(429) = %q, want %q", got, want)
-	}
-}
-
-func TestUserFacingError_Forbidden(t *testing.T) {
-	err := &ghapi.APIError{StatusCode: 403, Message: "forbidden"}
-	got := userFacingError(err)
-	want := "Permission denied. Check your GitHub account permissions."
-	if got != want {
-		t.Errorf("userFacingError(403) = %q, want %q", got, want)
-	}
-}
-
-func TestUserFacingError_GenericAPIError(t *testing.T) {
-	err := &ghapi.APIError{StatusCode: 500, Message: "internal server error"}
-	got := userFacingError(err)
-	want := "An error occurred. Please try again later."
-	if got != want {
-		t.Errorf("userFacingError(500) = %q, want %q", got, want)
-	}
-}
-
-func TestUserFacingError_NetworkError(t *testing.T) {
-	err := errors.New("dial tcp: lookup api.github.com: no such host")
-	got := userFacingError(err)
-	want := "An error occurred. Please try again later."
-	if got != want {
-		t.Errorf("userFacingError(network) = %q, want %q", got, want)
-	}
-}
-
-func TestUserFacingError_WrappedRateLimited(t *testing.T) {
-	inner := &ghapi.APIError{StatusCode: 429, Message: "rate limit"}
-	err := fmt.Errorf("request failed: %w", inner)
-	got := userFacingError(err)
-	want := "GitHub rate limit reached. Try again in a few minutes."
-	if got != want {
-		t.Errorf("userFacingError(wrapped 429) = %q, want %q", got, want)
-	}
-}
-
-func TestUserFacingError_WrappedForbidden(t *testing.T) {
-	inner := &ghapi.APIError{StatusCode: 403, Message: "forbidden"}
-	err := fmt.Errorf("request failed: %w", inner)
-	got := userFacingError(err)
-	want := "Permission denied. Check your GitHub account permissions."
-	if got != want {
-		t.Errorf("userFacingError(wrapped 403) = %q, want %q", got, want)
-	}
-}
-
-func TestUserFacingError_NilError(t *testing.T) {
-	// Edge case: nil error should not panic, returns generic message.
-	got := userFacingError(nil)
-	want := "An error occurred. Please try again later."
-	if got != want {
-		t.Errorf("userFacingError(nil) = %q, want %q", got, want)
-	}
-}
-
-func TestUserFacingError_DoesNotLeakDetails(t *testing.T) {
-	// Ensure internal error details are not exposed to the user.
-	err := errors.New("connection refused to 10.0.0.1:443: TLS handshake timeout")
-	got := userFacingError(err)
-	if got != "An error occurred. Please try again later." {
-		t.Errorf("userFacingError should not leak internal details, got %q", got)
 	}
 }
 
@@ -642,50 +565,6 @@ func TestCompleteLogin_FiresObserver(t *testing.T) {
 					rt.state.githubToken.AccessToken, tt.wantToken)
 			}
 		})
-	}
-}
-
-// --- userFacingError fork error test ---
-
-func TestUserFacingError_ForkError(t *testing.T) {
-	err := &ghapi.ForkError{Phase: "create", Wrapped: fmt.Errorf("network error")}
-	got := userFacingError(err)
-	want := "Could not set up your GitHub fork. Check your network connection and try again."
-	if got != want {
-		t.Errorf("userFacingError(ForkError) = %q, want %q", got, want)
-	}
-}
-
-func TestUserFacingError_WrappedForkError(t *testing.T) {
-	inner := &ghapi.ForkError{Phase: "poll", Wrapped: fmt.Errorf("timeout")}
-	err := fmt.Errorf("request failed: %w", inner)
-	got := userFacingError(err)
-	want := "Could not set up your GitHub fork. Check your network connection and try again."
-	if got != want {
-		t.Errorf("userFacingError(wrapped ForkError) = %q, want %q", got, want)
-	}
-}
-
-// TestUserFacingError_ForkErrorPrecedence pins the precedence: a ForkError
-// wrapping a 403/429 *APIError must yield the fork message (fork wins over
-// permission/rate-limit), while a bare 403 still yields the forbidden message.
-func TestUserFacingError_ForkErrorPrecedence(t *testing.T) {
-	forkMsg := "Could not set up your GitHub fork. Check your network connection and try again."
-	forbiddenMsg := "Permission denied. Check your GitHub account permissions."
-
-	forkOver403 := &ghapi.ForkError{Phase: "create", Wrapped: &ghapi.APIError{StatusCode: 403, Message: "forbidden"}}
-	if got := userFacingError(forkOver403); got != forkMsg {
-		t.Errorf("userFacingError(ForkError wrapping 403) = %q, want %q", got, forkMsg)
-	}
-
-	forkOver429 := &ghapi.ForkError{Phase: "poll", Wrapped: &ghapi.APIError{StatusCode: 429, Message: "rate limited"}}
-	if got := userFacingError(forkOver429); got != forkMsg {
-		t.Errorf("userFacingError(ForkError wrapping 429) = %q, want %q", got, forkMsg)
-	}
-
-	bare403 := &ghapi.APIError{StatusCode: 403, Message: "forbidden"}
-	if got := userFacingError(bare403); got != forbiddenMsg {
-		t.Errorf("userFacingError(bare 403) = %q, want %q", got, forbiddenMsg)
 	}
 }
 

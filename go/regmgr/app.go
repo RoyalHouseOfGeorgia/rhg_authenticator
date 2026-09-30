@@ -33,6 +33,10 @@ type appState struct {
 	githubUser  string
 }
 
+// restoreSessionFunc is the session-restore implementation; a package-level
+// var so tests can stub the network/keyring round trip.
+var restoreSessionFunc = ghapi.RestoreSession
+
 // tableColumns defines the column headers for the registry table.
 var tableColumns = []string{"#", "Authority", "From", "To", "Note", "Fingerprint"}
 
@@ -68,12 +72,6 @@ type RegistryTab struct {
 // main thread inside updateLoginUI).
 func (rt *RegistryTab) SetOnLoginChanged(fn func()) {
 	rt.onLoginChanged = fn
-}
-
-// StartLogin initiates the GitHub device authorization flow. Exported wrapper
-// so other tabs can trigger login through the single source of truth.
-func (rt *RegistryTab) StartLogin() {
-	rt.startLogin()
 }
 
 // IsDirty returns whether the registry has unsubmitted changes.
@@ -123,7 +121,7 @@ func resolveLoginState(isUnauthorized bool, username string, hasError bool) (log
 		return false, false, "Not logged in"
 	}
 	if hasError {
-		return true, true, "Logged in (offline)"
+		return true, true, "GitHub unreachable"
 	}
 	return true, false, "Logged in as @" + username
 }
@@ -134,7 +132,7 @@ func (rt *RegistryTab) updateLoginUI() {
 	if !rt.state.loggedIn {
 		rt.loginBtn.SetText("Login to GitHub")
 	} else if rt.state.offline {
-		rt.loginBtn.SetText("Logged in (offline)")
+		rt.loginBtn.SetText("Offline — Reconnect")
 	} else {
 		rt.loginBtn.SetText("@" + rt.state.githubUser + " \u25BE")
 	}
@@ -285,22 +283,75 @@ func (rt *RegistryTab) showLoginDialog(ctx context.Context, cancel context.Cance
 	}()
 }
 
-// userFacingError maps API errors to safe, user-friendly messages.
-func userFacingError(err error) string {
-	// Fork errors are checked first: a ForkError unwraps to its wrapped
-	// *APIError, so a fork failure caused by a 403/429 must still surface the
-	// fork message rather than the rate-limit/permission message.
-	if ghapi.IsForkError(err) {
-		return "Could not set up your GitHub fork. Check your network connection and try again."
+// HandleUnauthorized reacts to a GitHub 401: it clears the stored token,
+// resets all login state (a 401 means logged out, not offline), updates the
+// UI, and restarts the device login flow.
+// Must be called on the Fyne main thread.
+func (rt *RegistryTab) HandleUnauthorized() {
+	_ = ghapi.ClearToken(rt.kr, rt.configDir)
+	rt.state.loggedIn = false
+	rt.state.offline = false
+	rt.state.githubToken = ghapi.Token{}
+	rt.state.githubUser = ""
+	rt.updateLoginUI()
+	rt.statusLabel.SetText("Session expired. Please log in again.")
+	rt.startLogin()
+}
+
+// StartLoginOrReconnect is the single entry point for "log in" buttons.
+// When a stored session exists but GitHub was unreachable, it retries the
+// session restore instead of starting a new device flow; otherwise it starts
+// the device authorization flow. Must be called on the Fyne main thread.
+func (rt *RegistryTab) StartLoginOrReconnect() {
+	if rt.state.loggedIn && rt.state.offline {
+		if !rt.loggingIn.CompareAndSwap(false, true) {
+			return
+		}
+		rt.statusLabel.SetText("Reconnecting to GitHub...")
+		rt.restoreSession(true)
+		return
 	}
-	if ghapi.IsRateLimited(err) {
-		return "GitHub rate limit reached. Try again in a few minutes."
-	}
-	if ghapi.IsForbidden(err) {
-		return "Permission denied. Check your GitHub account permissions."
-	}
-	// Network/timeout errors
-	return "An error occurred. Please try again later."
+	rt.startLogin()
+}
+
+// restoreSession asynchronously restores the persisted GitHub session and
+// applies the result on the Fyne main thread.
+//
+// interactive=false is the silent startup restore. interactive=true is a
+// user-initiated reconnect: the caller must already hold rt.loggingIn, which
+// is released inside the fyne.Do callback (after state is applied) so a
+// second tap cannot race the unapplied result. An interactive restore that
+// ends logged out (401, expired token, load failure) falls through to the
+// device login flow.
+func (rt *RegistryTab) restoreSession(interactive bool) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		tok, username, loggedIn, offline, err := restoreSessionFunc(ctx, rt.kr, rt.configDir)
+		if err != nil {
+			log.Printf("warning: token restore failed: %s", core.SanitizeForLog(err.Error()))
+		}
+		fyne.Do(func() {
+			rt.state.githubToken = tok
+			rt.state.loggedIn = loggedIn
+			rt.state.offline = offline
+			rt.state.githubUser = username
+			rt.updateLoginUI()
+			if !interactive {
+				return
+			}
+			rt.statusLabel.SetText("")
+			if offline {
+				dialog.ShowInformation("GitHub Unreachable",
+					"Still can't reach GitHub. Check your connection and try again.", rt.window)
+			}
+			rt.loggingIn.Store(false)
+			if !loggedIn {
+				// startLogin re-acquires loggingIn itself, so it must follow the release.
+				rt.startLogin()
+			}
+		})
+	}()
 }
 
 // handleSubmitError handles PR creation errors — shows a dialog and, if the
@@ -308,20 +359,14 @@ func userFacingError(err error) string {
 // Must be called on the Fyne main thread.
 func (rt *RegistryTab) handleSubmitError(err error) {
 	if ghapi.IsUnauthorized(err) {
-		_ = ghapi.ClearToken(rt.kr, rt.configDir)
-		rt.state.loggedIn = false
-		rt.state.githubToken = ghapi.Token{}
-		rt.state.githubUser = ""
-		rt.updateLoginUI()
-		rt.statusLabel.SetText("Session expired. Please log in again.")
-		rt.startLogin()
+		rt.HandleUnauthorized()
 	} else if ghapi.IsForkError(err) {
 		log.Printf("error: fork setup failed: %s", core.SanitizeForLog(err.Error()))
-		dialog.ShowError(fmt.Errorf("%s", userFacingError(err)), rt.window)
+		dialog.ShowError(fmt.Errorf("%s", ghapi.UserMessage(err)), rt.window)
 		rt.statusLabel.SetText("")
 	} else {
 		log.Printf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
-		dialog.ShowError(fmt.Errorf("%s", userFacingError(err)), rt.window)
+		dialog.ShowError(fmt.Errorf("%s", ghapi.UserMessage(err)), rt.window)
 		rt.statusLabel.SetText("")
 	}
 }
@@ -361,8 +406,8 @@ func (rt *RegistryTab) submitForReview() {
 	if !canSave(rt.state.registry) {
 		return
 	}
-	if !rt.state.loggedIn {
-		rt.startLogin()
+	if !rt.state.loggedIn || rt.state.offline {
+		rt.StartLoginOrReconnect()
 		return
 	}
 	if !rt.submitting.CompareAndSwap(false, true) {
@@ -523,7 +568,9 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 
 	// Login button — text changes based on auth state.
 	loginBtn := widget.NewButton("Login to GitHub", func() {
-		if rt.state.loggedIn {
+		if rt.state.loggedIn && rt.state.offline {
+			rt.StartLoginOrReconnect()
+		} else if rt.state.loggedIn {
 			dialog.ShowConfirm("Log Out",
 				"Log out of GitHub? You'll need to re-authorize to submit future updates.",
 				func(ok bool) {
@@ -600,21 +647,7 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 	rt.Content = container.NewBorder(toolbar, actionBar, nil, nil, table)
 
 	// Async token restore.
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		tok, username, loggedIn, offline, err := ghapi.RestoreSession(ctx, rt.kr, rt.configDir)
-		if err != nil {
-			log.Printf("warning: token restore failed: %s", core.SanitizeForLog(err.Error()))
-		}
-		fyne.Do(func() {
-			rt.state.githubToken = tok
-			rt.state.loggedIn = loggedIn
-			rt.state.offline = offline
-			rt.state.githubUser = username
-			rt.updateLoginUI()
-		})
-	}()
+	rt.restoreSession(false)
 
 	return rt
 }

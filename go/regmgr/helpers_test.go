@@ -152,11 +152,11 @@ func TestCompleteLogin_Offline(t *testing.T) {
 	if rt.state.githubToken.AccessToken != "gho_test456" {
 		t.Errorf("githubToken.AccessToken = %q, want %q", rt.state.githubToken.AccessToken, "gho_test456")
 	}
-	if rt.statusLabel.Text != "Logged in (offline)" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "Logged in (offline)")
+	if rt.statusLabel.Text != "GitHub unreachable" {
+		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "GitHub unreachable")
 	}
-	if rt.loginBtn.Text != "Logged in (offline)" {
-		t.Errorf("loginBtn.Text = %q, want %q", rt.loginBtn.Text, "Logged in (offline)")
+	if rt.loginBtn.Text != "Offline — Reconnect" {
+		t.Errorf("loginBtn.Text = %q, want %q", rt.loginBtn.Text, "Offline — Reconnect")
 	}
 	if !cancelled {
 		t.Error("cancel was not called")

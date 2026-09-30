@@ -80,6 +80,26 @@ func IsForkError(err error) bool {
 	return errors.As(err, &fe)
 }
 
+// UserMessage maps API errors to safe, user-friendly messages suitable for
+// display in dialogs. It never includes err's text, so internal details
+// (hosts, response bodies) are not leaked to the user.
+func UserMessage(err error) string {
+	// Fork errors are checked first: a ForkError unwraps to its wrapped
+	// *APIError, so a fork failure caused by a 403/429 must still surface the
+	// fork message rather than the rate-limit/permission message.
+	if IsForkError(err) {
+		return "Could not set up your GitHub fork. Check your network connection and try again."
+	}
+	if IsRateLimited(err) {
+		return "GitHub rate limit reached. Try again in a few minutes."
+	}
+	if IsForbidden(err) {
+		return "Permission denied. Check your GitHub account permissions."
+	}
+	// Network/timeout errors
+	return "An error occurred. Please try again later."
+}
+
 // Client is a GitHub API client scoped to a single repository.
 type Client struct {
 	token      string
