@@ -212,7 +212,7 @@ The file itself lives here:
 - **Redirect protection**: HTTP client strips `Authorization` header on cross-origin redirects (allows `*.github.com` only).
 - **Input sanitization**: All untrusted GitHub API responses are sanitized before logging (control characters replaced, truncated to 500 runes). User-facing error messages are mapped to safe generic text.
 - **Panic recovery**: The main goroutine and all spawned goroutines (`safeGo`) catch panics, write a stack trace to the error log (`debug.log`) and stderr, and show an error dialog instead of silently crashing.
-- **Auto error reporting**: Fatal errors and signing failures offer to file a GitHub issue automatically (via `errorreport` package). If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS and error type. Signing-failure reports also include the last 50 lines of the error log (sanitized); fatal-error reports never do, because they are posted without a preview.
+- **Auto error reporting**: Fatal errors and signing failures offer to file a GitHub issue automatically (via `errorreport` package). If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS and error type — never the error log, because they are posted without a preview. Send the log deliberately with **Help → Export Error Log…**.
 
 ## Architecture
 

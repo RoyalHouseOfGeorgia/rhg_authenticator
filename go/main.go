@@ -189,8 +189,7 @@ func fatalDialog(window fyne.Window, message string, logger *debuglog.Logger, kr
 	var reportLine string
 	if kr != nil {
 		title := errorreport.BuildIssueTitle("internal", message)
-		// No log tail: this auto-posts to the public tracker without preview.
-		body := errorreport.BuildIssueBody(buildinfo.Version, "internal", message, "")
+		body := errorreport.BuildIssueBody(buildinfo.Version, "internal", message)
 		if resultURL, reportErr := errorreport.ReportIssue(context.Background(), kr, configDir, title, body); reportErr == nil && resultURL != "" {
 			reportLine = "\n\nError reported: " + resultURL
 		}

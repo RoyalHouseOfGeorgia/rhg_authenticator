@@ -161,7 +161,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 					if !errors.Is(err, ErrSigningCancelled) && !errors.Is(err, ErrPINEntryTimedOut) && config.Keyring != nil {
 						reportBtn := widget.NewButton("Report Issue", func() {
 							title := errorreport.BuildIssueTitle("signing", msg)
-							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error(), logger.Path())
+							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error())
 							resultURL, _ := errorreport.ReportIssue(context.Background(), config.Keyring, config.DataDir, title, body)
 							if resultURL != "" {
 								if u, parseErr := url.Parse(resultURL); parseErr == nil {

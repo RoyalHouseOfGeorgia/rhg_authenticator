@@ -27,8 +27,9 @@ patch component for fix-only releases (`v1.3.1`).
 - **Revocation errors are explained.** A failed revocation now shows why (for
   example a rate limit or a permission problem) instead of "failed to submit
   revocation". An expired GitHub session asks you to log in again.
-- **Fatal-error reports no longer include the log tail.** They are posted to
-  the public tracker without a preview.
+- **Automatic issue reports no longer include the log.** Neither signing-failure
+  nor fatal-error reports attach it, because they are posted to the public
+  tracker without a preview. Use **Help → Export Error Log…** to send it.
 
 ## [v1.4] — 2026-09-30
 
