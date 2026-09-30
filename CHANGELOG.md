@@ -8,6 +8,26 @@ patch component for fix-only releases (`v1.3.1`).
 
 ## [Unreleased]
 
+### Added
+- **Error log in every build.** The app keeps an error log in release builds
+  too, not just in debug builds. Entries older than 30 days are removed at
+  startup.
+- **Export Error Log.** **Help → Export Error Log…** saves the log to the
+  Desktop so it can be emailed. GitHub error dialogs have the same button.
+
+### Changed
+- **Reconnect after starting offline.** If GitHub couldn't be reached at
+  startup, the Registry tab's button reads **Offline — Reconnect** and retries
+  when clicked. Previously it only offered to log out. The History tab's
+  button now reads **Connect to GitHub**.
+
+### Fixed
+- **Revocation errors are explained.** A failed revocation now shows why (for
+  example a rate limit or a permission problem) instead of "failed to submit
+  revocation". An expired GitHub session asks you to log in again.
+- **Fatal-error reports no longer include the log tail.** They are posted to
+  the public tracker without a preview.
+
 ## [v1.4] — 2026-09-30
 
 ### Added

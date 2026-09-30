@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -15,7 +16,9 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
 )
 
@@ -362,11 +365,11 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 		rt.HandleUnauthorized()
 	} else if ghapi.IsForkError(err) {
 		log.Printf("error: fork setup failed: %s", core.SanitizeForLog(err.Error()))
-		dialog.ShowError(fmt.Errorf("%s", ghapi.UserMessage(err)), rt.window)
+		gui.ShowErrorWithLogExport("Submission Failed", ghapi.UserMessage(err), filepath.Join(rt.configDir, debuglog.FileName), rt.window)
 		rt.statusLabel.SetText("")
 	} else {
 		log.Printf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
-		dialog.ShowError(fmt.Errorf("%s", ghapi.UserMessage(err)), rt.window)
+		gui.ShowErrorWithLogExport("Submission Failed", ghapi.UserMessage(err), filepath.Join(rt.configDir, debuglog.FileName), rt.window)
 		rt.statusLabel.SetText("")
 	}
 }

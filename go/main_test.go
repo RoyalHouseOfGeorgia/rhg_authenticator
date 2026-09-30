@@ -385,3 +385,37 @@ func TestLogFileNonEmpty(t *testing.T) {
 
 // Ensure showConfirmFunc defaults to dialog.ShowConfirm (compile-time type check).
 var _ func(string, string, func(bool), fyne.Window) = dialog.ShowConfirm
+
+func TestBuildMainMenu(t *testing.T) {
+	called := false
+	mm := buildMainMenu(func() { called = true })
+
+	var file, help *fyne.Menu
+	for _, m := range mm.Items {
+		switch m.Label {
+		case "File":
+			file = m
+		case "Help":
+			help = m
+		}
+	}
+	if file == nil {
+		t.Fatal("File menu missing")
+	}
+	if help == nil {
+		t.Fatal("Help menu missing")
+	}
+	var export *fyne.MenuItem
+	for _, it := range help.Items {
+		if it.Label == "Export Error Log…" {
+			export = it
+		}
+	}
+	if export == nil || export.Action == nil {
+		t.Fatal("Help → Export Error Log… missing or has no action")
+	}
+	export.Action()
+	if !called {
+		t.Error("Export Error Log… action did not invoke callback")
+	}
+}

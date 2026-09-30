@@ -20,6 +20,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
@@ -61,6 +62,9 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	var selectedRecord *log.IssuanceRecord
 	var revokedHashes map[string]bool // key = lowercase payload_sha256
 	var cachedRevocationList *core.RevocationList
+
+	// logPath lives in the data dir, alongside the debug log.
+	debugLogPath := filepath.Join(filepath.Dir(logPath), debuglog.FileName)
 
 	searchEntry := widget.NewEntry()
 	searchEntry.SetPlaceHolder("Search by recipient...")
@@ -178,7 +182,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 							d.Show()
 							return
 						}
-						dialog.ShowError(errors.New(msg), window)
+						ShowErrorWithLogExport("Revocation Failed", msg, debugLogPath, window)
 					})
 					return
 				}

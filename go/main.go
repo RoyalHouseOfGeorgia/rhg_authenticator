@@ -146,6 +146,7 @@ func main() {
 	updateBanner := container.NewVBox()
 	windowContent := container.NewBorder(updateBanner, statusBar, nil, nil, tabs)
 	window.SetContent(windowContent)
+	window.SetMainMenu(buildMainMenu(func() { gui.OnErrorLogExportTapped(logger.Path(), window) }))
 
 	// 7. Close intercept for unsaved registry changes + PIN cache cleanup.
 	window.SetCloseIntercept(buildCloseHandler(
@@ -213,6 +214,15 @@ func fatalDialog(window fyne.Window, message string, logger *debuglog.Logger, kr
 // showConfirmFunc is the function used to show confirmation dialogs.
 // Package-level variable to allow test injection.
 var showConfirmFunc = dialog.ShowConfirm
+
+// buildMainMenu returns the app menu: an empty File menu (Fyne adds Quit to
+// the first menu on Windows, so Help doesn't get it) and Help → Export Error Log….
+func buildMainMenu(onExportErrorLog func()) *fyne.MainMenu {
+	return fyne.NewMainMenu(
+		fyne.NewMenu("File"),
+		fyne.NewMenu("Help", fyne.NewMenuItem("Export Error Log…", onExportErrorLog)),
+	)
+}
 
 // buildCloseHandler returns a function suitable for SetCloseIntercept that
 // handles unsaved-changes confirmation, optional debug log review, cleanup,
