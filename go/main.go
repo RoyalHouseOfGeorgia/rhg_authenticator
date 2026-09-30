@@ -285,7 +285,10 @@ func (t *rhgTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) co
 	case theme.ColorNamePrimary:
 		return officeBlue
 	case theme.ColorNameButton:
-		return officeBlue
+		// Standard buttons draw their text in ColorNameForeground (#333), so the
+		// fill must be light (Fluent secondary style). Primary actions
+		// (HighImportance) use ColorNamePrimary with white text.
+		return fluentNeutral
 	case theme.ColorNameForegroundOnPrimary:
 		return white
 	case theme.ColorNameBackground:

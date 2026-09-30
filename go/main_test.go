@@ -2,6 +2,7 @@ package main
 
 import (
 	"image/color"
+	"math"
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -17,7 +18,7 @@ func TestRhgTheme_Colors(t *testing.T) {
 		want color.Color
 	}{
 		{theme.ColorNamePrimary, color.NRGBA{0x2B, 0x57, 0x9A, 0xFF}},
-		{theme.ColorNameButton, color.NRGBA{0x2B, 0x57, 0x9A, 0xFF}},
+		{theme.ColorNameButton, color.NRGBA{0xF3, 0xF2, 0xF1, 0xFF}},
 		{theme.ColorNameForegroundOnPrimary, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
 		{theme.ColorNameBackground, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
 		{theme.ColorNameForeground, color.NRGBA{0x33, 0x33, 0x33, 0xFF}},
@@ -222,5 +223,46 @@ func TestBuildMainMenu(t *testing.T) {
 	export.Action()
 	if !called {
 		t.Error("Export Error Log… action did not invoke callback")
+	}
+}
+
+// relativeLuminance implements the WCAG 2.x relative luminance formula.
+func relativeLuminance(c color.Color) float64 {
+	r, g, b, _ := c.RGBA()
+	lin := func(v uint32) float64 {
+		s := float64(v) / 0xFFFF
+		if s <= 0.03928 {
+			return s / 12.92
+		}
+		return math.Pow((s+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b)
+}
+
+func contrastRatio(a, b color.Color) float64 {
+	la, lb := relativeLuminance(a), relativeLuminance(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// TestRhgTheme_ButtonTextContrast guards WCAG AA (4.5:1) for button text:
+// standard buttons draw ColorNameForeground on ColorNameButton, primary
+// buttons draw ColorNameForegroundOnPrimary on ColorNamePrimary.
+func TestRhgTheme_ButtonTextContrast(t *testing.T) {
+	th := &rhgTheme{}
+	v := theme.VariantLight
+	pairs := []struct {
+		name   string
+		fg, bg fyne.ThemeColorName
+	}{
+		{"standard button", theme.ColorNameForeground, theme.ColorNameButton},
+		{"primary button", theme.ColorNameForegroundOnPrimary, theme.ColorNamePrimary},
+	}
+	for _, p := range pairs {
+		if got := contrastRatio(th.Color(p.fg, v), th.Color(p.bg, v)); got < 4.5 {
+			t.Errorf("%s text contrast = %.2f:1, want >= 4.5:1", p.name, got)
+		}
 	}
 }

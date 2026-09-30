@@ -27,6 +27,9 @@ patch component for fix-only releases (`v1.3.1`).
 - **Revocation errors are explained.** A failed revocation now shows why (for
   example a rate limit or a permission problem) instead of "failed to submit
   revocation". An expired GitHub session asks you to log in again.
+- **Readable buttons.** Ordinary buttons showed dark grey text on dark blue
+  (about 1.7:1 contrast). They now use a light background with dark text; primary
+  actions stay blue with white text.
 - **Automatic issue reports no longer include the log.** Neither signing-failure
   nor fatal-error reports attach it, because they are posted to the public
   tracker without a preview. Use **Help → Export Error Log…** to send it.
