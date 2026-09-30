@@ -516,8 +516,8 @@ func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 	if !strings.Contains(got, "Failed to connect") {
 		t.Errorf("expected 'Failed to connect' message, got: %q", got)
 	}
-	if !strings.Contains(got, "debug.log") {
-		t.Errorf("expected debug.log reference in message, got: %q", got)
+	if !strings.Contains(got, "Export Error Log") {
+		t.Errorf("expected Export Error Log reference in message, got: %q", got)
 	}
 }
 
@@ -874,5 +874,29 @@ func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "signed but not recorded in audit log") {
 		t.Errorf("debug log should contain the wrapped error, got: %q", string(data))
+	}
+}
+
+// Every "see logs" fallback must point at the Help-menu export, not at a raw
+// debug.log file path the operator cannot easily locate.
+func TestSignFlowErrorMessage_DetailsPointToExportErrorLog(t *testing.T) {
+	const want = "Use Help → Export Error Log… for details."
+	cases := map[string]error{
+		"export key":   &SignFlowError{Phase: PhaseExportKey, Err: fmt.Errorf("x")},
+		"qr":           &SignFlowError{Phase: PhaseQR, Err: fmt.Errorf("x")},
+		"sign":         &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("x")},
+		"other phase":  &SignFlowError{Phase: SignFlowPhase("bogus"), Err: fmt.Errorf("x")},
+		"unclassified": fmt.Errorf("something odd happened"),
+	}
+	for name, err := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := signFlowErrorMessage(err, nil)
+			if !strings.HasSuffix(got, want) {
+				t.Errorf("got %q, want suffix %q", got, want)
+			}
+			if strings.Contains(got, "debug.log") {
+				t.Errorf("message must not reference debug.log: %q", got)
+			}
+		})
 	}
 }

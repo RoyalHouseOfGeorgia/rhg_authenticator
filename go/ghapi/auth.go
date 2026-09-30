@@ -501,5 +501,6 @@ func RestoreSession(ctx context.Context, kr Keyring, configDir string) (token To
 	}
 
 	// Network error, timeout, etc. — assume offline but keep the token.
+	log.Printf("warning: session validation failed, treating as offline: %s", core.SanitizeForLog(valErr.Error()))
 	return tok, "", true, true, nil
 }

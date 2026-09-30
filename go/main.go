@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"net/url"
 
@@ -41,13 +42,10 @@ func main() {
 			buf := make([]byte, 4096)
 			n := runtime.Stack(buf, false)
 			stack := string(buf[:n])
-			// Best-effort write to debug.log (synchronous file I/O only).
+			// Best-effort write to the diagnostic log via a fresh Logger
+			// (synchronous file I/O only; the main logger may not exist yet).
 			if configDir, err := os.UserConfigDir(); err == nil {
-				logPath := filepath.Join(configDir, "rhg-authenticator", "debug.log")
-				if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-					fmt.Fprintf(f, "PANIC: %v\n%s\n", r, stack)
-					f.Close()
-				}
+				debuglog.New(filepath.Join(configDir, "rhg-authenticator", debuglog.FileName)).Logf("PANIC: %v %s", r, stack)
 			}
 			fmt.Fprintf(os.Stderr, "RHG Authenticator crashed. Please report at https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/issues\n\nPanic: %v\n%s\n", r, stack)
 			panic(r) // re-panic so the OS gets the signal
@@ -82,28 +80,32 @@ func main() {
 		return
 	}
 
-	// Debug logging (debug builds only).
-	var logger *debuglog.Logger
-	if buildinfo.IsDebug() {
-		debugLogPath := filepath.Join(dataDir, "debug.log")
-		_ = os.Truncate(debugLogPath, 0) // fresh log per session
-		logger = debuglog.New(debugLogPath)
-		logger.Log("RHG Authenticator starting (debug mode, version: " + buildinfo.Version + ")")
-	} else {
-		logger = debuglog.New("") // no-op
+	// Diagnostic logging (always on). Prune entries older than the retention
+	// window before opening; prune failures go to the log itself, never stderr.
+	debugLogPath := filepath.Join(dataDir, debuglog.FileName)
+	pruneErr := debuglog.Prune(debugLogPath, debuglog.LogRetention, time.Now())
+	logger := debuglog.New(debugLogPath)
+	if pruneErr != nil {
+		logger.Logf("warning: log prune failed: %v", pruneErr)
 	}
+	debuglog.CaptureStdlib(logger)
+	startMsg := "RHG Authenticator starting (version: " + buildinfo.Version + ")"
+	if buildinfo.IsDebug() {
+		startMsg += " (debug mode)"
+	}
+	logger.Log(startMsg)
 
 	// 3. Log path and cleanup.
 	logPath := filepath.Join(dataDir, "issuances.json")
 	if err := log.CleanStaleTmpFiles(logPath); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: log cleanup failed: %v\n", err)
+		logger.Logf("warning: log cleanup failed: %s", core.SanitizeForLog(err.Error()))
 	}
 
 	// 4. Fetch registry (remote only — no cache or embedded fallback).
 	reg, err := registry.FetchRegistry(registry.DefaultRegistryURL)
 	regOnline := err == nil
 	if !regOnline {
-		fmt.Fprintf(os.Stderr, "warning: registry fetch failed: %v\n", err)
+		logger.Logf("warning: registry fetch failed: %s", core.SanitizeForLog(err.Error()))
 		reg = core.Registry{}
 	}
 	logger.Logf("registry fetch: online=%v", regOnline)
@@ -115,6 +117,7 @@ func main() {
 		DataDir: dataDir,
 		Keyring: kr,
 		SafeGo:  func(fn func()) { safeGo(fn, logger, window) },
+		Logger:  logger,
 	}, window)
 	regTab := regmgr.NewRegistryTab(window, dataDir)
 	historyContent, refreshHistoryLogin := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, regTab.ClientForHistory, regTab.StartLogin, window)
@@ -189,7 +192,8 @@ func fatalDialog(window fyne.Window, message string, logger *debuglog.Logger, kr
 	var reportLine string
 	if kr != nil {
 		title := errorreport.BuildIssueTitle("internal", message)
-		body := errorreport.BuildIssueBody(buildinfo.Version, "internal", message, logger.Path())
+		// No log tail: this auto-posts to the public tracker without preview.
+		body := errorreport.BuildIssueBody(buildinfo.Version, "internal", message, "")
 		if resultURL, reportErr := errorreport.ReportIssue(context.Background(), kr, configDir, title, body); reportErr == nil && resultURL != "" {
 			reportLine = "\n\nError reported: " + resultURL
 		}
