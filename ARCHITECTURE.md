@@ -161,7 +161,8 @@ type Registry = { keys: KeyEntry[] };
 ### Verification Rules
 
 - **Dates:** only `to` limits validity. A credential dated after `to` fails; any earlier date verifies, including dates before `from`, so backdated honors work.
-- **`allowed_honors`:** when present, a non-empty list of exact honor titles (case-sensitive). A credential whose `honor` is not in the list fails. When absent, the key verifies any honor. The restriction is retroactive — it applies to every credential the key ever signed — and per entry: every entry sharing a public key needs its own `allowed_honors`, or the unrestricted entry verifies.
+- **`allowed_honors`:** a list of exact honor titles (case-sensitive). A credential whose `honor` is not in the list fails. When absent, `null`, `[]` or all-blank, the key verifies any honor; blank items are skipped. Non-string, untrimmed or control-character items reject the registry. The restriction is retroactive — it applies to every credential the key ever signed — and per entry: every entry sharing a public key needs its own `allowed_honors`, or the unrestricted entry verifies.
+- **Blank `allowed_honors` fails open (accepted risk):** an edit that blanks a restriction (`[]` or `[""]`) silently makes the key unrestricted instead of rejecting the registry. Accepted because registry edits land only via maintainer-reviewed PRs and the app's Restrictions column shows the effective value.
 - **Strict verifier, tolerant app:** the verification page rejects any registry field it does not recognise, so an outdated verifier fails closed instead of silently ignoring a restriction. The Go app accepts and preserves unknown fields, so new registry fields never break installed copies.
 
 ### Key Rotation

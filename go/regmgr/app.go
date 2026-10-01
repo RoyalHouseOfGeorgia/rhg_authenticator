@@ -2,10 +2,12 @@ package regmgr
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -41,10 +43,10 @@ type appState struct {
 var restoreSessionFunc = ghapi.RestoreSession
 
 // tableColumns defines the column headers for the registry table.
-var tableColumns = []string{"#", "Authority", "From", "To", "Note", "Fingerprint"}
+var tableColumns = []string{"#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"}
 
 // tableColumnWidths defines the minimum widths for each table column.
-var tableColumnWidths = []float32{40, 200, 100, 100, 200, 450}
+var tableColumnWidths = []float32{40, 200, 100, 100, 150, 200, 450}
 
 // canSave returns whether the registry has entries that can be saved.
 func canSave(reg core.Registry) bool {
@@ -459,6 +461,43 @@ func (rt *RegistryTab) submitForReview() {
 	})
 }
 
+// restrictionsText renders a key's allowed_honors using the same rules as
+// the verify page (src/registry.ts): "(none)" when unrestricted (absent,
+// null, [] or all blank), "(invalid)" when the verify page would reject it,
+// otherwise the non-blank honors joined by ", ".
+func restrictionsText(entry core.KeyEntry) string {
+	raw, ok := entry.Extra["allowed_honors"]
+	if !ok {
+		return "(none)"
+	}
+	var items []any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return "(invalid)"
+	}
+	kept := make([]string, 0, len(items))
+	for _, item := range items {
+		h, isString := item.(string)
+		if !isString {
+			return "(invalid)"
+		}
+		if core.StripControlChars(h) != h {
+			return "(invalid)"
+		}
+		trimmed := strings.TrimSpace(h)
+		if trimmed == "" {
+			continue
+		}
+		if h != trimmed {
+			return "(invalid)"
+		}
+		kept = append(kept, h)
+	}
+	if len(kept) == 0 {
+		return "(none)"
+	}
+	return strings.Join(kept, ", ")
+}
+
 // entryCellText returns the display text for a registry table cell.
 // entryIdx is the 0-based index into registry.Keys.
 func entryCellText(entry core.KeyEntry, col, entryIdx int, fpCache map[int]string) string {
@@ -475,8 +514,10 @@ func entryCellText(entry core.KeyEntry, col, entryIdx int, fpCache map[int]strin
 		}
 		return "(none)"
 	case 4:
-		return entry.Note
+		return restrictionsText(entry)
 	case 5:
+		return entry.Note
+	case 6:
 		if fp, ok := fpCache[entryIdx]; ok {
 			return fp
 		}

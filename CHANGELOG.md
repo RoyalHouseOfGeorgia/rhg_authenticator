@@ -9,6 +9,8 @@ patch component for fix-only releases (`v1.3.1`).
 ## [Unreleased]
 
 ### Added
+- **Restrictions column.** The Registry tab shows each key's `allowed_honors`
+  restriction, or "(none)" when the key is unrestricted.
 - **Error log in every build.** The app keeps an error log in release builds
   too, not just in debug builds. Entries older than 30 days are removed at
   startup.
@@ -17,6 +19,9 @@ patch component for fix-only releases (`v1.3.1`).
   dialogs have the same button.
 
 ### Changed
+- **Blank `allowed_honors` means unrestricted.** `null`, `[]` or a list of only
+  blank titles no longer rejects the whole registry on the verification page;
+  blank titles are skipped.
 - **Reconnect after starting offline.** If GitHub couldn't be reached at
   startup, the Registry tab's button reads **Offline — Reconnect** and retries
   when clicked. Previously it only offered to log out. Submit for Review does

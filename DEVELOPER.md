@@ -126,7 +126,7 @@ isDateInRange(credentialDate: string, key: KeyEntry): boolean
 decodePublicKey(entry: KeyEntry): Uint8Array   // SPKI DER or raw → 32 bytes
 ```
 
-- `validateRegistry` rejects extra fields at both top-level and entry-level; the optional `allowed_honors` must be a non-empty array of non-empty, trimmed strings
+- `validateRegistry` rejects extra fields at both top-level and entry-level; the optional `allowed_honors` is a list of exact honor titles: absent, `null`, `[]` or an all-blank list means unrestricted (the field is omitted), blank items are skipped, and non-string, untrimmed or control-character items are rejected
 - `isDateInRange` checks only the key's `to` (inclusive); `from` is informational, so backdated credentials verify
 - `decodePublicKey` accepts 44-byte SPKI DER (strips 12-byte prefix) or 32-byte raw keys
 
@@ -277,4 +277,4 @@ The `verify/keys/registry.json` file contains all registered signing keys. To ad
 6. Click **"Submit for Review"** — this creates a GitHub pull request
 7. The repository admin reviews and merges the PR; the updated registry deploys automatically via GitHub Pages
 
-To restrict a key to specific honors, add `"allowed_honors": ["<exact title>", …]` to its entry by hand in the PR (the Registry tab has no field for it, but preserves it on later edits). Registry PRs run CI, which validates the committed file.
+To restrict a key to specific honors, add `"allowed_honors": ["<exact title>", …]` to its entry by hand in the PR (the Registry tab has no field for it, but preserves it on later edits; its Restrictions column shows the effective value). An empty or all-blank list means unrestricted. Registry PRs run CI, which validates the committed file.
