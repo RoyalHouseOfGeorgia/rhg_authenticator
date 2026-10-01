@@ -33,15 +33,15 @@ const maxHonorDisplay = 50
 // revocationTimeout is the deadline for the revocation goroutine.
 const revocationTimeout = 180 * time.Second
 
-// revocationCacheUnavailableMsg is the error shown when the cached revocation
-// list is nil at revoke time.
+// revocationCacheUnavailableMsg is the error shown when the revocation list
+// has not loaded at revoke time.
 const revocationCacheUnavailableMsg = "Revocation data not loaded. Try refreshing."
 
 // shouldEnableRevoke reports whether the Revoke button should be enabled: a
 // usable GitHub client exists, the revocation list has loaded, a record is
 // selected, and that record is not already revoked. cacheReady keeps the button
-// state in sync with the OnTapped precondition (which needs cachedRevocationList
-// != nil) — without it, selecting a row after a failed fetch would enable a
+// state in sync with the OnTapped precondition (which needs the revocation list
+// loaded) — without it, selecting a row after a failed fetch would enable a
 // button whose tap dead-ends in the "Revocation unavailable" error. Pure and
 // nil-safe — callable with selected == nil (the login-state refresh case).
 func shouldEnableRevoke(clientNil, cacheReady bool, selected *log.IssuanceRecord, revoked map[string]bool) bool {
@@ -61,7 +61,8 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	var filtered []log.IssuanceRecord
 	var selectedRecord *log.IssuanceRecord
 	var revokedHashes map[string]bool // key = lowercase payload_sha256
-	var cachedRevocationList *core.RevocationList
+	var revocationsLoaded bool        // revocation list fetched; gates Revoke
+	var revokeInFlight bool           // a revocation PR is being created; keeps Revoke disabled
 
 	// logPath lives in the data dir, alongside the debug log.
 	debugLogPath := filepath.Join(filepath.Dir(logPath), debuglog.FileName)
@@ -97,7 +98,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	// updateRevokeButton applies the shared enable rule. clientNil is passed in
 	// so each caller reads ghClientFn() exactly once (ClientForHistory allocates).
 	updateRevokeButton := func(clientNil bool) {
-		if shouldEnableRevoke(clientNil, cachedRevocationList != nil, selectedRecord, revokedHashes) {
+		if !revokeInFlight && shouldEnableRevoke(clientNil, revocationsLoaded, selectedRecord, revokedHashes) {
 			revokeButton.Enable()
 		} else {
 			revokeButton.Disable()
@@ -132,7 +133,6 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 			return
 		}
 		rec := *selectedRecord // local copy on main thread
-		cached := cachedRevocationList
 
 		// Check if already revoked.
 		if revokedHashes[strings.ToLower(rec.PayloadSHA256)] {
@@ -140,7 +140,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 			return
 		}
 
-		if cached == nil {
+		if !revocationsLoaded {
 			dialog.ShowError(fmt.Errorf("%s", revocationCacheUnavailableMsg), window)
 			return
 		}
@@ -151,31 +151,25 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 			if !confirmed {
 				return
 			}
+			// Prevent a second tap from opening a duplicate PR while this one is
+			// in flight (updateRevokeButton honours the flag); re-enabled on
+			// failure, left disabled on success.
+			revokeInFlight = true
+			revokeButton.Disable()
 
-			// Build updated revocation list.
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), revocationTimeout)
 				defer cancel()
 
-				// Build updated revocation list (deep-copies cached, does not mutate it).
-				updatedList := core.AppendRevocationEntry(cached, rec.PayloadSHA256, time.Now().UTC().Format("2006-01-02"))
-
-				// Marshal.
-				content, err := json.MarshalIndent(updatedList, "", "  ")
-				if err != nil {
-					stdlog.Printf("error: marshal revocation list failed: %s", core.SanitizeForLog(err.Error()))
-					fyne.Do(func() {
-						dialog.ShowError(fmt.Errorf("failed to prepare revocation data"), window)
-					})
-					return
-				}
-				content = append(content, '\n')
-
-				pr, err := client.CreateRevocationPR(ctx, content, rec.PayloadSHA256)
+				// ghapi builds the new revocations.json from upstream main, so
+				// revocations merged since the last fetch are never dropped.
+				pr, err := client.CreateRevocationPR(ctx, rec.PayloadSHA256, time.Now().UTC().Format("2006-01-02"))
 				if err != nil {
 					stdlog.Printf("error: revocation PR failed: %s", core.SanitizeForLog(err.Error()))
 					unauthorized, msg := revokeFailureAction(err)
 					fyne.Do(func() {
+						revokeInFlight = false
+						updateRevokeButton(ghClientFn() == nil)
 						if unauthorized {
 							d := dialog.NewInformation("Session Expired", msg, window)
 							d.SetOnClosed(onUnauthorized)
@@ -188,7 +182,8 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				}
 
 				fyne.Do(func() {
-					dialog.ShowInformation("Revocation Submitted", fmt.Sprintf("Pull request #%d created:\n%s", pr.Number, pr.HTMLURL), window)
+					revokeInFlight = false
+					dialog.ShowInformation("Revocation Submitted", fmt.Sprintf("Pull request #%d created:\n%s\n\nIf several revocation PRs are open, merge them one at a time.", pr.Number, pr.HTMLURL), window)
 					// Update local state.
 					if revokedHashes == nil {
 						revokedHashes = make(map[string]bool)
@@ -218,7 +213,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 			// Update UI on the main thread.
 			fyne.Do(func() {
 				revokedHashes = newHashes
-				cachedRevocationList = revList
+				revocationsLoaded = true
 				revocationStatus.Importance = widget.MediumImportance
 				revocationStatus.SetText("")
 				list.Refresh()

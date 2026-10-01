@@ -380,33 +380,58 @@ describe('validateRegistry — allowed_honors', () => {
     expect('allowed_honors' in result.keys[0]).toBe(false);
   });
 
-  it('rejects null (not treated as absent)', () => {
-    expect(() => validateRegistry({ keys: [withHonors(null)] })).toThrow(
-      'keys[0]: allowed_honors must be a non-empty array',
-    );
+  it.each([
+    ['null', null],
+    ['an empty array', []],
+    ['a single empty string', ['']],
+    ['only blank strings', ['  ', '']],
+  ])('treats %s as unrestricted (property omitted)', (_label, value) => {
+    const result = validateRegistry({ keys: [withHonors(value)] });
+    expect('allowed_honors' in result.keys[0]).toBe(false);
   });
 
-  it('rejects an empty array', () => {
-    expect(() => validateRegistry({ keys: [withHonors([])] })).toThrow(
-      'keys[0]: allowed_honors must be a non-empty array',
-    );
+  it('skips blank elements and keeps the rest in order', () => {
+    const result = validateRegistry({ keys: [withHonors(['A', '', 'B', '   '])] });
+    expect(result.keys[0].allowed_honors).toEqual(['A', 'B']);
   });
 
-  it('rejects a non-array', () => {
-    expect(() => validateRegistry({ keys: [withHonors('Medal')] })).toThrow(
-      'keys[0]: allowed_honors must be a non-empty array',
+  it.each([
+    ['a string', 'Medal'],
+    ['an object', {}],
+    ['a number', 1],
+  ])('rejects %s', (_label, value) => {
+    expect(() => validateRegistry({ keys: [withHonors(value)] })).toThrow(
+      'keys[0]: allowed_honors must be an array',
     );
   });
 
   it('rejects a non-string element', () => {
     expect(() => validateRegistry({ keys: [withHonors(['Medal', 42])] })).toThrow(
-      'keys[0]: allowed_honors[1] must be a non-empty string',
+      'keys[0]: allowed_honors[1] must be a string',
     );
   });
 
-  it('rejects an empty string element', () => {
-    expect(() => validateRegistry({ keys: [withHonors([''])] })).toThrow(
-      'keys[0]: allowed_honors[0] must be a non-empty string',
+  it('rejects a null element', () => {
+    expect(() => validateRegistry({ keys: [withHonors([null])] })).toThrow(
+      'keys[0]: allowed_honors[0] must be a string',
+    );
+  });
+
+  it('rejects a whitespace-only control character instead of skipping it as blank', () => {
+    expect(() => validateRegistry({ keys: [withHonors(['\t'])] })).toThrow(
+      'keys[0]: allowed_honors[0] contains invalid control characters',
+    );
+  });
+
+  it('rejects a C1 control (U+0085) that JS trim does not strip', () => {
+    expect(() => validateRegistry({ keys: [withHonors(['A', '\u0085'])] })).toThrow(
+      'keys[0]: allowed_honors[1] contains invalid control characters',
+    );
+  });
+
+  it('rejects a bidi control character', () => {
+    expect(() => validateRegistry({ keys: [withHonors(['Med\u202eal'])] })).toThrow(
+      'keys[0]: allowed_honors[0] contains invalid control characters',
     );
   });
 
@@ -419,6 +444,12 @@ describe('validateRegistry — allowed_honors', () => {
   it('rejects an untrimmed element', () => {
     expect(() => validateRegistry({ keys: [withHonors([' Medal'])] })).toThrow(
       'keys[0]: allowed_honors[0] must not have leading or trailing whitespace',
+    );
+  });
+
+  it('rejects an untrimmed element after a skipped blank, reporting its original index', () => {
+    expect(() => validateRegistry({ keys: [withHonors(['', 'Medal '])] })).toThrow(
+      'keys[0]: allowed_honors[1] must not have leading or trailing whitespace',
     );
   });
 });

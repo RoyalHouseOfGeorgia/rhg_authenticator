@@ -193,3 +193,25 @@ func TestStripControlChars(t *testing.T) {
 		})
 	}
 }
+
+func TestTrimJS(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"leading BOM", "\ufeffA", "A"},
+		{"trailing BOM", "A\ufeff", "A"},
+		{"mixed whitespace and ideographic space", " \t A\u3000", "A"},
+		{"NBSP both sides", "\u00a0A\u00a0", "A"},
+		{"no-op", "A", "A"},
+		{"interior BOM kept", "A\ufeffB", "A\ufeffB"},
+		{"only BOM and spaces", " \ufeff ", ""},
+		{"empty", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TrimJS(tc.in); got != tc.want {
+				t.Errorf("TrimJS(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

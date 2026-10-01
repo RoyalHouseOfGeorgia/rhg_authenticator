@@ -4,7 +4,8 @@
  * A registry holds an array of key entries that map authorities to their
  * Ed25519 public keys. A key's `to` date bounds which credential dates it
  * verifies (`from` is informational). An optional `allowed_honors` list
- * restricts a key to specific honors; when absent the key is unrestricted.
+ * restricts a key to specific honors; when absent, null, empty or all-blank
+ * the key is unrestricted.
  */
 
 import { base64Decode } from './base64url.js';
@@ -18,6 +19,9 @@ export type KeyEntry = {
   algorithm: 'Ed25519';
   public_key: string;
   note: string;
+  /** When present, always non-empty: validateRegistry omits the field for
+   * absent/null/[]/all-blank input, and verify.ts treats undefined as
+   * unrestricted (an empty array would allow nothing). */
   allowed_honors?: string[];
 };
 
@@ -130,25 +134,38 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
     throw new Error(`keys[${index}]: note contains invalid control characters`);
   }
 
-  // allowed_honors: optional non-empty array of non-empty, trimmed strings.
-  // `in` (not `!== undefined`) so an explicit null is rejected, not treated as absent.
+  // allowed_honors: optional list of exact honor titles. Absent, null, [] or
+  // all-blank means unrestricted (field omitted). Blank items are skipped;
+  // non-strings, control characters and untrimmed non-blank items are rejected.
+  // Mirrored for display by restrictionsText in go/regmgr/app.go; keep in sync.
   let allowedHonors: string[] | undefined;
-  if ('allowed_honors' in record) {
-    if (!Array.isArray(record.allowed_honors) || record.allowed_honors.length === 0) {
-      throw new Error(`keys[${index}]: allowed_honors must be a non-empty array`);
+  const rawHonors = record.allowed_honors;
+  if (rawHonors !== undefined && rawHonors !== null) {
+    if (!Array.isArray(rawHonors)) {
+      throw new Error(`keys[${index}]: allowed_honors must be an array`);
     }
-    allowedHonors = record.allowed_honors.map((honor: unknown, j: number) => {
-      if (typeof honor !== 'string' || honor.length === 0) {
-        throw new Error(`keys[${index}]: allowed_honors[${j}] must be a non-empty string`);
+    const kept: string[] = [];
+    for (const [j, honor] of (rawHonors as unknown[]).entries()) {
+      if (typeof honor !== 'string') {
+        throw new Error(`keys[${index}]: allowed_honors[${j}] must be a string`);
       }
+      // Control check first, so Go/JS whitespace differences (e.g. U+0085)
+      // can't turn a rejected item into a skipped one.
       if (CONTROL_CHAR_RE.test(honor)) {
         throw new Error(`keys[${index}]: allowed_honors[${j}] contains invalid control characters`);
       }
-      if (honor !== honor.trim()) {
+      const trimmed = honor.trim();
+      if (trimmed === '') {
+        continue;
+      }
+      if (honor !== trimmed) {
         throw new Error(`keys[${index}]: allowed_honors[${j}] must not have leading or trailing whitespace`);
       }
-      return honor;
-    });
+      kept.push(honor);
+    }
+    if (kept.length > 0) {
+      allowedHonors = kept; // all blank: stays undefined (unrestricted)
+    }
   }
 
   const validated: KeyEntry = {
@@ -187,9 +204,8 @@ export function validateRegistry(obj: unknown): Registry {
   }
 
   // Reject extra top-level fields.
-  // Note: Object.keys does NOT enumerate __proto__ after JSON.parse, so this
-  // check cannot catch __proto__ at the registry level. Not a real attack vector
-  // since the value is inaccessible via Object.keys iteration.
+  // JSON.parse defines "__proto__" as an own enumerable key, so this allow-list
+  // also rejects it (and "constructor") at the registry level.
   for (const key of Object.keys(record)) {
     if (!REGISTRY_FIELDS.has(key)) {
       throw new Error(`unexpected field: ${key}`);

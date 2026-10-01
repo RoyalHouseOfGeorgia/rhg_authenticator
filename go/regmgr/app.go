@@ -1,11 +1,15 @@
 package regmgr
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -27,24 +31,32 @@ import (
 // atomic.Bool fields on RegistryTab are belt-and-suspenders guards.
 type appState struct {
 	registry    core.Registry
-	filePath    string // "" = not yet saved locally
 	dirty       bool
 	selected    int // selected table row, -1 = none
 	githubToken ghapi.Token
 	loggedIn    bool
 	offline     bool
 	githubUser  string
+	// baseBytes is the MarshalRegistry output of the registry as loaded by
+	// Fetch (from main via the API when logged in, else the Pages copy, which
+	// lags main for 10–15 min after a merge); nil = not loaded. Submit refuses
+	// unless main still matches it.
+	baseBytes []byte
 }
+
+// errRegistryChanged is returned by submitRegistry when upstream's registry no
+// longer matches the snapshot the local edits were based on (or none was loaded).
+var errRegistryChanged = errors.New("registry on GitHub does not match the loaded snapshot")
 
 // restoreSessionFunc is the session-restore implementation; a package-level
 // var so tests can stub the network/keyring round trip.
 var restoreSessionFunc = ghapi.RestoreSession
 
 // tableColumns defines the column headers for the registry table.
-var tableColumns = []string{"#", "Authority", "From", "To", "Note", "Fingerprint"}
+var tableColumns = []string{"#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"}
 
 // tableColumnWidths defines the minimum widths for each table column.
-var tableColumnWidths = []float32{40, 200, 100, 100, 200, 450}
+var tableColumnWidths = []float32{40, 200, 100, 100, 150, 200, 450}
 
 // canSave returns whether the registry has entries that can be saved.
 func canSave(reg core.Registry) bool {
@@ -68,6 +80,9 @@ type RegistryTab struct {
 	// state changes (login, logout, session restore, 401 expiry). Lets other
 	// tabs (History) react to auth changes without polling. nil in tests.
 	onLoginChanged func()
+	// onRestored runs once after the startup session restore is applied (on the
+	// main thread); NewRegistryTab sets it to Fetch. nil in tests.
+	onRestored func()
 }
 
 // SetOnLoginChanged registers a callback fired on the Fyne main thread whenever
@@ -95,8 +110,18 @@ func (rt *RegistryTab) ClientForHistory() *ghapi.Client {
 // Must be called on the Fyne main thread (updates UI widgets before spawning goroutine).
 func (rt *RegistryTab) Fetch() {
 	rt.statusLabel.SetText("Fetching...")
+	// Read on the main thread. nil when logged out or offline (offline skips the
+	// API attempt and its timeout and goes straight to the Pages copy).
+	client := rt.ClientForHistory()
+	if rt.state.offline {
+		client = nil
+	}
 	go func() {
-		reg, err := registry.FetchRegistry(registry.DefaultRegistryURL)
+		reg, err := fetchRegistry(client)
+		var base []byte
+		if err == nil {
+			base, err = MarshalRegistry(reg)
+		}
 		fyne.Do(func() {
 			if err != nil {
 				log.Printf("error: registry fetch failed: %s", core.SanitizeForLog(err.Error()))
@@ -104,7 +129,7 @@ func (rt *RegistryTab) Fetch() {
 				return
 			}
 			rt.state.registry = reg
-			rt.state.filePath = ""
+			rt.state.baseBytes = base
 			rt.state.dirty = false
 			rt.state.selected = -1
 			rt.table.UnselectAll()
@@ -115,6 +140,23 @@ func (rt *RegistryTab) Fetch() {
 			rt.statusLabel.SetText("Loaded from registry server")
 		})
 	}()
+}
+
+// fetchRegistry loads the registry from main via the GitHub API when a client
+// is available, so the submit check compares like with like and isn't tripped
+// by the Pages deploy lag after a merge. Logged out (or if the API read fails)
+// it falls back to the published Pages copy.
+func fetchRegistry(client *ghapi.Client) (core.Registry, error) {
+	if client != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		up, err := client.FetchUpstreamFile(ctx, ghapi.RegistryFilePath)
+		if err == nil {
+			return core.ValidateRegistry(up)
+		}
+		log.Printf("warning: registry fetch from GitHub failed, using site copy: %s", core.SanitizeForLog(err.Error()))
+	}
+	return registry.FetchRegistry(registry.DefaultRegistryURL)
 }
 
 // resolveLoginState determines the login display state from validation results.
@@ -342,6 +384,9 @@ func (rt *RegistryTab) restoreSession(interactive bool) {
 			rt.state.githubUser = username
 			rt.updateLoginUI()
 			if !interactive {
+				if rt.onRestored != nil {
+					rt.onRestored() // startup: load the registry now that login state is known
+				}
 				return
 			}
 			rt.statusLabel.SetText("")
@@ -370,6 +415,13 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 		dialog.ShowInformation("Session Expired",
 			"Your GitHub session expired. Log in again, then submit again.", rt.window)
 		rt.HandleUnauthorized()
+		return
+	}
+	if errors.Is(err, errRegistryChanged) {
+		log.Printf("warning: registry submit refused: %s", core.SanitizeForLog(err.Error()))
+		dialog.ShowInformation("Registry Changed",
+			"The registry on GitHub doesn't match the copy you loaded (it changed, or nothing was loaded). Click Fetch from Server, re-apply your edits, and submit again.", rt.window)
+		rt.statusLabel.SetText("")
 		return
 	}
 	log.Printf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
@@ -408,6 +460,29 @@ func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
 	}
 }
 
+// submitRegistry refuses to open a PR if upstream's registry no longer matches
+// the snapshot the edits were based on (base), so a stale fetch can't silently
+// undo another change. Both sides go through MarshalRegistry, so whitespace and
+// line endings don't matter.
+func submitRegistry(ctx context.Context, client *ghapi.Client, base, content []byte, title string) (ghapi.PRResult, error) {
+	up, err := client.FetchUpstreamFile(ctx, ghapi.RegistryFilePath)
+	if err != nil {
+		return ghapi.PRResult{}, fmt.Errorf("fetching upstream registry: %w", err)
+	}
+	reg, err := core.ValidateRegistry(up)
+	if err != nil {
+		return ghapi.PRResult{}, fmt.Errorf("validating upstream registry: %w", err)
+	}
+	upBytes, err := MarshalRegistry(reg)
+	if err != nil {
+		return ghapi.PRResult{}, fmt.Errorf("re-marshaling upstream registry: %w", err)
+	}
+	if len(base) == 0 || !bytes.Equal(upBytes, base) {
+		return ghapi.PRResult{}, errRegistryChanged
+	}
+	return client.CreateRegistryPR(ctx, content, title)
+}
+
 // submitForReview marshals the registry and creates a GitHub pull request.
 func (rt *RegistryTab) submitForReview() {
 	if !canSave(rt.state.registry) {
@@ -432,6 +507,7 @@ func (rt *RegistryTab) submitForReview() {
 		}
 		token := rt.state.githubToken.AccessToken
 		username := rt.state.githubUser
+		base := rt.state.baseBytes
 
 		if username == "" {
 			rt.submitting.Store(false)
@@ -448,7 +524,7 @@ func (rt *RegistryTab) submitForReview() {
 			defer submitCancel()
 
 			client := ghapi.NewClientWithUser(token, username)
-			pr, err := client.CreateRegistryPR(submitCtx, content, "Registry update")
+			pr, err := submitRegistry(submitCtx, client, base, content, "Registry update")
 			if err != nil {
 				fyne.Do(func() { rt.handleSubmitError(err) })
 				return
@@ -457,6 +533,43 @@ func (rt *RegistryTab) submitForReview() {
 			fyne.Do(func() { rt.handleSubmitSuccess(pr) })
 		}()
 	})
+}
+
+// restrictionsText renders a key's allowed_honors using the same rules as
+// the verify page (src/registry.ts): "(none)" when unrestricted (absent,
+// null, [] or all blank), "(invalid)" when the verify page would reject it,
+// otherwise the non-blank honors joined by ", ".
+func restrictionsText(entry core.KeyEntry) string {
+	raw, ok := entry.Extra["allowed_honors"]
+	if !ok {
+		return "(none)"
+	}
+	var items []any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return "(invalid)"
+	}
+	kept := make([]string, 0, len(items))
+	for _, item := range items {
+		h, isString := item.(string)
+		if !isString {
+			return "(invalid)"
+		}
+		if core.StripControlChars(h) != h {
+			return "(invalid)"
+		}
+		trimmed := core.TrimJS(h)
+		if trimmed == "" {
+			continue
+		}
+		if h != trimmed {
+			return "(invalid)"
+		}
+		kept = append(kept, h)
+	}
+	if len(kept) == 0 {
+		return "(none)"
+	}
+	return strings.Join(kept, ", ")
 }
 
 // entryCellText returns the display text for a registry table cell.
@@ -475,8 +588,10 @@ func entryCellText(entry core.KeyEntry, col, entryIdx int, fpCache map[int]strin
 		}
 		return "(none)"
 	case 4:
-		return entry.Note
+		return restrictionsText(entry)
 	case 5:
+		return entry.Note
+	case 6:
 		if fp, ok := fpCache[entryIdx]; ok {
 			return fp
 		}
@@ -654,6 +769,14 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 	rt.Content = container.NewBorder(toolbar, actionBar, nil, nil, table)
 
 	// Async token restore.
+	// Fetch once login state is known (so a logged-in session loads main via the
+	// API), but never clobber edits made while the restore was running.
+	rt.onRestored = func() {
+		if !rt.state.dirty {
+			rt.Fetch()
+		}
+	}
+	statusLabel.SetText("Fetching...")
 	rt.restoreSession(false)
 
 	return rt

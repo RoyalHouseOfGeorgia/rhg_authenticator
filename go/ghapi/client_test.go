@@ -1000,35 +1000,61 @@ func TestCreateRegistryPR_422RetryAnyMessage(t *testing.T) {
 
 // --- CreateRevocationPR ---
 
-func TestCreateRevocationPR_Success(t *testing.T) {
-	var callSequence []string
-	content := []byte(`{"revocations": []}`)
-	fullHash := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+const (
+	testRevHashA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	testRevHashB = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+)
 
-	var capturedBranchRef string
-	var capturedContentsPath string
-	var capturedPRTitle string
-	var capturedPRBody string
+// wrappedBase64 encodes data as the GitHub contents API does: standard
+// base64 with a newline every 60 characters.
+func wrappedBase64(data []byte) string {
+	enc := base64.StdEncoding.EncodeToString(data)
+	var sb strings.Builder
+	for len(enc) > 60 {
+		sb.WriteString(enc[:60])
+		sb.WriteByte('\n')
+		enc = enc[60:]
+	}
+	sb.WriteString(enc)
+	sb.WriteByte('\n')
+	return sb.String()
+}
 
+// revocationFake records the requests a fake GitHub server received during a
+// CreateRevocationPR run.
+type revocationFake struct {
+	calls        []string
+	contentsGETs []string // path?query of every contents GET
+	putContent   []byte   // decoded content of the PUT
+	branchRef    string
+	prTitle      string
+	prBody       string
+}
+
+// newRevocationFakeServer serves a full fork-PR flow. Every contents GET (the
+// upstream fetch and the fork's blob-SHA lookup) returns upstream, line-wrapped.
+func newRevocationFakeServer(t *testing.T, upstream []byte) (*httptest.Server, *revocationFake) {
+	t.Helper()
+	f := &revocationFake{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
-			callSequence = append(callSequence, "forkRepo")
+			f.calls = append(f.calls, "forkRepo")
 			w.WriteHeader(202)
 			w.Write([]byte(`{}`))
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
-			callSequence = append(callSequence, "waitForFork")
+			f.calls = append(f.calls, "waitForFork")
 			w.WriteHeader(200)
 			w.Write([]byte(`{}`))
 
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
-			callSequence = append(callSequence, "syncFork")
+			f.calls = append(f.calls, "syncFork")
 			w.WriteHeader(200)
 			w.Write([]byte(`{}`))
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
-			callSequence = append(callSequence, "getRef")
+			f.calls = append(f.calls, "getRef")
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(map[string]any{
 				"ref":    "refs/heads/main",
@@ -1036,35 +1062,47 @@ func TestCreateRevocationPR_Success(t *testing.T) {
 			})
 
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
-			callSequence = append(callSequence, "createRef")
+			f.calls = append(f.calls, "createRef")
 			body, _ := io.ReadAll(r.Body)
 			var req map[string]string
 			json.Unmarshal(body, &req)
-			capturedBranchRef = req["ref"]
+			f.branchRef = req["ref"]
 			w.WriteHeader(201)
 			w.Write([]byte(`{}`))
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
-			callSequence = append(callSequence, "getContents")
-			capturedContentsPath = r.URL.Path
+			f.calls = append(f.calls, "getContents")
+			f.contentsGETs = append(f.contentsGETs, r.URL.Path+"?"+r.URL.RawQuery)
 			w.WriteHeader(200)
-			json.NewEncoder(w).Encode(map[string]string{"sha": "file-sha-rev"})
+			json.NewEncoder(w).Encode(map[string]string{
+				"content":  wrappedBase64(upstream),
+				"encoding": "base64",
+				"sha":      "file-sha-rev",
+			})
 
 		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
-			callSequence = append(callSequence, "updateContents")
+			f.calls = append(f.calls, "updateContents")
 			if !strings.Contains(r.URL.Path, "revocations.json") {
 				t.Errorf("PUT path = %s, want to contain revocations.json", r.URL.Path)
 			}
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]string
+			json.Unmarshal(body, &req)
+			decoded, err := base64.StdEncoding.DecodeString(req["content"])
+			if err != nil {
+				t.Errorf("PUT content not valid base64: %v", err)
+			}
+			f.putContent = decoded
 			w.WriteHeader(200)
 			w.Write([]byte(`{}`))
 
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
-			callSequence = append(callSequence, "createPR")
+			f.calls = append(f.calls, "createPR")
 			body, _ := io.ReadAll(r.Body)
 			var req map[string]string
 			json.Unmarshal(body, &req)
-			capturedPRTitle = req["title"]
-			capturedPRBody = req["body"]
+			f.prTitle = req["title"]
+			f.prBody = req["body"]
 			w.WriteHeader(201)
 			json.NewEncoder(w).Encode(PRResult{Number: 99, HTMLURL: "https://github.com/test/pr/99"})
 
@@ -1073,10 +1111,16 @@ func TestCreateRevocationPR_Success(t *testing.T) {
 			w.WriteHeader(500)
 		}
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv, f
+}
+
+func TestCreateRevocationPR_Success(t *testing.T) {
+	upstream := []byte(`{"revocations": []}`)
+	srv, f := newRevocationFakeServer(t, upstream)
 
 	c := newTestClientWithUser(srv, "tok", "testuser")
-	pr, err := c.CreateRevocationPR(context.Background(), content, fullHash)
+	pr, err := c.CreateRevocationPR(context.Background(), testRevHashB, "2026-10-01")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1087,217 +1131,258 @@ func TestCreateRevocationPR_Success(t *testing.T) {
 		t.Errorf("PR URL = %q, want https://github.com/test/pr/99", pr.HTMLURL)
 	}
 
-	// Verify call sequence.
-	expected := []string{"forkRepo", "waitForFork", "syncFork", "getRef", "createRef", "getContents", "updateContents", "createPR"}
-	if len(callSequence) != len(expected) {
-		t.Fatalf("call sequence = %v, want %v", callSequence, expected)
+	// Upstream fetch happens before any fork work.
+	expected := []string{"getContents", "forkRepo", "waitForFork", "syncFork", "getRef", "createRef", "getContents", "updateContents", "createPR"}
+	if len(f.calls) != len(expected) {
+		t.Fatalf("call sequence = %v, want %v", f.calls, expected)
 	}
 	for i, want := range expected {
-		if callSequence[i] != want {
-			t.Errorf("call[%d] = %q, want %q", i, callSequence[i], want)
+		if f.calls[i] != want {
+			t.Errorf("call[%d] = %q, want %q", i, f.calls[i], want)
 		}
 	}
 
-	// Verify branch name contains "revoke-" prefix.
-	if !strings.Contains(capturedBranchRef, "revoke-") {
-		t.Errorf("branch ref = %q, want to contain 'revoke-'", capturedBranchRef)
+	if !strings.Contains(f.branchRef, "revoke-") {
+		t.Errorf("branch ref = %q, want to contain 'revoke-'", f.branchRef)
 	}
-
-	// Verify contents path targets revocations.json.
-	if !strings.Contains(capturedContentsPath, "revocations.json") {
-		t.Errorf("getContents path = %q, want to contain revocations.json", capturedContentsPath)
-	}
-
-	// Verify PR title contains "Revoke credential".
-	shortHash := fullHash[:16]
-	if !strings.Contains(capturedPRTitle, "Revoke credential") {
-		t.Errorf("PR title = %q, want to contain 'Revoke credential'", capturedPRTitle)
-	}
-	if !strings.Contains(capturedPRTitle, shortHash) {
-		t.Errorf("PR title = %q, want to contain short hash %q", capturedPRTitle, shortHash)
-	}
-
-	// Verify PR body contains the full hash.
-	if !strings.Contains(capturedPRBody, fullHash) {
-		t.Errorf("PR body = %q, want to contain full hash %q", capturedPRBody, fullHash)
-	}
-}
-
-func TestCreateRevocationPR_EmptyContent(t *testing.T) {
-	apiCalled := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		apiCalled = true
-		w.WriteHeader(500)
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	_, err := c.CreateRevocationPR(context.Background(), nil, "somehash")
-	if err == nil {
-		t.Fatal("expected error for empty content")
-	}
-	if !strings.Contains(err.Error(), "no revocation content") {
-		t.Errorf("error = %q, want to contain 'no revocation content'", err.Error())
-	}
-	if apiCalled {
-		t.Error("API was called despite empty content")
-	}
-
-	// Also test with zero-length slice.
-	_, err = c.CreateRevocationPR(context.Background(), []byte{}, "somehash")
-	if err == nil {
-		t.Fatal("expected error for zero-length content")
-	}
-	if !strings.Contains(err.Error(), "no revocation content") {
-		t.Errorf("error = %q, want to contain 'no revocation content'", err.Error())
-	}
-}
-
-func TestCreateRevocationPR_LongHash(t *testing.T) {
-	longHash := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-	content := []byte(`{"revocations": []}`)
-
-	var capturedBranchRef string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
-			w.WriteHeader(202)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
-			w.WriteHeader(200)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
-			w.WriteHeader(200)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
-			w.WriteHeader(200)
-			json.NewEncoder(w).Encode(map[string]any{
-				"ref":    "refs/heads/main",
-				"object": map[string]string{"sha": "sha1"},
-			})
-
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
-			body, _ := io.ReadAll(r.Body)
-			var req map[string]string
-			json.Unmarshal(body, &req)
-			capturedBranchRef = req["ref"]
-			w.WriteHeader(201)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
-			w.WriteHeader(200)
-			json.NewEncoder(w).Encode(map[string]string{"sha": "fsha"})
-
-		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
-			w.WriteHeader(200)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
-			w.WriteHeader(201)
-			json.NewEncoder(w).Encode(PRResult{Number: 1})
-
-		default:
-			w.WriteHeader(500)
+	for _, p := range f.contentsGETs {
+		if !strings.Contains(p, "revocations.json") {
+			t.Errorf("contents GET = %q, want to contain revocations.json", p)
 		}
-	}))
-	defer srv.Close()
+	}
+
+	// PUT body is exactly upstream + the new entry, in the canonical format.
+	want := "{\n  \"revocations\": [\n    {\n      \"hash\": \"" + testRevHashB + "\",\n      \"revoked_on\": \"2026-10-01\"\n    }\n  ]\n}\n"
+	if string(f.putContent) != want {
+		t.Errorf("PUT content =\n%s\nwant\n%s", f.putContent, want)
+	}
+
+	shortHash := testRevHashB[:16]
+	if !strings.Contains(f.prTitle, "Revoke credential") || !strings.Contains(f.prTitle, shortHash) {
+		t.Errorf("PR title = %q, want 'Revoke credential' and %q", f.prTitle, shortHash)
+	}
+	if !strings.Contains(f.prBody, testRevHashB) {
+		t.Errorf("PR body = %q, want to contain full hash %q", f.prBody, testRevHashB)
+	}
+}
+
+// TestCreateRevocationPR_PreservesUpstreamEntries guards against building the
+// new file from a stale local copy: an entry merged upstream (A) must survive
+// a later revocation (B).
+func TestCreateRevocationPR_PreservesUpstreamEntries(t *testing.T) {
+	upstream, err := json.MarshalIndent(core.RevocationList{Revocations: []core.RevocationEntry{
+		{Hash: testRevHashA, RevokedOn: "2026-09-30"},
+	}}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(base64.StdEncoding.EncodeToString(upstream)) <= 60 {
+		t.Fatal("fixture too small to exercise line-wrapped base64")
+	}
+	srv, f := newRevocationFakeServer(t, upstream)
 
 	c := newTestClientWithUser(srv, "tok", "testuser")
-	_, err := c.CreateRevocationPR(context.Background(), content, longHash)
+	if _, err := c.CreateRevocationPR(context.Background(), testRevHashB, "2026-10-01"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(f.contentsGETs) == 0 {
+		t.Fatal("no contents GET recorded")
+	}
+	wantUpstream := "/repos/" + DefaultOwner + "/" + DefaultRepo + "/contents/" + revocationPath + "?ref=main"
+	if f.contentsGETs[0] != wantUpstream {
+		t.Errorf("upstream GET = %q, want %q", f.contentsGETs[0], wantUpstream)
+	}
+
+	got, err := core.ValidateRevocationList(f.putContent)
 	if err != nil {
+		t.Fatalf("PUT content is not a valid revocation list: %v\n%s", err, f.putContent)
+	}
+	wantEntries := []core.RevocationEntry{
+		{Hash: testRevHashA, RevokedOn: "2026-09-30"},
+		{Hash: testRevHashB, RevokedOn: "2026-10-01"},
+	}
+	if len(got.Revocations) != len(wantEntries) {
+		t.Fatalf("PUT entries = %v, want %v", got.Revocations, wantEntries)
+	}
+	for i, w := range wantEntries {
+		if got.Revocations[i] != w {
+			t.Errorf("entry[%d] = %v, want %v", i, got.Revocations[i], w)
+		}
+	}
+}
+
+func TestCreateRevocationPR_BranchUsesShortHash(t *testing.T) {
+	srv, f := newRevocationFakeServer(t, []byte(`{"revocations": []}`))
+
+	c := newTestClientWithUser(srv, "tok", "testuser")
+	if _, err := c.CreateRevocationPR(context.Background(), testRevHashB, "2026-10-01"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Branch ref should contain "revoke-" followed by exactly 16 hex chars, then "-".
-	// The full 64-char hash must NOT appear in the branch name.
-	expectedPrefix := "revoke-" + longHash[:16] + "-"
-	if !strings.Contains(capturedBranchRef, expectedPrefix) {
-		t.Errorf("branch ref = %q, want to contain %q", capturedBranchRef, expectedPrefix)
+	expectedPrefix := "revoke-" + testRevHashB[:16] + "-"
+	if !strings.Contains(f.branchRef, expectedPrefix) {
+		t.Errorf("branch ref = %q, want to contain %q", f.branchRef, expectedPrefix)
 	}
-	// Ensure the full hash is NOT in the branch name (it was truncated).
-	if strings.Contains(capturedBranchRef, longHash) {
-		t.Errorf("branch ref = %q, should not contain full hash %q", capturedBranchRef, longHash)
+	if strings.Contains(f.branchRef, testRevHashB) {
+		t.Errorf("branch ref = %q, should not contain full hash", f.branchRef)
 	}
 }
 
-func TestCreateRevocationPR_ShortHash(t *testing.T) {
-	// Hash shorter than 16 chars should be used as-is (no truncation).
-	shortHash := "abc123"
-	content := []byte(`{"revocations": []}`)
-
-	var capturedBranchRef string
-	var capturedPRTitle string
-
+func TestCreateRevocationPR_InvalidHash(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
-			w.WriteHeader(202)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/repos/testuser/") && !strings.Contains(r.URL.Path, "/git/") && !strings.Contains(r.URL.Path, "/contents/"):
-			w.WriteHeader(200)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/merge-upstream"):
-			w.WriteHeader(200)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/refs/heads/main"):
-			w.WriteHeader(200)
-			json.NewEncoder(w).Encode(map[string]any{
-				"ref":    "refs/heads/main",
-				"object": map[string]string{"sha": "sha1"},
-			})
-
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
-			body, _ := io.ReadAll(r.Body)
-			var req map[string]string
-			json.Unmarshal(body, &req)
-			capturedBranchRef = req["ref"]
-			w.WriteHeader(201)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
-			w.WriteHeader(200)
-			json.NewEncoder(w).Encode(map[string]string{"sha": "fsha"})
-
-		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
-			w.WriteHeader(200)
-			w.Write([]byte(`{}`))
-
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
-			body, _ := io.ReadAll(r.Body)
-			var req map[string]string
-			json.Unmarshal(body, &req)
-			capturedPRTitle = req["title"]
-			w.WriteHeader(201)
-			json.NewEncoder(w).Encode(PRResult{Number: 1})
-
-		default:
-			w.WriteHeader(500)
-		}
+		t.Errorf("API should not be called for invalid hash: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(500)
 	}))
 	defer srv.Close()
 
 	c := newTestClientWithUser(srv, "tok", "testuser")
-	_, err := c.CreateRevocationPR(context.Background(), content, shortHash)
+	cases := map[string]string{
+		"empty":    "",
+		"short":    "abc123",
+		"too long": testRevHashB + "0",
+		"non-hex":  strings.Repeat("g", 64),
+		"newline":  testRevHashB[:63] + "\n",
+	}
+	for name, hash := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := c.CreateRevocationPR(context.Background(), hash, "2026-10-01")
+			if err == nil {
+				t.Fatal("expected error for invalid hash")
+			}
+			if !strings.Contains(err.Error(), "invalid payload hash") {
+				t.Errorf("error = %q, want to contain 'invalid payload hash'", err.Error())
+			}
+		})
+	}
+}
+
+func TestCreateRevocationPR_UpstreamFetchFails(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClientWithUser(srv, "tok", "testuser")
+	_, err := c.CreateRevocationPR(context.Background(), testRevHashB, "2026-10-01")
+	if err == nil {
+		t.Fatal("expected error when upstream fetch fails")
+	}
+	if !strings.Contains(err.Error(), "fetching upstream revocation list") {
+		t.Errorf("error = %q, want fetch context", err.Error())
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.StatusCode != 404 {
+		t.Errorf("error = %v, want wrapped 404 APIError", err)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("API calls = %d, want 1 (no fork work after failed fetch)", n)
+	}
+}
+
+func TestCreateRevocationPR_UpstreamInvalid(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		json.NewEncoder(w).Encode(map[string]string{
+			"content":  base64.StdEncoding.EncodeToString([]byte(`{"revocations": [{"hash": "bad", "revoked_on": "2026-01-01"}]}`)),
+			"encoding": "base64",
+		})
+	}))
+	defer srv.Close()
+
+	c := newTestClientWithUser(srv, "tok", "testuser")
+	_, err := c.CreateRevocationPR(context.Background(), testRevHashB, "2026-10-01")
+	if err == nil {
+		t.Fatal("expected error for invalid upstream list")
+	}
+	if !strings.Contains(err.Error(), "validating upstream revocation list") {
+		t.Errorf("error = %q, want validation context", err.Error())
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("API calls = %d, want 1 (no fork work after invalid list)", n)
+	}
+}
+
+// --- FetchUpstreamFile ---
+
+func TestFetchUpstreamFile_DecodesWrappedBase64(t *testing.T) {
+	want := []byte(strings.Repeat("0123456789", 20)) // encodes to >60 chars
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		json.NewEncoder(w).Encode(map[string]string{
+			"content":  wrappedBase64(want),
+			"encoding": "base64",
+			"sha":      "abc",
+		})
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv, "tok")
+	got, err := c.FetchUpstreamFile(context.Background(), revocationPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	// Short hash should appear in full in the branch prefix.
-	expectedPrefix := "revoke-" + shortHash + "-"
-	if !strings.Contains(capturedBranchRef, expectedPrefix) {
-		t.Errorf("branch ref = %q, want to contain %q", capturedBranchRef, expectedPrefix)
+	if string(got) != string(want) {
+		t.Errorf("content = %q, want %q", got, want)
 	}
+	if wantPath := "/repos/" + DefaultOwner + "/" + DefaultRepo + "/contents/" + revocationPath; gotPath != wantPath {
+		t.Errorf("path = %q, want %q", gotPath, wantPath)
+	}
+	if gotQuery != "ref=main" {
+		t.Errorf("query = %q, want ref=main", gotQuery)
+	}
+}
 
-	// Title should use the short hash as-is.
-	if !strings.Contains(capturedPRTitle, shortHash) {
-		t.Errorf("PR title = %q, want to contain %q", capturedPRTitle, shortHash)
+func TestFetchUpstreamFile_NonBase64Encoding(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"content": "", "encoding": "none", "sha": "abc"})
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv, "tok")
+	_, err := c.FetchUpstreamFile(context.Background(), revocationPath)
+	if err == nil {
+		t.Fatal("expected error for encoding \"none\"")
+	}
+	if !strings.Contains(err.Error(), "unsupported content encoding") {
+		t.Errorf("error = %q, want 'unsupported content encoding'", err.Error())
+	}
+}
+
+func TestFetchUpstreamFile_InvalidBase64(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"content": "!!!not-base64!!!", "encoding": "base64"})
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv, "tok")
+	_, err := c.FetchUpstreamFile(context.Background(), revocationPath)
+	if err == nil {
+		t.Fatal("expected error for invalid base64")
+	}
+	if !strings.Contains(err.Error(), "decoding") {
+		t.Errorf("error = %q, want decoding context", err.Error())
+	}
+}
+
+func TestFetchUpstreamFile_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv, "tok")
+	_, err := c.FetchUpstreamFile(context.Background(), revocationPath)
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.StatusCode != 404 {
+		t.Errorf("error = %v, want 404 APIError", err)
 	}
 }
 

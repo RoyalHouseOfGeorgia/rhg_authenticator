@@ -3,7 +3,6 @@ package core
 import (
 	"fmt"
 	"regexp"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -17,6 +16,8 @@ type CredentialV1 struct {
 }
 
 // controlCharPattern matches C0/C1 control characters and bidi overrides.
+// Keep in sync with isControlOrBidi (go/core/sanitize.go) and
+// CONTROL_CHAR_PATTERN (src/credential.ts).
 const controlCharPattern = `[\x00-\x1f\x7f-\x9f\x{061c}\x{200e}\x{200f}\x{202a}-\x{202e}\x{2066}-\x{2069}]`
 
 var controlCharRE = regexp.MustCompile(controlCharPattern)
@@ -80,7 +81,7 @@ func ValidateCredential(obj map[string]any) (CredentialV1, error) {
 		if !ok {
 			return CredentialV1{}, fmt.Errorf("%s must be a string", field)
 		}
-		if s != strings.TrimSpace(s) {
+		if s != TrimJS(s) {
 			return CredentialV1{}, fmt.Errorf("%s must not have leading or trailing whitespace", field)
 		}
 		if controlCharRE.MatchString(s) {

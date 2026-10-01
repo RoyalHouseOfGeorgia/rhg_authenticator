@@ -49,10 +49,10 @@ func Plan(rows []Row, allowedHonors []string, issued map[string]string) []Result
 		res := Result{
 			Row: row,
 			Req: core.SignRequest{
-				Recipient: strings.TrimSpace(row.Name),
-				Honor:     strings.TrimSpace(row.Honor),
-				Detail:    strings.TrimSpace(row.Detail),
-				Date:      strings.TrimSpace(row.Date),
+				Recipient: core.TrimJS(row.Name),
+				Honor:     core.TrimJS(row.Honor),
+				Detail:    core.TrimJS(row.Detail),
+				Date:      core.TrimJS(row.Date),
 			},
 			Status: StatusInvalid,
 		}

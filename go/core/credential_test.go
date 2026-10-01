@@ -114,6 +114,29 @@ func TestValidateCredential_TrailingWhitespace(t *testing.T) {
 	}
 }
 
+// TestValidateCredential_SurroundingBOM checks that a leading or trailing
+// U+FEFF is rejected like whitespace, matching JS trim() on the verify page.
+func TestValidateCredential_SurroundingBOM(t *testing.T) {
+	for _, field := range stringFields {
+		for _, pos := range []string{"leading", "trailing"} {
+			t.Run(field+"/"+pos, func(t *testing.T) {
+				obj := validObj()
+				v := obj[field].(string)
+				if pos == "leading" {
+					obj[field] = "\ufeff" + v
+				} else {
+					obj[field] = v + "\ufeff"
+				}
+				_, err := ValidateCredential(obj)
+				want := field + " must not have leading or trailing whitespace"
+				if err == nil || err.Error() != want {
+					t.Fatalf("expected %q, got %v", want, err)
+				}
+			})
+		}
+	}
+}
+
 func TestValidateCredential_ControlChars_NullByte(t *testing.T) {
 	obj := validObj()
 	obj["honor"] = "Order\x00Fleece"

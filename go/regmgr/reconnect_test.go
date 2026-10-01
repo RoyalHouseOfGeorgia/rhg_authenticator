@@ -267,3 +267,25 @@ func TestSubmitForReview_OfflineReconnectsInsteadOfSubmitting(t *testing.T) {
 		t.Error("state should still be offline after a failed reconnect")
 	}
 }
+
+func TestRestoreSession_NonInteractiveRunsOnRestoredAfterState(t *testing.T) {
+	stubRestoreSession(t, ghapi.Token{AccessToken: "t"}, "someuser", true, false, nil)
+	var fired atomic.Bool
+	rt := newOfflineTab(t, &fired)
+	done := make(chan bool, 1)
+	rt.onRestored = func() {
+		// Login state must already be applied, so Fetch can use the API client.
+		done <- rt.ClientForHistory() != nil
+	}
+
+	rt.restoreSession(false)
+
+	select {
+	case hadClient := <-done:
+		if !hadClient {
+			t.Error("onRestored ran before login state was applied")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("onRestored did not run within 2s")
+	}
+}

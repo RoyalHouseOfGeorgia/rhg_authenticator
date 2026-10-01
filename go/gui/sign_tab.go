@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -120,10 +119,10 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 		resultContainer.RemoveAll()
 
 		// Trim all text inputs before validation and use.
-		recipient := strings.TrimSpace(recipientEntry.Text)
-		honor := strings.TrimSpace(honorSelect.Selected)
-		detail := strings.TrimSpace(detailEntry.Text)
-		date := strings.TrimSpace(dateEntry.Text)
+		recipient := core.TrimJS(recipientEntry.Text)
+		honor := core.TrimJS(honorSelect.Selected)
+		detail := core.TrimJS(detailEntry.Text)
+		date := core.TrimJS(dateEntry.Text)
 
 		// Validate form.
 		if err := validateSignForm(recipient, honor, detail, date); err != nil {
@@ -164,8 +163,11 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error())
 							resultURL, _ := errorreport.ReportIssue(context.Background(), config.Keyring, config.DataDir, title, body)
 							if resultURL != "" {
-								if u, parseErr := url.Parse(resultURL); parseErr == nil {
+								// Only open https://github.com URLs; anything else is not ours.
+								if u := parseGitHubURL(resultURL); u != nil {
 									fyne.CurrentApp().OpenURL(u)
+								} else {
+									logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(resultURL))
 								}
 							}
 						})

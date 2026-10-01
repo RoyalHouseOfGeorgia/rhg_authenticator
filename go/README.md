@@ -139,12 +139,12 @@ Then import `cert.crt` via the Registry tab.
 
 The **Registry** tab (built into the signing app) manages the key registry:
 
-- **Auto-fetches** the live registry from the server on startup
+- **Auto-fetches** the registry on startup — from GitHub (`main`) when you're logged in, otherwise from the published site, which can lag `main` by 10–15 minutes after a merge
 - **Import from YubiKey** — reads the Ed25519 public key directly from an inserted YubiKey
 - **Import certificates** (`.crt`/`.pem`) — extracts Ed25519 public keys from certificate files
 - **Add/Edit** registry entries with full validation (entries cannot be deleted — revoke by setting an expiry date)
 - **Calendar date pickers** for key validity ranges
-- **Submit for Review** — creates a GitHub pull request with the updated registry for admin review
+- **Submit for Review** — creates a GitHub pull request with the updated registry for admin review. It's refused if the registry on GitHub changed since you fetched it: click **Fetch from Server**, re-apply your edits, and submit again
 - **GitHub login** via OAuth Device Flow (enter a code in your browser — no technical setup required)
 - **Token storage** in OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
 - **Click any cell** to see the full text in the status bar (long values are truncated with ellipsis in the table)
@@ -161,14 +161,14 @@ Workflow:
 
 The app fetches the key registry from `https://verify.royalhouseofgeorgia.ge/keys/registry.json` on startup. **Remote only** — no cache or embedded fallback (a local copy could be tampered with). If the server is unreachable, the app opens in offline mode (signing still works, but YubiKey registry check is unavailable). Restart the app to retry.
 
-Registry fields the app doesn't recognise (such as `allowed_honors`, which only the verification page enforces) are ignored for display and preserved when the **Registry** tab writes entries back.
+The **Registry** tab shows `allowed_honors` (enforced by the verification page) read-only in its **Restrictions** column: "(none)" means unrestricted, "(invalid)" means the verification page would reject the value. Edit it in the registry JSON. Fields the app doesn't recognise are preserved when the tab writes entries back.
 
 ## Credential Revocation
 
 The app fetches the revocation list (`revocations.json`) alongside the registry on startup. The revocation list contains only SHA-256 hashes of revoked credential payloads — no personal data.
 
 - **History tab**: the **Revoke** button opens a confirmation dialog, then submits a PR via `ghapi.CreateRevocationPR` adding the credential hash to `revocations.json`.
-- **Caching**: `cachedRevocationList` with deep-copy before mutation to prevent races.
+- **Upstream-built PRs**: `CreateRevocationPR` reads `revocations.json` from upstream `main` and appends to it, so the History tab's loaded copy is only used for display and gating. With several revocation PRs open, merge them one at a time.
 - **Soft failure**: if the revocation list fetch fails, the app displays feedback via the `revocationStatus` label in the status bar; verification proceeds without revocation checks.
 
 ## Troubleshooting

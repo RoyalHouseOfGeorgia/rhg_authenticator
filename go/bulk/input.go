@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
 // MaxBytes is the maximum accepted input file size.
@@ -143,7 +145,7 @@ func buildRow(rec []string, line int, idx map[string]int, width int) Row {
 		}
 	}
 	for _, cell := range rec[min(width, len(rec)):] {
-		if strings.TrimSpace(cell) != "" {
+		if core.TrimJS(cell) != "" {
 			row.ParseErr = "more cells than header columns (unquoted comma?)"
 			return row
 		}
@@ -161,7 +163,7 @@ func cellAt(rec []string, i int) string {
 
 func isBlank(rec []string) bool {
 	for _, cell := range rec {
-		if strings.TrimSpace(cell) != "" {
+		if core.TrimJS(cell) != "" {
 			return false
 		}
 	}

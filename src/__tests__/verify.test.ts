@@ -850,6 +850,26 @@ describe("verifyCredential — allowed_honors", () => {
     expect(verifyCredential(payload, signature, registry).valid).toBe(true);
   });
 
+  it.each([
+    ["an empty list", []],
+    ["a list of blank strings", [""]],
+    ["null", null],
+  ])("accepts any honor when allowed_honors is %s (unrestricted)", (_label, value) => {
+    const registry = registryFrom({ allowed_honors: value });
+    const { payload, signature } = signed({ honor: "Anything At All" });
+    expect(verifyCredential(payload, signature, registry).valid).toBe(true);
+  });
+
+  it("restricts to the non-blank entries when some are blank", () => {
+    const registry = registryFrom({ allowed_honors: ["", "Other"] });
+    const { payload, signature } = signed();
+    expect(verifyCredential(payload, signature, registry)).toEqual({
+      valid: false,
+      revoked: false,
+      reason: "signature valid but key not authorized for this honor",
+    });
+  });
+
   it("reports revocation over an honor mismatch", () => {
     const registry = registryFrom({ allowed_honors: ["Other"] });
     const { payload, signature } = signed();

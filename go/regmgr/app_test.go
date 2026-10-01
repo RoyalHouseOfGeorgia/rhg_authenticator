@@ -1,6 +1,7 @@
 package regmgr
 
 import (
+	"encoding/json"
 	"errors"
 	"net/url"
 	"testing"
@@ -34,9 +35,6 @@ func TestCanSave_NonEmpty(t *testing.T) {
 
 func TestAppState_InitialValues(t *testing.T) {
 	state := &appState{selected: -1}
-	if state.filePath != "" {
-		t.Error("expected empty filePath initially")
-	}
 	if state.dirty {
 		t.Error("expected dirty = false initially")
 	}
@@ -81,7 +79,7 @@ func TestTableColumns(t *testing.T) {
 		t.Errorf("tableColumns (%d) and tableColumnWidths (%d) length mismatch",
 			len(tableColumns), len(tableColumnWidths))
 	}
-	expected := []string{"#", "Authority", "From", "To", "Note", "Fingerprint"}
+	expected := []string{"#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"}
 	for i, col := range expected {
 		if tableColumns[i] != col {
 			t.Errorf("tableColumns[%d] = %q, want %q", i, tableColumns[i], col)
@@ -379,53 +377,104 @@ func TestEntryCellText_Column3_ToNonNil(t *testing.T) {
 	}
 }
 
-func TestEntryCellText_Column4_Note(t *testing.T) {
+func TestEntryCellText_Column4_Restrictions(t *testing.T) {
 	entry := core.KeyEntry{
 		Authority: "Test Auth",
 		From:      "2026-01-15",
-		Note:      "test note",
+		Extra:     map[string]json.RawMessage{"allowed_honors": json.RawMessage(`["Appointment"]`)},
 	}
 	got := entryCellText(entry, 4, 0, nil)
-	if got != "test note" {
-		t.Errorf("col 4: got %q, want %q", got, "test note")
+	if got != "Appointment" {
+		t.Errorf("col 4: got %q, want %q", got, "Appointment")
 	}
 }
 
-func TestEntryCellText_Column5_CacheHit(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	cache := map[int]string{0: "SHA256:abc123"}
-	got := entryCellText(entry, 5, 0, cache)
-	if got != "SHA256:abc123" {
-		t.Errorf("col 5 cache hit: got %q, want %q", got, "SHA256:abc123")
-	}
-}
-
-func TestEntryCellText_Column5_CacheMiss(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	cache := map[int]string{99: "SHA256:other"}
-	got := entryCellText(entry, 5, 0, cache)
-	if got != "(invalid key)" {
-		t.Errorf("col 5 cache miss: got %q, want %q", got, "(invalid key)")
-	}
-}
-
-func TestEntryCellText_Column5_NilCache(t *testing.T) {
+func TestEntryCellText_Column5_Note(t *testing.T) {
 	entry := core.KeyEntry{
 		Authority: "Test Auth",
 		From:      "2026-01-15",
 		Note:      "test note",
 	}
 	got := entryCellText(entry, 5, 0, nil)
+	if got != "test note" {
+		t.Errorf("col 5: got %q, want %q", got, "test note")
+	}
+}
+
+func TestEntryCellText_Column6_CacheHit(t *testing.T) {
+	entry := core.KeyEntry{
+		Authority: "Test Auth",
+		From:      "2026-01-15",
+		Note:      "test note",
+	}
+	cache := map[int]string{0: "SHA256:abc123"}
+	got := entryCellText(entry, 6, 0, cache)
+	if got != "SHA256:abc123" {
+		t.Errorf("col 6 cache hit: got %q, want %q", got, "SHA256:abc123")
+	}
+}
+
+func TestEntryCellText_Column6_CacheMiss(t *testing.T) {
+	entry := core.KeyEntry{
+		Authority: "Test Auth",
+		From:      "2026-01-15",
+		Note:      "test note",
+	}
+	cache := map[int]string{99: "SHA256:other"}
+	got := entryCellText(entry, 6, 0, cache)
 	if got != "(invalid key)" {
-		t.Errorf("col 5 nil cache: got %q, want %q", got, "(invalid key)")
+		t.Errorf("col 6 cache miss: got %q, want %q", got, "(invalid key)")
+	}
+}
+
+func TestEntryCellText_Column6_NilCache(t *testing.T) {
+	entry := core.KeyEntry{
+		Authority: "Test Auth",
+		From:      "2026-01-15",
+		Note:      "test note",
+	}
+	got := entryCellText(entry, 6, 0, nil)
+	if got != "(invalid key)" {
+		t.Errorf("col 6 nil cache: got %q, want %q", got, "(invalid key)")
+	}
+}
+
+func TestRestrictionsText(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string // "" means allowed_honors absent from Extra
+		want string
+	}{
+		{"absent", "", "(none)"},
+		{"null", `null`, "(none)"},
+		{"empty array", `[]`, "(none)"},
+		{"all blank", `["", "  "]`, "(none)"},
+		{"single honor", `["Appointment"]`, "Appointment"},
+		{"blank items skipped", `["A", "", "B"]`, "A, B"},
+		{"non-array string", `"Appointment"`, "(invalid)"},
+		{"non-array object", `{"a": 1}`, "(invalid)"},
+		{"malformed json", `[`, "(invalid)"},
+		{"non-string item", `[1]`, "(invalid)"},
+		{"null item", `["A", null]`, "(invalid)"},
+		{"leading whitespace", `[" A"]`, "(invalid)"},
+		{"trailing whitespace", `["A "]`, "(invalid)"},
+		{"bidi control char", `["A\u202e"]`, "(invalid)"},
+		{"C0 control char", `["A\u0001B"]`, "(invalid)"},
+		{"tab only is control not blank", `["\t"]`, "(invalid)"},
+		// U+FEFF: JS trim() strips it, so the verify page treats these as blank / untrimmed.
+		{"BOM only is blank like JS trim", `["\ufeff"]`, "(none)"},
+		{"trailing BOM is untrimmed like JS trim", `["Medal\ufeff"]`, "(invalid)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := core.KeyEntry{Authority: "Test Auth", From: "2026-01-15"}
+			if tt.raw != "" {
+				entry.Extra = map[string]json.RawMessage{"allowed_honors": json.RawMessage(tt.raw)}
+			}
+			if got := restrictionsText(entry); got != tt.want {
+				t.Errorf("restrictionsText(%s) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -435,7 +484,7 @@ func TestEntryCellText_InvalidColumn(t *testing.T) {
 		From:      "2026-01-15",
 		Note:      "test note",
 	}
-	for _, col := range []int{-1, 6, 100} {
+	for _, col := range []int{-1, len(tableColumns), 100} {
 		got := entryCellText(entry, col, 0, nil)
 		if got != "" {
 			t.Errorf("col %d: got %q, want empty string", col, got)

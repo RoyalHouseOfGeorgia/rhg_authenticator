@@ -1,5 +1,18 @@
 package core
 
+import (
+	"strings"
+	"unicode"
+)
+
+// TrimJS trims a superset of what JavaScript's String.prototype.trim strips:
+// Go's Unicode whitespace plus U+FEFF (which strings.TrimSpace keeps). It also
+// strips U+0085, which JS keeps, but the control-character check rejects that
+// anyway. Use wherever Go output must be accepted by the verify page (src/*.ts).
+func TrimJS(s string) string {
+	return strings.TrimFunc(s, func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' })
+}
+
 // MaxLogRunes is the maximum number of runes kept in sanitized log output.
 const MaxLogRunes = 500
 
@@ -33,7 +46,8 @@ func SanitizeForLog(s string) string {
 
 // isControlOrBidi reports whether r is a C0 control, DEL, C1 control, or
 // Unicode bidi override/isolate/mark character. Matches the same set as
-// controlCharPattern in credential.go.
+// controlCharPattern in credential.go and CONTROL_CHAR_PATTERN in
+// src/credential.ts (the verify page); keep all three in sync.
 func isControlOrBidi(r rune) bool {
 	if r <= 0x1f || r == 0x7f {
 		return true // C0 + DEL

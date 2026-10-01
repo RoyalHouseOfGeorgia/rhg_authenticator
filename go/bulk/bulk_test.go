@@ -87,10 +87,10 @@ func TestPlanClassification(t *testing.T) {
 				t.Fatalf("err = %q, want containing %q", res.Err, tc.wantErr)
 			}
 			wantReq := core.SignRequest{
-				Recipient: strings.TrimSpace(tc.row.Name),
-				Honor:     strings.TrimSpace(tc.row.Honor),
-				Detail:    strings.TrimSpace(tc.row.Detail),
-				Date:      strings.TrimSpace(tc.row.Date),
+				Recipient: core.TrimJS(tc.row.Name),
+				Honor:     core.TrimJS(tc.row.Honor),
+				Detail:    core.TrimJS(tc.row.Detail),
+				Date:      core.TrimJS(tc.row.Date),
 			}
 			if res.Req != wantReq {
 				t.Fatalf("Req = %+v, want %+v", res.Req, wantReq)
@@ -109,6 +109,16 @@ func TestPlanClassification(t *testing.T) {
 				t.Fatalf("unexpected URL %q", res.URL)
 			}
 		})
+	}
+}
+
+// TestPlanStripsBOM checks that a leading/trailing U+FEFF (e.g. from an Excel
+// export) is stripped so the signed payload passes the verify page's trim check.
+func TestPlanStripsBOM(t *testing.T) {
+	res := Plan([]Row{row(2, "\ufeffDavit", "\ufeffOther", "d\ufeff", "\ufeff2026-03-15")}, testHonors, nil)[0]
+	want := core.SignRequest{Recipient: "Davit", Honor: "Other", Detail: "d", Date: "2026-03-15"}
+	if res.Status != StatusToSign || res.Req != want {
+		t.Fatalf("got status %q (err %q) req %+v, want to_sign %+v", res.Status, res.Err, res.Req, want)
 	}
 }
 

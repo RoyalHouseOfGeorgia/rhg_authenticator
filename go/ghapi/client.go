@@ -319,6 +319,29 @@ func (c *Client) getContentsFor(ctx context.Context, owner, repo, filePath, ref 
 	return resp.SHA, nil
 }
 
+// FetchUpstreamFile returns the decoded content of filePath on the upstream
+// repository's main branch. Files the contents API does not return inline
+// (encoding other than "base64", e.g. "none" for files over 1 MB) are an error.
+// filePath is not URL-escaped — callers pass package constants, not user input.
+func (c *Client) FetchUpstreamFile(ctx context.Context, filePath string) ([]byte, error) {
+	path := fmt.Sprintf("/repos/%s/%s/contents/%s", c.Owner, c.Repo, filePath) + "?" + url.Values{"ref": {"main"}}.Encode()
+	var resp struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Encoding != "base64" {
+		return nil, fmt.Errorf("unsupported content encoding %q for %s", core.SanitizeForError(resp.Encoding), filePath)
+	}
+	data, err := base64.StdEncoding.DecodeString(resp.Content)
+	if err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", filePath, err)
+	}
+	return data, nil
+}
+
 // getContents returns the blob SHA of a file at the given ref.
 // filePath is not URL-escaped — it comes from the RegistryFilePath constant, not user input.
 func (c *Client) getContents(ctx context.Context, filePath, ref string) (string, error) {
@@ -553,19 +576,37 @@ func (c *Client) CreateRegistryPR(ctx context.Context, content []byte, title str
 	return c.createForkFilePR(ctx, RegistryFilePath, content, "registry-update-", title, "Registry update submitted via RHG Authenticator")
 }
 
-// CreateRevocationPR creates a branch, updates the revocation list, and opens a PR.
-func (c *Client) CreateRevocationPR(ctx context.Context, content []byte, hash string) (PRResult, error) {
-	if len(content) == 0 {
-		return PRResult{}, fmt.Errorf("no revocation content to submit")
-	}
+// CreateRevocationPR appends a revocation entry for hash to the upstream
+// revocation list on main and opens a fork-based PR with the result.
+// The list is always rebuilt from upstream main (never a locally cached copy)
+// so that revocations merged since the caller last fetched are preserved.
+// hash must be a 64-character hex SHA-256 (any case); revokedOn is a YYYY-MM-DD date.
+func (c *Client) CreateRevocationPR(ctx context.Context, hash, revokedOn string) (PRResult, error) {
 	if c.username == "" {
 		return PRResult{}, fmt.Errorf("client username not set; cannot perform fork-based PR")
 	}
-
-	shortHash := hash
-	if len(shortHash) > 16 {
-		shortHash = shortHash[:16]
+	hash = strings.ToLower(hash) // same normalisation as core.ValidateRevocationList
+	if !core.IsPayloadHash(hash) {
+		return PRResult{}, fmt.Errorf("invalid payload hash: must be 64 hex characters")
 	}
+
+	current, err := c.FetchUpstreamFile(ctx, revocationPath)
+	if err != nil {
+		return PRResult{}, fmt.Errorf("fetching upstream revocation list: %w", err)
+	}
+	list, err := core.ValidateRevocationList(current)
+	if err != nil {
+		return PRResult{}, fmt.Errorf("validating upstream revocation list: %w", err)
+	}
+
+	updated := core.AppendRevocationEntry(list, hash, revokedOn)
+	content, err := json.MarshalIndent(updated, "", "  ")
+	if err != nil {
+		return PRResult{}, fmt.Errorf("marshaling revocation list: %w", err)
+	}
+	content = append(content, '\n')
+
+	shortHash := hash[:16]
 	branchPrefix := "revoke-" + shortHash + "-"
 	title := fmt.Sprintf("Revoke credential %s", shortHash)
 	body := fmt.Sprintf("Revoke credential with payload hash: %s", hash)

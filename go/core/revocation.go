@@ -24,6 +24,12 @@ const MaxRevocationEntries = 10000
 // hexHash64RE matches exactly 64 lowercase hex characters.
 var hexHash64RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// IsPayloadHash reports whether hash is a 64-character lowercase hex
+// SHA-256 — the form stored in the revocation list. Callers lowercase first.
+func IsPayloadHash(hash string) bool {
+	return hexHash64RE.MatchString(hash)
+}
+
 // revocationFields are the only allowed top-level fields.
 var revocationFields = map[string]bool{"revocations": true}
 
