@@ -19,6 +19,9 @@ export type KeyEntry = {
   algorithm: 'Ed25519';
   public_key: string;
   note: string;
+  /** When present, always non-empty: validateRegistry omits the field for
+   * absent/null/[]/all-blank input, and verify.ts treats undefined as
+   * unrestricted (an empty array would allow nothing). */
   allowed_honors?: string[];
 };
 
@@ -134,6 +137,7 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
   // allowed_honors: optional list of exact honor titles. Absent, null, [] or
   // all-blank means unrestricted (field omitted). Blank items are skipped;
   // non-strings, control characters and untrimmed non-blank items are rejected.
+  // Mirrored for display by restrictionsText in go/regmgr/app.go; keep in sync.
   let allowedHonors: string[] | undefined;
   const rawHonors = record.allowed_honors;
   if (rawHonors !== undefined && rawHonors !== null) {
@@ -141,7 +145,7 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
       throw new Error(`keys[${index}]: allowed_honors must be an array`);
     }
     const kept: string[] = [];
-    rawHonors.forEach((honor: unknown, j: number) => {
+    for (const [j, honor] of (rawHonors as unknown[]).entries()) {
       if (typeof honor !== 'string') {
         throw new Error(`keys[${index}]: allowed_honors[${j}] must be a string`);
       }
@@ -150,14 +154,15 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
       if (CONTROL_CHAR_RE.test(honor)) {
         throw new Error(`keys[${index}]: allowed_honors[${j}] contains invalid control characters`);
       }
-      if (honor.trim() === '') {
-        return; // blank: skipped
+      const trimmed = honor.trim();
+      if (trimmed === '') {
+        continue;
       }
-      if (honor !== honor.trim()) {
+      if (honor !== trimmed) {
         throw new Error(`keys[${index}]: allowed_honors[${j}] must not have leading or trailing whitespace`);
       }
       kept.push(honor);
-    });
+    }
     if (kept.length > 0) {
       allowedHonors = kept; // all blank: stays undefined (unrestricted)
     }

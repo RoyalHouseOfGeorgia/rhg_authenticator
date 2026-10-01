@@ -33,7 +33,8 @@ func SanitizeForLog(s string) string {
 
 // isControlOrBidi reports whether r is a C0 control, DEL, C1 control, or
 // Unicode bidi override/isolate/mark character. Matches the same set as
-// controlCharPattern in credential.go.
+// controlCharPattern in credential.go and CONTROL_CHAR_PATTERN in
+// src/credential.ts (the verify page); keep all three in sync.
 func isControlOrBidi(r rune) bool {
 	if r <= 0x1f || r == 0x7f {
 		return true // C0 + DEL

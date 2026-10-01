@@ -10,7 +10,8 @@ patch component for fix-only releases (`v1.3.1`).
 
 ### Added
 - **Restrictions column.** The Registry tab shows each key's `allowed_honors`
-  restriction, or "(none)" when the key is unrestricted.
+  restriction, "(none)" when the key is unrestricted, or "(invalid)" when the
+  verification page would reject the value.
 - **Error log in every build.** The app keeps an error log in release builds
   too, not just in debug builds. Entries older than 30 days are removed at
   startup.

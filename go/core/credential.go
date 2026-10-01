@@ -17,6 +17,8 @@ type CredentialV1 struct {
 }
 
 // controlCharPattern matches C0/C1 control characters and bidi overrides.
+// Keep in sync with isControlOrBidi (go/core/sanitize.go) and
+// CONTROL_CHAR_PATTERN (src/credential.ts).
 const controlCharPattern = `[\x00-\x1f\x7f-\x9f\x{061c}\x{200e}\x{200f}\x{202a}-\x{202e}\x{2066}-\x{2069}]`
 
 var controlCharRE = regexp.MustCompile(controlCharPattern)

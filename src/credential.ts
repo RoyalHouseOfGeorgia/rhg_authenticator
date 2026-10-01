@@ -17,7 +17,7 @@ export type CredentialV1 = {
 
 export type Credential = CredentialV1;
 
-/** Pattern matching C0/C1 control characters and bidi overrides. Exported as a string constant (not a RegExp with `g`) to avoid `lastIndex` statefulness. */
+/** Pattern matching C0/C1 control characters and bidi overrides. Exported as a string constant (not a RegExp with `g`) to avoid `lastIndex` statefulness. Must match isControlOrBidi in go/core/sanitize.go and controlCharPattern in go/core/credential.go (the app's Restrictions column relies on all three rejecting the same characters). */
 export const CONTROL_CHAR_PATTERN = '[\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]';
 
 /** Cached test-only regex (no `g` flag, safe to reuse — no `lastIndex` state). */

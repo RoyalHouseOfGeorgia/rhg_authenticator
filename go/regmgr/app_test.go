@@ -380,6 +380,18 @@ func TestEntryCellText_Column3_ToNonNil(t *testing.T) {
 	}
 }
 
+func TestEntryCellText_Column4_Restrictions(t *testing.T) {
+	entry := core.KeyEntry{
+		Authority: "Test Auth",
+		From:      "2026-01-15",
+		Extra:     map[string]json.RawMessage{"allowed_honors": json.RawMessage(`["Appointment"]`)},
+	}
+	got := entryCellText(entry, 4, 0, nil)
+	if got != "Appointment" {
+		t.Errorf("col 4: got %q, want %q", got, "Appointment")
+	}
+}
+
 func TestEntryCellText_Column5_Note(t *testing.T) {
 	entry := core.KeyEntry{
 		Authority: "Test Auth",
@@ -430,55 +442,41 @@ func TestEntryCellText_Column6_NilCache(t *testing.T) {
 	}
 }
 
-func TestEntryCellText_Column4_Restrictions(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Extra:     map[string]json.RawMessage{"allowed_honors": json.RawMessage(`["Appointment"]`)},
-	}
-	got := entryCellText(entry, 4, 0, nil)
-	if got != "Appointment" {
-		t.Errorf("col 4: got %q, want %q", got, "Appointment")
-	}
-}
-
 func TestRestrictionsText(t *testing.T) {
 	tests := []struct {
 		name string
-		raw  *string // nil means allowed_honors absent from Extra
+		raw  string // "" means allowed_honors absent from Extra
 		want string
 	}{
-		{"absent", nil, "(none)"},
-		{"null", ptr(`null`), "(none)"},
-		{"empty array", ptr(`[]`), "(none)"},
-		{"all blank", ptr(`["", "  "]`), "(none)"},
-		{"single honor", ptr(`["Appointment"]`), "Appointment"},
-		{"blank items skipped", ptr(`["A", "", "B"]`), "A, B"},
-		{"non-array string", ptr(`"Appointment"`), "(invalid)"},
-		{"non-array object", ptr(`{"a": 1}`), "(invalid)"},
-		{"malformed json", ptr(`[`), "(invalid)"},
-		{"non-string item", ptr(`[1]`), "(invalid)"},
-		{"null item", ptr(`["A", null]`), "(invalid)"},
-		{"leading whitespace", ptr(`[" A"]`), "(invalid)"},
-		{"trailing whitespace", ptr(`["A "]`), "(invalid)"},
-		{"bidi control char", ptr(`["A\u202e"]`), "(invalid)"},
-		{"C0 control char", ptr(`["A\u0001B"]`), "(invalid)"},
-		{"tab only is control not blank", ptr(`["\t"]`), "(invalid)"},
+		{"absent", "", "(none)"},
+		{"null", `null`, "(none)"},
+		{"empty array", `[]`, "(none)"},
+		{"all blank", `["", "  "]`, "(none)"},
+		{"single honor", `["Appointment"]`, "Appointment"},
+		{"blank items skipped", `["A", "", "B"]`, "A, B"},
+		{"non-array string", `"Appointment"`, "(invalid)"},
+		{"non-array object", `{"a": 1}`, "(invalid)"},
+		{"malformed json", `[`, "(invalid)"},
+		{"non-string item", `[1]`, "(invalid)"},
+		{"null item", `["A", null]`, "(invalid)"},
+		{"leading whitespace", `[" A"]`, "(invalid)"},
+		{"trailing whitespace", `["A "]`, "(invalid)"},
+		{"bidi control char", `["A\u202e"]`, "(invalid)"},
+		{"C0 control char", `["A\u0001B"]`, "(invalid)"},
+		{"tab only is control not blank", `["\t"]`, "(invalid)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			entry := core.KeyEntry{Authority: "Test Auth", From: "2026-01-15"}
-			if tt.raw != nil {
-				entry.Extra = map[string]json.RawMessage{"allowed_honors": json.RawMessage(*tt.raw)}
+			if tt.raw != "" {
+				entry.Extra = map[string]json.RawMessage{"allowed_honors": json.RawMessage(tt.raw)}
 			}
 			if got := restrictionsText(entry); got != tt.want {
-				t.Errorf("restrictionsText(%s) = %q, want %q", tt.name, got, tt.want)
+				t.Errorf("restrictionsText(%s) = %q, want %q", tt.raw, got, tt.want)
 			}
 		})
 	}
 }
-
-func ptr(s string) *string { return &s }
 
 func TestEntryCellText_InvalidColumn(t *testing.T) {
 	entry := core.KeyEntry{
