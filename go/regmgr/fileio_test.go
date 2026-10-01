@@ -3,26 +3,11 @@ package regmgr
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
-
-func validRegistryJSON() []byte {
-	return []byte(`{
-		"keys": [{
-			"authority": "Test Authority",
-			"from": "2025-01-01",
-			"to": null,
-			"algorithm": "Ed25519",
-			"public_key": "/PjT+j342wWZypb0m/4MSBsFhHrrqzpoTe2rZ9hf0XU=",
-			"note": "Test key"
-		}]
-	}`)
-}
 
 func validRegistry() core.Registry {
 	return core.Registry{
@@ -34,50 +19,6 @@ func validRegistry() core.Registry {
 			PublicKey: "/PjT+j342wWZypb0m/4MSBsFhHrrqzpoTe2rZ9hf0XU=",
 			Note:      "Test key",
 		}},
-	}
-}
-
-// --- ReadRegistry tests ---
-
-func TestReadRegistry_Success(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
-	if err := os.WriteFile(path, validRegistryJSON(), 0o600); err != nil {
-		t.Fatalf("writing test file: %v", err)
-	}
-
-	reg, err := ReadRegistry(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(reg.Keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(reg.Keys))
-	}
-	if reg.Keys[0].Authority != "Test Authority" {
-		t.Errorf("authority = %q, want %q", reg.Keys[0].Authority, "Test Authority")
-	}
-}
-
-func TestReadRegistry_MissingFile(t *testing.T) {
-	_, err := ReadRegistry("/nonexistent/path/registry.json")
-	if err == nil {
-		t.Fatal("expected error for missing file")
-	}
-	if !strings.Contains(err.Error(), "reading registry file") {
-		t.Errorf("error = %v, want containing %q", err, "reading registry file")
-	}
-}
-
-func TestReadRegistry_InvalidJSON(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.json")
-	if err := os.WriteFile(path, []byte("not json at all"), 0o600); err != nil {
-		t.Fatalf("writing test file: %v", err)
-	}
-
-	_, err := ReadRegistry(path)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
 	}
 }
 

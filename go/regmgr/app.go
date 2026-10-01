@@ -1,8 +1,10 @@
 package regmgr
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -10,7 +12,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -37,7 +38,14 @@ type appState struct {
 	loggedIn    bool
 	offline     bool
 	githubUser  string
+	// baseBytes is the MarshalRegistry output of the registry as fetched from
+	// the server; nil = not loaded from server.
+	baseBytes []byte
 }
+
+// ErrRegistryChanged is returned by submitRegistry when upstream's registry no
+// longer matches the snapshot the local edits were based on.
+var ErrRegistryChanged = errors.New("registry changed on GitHub since it was loaded")
 
 // restoreSessionFunc is the session-restore implementation; a package-level
 // var so tests can stub the network/keyring round trip.
@@ -106,7 +114,14 @@ func (rt *RegistryTab) Fetch() {
 				rt.statusLabel.SetText("Failed to load registry")
 				return
 			}
+			base, merr := MarshalRegistry(reg)
+			if merr != nil {
+				log.Printf("error: registry snapshot failed: %s", core.SanitizeForLog(merr.Error()))
+				rt.statusLabel.SetText("Failed to load registry")
+				return
+			}
 			rt.state.registry = reg
+			rt.state.baseBytes = base
 			rt.state.filePath = ""
 			rt.state.dirty = false
 			rt.state.selected = -1
@@ -375,6 +390,13 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 		rt.HandleUnauthorized()
 		return
 	}
+	if errors.Is(err, ErrRegistryChanged) {
+		log.Printf("warning: registry submit refused: %s", core.SanitizeForLog(err.Error()))
+		dialog.ShowInformation("Registry Changed",
+			"The registry changed on GitHub since you loaded it. Click Fetch from Server, re-apply your edits, and submit again. After a merge the site can take 10–15 minutes to update.", rt.window)
+		rt.statusLabel.SetText("")
+		return
+	}
 	log.Printf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
 	// rt.configDir is the app data dir (main passes dataDir), where debug.log lives.
 	gui.ShowErrorWithLogExport("Submission Failed", ghapi.UserMessage(err), filepath.Join(rt.configDir, debuglog.FileName), rt.window)
@@ -411,6 +433,29 @@ func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
 	}
 }
 
+// submitRegistry refuses to open a PR if upstream's registry no longer matches
+// the snapshot the edits were based on (base), so a stale fetch can't silently
+// undo another change. Both sides go through MarshalRegistry, so whitespace and
+// line endings don't matter.
+func submitRegistry(ctx context.Context, client *ghapi.Client, base, content []byte, title string) (ghapi.PRResult, error) {
+	up, err := client.FetchUpstreamFile(ctx, ghapi.RegistryFilePath)
+	if err != nil {
+		return ghapi.PRResult{}, fmt.Errorf("fetching upstream registry: %w", err)
+	}
+	reg, err := core.ValidateRegistry(up)
+	if err != nil {
+		return ghapi.PRResult{}, fmt.Errorf("validating upstream registry: %w", err)
+	}
+	upBytes, err := MarshalRegistry(reg)
+	if err != nil {
+		return ghapi.PRResult{}, err
+	}
+	if len(base) == 0 || !bytes.Equal(upBytes, base) {
+		return ghapi.PRResult{}, ErrRegistryChanged
+	}
+	return client.CreateRegistryPR(ctx, content, title)
+}
+
 // submitForReview marshals the registry and creates a GitHub pull request.
 func (rt *RegistryTab) submitForReview() {
 	if !canSave(rt.state.registry) {
@@ -435,6 +480,7 @@ func (rt *RegistryTab) submitForReview() {
 		}
 		token := rt.state.githubToken.AccessToken
 		username := rt.state.githubUser
+		base := rt.state.baseBytes
 
 		if username == "" {
 			rt.submitting.Store(false)
@@ -451,7 +497,7 @@ func (rt *RegistryTab) submitForReview() {
 			defer submitCancel()
 
 			client := ghapi.NewClientWithUser(token, username)
-			pr, err := client.CreateRegistryPR(submitCtx, content, "Registry update")
+			pr, err := submitRegistry(submitCtx, client, base, content, "Registry update")
 			if err != nil {
 				fyne.Do(func() { rt.handleSubmitError(err) })
 				return
@@ -484,9 +530,8 @@ func restrictionsText(entry core.KeyEntry) string {
 		if core.StripControlChars(h) != h {
 			return "(invalid)"
 		}
-		// Trim like JS String.prototype.trim (which, unlike TrimSpace, also strips
-		// U+FEFF) so this column agrees with the verify page.
-		trimmed := strings.TrimFunc(h, func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' })
+		// Trim like the verify page (JS trim also strips U+FEFF).
+		trimmed := core.TrimJS(h)
 		if trimmed == "" {
 			continue
 		}

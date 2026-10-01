@@ -36,11 +36,25 @@ def main() -> int:
         return 1
     print(hashlib.sha256(payload).hexdigest())
     # Echo what the hash identifies so the right credential gets revoked.
-    print(
-        f"  {cred.get('recipient')} | {cred.get('honor')} | {cred.get('date')}",
-        file=sys.stderr,
-    )
+    # The URL is untrusted (e.g. a reported link): strip control/bidi characters
+    # (same set as CONTROL_CHAR_PATTERN in src/credential.ts) so the payload
+    # can't rewrite what the terminal shows.
+    if isinstance(cred, dict):
+        fields = [_printable(cred.get(k)) for k in ("recipient", "honor", "date")]
+        print(f"  {' | '.join(fields)}", file=sys.stderr)
+    else:
+        print("  (unreadable payload)", file=sys.stderr)
     return 0
+
+
+
+_CONTROL_RE = re.compile(
+    "[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
+)
+
+
+def _printable(value: object) -> str:
+    return _CONTROL_RE.sub("", str(value))
 
 
 if __name__ == "__main__":

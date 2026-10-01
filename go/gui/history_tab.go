@@ -152,26 +152,14 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				return
 			}
 
-			// Build updated revocation list.
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), revocationTimeout)
 				defer cancel()
 
-				// Build updated revocation list (deep-copies cached, does not mutate it).
-				updatedList := core.AppendRevocationEntry(cached, rec.PayloadSHA256, time.Now().UTC().Format("2006-01-02"))
-
-				// Marshal.
-				content, err := json.MarshalIndent(updatedList, "", "  ")
-				if err != nil {
-					stdlog.Printf("error: marshal revocation list failed: %s", core.SanitizeForLog(err.Error()))
-					fyne.Do(func() {
-						dialog.ShowError(fmt.Errorf("failed to prepare revocation data"), window)
-					})
-					return
-				}
-				content = append(content, '\n')
-
-				pr, err := client.CreateRevocationPR(ctx, content, rec.PayloadSHA256)
+				// The new revocations.json is built from upstream main inside
+				// ghapi, not from cached, so revocations merged since the last
+				// fetch are never dropped.
+				pr, err := client.CreateRevocationPR(ctx, rec.PayloadSHA256, time.Now().UTC().Format("2006-01-02"))
 				if err != nil {
 					stdlog.Printf("error: revocation PR failed: %s", core.SanitizeForLog(err.Error()))
 					unauthorized, msg := revokeFailureAction(err)
@@ -188,7 +176,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				}
 
 				fyne.Do(func() {
-					dialog.ShowInformation("Revocation Submitted", fmt.Sprintf("Pull request #%d created:\n%s", pr.Number, pr.HTMLURL), window)
+					dialog.ShowInformation("Revocation Submitted", fmt.Sprintf("Pull request #%d created:\n%s\n\nIf several revocation PRs are open, merge them one at a time.", pr.Number, pr.HTMLURL), window)
 					// Update local state.
 					if revokedHashes == nil {
 						revokedHashes = make(map[string]bool)

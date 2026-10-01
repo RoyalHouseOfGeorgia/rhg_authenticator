@@ -305,6 +305,22 @@ func TestHandleSubmitError_GenericError(t *testing.T) {
 	}
 }
 
+func TestHandleSubmitError_RegistryChanged(t *testing.T) {
+	rt := newTestRegistryTab(t)
+	rt.statusLabel.SetText("Creating pull request...")
+	rt.state.loggedIn = true
+	rt.state.githubToken = ghapi.Token{AccessToken: "gho_valid"}
+
+	rt.handleSubmitError(fmt.Errorf("submit: %w", ErrRegistryChanged))
+
+	if rt.statusLabel.Text != "" {
+		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
+	}
+	if !rt.state.loggedIn || rt.state.githubToken.AccessToken != "gho_valid" {
+		t.Error("ErrRegistryChanged must not clear login state")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // handleSubmitSuccess
 // ---------------------------------------------------------------------------

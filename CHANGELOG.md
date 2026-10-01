@@ -20,6 +20,9 @@ patch component for fix-only releases (`v1.3.1`).
   dialogs have the same button.
 
 ### Changed
+- **Releases publish only the build artifacts.** The release job downloads only
+  the `rhg-authenticator-*` artifacts, so no other job's uploads can end up as
+  release assets.
 - **Blank `allowed_honors` means unrestricted.** `null`, `[]` or a list of only
   blank titles no longer rejects the whole registry on the verification page;
   blank titles are skipped.
@@ -30,6 +33,21 @@ patch component for fix-only releases (`v1.3.1`).
   **Connect to GitHub**.
 
 ### Fixed
+- **Revoking a credential no longer un-revokes an earlier one.** Each
+  revocation pull request is now built from the current list on GitHub, not
+  from the copy loaded when the History tab opened. Before, a second revocation
+  in the same session could drop the first one when merged.
+- **Registry edits can't silently undo another change.** Submit for Review now
+  refuses if the registry on GitHub changed since you fetched it (for example a
+  just-merged expiry date), and asks you to Fetch from Server and re-apply your
+  edits.
+- **Names pasted with a hidden character now verify.** A stray U+FEFF
+  (zero-width no-break space, common when pasting from Word or Excel) at the
+  start or end of a field is removed before signing. Previously the credential
+  was signed but always failed verification.
+- **Security hardening.** Report Issue only opens GitHub links; the revocation
+  hash script strips terminal control characters from what it prints; local
+  builds now use Go 1.27.1, matching CI.
 - **Revocation errors are explained.** A failed revocation now shows why (for
   example a rate limit or a permission problem) instead of "failed to submit
   revocation". An expired GitHub session asks you to log in again.

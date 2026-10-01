@@ -1,5 +1,18 @@
 package core
 
+import (
+	"strings"
+	"unicode"
+)
+
+// TrimJS trims a superset of what JavaScript's String.prototype.trim strips:
+// Go's Unicode whitespace plus U+FEFF (which strings.TrimSpace keeps). It also
+// strips U+0085, which JS keeps, but the control-character check rejects that
+// anyway. Use wherever Go output must be accepted by the verify page (src/*.ts).
+func TrimJS(s string) string {
+	return strings.TrimFunc(s, func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' })
+}
+
 // MaxLogRunes is the maximum number of runes kept in sanitized log output.
 const MaxLogRunes = 500
 

@@ -66,6 +66,7 @@ func TestPlanClassification(t *testing.T) {
 	}{
 		{"valid", row(2, "Davit", crown, "For service", "2026-03-15"), StatusToSign, ""},
 		{"padded cells", row(2, "  Davit ", "\tOther ", " d ", " 2026-03-15 "), StatusToSign, ""},
+		{"BOM-wrapped cells", row(2, "\ufeffDavit", "Other\ufeff", "\ufeff d", "2026-03-15\ufeff"), StatusToSign, ""},
 		{"honor case near-miss", row(2, "Davit", "order of the crown of georgia", "d", "2026-03-15"), StatusInvalid, `honor: not one of the allowed honor titles: "` + strings.Join(testHonors, `", "`) + `"`},
 		{"US date", row(2, "Davit", crown, "d", "3/15/2026"), StatusInvalid, "invalid credential data: invalid date: 3/15/2026"},
 		{"impossible date", row(2, "Davit", crown, "d", "2026-02-30"), StatusInvalid, "invalid date"},
@@ -87,10 +88,10 @@ func TestPlanClassification(t *testing.T) {
 				t.Fatalf("err = %q, want containing %q", res.Err, tc.wantErr)
 			}
 			wantReq := core.SignRequest{
-				Recipient: strings.TrimSpace(tc.row.Name),
-				Honor:     strings.TrimSpace(tc.row.Honor),
-				Detail:    strings.TrimSpace(tc.row.Detail),
-				Date:      strings.TrimSpace(tc.row.Date),
+				Recipient: core.TrimJS(tc.row.Name),
+				Honor:     core.TrimJS(tc.row.Honor),
+				Detail:    core.TrimJS(tc.row.Detail),
+				Date:      core.TrimJS(tc.row.Date),
 			}
 			if res.Req != wantReq {
 				t.Fatalf("Req = %+v, want %+v", res.Req, wantReq)
@@ -109,6 +110,16 @@ func TestPlanClassification(t *testing.T) {
 				t.Fatalf("unexpected URL %q", res.URL)
 			}
 		})
+	}
+}
+
+// TestPlanStripsBOM checks that a leading/trailing U+FEFF (e.g. from an Excel
+// export) is stripped so the signed payload passes the verify page's trim check.
+func TestPlanStripsBOM(t *testing.T) {
+	res := Plan([]Row{row(2, "\ufeffDavit", "\ufeffOther", "d\ufeff", "\ufeff2026-03-15")}, testHonors, nil)[0]
+	want := core.SignRequest{Recipient: "Davit", Honor: "Other", Detail: "d", Date: "2026-03-15"}
+	if res.Status != StatusToSign || res.Req != want {
+		t.Fatalf("got status %q (err %q) req %+v, want to_sign %+v", res.Status, res.Err, res.Req, want)
 	}
 }
 

@@ -3,7 +3,6 @@ package core
 import (
 	"fmt"
 	"regexp"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -82,7 +81,7 @@ func ValidateCredential(obj map[string]any) (CredentialV1, error) {
 		if !ok {
 			return CredentialV1{}, fmt.Errorf("%s must be a string", field)
 		}
-		if s != strings.TrimSpace(s) {
+		if s != TrimJS(s) {
 			return CredentialV1{}, fmt.Errorf("%s must not have leading or trailing whitespace", field)
 		}
 		if controlCharRE.MatchString(s) {
