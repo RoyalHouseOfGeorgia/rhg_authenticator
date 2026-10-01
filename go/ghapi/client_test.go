@@ -1239,12 +1239,11 @@ func TestCreateRevocationPR_InvalidHash(t *testing.T) {
 
 	c := newTestClientWithUser(srv, "tok", "testuser")
 	cases := map[string]string{
-		"empty":     "",
-		"short":     "abc123",
-		"uppercase": strings.ToUpper(testRevHashB),
-		"too long":  testRevHashB + "0",
-		"non-hex":   strings.Repeat("g", 64),
-		"newline":   testRevHashB[:63] + "\n",
+		"empty":    "",
+		"short":    "abc123",
+		"too long": testRevHashB + "0",
+		"non-hex":  strings.Repeat("g", 64),
+		"newline":  testRevHashB[:63] + "\n",
 	}
 	for name, hash := range cases {
 		t.Run(name, func(t *testing.T) {

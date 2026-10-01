@@ -685,7 +685,7 @@ func TestCreateRevocationPR_NoUsername(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv, "tok") // No username set.
-	_, err := c.CreateRevocationPR(context.Background(), "somehash", "2026-01-01")
+	_, err := c.CreateRevocationPR(context.Background(), testRevHashB, "2026-01-01")
 	if err == nil {
 		t.Fatal("expected error for missing username")
 	}

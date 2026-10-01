@@ -17,6 +17,14 @@ import re
 import sys
 from urllib.parse import parse_qs, urlsplit
 
+_CONTROL_RE = re.compile(
+    "[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
+)
+
+
+def _printable(value: object) -> str:
+    return _CONTROL_RE.sub("", str(value))
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -45,16 +53,6 @@ def main() -> int:
     else:
         print("  (unreadable payload)", file=sys.stderr)
     return 0
-
-
-
-_CONTROL_RE = re.compile(
-    "[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
-)
-
-
-def _printable(value: object) -> str:
-    return _CONTROL_RE.sub("", str(value))
 
 
 if __name__ == "__main__":

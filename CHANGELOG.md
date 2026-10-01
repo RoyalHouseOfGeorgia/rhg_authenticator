@@ -37,17 +37,20 @@ patch component for fix-only releases (`v1.3.1`).
   revocation pull request is now built from the current list on GitHub, not
   from the copy loaded when the History tab opened. Before, a second revocation
   in the same session could drop the first one when merged.
-- **Registry edits can't silently undo another change.** Submit for Review now
-  refuses if the registry on GitHub changed since you fetched it (for example a
-  just-merged expiry date), and asks you to Fetch from Server and re-apply your
-  edits.
+- **Registry edits can't silently undo another change.** When you're logged
+  in, Fetch from Server reads the registry from GitHub directly (no site
+  delay). Submit for Review refuses if the registry on GitHub changed since you
+  fetched it (for example a just-merged expiry date), and asks you to Fetch
+  from Server and re-apply your edits.
 - **Names pasted with a hidden character now verify.** A stray U+FEFF
   (zero-width no-break space, common when pasting from Word or Excel) at the
   start or end of a field is removed before signing. Previously the credential
   was signed but always failed verification.
-- **Security hardening.** Report Issue only opens GitHub links; the revocation
-  hash script strips terminal control characters from what it prints; local
-  builds now use Go 1.27.1, matching CI.
+- **Report Issue only opens GitHub links.** A link returned by the GitHub API is
+  opened only if it is an `https://github.com` URL.
+- **Maintainer tooling.** `go.mod` now requires Go 1.27.1 or newer, and CI
+  reads its Go version from `go.mod`. The revocation hash script strips terminal
+  control characters from what it prints.
 - **Revocation errors are explained.** A failed revocation now shows why (for
   example a rate limit or a permission problem) instead of "failed to submit
   revocation". An expired GitHub session asks you to log in again.

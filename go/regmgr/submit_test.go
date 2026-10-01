@@ -202,20 +202,6 @@ func testKeyEntry(t *testing.T, authority string, to *string) core.KeyEntry {
 	}
 }
 
-// wrapBase64 base64-encodes data with a newline every 60 characters, as the
-// GitHub contents API does.
-func wrapBase64(data []byte) string {
-	enc := base64.StdEncoding.EncodeToString(data)
-	var b strings.Builder
-	for len(enc) > 60 {
-		b.WriteString(enc[:60])
-		b.WriteByte('\n')
-		enc = enc[60:]
-	}
-	b.WriteString(enc)
-	return b.String()
-}
-
 // submitFake is an httptest GitHub API covering the upstream registry read
 // and the fork-based PR flow. It records every "METHOD path" it serves.
 type submitFake struct {
@@ -255,7 +241,7 @@ func newSubmitFake(t *testing.T, username string, upstream []byte, upstreamStatu
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"content":  wrapBase64(upstream),
+				"content":  base64.StdEncoding.EncodeToString(upstream),
 				"encoding": "base64",
 				"sha":      "upstreamsha123",
 			})
@@ -360,8 +346,8 @@ func TestSubmitRegistry_UpstreamChanged_Refuses(t *testing.T) {
 
 	f, client := newSubmitFake(t, "testuser", upstream, http.StatusOK)
 	_, err = submitRegistry(context.Background(), client, base, base, "Registry update")
-	if !errors.Is(err, ErrRegistryChanged) {
-		t.Fatalf("err = %v, want ErrRegistryChanged", err)
+	if !errors.Is(err, errRegistryChanged) {
+		t.Fatalf("err = %v, want errRegistryChanged", err)
 	}
 	upstreamOnly(t, f)
 }
@@ -375,8 +361,8 @@ func TestSubmitRegistry_EmptyBase_Refuses(t *testing.T) {
 
 	f, client := newSubmitFake(t, "testuser", upstream, http.StatusOK)
 	_, err = submitRegistry(context.Background(), client, nil, upstream, "Registry update")
-	if !errors.Is(err, ErrRegistryChanged) {
-		t.Fatalf("err = %v, want ErrRegistryChanged", err)
+	if !errors.Is(err, errRegistryChanged) {
+		t.Fatalf("err = %v, want errRegistryChanged", err)
 	}
 	upstreamOnly(t, f)
 }
@@ -403,10 +389,31 @@ func TestSubmitRegistry_UpstreamErrors(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.wantMsg) {
 				t.Fatalf("err = %v, want containing %q", err, tc.wantMsg)
 			}
-			if errors.Is(err, ErrRegistryChanged) {
-				t.Error("upstream failure must not be reported as ErrRegistryChanged")
+			if errors.Is(err, errRegistryChanged) {
+				t.Error("upstream failure must not be reported as errRegistryChanged")
 			}
 			upstreamOnly(t, f)
 		})
+	}
+}
+
+func TestFetchRegistry_LoggedInReadsMainViaAPI(t *testing.T) {
+	to := "2027-12-31"
+	reg := core.Registry{Keys: []core.KeyEntry{testKeyEntry(t, "Key X", &to)}}
+	up, err := MarshalRegistry(reg)
+	if err != nil {
+		t.Fatalf("MarshalRegistry: %v", err)
+	}
+	f, client := newSubmitFake(t, "testuser", up, http.StatusOK)
+
+	got, err := fetchRegistry(client)
+	if err != nil {
+		t.Fatalf("fetchRegistry: %v", err)
+	}
+	if len(got.Keys) != 1 || got.Keys[0].Authority != "Key X" {
+		t.Errorf("got %+v, want the upstream registry", got.Keys)
+	}
+	if len(f.hits) != 1 || !strings.Contains(f.hits[0], "/contents/"+ghapi.RegistryFilePath) {
+		t.Errorf("hits = %v, want one upstream contents GET", f.hits)
 	}
 }

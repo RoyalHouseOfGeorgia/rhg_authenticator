@@ -35,9 +35,6 @@ func TestCanSave_NonEmpty(t *testing.T) {
 
 func TestAppState_InitialValues(t *testing.T) {
 	state := &appState{selected: -1}
-	if state.filePath != "" {
-		t.Error("expected empty filePath initially")
-	}
 	if state.dirty {
 		t.Error("expected dirty = false initially")
 	}

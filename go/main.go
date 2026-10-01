@@ -155,8 +155,8 @@ func main() {
 		window,
 	))
 
-	// 8. Non-blocking registry tab fetch.
-	regTab.Fetch()
+	// 8. The registry tab fetches itself once the async login restore finishes,
+	// so a logged-in session loads from main via the API (see regmgr.Fetch).
 
 	// 9. Non-blocking version check.
 	safeGo(func() {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
@@ -311,13 +313,18 @@ func TestHandleSubmitError_RegistryChanged(t *testing.T) {
 	rt.state.loggedIn = true
 	rt.state.githubToken = ghapi.Token{AccessToken: "gho_valid"}
 
-	rt.handleSubmitError(fmt.Errorf("submit: %w", ErrRegistryChanged))
+	rt.handleSubmitError(fmt.Errorf("submit: %w", errRegistryChanged))
 
+	// The specific dialog (not the generic "Submission Failed") must be shown.
+	top := rt.window.Canvas().Overlays().Top()
+	if top == nil || !overlayHasText(top, "Registry Changed") {
+		t.Error(`want the "Registry Changed" dialog, not the generic error`)
+	}
 	if rt.statusLabel.Text != "" {
 		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
 	}
 	if !rt.state.loggedIn || rt.state.githubToken.AccessToken != "gho_valid" {
-		t.Error("ErrRegistryChanged must not clear login state")
+		t.Error("errRegistryChanged must not clear login state")
 	}
 }
 
@@ -449,4 +456,21 @@ func TestHandleSubmitError_WrappedUnauthorized(t *testing.T) {
 	if rt.state.githubUser != "" {
 		t.Error("githubUser should be cleared after wrapped 401")
 	}
+}
+
+// overlayHasText reports whether any label or text in o's object tree reads want.
+func overlayHasText(o fyne.CanvasObject, want string) bool {
+	for _, obj := range test.LaidOutObjects(o) {
+		switch v := obj.(type) {
+		case *widget.Label:
+			if v.Text == want {
+				return true
+			}
+		case *canvas.Text:
+			if v.Text == want {
+				return true
+			}
+		}
+	}
+	return false
 }

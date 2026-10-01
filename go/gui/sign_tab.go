@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -164,8 +163,8 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error())
 							resultURL, _ := errorreport.ReportIssue(context.Background(), config.Keyring, config.DataDir, title, body)
 							if resultURL != "" {
-								// Only open https GitHub URLs; anything else is not ours.
-								if u, parseErr := url.Parse(resultURL); parseErr == nil && u.Scheme == "https" && ghapi.IsGitHubHost(u.Host) {
+								// Only open https://github.com URLs; anything else is not ours.
+								if u := parseGitHubURL(resultURL); u != nil {
 									fyne.CurrentApp().OpenURL(u)
 								} else {
 									logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(resultURL))

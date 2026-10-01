@@ -31,21 +31,22 @@ import (
 // atomic.Bool fields on RegistryTab are belt-and-suspenders guards.
 type appState struct {
 	registry    core.Registry
-	filePath    string // "" = not yet saved locally
 	dirty       bool
 	selected    int // selected table row, -1 = none
 	githubToken ghapi.Token
 	loggedIn    bool
 	offline     bool
 	githubUser  string
-	// baseBytes is the MarshalRegistry output of the registry as fetched from
-	// the server; nil = not loaded from server.
+	// baseBytes is the MarshalRegistry output of the registry as loaded by
+	// Fetch (from main via the API when logged in, else the Pages copy, which
+	// lags main for 10–15 min after a merge); nil = not loaded. Submit refuses
+	// unless main still matches it.
 	baseBytes []byte
 }
 
-// ErrRegistryChanged is returned by submitRegistry when upstream's registry no
-// longer matches the snapshot the local edits were based on.
-var ErrRegistryChanged = errors.New("registry changed on GitHub since it was loaded")
+// errRegistryChanged is returned by submitRegistry when upstream's registry no
+// longer matches the snapshot the local edits were based on (or none was loaded).
+var errRegistryChanged = errors.New("registry on GitHub does not match the loaded snapshot")
 
 // restoreSessionFunc is the session-restore implementation; a package-level
 // var so tests can stub the network/keyring round trip.
@@ -79,6 +80,9 @@ type RegistryTab struct {
 	// state changes (login, logout, session restore, 401 expiry). Lets other
 	// tabs (History) react to auth changes without polling. nil in tests.
 	onLoginChanged func()
+	// onRestored runs once after the startup session restore is applied (on the
+	// main thread); NewRegistryTab sets it to Fetch. nil in tests.
+	onRestored func()
 }
 
 // SetOnLoginChanged registers a callback fired on the Fyne main thread whenever
@@ -106,23 +110,26 @@ func (rt *RegistryTab) ClientForHistory() *ghapi.Client {
 // Must be called on the Fyne main thread (updates UI widgets before spawning goroutine).
 func (rt *RegistryTab) Fetch() {
 	rt.statusLabel.SetText("Fetching...")
+	// Read on the main thread. nil when logged out or offline (offline skips the
+	// API attempt and its timeout and goes straight to the Pages copy).
+	client := rt.ClientForHistory()
+	if rt.state.offline {
+		client = nil
+	}
 	go func() {
-		reg, err := registry.FetchRegistry(registry.DefaultRegistryURL)
+		reg, err := fetchRegistry(client)
+		var base []byte
+		if err == nil {
+			base, err = MarshalRegistry(reg)
+		}
 		fyne.Do(func() {
 			if err != nil {
 				log.Printf("error: registry fetch failed: %s", core.SanitizeForLog(err.Error()))
 				rt.statusLabel.SetText("Failed to load registry")
 				return
 			}
-			base, merr := MarshalRegistry(reg)
-			if merr != nil {
-				log.Printf("error: registry snapshot failed: %s", core.SanitizeForLog(merr.Error()))
-				rt.statusLabel.SetText("Failed to load registry")
-				return
-			}
 			rt.state.registry = reg
 			rt.state.baseBytes = base
-			rt.state.filePath = ""
 			rt.state.dirty = false
 			rt.state.selected = -1
 			rt.table.UnselectAll()
@@ -133,6 +140,23 @@ func (rt *RegistryTab) Fetch() {
 			rt.statusLabel.SetText("Loaded from registry server")
 		})
 	}()
+}
+
+// fetchRegistry loads the registry from main via the GitHub API when a client
+// is available, so the submit check compares like with like and isn't tripped
+// by the Pages deploy lag after a merge. Logged out (or if the API read fails)
+// it falls back to the published Pages copy.
+func fetchRegistry(client *ghapi.Client) (core.Registry, error) {
+	if client != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		up, err := client.FetchUpstreamFile(ctx, ghapi.RegistryFilePath)
+		if err == nil {
+			return core.ValidateRegistry(up)
+		}
+		log.Printf("warning: registry fetch from GitHub failed, using site copy: %s", core.SanitizeForLog(err.Error()))
+	}
+	return registry.FetchRegistry(registry.DefaultRegistryURL)
 }
 
 // resolveLoginState determines the login display state from validation results.
@@ -360,6 +384,9 @@ func (rt *RegistryTab) restoreSession(interactive bool) {
 			rt.state.githubUser = username
 			rt.updateLoginUI()
 			if !interactive {
+				if rt.onRestored != nil {
+					rt.onRestored() // startup: load the registry now that login state is known
+				}
 				return
 			}
 			rt.statusLabel.SetText("")
@@ -390,10 +417,10 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 		rt.HandleUnauthorized()
 		return
 	}
-	if errors.Is(err, ErrRegistryChanged) {
+	if errors.Is(err, errRegistryChanged) {
 		log.Printf("warning: registry submit refused: %s", core.SanitizeForLog(err.Error()))
 		dialog.ShowInformation("Registry Changed",
-			"The registry changed on GitHub since you loaded it. Click Fetch from Server, re-apply your edits, and submit again. After a merge the site can take 10–15 minutes to update.", rt.window)
+			"The registry on GitHub doesn't match the copy you loaded (it changed, or nothing was loaded). Click Fetch from Server, re-apply your edits, and submit again.", rt.window)
 		rt.statusLabel.SetText("")
 		return
 	}
@@ -448,10 +475,10 @@ func submitRegistry(ctx context.Context, client *ghapi.Client, base, content []b
 	}
 	upBytes, err := MarshalRegistry(reg)
 	if err != nil {
-		return ghapi.PRResult{}, err
+		return ghapi.PRResult{}, fmt.Errorf("re-marshaling upstream registry: %w", err)
 	}
 	if len(base) == 0 || !bytes.Equal(upBytes, base) {
-		return ghapi.PRResult{}, ErrRegistryChanged
+		return ghapi.PRResult{}, errRegistryChanged
 	}
 	return client.CreateRegistryPR(ctx, content, title)
 }
@@ -530,7 +557,6 @@ func restrictionsText(entry core.KeyEntry) string {
 		if core.StripControlChars(h) != h {
 			return "(invalid)"
 		}
-		// Trim like the verify page (JS trim also strips U+FEFF).
 		trimmed := core.TrimJS(h)
 		if trimmed == "" {
 			continue
@@ -743,6 +769,14 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 	rt.Content = container.NewBorder(toolbar, actionBar, nil, nil, table)
 
 	// Async token restore.
+	// Fetch once login state is known (so a logged-in session loads main via the
+	// API), but never clobber edits made while the restore was running.
+	rt.onRestored = func() {
+		if !rt.state.dirty {
+			rt.Fetch()
+		}
+	}
+	statusLabel.SetText("Fetching...")
 	rt.restoreSession(false)
 
 	return rt

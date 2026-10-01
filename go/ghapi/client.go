@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -577,20 +576,18 @@ func (c *Client) CreateRegistryPR(ctx context.Context, content []byte, title str
 	return c.createForkFilePR(ctx, RegistryFilePath, content, "registry-update-", title, "Registry update submitted via RHG Authenticator")
 }
 
-// revocationHashRE matches exactly 64 lowercase hex characters (a payload SHA-256).
-var revocationHashRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 // CreateRevocationPR appends a revocation entry for hash to the upstream
 // revocation list on main and opens a fork-based PR with the result.
 // The list is always rebuilt from upstream main (never a locally cached copy)
 // so that revocations merged since the caller last fetched are preserved.
-// hash must be 64 lowercase hex characters; revokedOn is a YYYY-MM-DD date.
+// hash must be a 64-character hex SHA-256 (any case); revokedOn is a YYYY-MM-DD date.
 func (c *Client) CreateRevocationPR(ctx context.Context, hash, revokedOn string) (PRResult, error) {
 	if c.username == "" {
 		return PRResult{}, fmt.Errorf("client username not set; cannot perform fork-based PR")
 	}
-	if !revocationHashRE.MatchString(hash) {
-		return PRResult{}, fmt.Errorf("invalid payload hash: must be 64 lowercase hex characters")
+	hash = strings.ToLower(hash) // same normalisation as core.ValidateRevocationList
+	if !core.IsPayloadHash(hash) {
+		return PRResult{}, fmt.Errorf("invalid payload hash: must be 64 hex characters")
 	}
 
 	current, err := c.FetchUpstreamFile(ctx, revocationPath)

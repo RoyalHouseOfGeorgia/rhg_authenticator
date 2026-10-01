@@ -22,7 +22,7 @@ The system has three independent components, plus a standalone helper:
 ## Threat Model
 
 - **Trust anchor**: The YubiKey hardware token. Private key never leaves the device.
-- **Public registry**: `verify/keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls and a PR-based review workflow. Changes are submitted as pull requests via the Registry tab; the repository admin reviews and merges.
+- **Public registry**: `verify/keys/registry.json` is hosted on GitHub Pages. Integrity is protected by GitHub account access controls and a PR-based review workflow. Changes are submitted as pull requests via the Registry tab; the repository admin reviews and merges. Fetch (including the startup load) reads the registry from `main` via the API when logged in (the Pages copy when logged out, offline, or if the API read fails) and refuses to submit if `main` no longer matches what was loaded, so a stale copy can't silently undo another change.
 - **Verification is client-side**: The public verification page fetches the registry and performs all crypto in the browser — no server round-trip.
 - **PIN security**: The Go signing app uses `piv-go` to talk directly to the YubiKey via PCSC. PIN is handled entirely in-process — never on the command line, never in a file, never visible in `/proc`.
 - **QR as transport**: The QR code is a URL containing the full signed credential. No database lookup required.
@@ -71,7 +71,7 @@ Credentials can be revoked after issuance. The revocation mechanism is hash-base
 
 - The **History** tab includes a **Revoke** button with a confirmation dialog. Revoking a credential submits a pull request via the GitHub API (`CreateRevocationPR` in `ghapi`), adding the credential's SHA-256 hash to `revocations.json`.
 - `core/revocation.go` provides `RevocationEntry`, `RevocationList`, `ValidateRevocationList`, `BuildRevocationSet`, `IsRevoked`, and `AppendRevocationEntry` (deep-copies the list and appends a new entry without mutating the input).
-- The revocation list is cached (`cachedRevocationList`); mutations use `AppendRevocationEntry` which deep-copies before appending.
+- The PR's `revocations.json` is built inside `CreateRevocationPR` from the current file on upstream `main` (Contents API), never from the copy the History tab loaded, so a second revocation can't drop an earlier one. With several revocation PRs open, merge them one at a time; close any PR that conflicts and re-revoke.
 
 ### Verification Page (TypeScript)
 
@@ -162,7 +162,6 @@ type Registry = { keys: KeyEntry[] };
 
 - **Dates:** only `to` limits validity. A credential dated after `to` fails; any earlier date verifies, including dates before `from`, so backdated honors work.
 - **`allowed_honors`:** a list of exact honor titles (case-sensitive). A credential whose `honor` is not in the list fails. When absent, `null`, `[]` or all-blank, the key verifies any honor; blank items are skipped. Non-string, untrimmed or control-character items reject the registry. The restriction is retroactive — it applies to every credential the key ever signed — and per entry: every entry sharing a public key needs its own `allowed_honors`, or the unrestricted entry verifies.
-- **Whole-file PRs are built from or checked against upstream `main`:** a revocation PR reads the current `revocations.json` from GitHub and appends one entry, so it can't drop an earlier revocation. A registry submit is refused if upstream changed since the last Fetch. With several revocation PRs open, merge them one at a time; a PR that conflicts should be closed and the credential re-revoked.
 - **Blank `allowed_honors` fails open (accepted risk):** an edit that blanks a restriction (`[]` or `[""]`) silently makes the key unrestricted instead of rejecting the registry. Accepted because registry edits land only via maintainer-reviewed PRs and the app's Restrictions column shows the effective value.
 - **Strict verifier, tolerant app:** the verification page rejects any registry field it does not recognise, so an outdated verifier fails closed instead of silently ignoring a restriction. The Go app accepts and preserves unknown fields, so new registry fields never break installed copies.
 
