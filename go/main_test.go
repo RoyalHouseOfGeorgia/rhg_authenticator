@@ -2,8 +2,7 @@ package main
 
 import (
 	"image/color"
-	"os"
-	"path/filepath"
+	"math"
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -19,7 +18,7 @@ func TestRhgTheme_Colors(t *testing.T) {
 		want color.Color
 	}{
 		{theme.ColorNamePrimary, color.NRGBA{0x2B, 0x57, 0x9A, 0xFF}},
-		{theme.ColorNameButton, color.NRGBA{0x2B, 0x57, 0x9A, 0xFF}},
+		{theme.ColorNameButton, color.NRGBA{0xF3, 0xF2, 0xF1, 0xFF}},
 		{theme.ColorNameForegroundOnPrimary, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
 		{theme.ColorNameBackground, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
 		{theme.ColorNameForeground, color.NRGBA{0x33, 0x33, 0x33, 0xFF}},
@@ -125,110 +124,18 @@ func stubShowConfirm(t *testing.T, handler func(title, msg string, cb func(bool)
 	showConfirmFunc = handler
 }
 
-func TestBuildCloseHandler_ReleaseMode_NotDirty(t *testing.T) {
-	var cleaned, quitted bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		false, "",
-		func() { cleaned = true },
-		func(string) { t.Error("openFile called in release mode") },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_ReleaseMode_WithLogFile(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("some log data"), 0o600)
-
-	var cleaned, quitted bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		false, logFile,
-		func() { cleaned = true },
-		func(string) { t.Error("openFile called in release mode") },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_DebugMode_EmptyLog(t *testing.T) {
-	var cleaned, quitted bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		true, "",
-		func() { cleaned = true },
-		func(string) { t.Error("openFile called with empty log path") },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_DebugMode_MissingLog(t *testing.T) {
-	var cleaned, quitted bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		true, "/nonexistent/debug.log",
-		func() { cleaned = true },
-		func(string) { t.Error("openFile called with missing log") },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_DebugMode_NonEmptyLog_Open(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
+func TestBuildCloseHandler_NotDirty(t *testing.T) {
 	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
-		if title != "Debug Log" {
-			t.Errorf("dialog title = %q, want %q", title, "Debug Log")
-		}
-		cb(true) // simulate "Open File"
+		t.Errorf("unexpected dialog %q", title)
 	})
-
 	var cleaned, quitted bool
-	var openedPath string
 	h := buildCloseHandler(
 		func() bool { return false },
-		true, logFile,
 		func() { cleaned = true },
-		func(p string) { openedPath = p },
 		func() { quitted = true },
 		nil,
 	)
 	h()
-	if openedPath != logFile {
-		t.Errorf("openFile path = %q, want %q", openedPath, logFile)
-	}
 	if !cleaned {
 		t.Error("cleanup not called")
 	}
@@ -237,68 +144,22 @@ func TestBuildCloseHandler_DebugMode_NonEmptyLog_Open(t *testing.T) {
 	}
 }
 
-func TestBuildCloseHandler_DebugMode_NonEmptyLog_Dismiss(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
-	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
-		cb(false) // simulate "Dismiss"
-	})
-
-	var cleaned, quitted, opened bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		true, logFile,
-		func() { cleaned = true },
-		func(string) { opened = true },
-		func() { quitted = true },
-		nil,
-	)
-	h()
-	if opened {
-		t.Error("openFile should not be called on dismiss")
-	}
-	if !cleaned {
-		t.Error("cleanup not called")
-	}
-	if !quitted {
-		t.Error("quit not called")
-	}
-}
-
-func TestBuildCloseHandler_DirtyRegistry_DebugLog(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
+func TestBuildCloseHandler_DirtyRegistry_Confirmed(t *testing.T) {
 	var dialogTitles []string
 	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
 		dialogTitles = append(dialogTitles, title)
-		cb(true) // confirm both dialogs
+		cb(true)
 	})
-
 	var cleaned, quitted bool
-	var openedPath string
 	h := buildCloseHandler(
-		func() bool { return true }, // dirty
-		true, logFile,
+		func() bool { return true },
 		func() { cleaned = true },
-		func(p string) { openedPath = p },
 		func() { quitted = true },
 		nil,
 	)
 	h()
-
-	if len(dialogTitles) != 2 {
-		t.Fatalf("got %d dialogs, want 2: %v", len(dialogTitles), dialogTitles)
-	}
-	if dialogTitles[0] != "Unsubmitted Changes" {
-		t.Errorf("first dialog = %q, want %q", dialogTitles[0], "Unsubmitted Changes")
-	}
-	if dialogTitles[1] != "Debug Log" {
-		t.Errorf("second dialog = %q, want %q", dialogTitles[1], "Debug Log")
-	}
-	if openedPath != logFile {
-		t.Errorf("openFile path = %q, want %q", openedPath, logFile)
+	if len(dialogTitles) != 1 || dialogTitles[0] != "Unsubmitted Changes" {
+		t.Errorf("dialogs = %v, want [Unsubmitted Changes]", dialogTitles)
 	}
 	if !cleaned {
 		t.Error("cleanup not called")
@@ -309,19 +170,13 @@ func TestBuildCloseHandler_DirtyRegistry_DebugLog(t *testing.T) {
 }
 
 func TestBuildCloseHandler_DirtyRegistry_Cancelled(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
 	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
 		cb(false) // user cancels unsaved changes dialog
 	})
-
 	var cleaned, quitted bool
 	h := buildCloseHandler(
-		func() bool { return true }, // dirty
-		true, logFile,
+		func() bool { return true },
 		func() { cleaned = true },
-		func(string) { t.Error("openFile should not be called") },
 		func() { quitted = true },
 		nil,
 	)
@@ -334,54 +189,80 @@ func TestBuildCloseHandler_DirtyRegistry_Cancelled(t *testing.T) {
 	}
 }
 
-func TestBuildCloseHandler_CleanupAlwaysRuns(t *testing.T) {
-	logFile := filepath.Join(t.TempDir(), "debug.log")
-	os.WriteFile(logFile, []byte("log data"), 0o600)
-
-	// Dismiss the debug log review — cleanup should still run.
-	stubShowConfirm(t, func(title, msg string, cb func(bool), w fyne.Window) {
-		cb(false)
-	})
-
-	var cleaned bool
-	h := buildCloseHandler(
-		func() bool { return false },
-		true, logFile,
-		func() { cleaned = true },
-		func(string) {},
-		func() {},
-		nil,
-	)
-	h()
-	if !cleaned {
-		t.Error("cleanup must run regardless of dialog choice")
-	}
-}
-
-// --- logFileNonEmpty tests ---
-
-func TestLogFileNonEmpty(t *testing.T) {
-	if logFileNonEmpty("") {
-		t.Error("empty path should return false")
-	}
-	if logFileNonEmpty("/nonexistent/file.log") {
-		t.Error("nonexistent file should return false")
-	}
-
-	dir := t.TempDir()
-
-	empty := filepath.Join(dir, "empty.log")
-	os.WriteFile(empty, nil, 0o600)
-	if logFileNonEmpty(empty) {
-		t.Error("empty file should return false")
-	}
-
-	nonEmpty := filepath.Join(dir, "nonempty.log")
-	os.WriteFile(nonEmpty, []byte("data"), 0o600)
-	if !logFileNonEmpty(nonEmpty) {
-		t.Error("non-empty file should return true")
-	}
-}
-
 // Ensure showConfirmFunc defaults to dialog.ShowConfirm (compile-time type check).
 var _ func(string, string, func(bool), fyne.Window) = dialog.ShowConfirm
+
+func TestBuildMainMenu(t *testing.T) {
+	called := false
+	mm := buildMainMenu(func() { called = true })
+
+	var file, help *fyne.Menu
+	for _, m := range mm.Items {
+		switch m.Label {
+		case "File":
+			file = m
+		case "Help":
+			help = m
+		}
+	}
+	if file == nil {
+		t.Fatal("File menu missing")
+	}
+	if help == nil {
+		t.Fatal("Help menu missing")
+	}
+	var export *fyne.MenuItem
+	for _, it := range help.Items {
+		if it.Label == "Export Error Log…" {
+			export = it
+		}
+	}
+	if export == nil || export.Action == nil {
+		t.Fatal("Help → Export Error Log… missing or has no action")
+	}
+	export.Action()
+	if !called {
+		t.Error("Export Error Log… action did not invoke callback")
+	}
+}
+
+// relativeLuminance implements the WCAG 2.x relative luminance formula.
+func relativeLuminance(c color.Color) float64 {
+	r, g, b, _ := c.RGBA()
+	lin := func(v uint32) float64 {
+		s := float64(v) / 0xFFFF
+		if s <= 0.03928 {
+			return s / 12.92
+		}
+		return math.Pow((s+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b)
+}
+
+func contrastRatio(a, b color.Color) float64 {
+	la, lb := relativeLuminance(a), relativeLuminance(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// TestRhgTheme_ButtonTextContrast guards WCAG AA (4.5:1) for button text:
+// standard buttons draw ColorNameForeground on ColorNameButton, primary
+// buttons draw ColorNameForegroundOnPrimary on ColorNamePrimary.
+func TestRhgTheme_ButtonTextContrast(t *testing.T) {
+	th := &rhgTheme{}
+	v := theme.VariantLight
+	pairs := []struct {
+		name   string
+		fg, bg fyne.ThemeColorName
+	}{
+		{"standard button", theme.ColorNameForeground, theme.ColorNameButton},
+		{"primary button", theme.ColorNameForegroundOnPrimary, theme.ColorNamePrimary},
+	}
+	for _, p := range pairs {
+		if got := contrastRatio(th.Color(p.fg, v), th.Color(p.bg, v)); got < 4.5 {
+			t.Errorf("%s text contrast = %.2f:1, want >= 4.5:1", p.name, got)
+		}
+	}
+}

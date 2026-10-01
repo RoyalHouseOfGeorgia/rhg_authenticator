@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"image/color"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"net/url"
 
@@ -41,13 +41,10 @@ func main() {
 			buf := make([]byte, 4096)
 			n := runtime.Stack(buf, false)
 			stack := string(buf[:n])
-			// Best-effort write to debug.log (synchronous file I/O only).
+			// Best-effort write to the diagnostic log via a fresh Logger
+			// (synchronous file I/O only; the main logger may not exist yet).
 			if configDir, err := os.UserConfigDir(); err == nil {
-				logPath := filepath.Join(configDir, "rhg-authenticator", "debug.log")
-				if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-					fmt.Fprintf(f, "PANIC: %v\n%s\n", r, stack)
-					f.Close()
-				}
+				debuglog.New(filepath.Join(configDir, "rhg-authenticator", debuglog.FileName)).Logf("PANIC: %v %s", r, stack)
 			}
 			fmt.Fprintf(os.Stderr, "RHG Authenticator crashed. Please report at https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/issues\n\nPanic: %v\n%s\n", r, stack)
 			panic(r) // re-panic so the OS gets the signal
@@ -82,28 +79,32 @@ func main() {
 		return
 	}
 
-	// Debug logging (debug builds only).
-	var logger *debuglog.Logger
-	if buildinfo.IsDebug() {
-		debugLogPath := filepath.Join(dataDir, "debug.log")
-		_ = os.Truncate(debugLogPath, 0) // fresh log per session
-		logger = debuglog.New(debugLogPath)
-		logger.Log("RHG Authenticator starting (debug mode, version: " + buildinfo.Version + ")")
-	} else {
-		logger = debuglog.New("") // no-op
+	// Diagnostic logging (always on). Prune entries older than the retention
+	// window before opening; prune failures go to the log itself, never stderr.
+	debugLogPath := filepath.Join(dataDir, debuglog.FileName)
+	pruneErr := debuglog.Prune(debugLogPath, debuglog.LogRetention, time.Now())
+	logger := debuglog.New(debugLogPath)
+	if pruneErr != nil {
+		logger.Logf("warning: log prune failed: %v", pruneErr)
 	}
+	debuglog.CaptureStdlib(logger)
+	startMsg := "RHG Authenticator starting (version: " + buildinfo.Version + ")"
+	if buildinfo.IsDebug() {
+		startMsg += " (debug mode)"
+	}
+	logger.Log(startMsg)
 
 	// 3. Log path and cleanup.
 	logPath := filepath.Join(dataDir, "issuances.json")
 	if err := log.CleanStaleTmpFiles(logPath); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: log cleanup failed: %v\n", err)
+		logger.Logf("warning: log cleanup failed: %s", core.SanitizeForLog(err.Error()))
 	}
 
 	// 4. Fetch registry (remote only — no cache or embedded fallback).
 	reg, err := registry.FetchRegistry(registry.DefaultRegistryURL)
 	regOnline := err == nil
 	if !regOnline {
-		fmt.Fprintf(os.Stderr, "warning: registry fetch failed: %v\n", err)
+		logger.Logf("warning: registry fetch failed: %s", core.SanitizeForLog(err.Error()))
 		reg = core.Registry{}
 	}
 	logger.Logf("registry fetch: online=%v", regOnline)
@@ -115,9 +116,10 @@ func main() {
 		DataDir: dataDir,
 		Keyring: kr,
 		SafeGo:  func(fn func()) { safeGo(fn, logger, window) },
+		Logger:  logger,
 	}, window)
 	regTab := regmgr.NewRegistryTab(window, dataDir)
-	historyContent, refreshHistoryLogin := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, regTab.ClientForHistory, regTab.StartLogin, window)
+	historyContent, refreshHistoryLogin := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, regTab.ClientForHistory, regTab.StartLoginOrReconnect, regTab.HandleUnauthorized, window)
 	// Push login-state changes (from either tab) into the History tab, then sync
 	// once now to reflect the current state. The observer nil-guard makes this
 	// correct regardless of whether the async session restore has completed.
@@ -143,14 +145,12 @@ func main() {
 	updateBanner := container.NewVBox()
 	windowContent := container.NewBorder(updateBanner, statusBar, nil, nil, tabs)
 	window.SetContent(windowContent)
+	window.SetMainMenu(buildMainMenu(func() { gui.OnErrorLogExportTapped(logger.Path(), window) }))
 
 	// 7. Close intercept for unsaved registry changes + PIN cache cleanup.
 	window.SetCloseIntercept(buildCloseHandler(
 		regTab.IsDirty,
-		buildinfo.IsDebug(),
-		logger.Path(),
 		signCleanup,
-		openFileDefault,
 		a.Quit,
 		window,
 	))
@@ -189,7 +189,7 @@ func fatalDialog(window fyne.Window, message string, logger *debuglog.Logger, kr
 	var reportLine string
 	if kr != nil {
 		title := errorreport.BuildIssueTitle("internal", message)
-		body := errorreport.BuildIssueBody(buildinfo.Version, "internal", message, logger.Path())
+		body := errorreport.BuildIssueBody(buildinfo.Version, "internal", message)
 		if resultURL, reportErr := errorreport.ReportIssue(context.Background(), kr, configDir, title, body); reportErr == nil && resultURL != "" {
 			reportLine = "\n\nError reported: " + resultURL
 		}
@@ -210,66 +210,40 @@ func fatalDialog(window fyne.Window, message string, logger *debuglog.Logger, kr
 // Package-level variable to allow test injection.
 var showConfirmFunc = dialog.ShowConfirm
 
+// buildMainMenu returns the app menu: an empty File menu (Fyne adds Quit to
+// the first menu on Windows, so Help doesn't get it) and Help → Export Error Log….
+func buildMainMenu(onExportErrorLog func()) *fyne.MainMenu {
+	return fyne.NewMainMenu(
+		fyne.NewMenu("File"),
+		fyne.NewMenu("Help", fyne.NewMenuItem("Export Error Log…", onExportErrorLog)),
+	)
+}
+
 // buildCloseHandler returns a function suitable for SetCloseIntercept that
-// handles unsaved-changes confirmation, optional debug log review, cleanup,
-// and quit. All dependencies are injected for testability.
+// handles unsaved-changes confirmation, cleanup, and quit. All dependencies
+// are injected for testability.
 func buildCloseHandler(
 	isDirty func() bool,
-	isDebug bool,
-	logPath string,
 	cleanup func(),
-	openFile func(string),
 	quit func(),
 	window fyne.Window,
 ) func() {
 	return func() {
-		afterDirtyCheck := func() {
-			if isDebug && logFileNonEmpty(logPath) {
-				showConfirmFunc("Debug Log",
-					"Debug log written to debug.log. Review it?",
-					func(open bool) {
-						if open {
-							openFile(logPath)
-						}
-						cleanup()
-						quit()
-					}, window)
-			} else {
-				cleanup()
-				quit()
-			}
+		exit := func() {
+			cleanup()
+			quit()
 		}
-
-		if isDirty() {
-			showConfirmFunc("Unsubmitted Changes",
-				"The registry has unsubmitted changes. Exit anyway?",
-				func(ok bool) {
-					if ok {
-						afterDirtyCheck()
-					}
-				}, window)
-		} else {
-			afterDirtyCheck()
+		if !isDirty() {
+			exit()
+			return
 		}
-	}
-}
-
-// logFileNonEmpty reports whether the file at path exists and has content.
-func logFileNonEmpty(path string) bool {
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && info.Size() > 0
-}
-
-// openFileDefault opens a file with the platform's default application.
-func openFileDefault(path string) {
-	switch runtime.GOOS {
-	case "darwin":
-		exec.Command("open", path).Start()
-	case "windows":
-		exec.Command("cmd", "/c", "start", "", path).Start()
+		showConfirmFunc("Unsubmitted Changes",
+			"The registry has unsubmitted changes. Exit anyway?",
+			func(ok bool) {
+				if ok {
+					exit()
+				}
+			}, window)
 	}
 }
 
@@ -286,7 +260,7 @@ func safeGo(fn func(), logger *debuglog.Logger, window fyne.Window) {
 				n := runtime.Stack(buf, false)
 				stack := string(buf[:n])
 				fmt.Fprintf(os.Stderr, "goroutine panic: %v\n%s\n", r, stack)
-				logger.Logf("PANIC (goroutine): %v\n%s", r, stack)
+				logger.Logf("PANIC (goroutine): %v %s", r, stack)
 				fyne.Do(func() {
 					dialog.ShowError(fmt.Errorf("an internal error occurred — please restart"), window)
 				})
@@ -311,7 +285,10 @@ func (t *rhgTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) co
 	case theme.ColorNamePrimary:
 		return officeBlue
 	case theme.ColorNameButton:
-		return officeBlue
+		// Standard buttons draw their text in ColorNameForeground (#333), so the
+		// fill must be light (Fluent secondary style). Primary actions
+		// (HighImportance) use ColorNamePrimary with white text.
+		return fluentNeutral
 	case theme.ColorNameForegroundOnPrimary:
 		return white
 	case theme.ColorNameBackground:

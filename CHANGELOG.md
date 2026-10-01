@@ -8,6 +8,32 @@ patch component for fix-only releases (`v1.3.1`).
 
 ## [Unreleased]
 
+### Added
+- **Error log in every build.** The app keeps an error log in release builds
+  too, not just in debug builds. Entries older than 30 days are removed at
+  startup.
+- **Export Error Log.** **Help → Export Error Log…** saves the log to the
+  Desktop so it can be emailed. The Revocation Failed and Submission Failed
+  dialogs have the same button.
+
+### Changed
+- **Reconnect after starting offline.** If GitHub couldn't be reached at
+  startup, the Registry tab's button reads **Offline — Reconnect** and retries
+  when clicked. Previously it only offered to log out. Submit for Review does
+  the same while offline. The History tab's button now reads
+  **Connect to GitHub**.
+
+### Fixed
+- **Revocation errors are explained.** A failed revocation now shows why (for
+  example a rate limit or a permission problem) instead of "failed to submit
+  revocation". An expired GitHub session asks you to log in again.
+- **Readable buttons.** Ordinary buttons showed dark grey text on dark blue
+  (about 1.7:1 contrast). They now use a light background with dark text; primary
+  actions stay blue with white text.
+- **Automatic issue reports no longer include the log.** Neither signing-failure
+  nor fatal-error reports attach it, because they are posted to the public
+  tracker without a preview. Use **Help → Export Error Log…** to send it.
+
 ## [v1.4] — 2026-09-30
 
 ### Added

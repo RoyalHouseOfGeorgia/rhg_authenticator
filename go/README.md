@@ -50,7 +50,7 @@ See [../CHANGELOG.md](../CHANGELOG.md) for release history.
 6. Click **Save SVG** (primary — vector for print) or **Save PNG** (2048px alternative). The save dialog opens on the Desktop; on a Mac, the first save may ask whether the app can access the Desktop — click **Allow**
 7. Copy the verification URL to clipboard via **Copy URL**
 
-If signing fails, the status area shows a diagnostic message and a **Report Issue** button (files a GitHub issue automatically if logged in, or opens a pre-filled browser form). In debug builds, details are also written to `debug.log` — see [Troubleshooting](#troubleshooting) below.
+If signing fails, the status area shows a diagnostic message and a **Report Issue** button (files a GitHub issue automatically if logged in, or opens a pre-filled browser form). Details are written to the error log — see [Troubleshooting](#troubleshooting) below.
 
 ### Bulk Sign
 
@@ -95,6 +95,8 @@ A wrong PIN, a YubiKey error, or a failure to write the issuance log stops the b
 ### History Tab
 
 Browse previously issued credentials. Search by recipient name. Click any entry for full details. **Revoke** a credential via the Revoke button — this submits a GitHub PR to add the credential's SHA-256 hash to the revocation list.
+
+Revoke needs a working GitHub session. If you aren't logged in, or GitHub couldn't be reached when the app started, click **Connect to GitHub**. If a revocation fails, the error dialog has an **Export Error Log…** button.
 
 **Export Issuance Log…** saves a copy of the issuance log. The save dialog opens on the Desktop with a dated name (`rhg-issuances-YYYY-MM-DD.json`); after saving, a message shows exactly where the file went so it can be attached to an email. On a Mac, the first export may ask whether the app can access the Desktop — click **Allow**. If nothing has been signed yet, the button says so instead of opening the dialog.
 
@@ -171,7 +173,11 @@ The app fetches the revocation list (`revocations.json`) alongside the registry 
 
 ## Troubleshooting
 
-In **debug builds** (any non-release version, i.e. not a tagged `vX.Y.Z`), the app writes a debug log that is truncated at startup and accumulates entries for the session. On exit, you are prompted to review it. In **release builds**, debug logging is a no-op.
+The app keeps an error log (`debug.log`) in every build. Entries older than 30 days are removed each time the app starts.
+
+**To send the log:** choose **Help → Export Error Log…** (or click **Export Error Log…** in the Revocation Failed or Submission Failed dialog). The save dialog opens on the Desktop with a dated name (`rhg-error-log-YYYY-MM-DD.log`), ready to attach to an email. The log contains app diagnostics — it may include your GitHub username and file paths, but never PINs or keys.
+
+The file itself lives here:
 
 | Platform | Path |
 |----------|------|
@@ -185,7 +191,8 @@ In **debug builds** (any non-release version, i.e. not a tagged `vX.Y.Z`), the a
 | **YubiKey not detected** | No YubiKey visible to the smart card service | Unplug and replug the key. Verify CCID is enabled: `ykman config usb` |
 | **Smart card service not available** | OS smart card service not running | macOS: built-in, should always work. Windows: ensure the "Smart Card" service is running (`services.msc`) |
 | **No signing certificate found on YubiKey (PIV slot 9c)** | Slot 9c has no certificate, or the certificate does not contain an Ed25519 key | Follow [YubiKey Setup](#yubikey-setup) to generate a key and import the certificate. Ed25519 requires firmware >= 5.7 — check with `ykman info` |
-| **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | Check `debug.log` for the actual error message |
+| **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | **Help → Export Error Log…** and send the file |
+| **Offline — Reconnect** (Registry tab) / Revoke stays disabled | GitHub couldn't be reached when the app started | Click **Offline — Reconnect** (or **Connect to GitHub** on the History tab). If it still can't connect, check your network and try again |
 | **Could not save the SVG file / PNG file / issuance log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop**. May be needed again after installing a new version |
 
 ### Verifying YubiKey readiness
@@ -204,8 +211,8 @@ In **debug builds** (any non-release version, i.e. not a tagged `vX.Y.Z`), the a
 - **GitHub token in OS keychain**: OAuth tokens are stored via `go-keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). File fallback on Linux only (0600 permissions). Token redacted from `fmt.Sprintf` output via `String()`/`GoString()` methods. Tokens expire after 90 days (enforced locally on session restore).
 - **Redirect protection**: HTTP client strips `Authorization` header on cross-origin redirects (allows `*.github.com` only).
 - **Input sanitization**: All untrusted GitHub API responses are sanitized before logging (control characters replaced, truncated to 500 runes). User-facing error messages are mapped to safe generic text.
-- **Panic recovery**: The main goroutine and all spawned goroutines (`safeGo`) catch panics, write a stack trace to `debug.log` and stderr, and show an error dialog instead of silently crashing.
-- **Auto error reporting**: Fatal errors and signing failures offer to file a GitHub issue automatically (via `errorreport` package). If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS, error type, and the last 50 lines of the debug log (sanitized).
+- **Panic recovery**: The main goroutine and all spawned goroutines (`safeGo`) catch panics, write a stack trace to the error log (`debug.log`) and stderr, and show an error dialog instead of silently crashing.
+- **Auto error reporting**: Fatal errors and signing failures offer to file a GitHub issue automatically (via `errorreport` package). If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS and error type — never the error log, because they are posted without a preview. Send the log deliberately with **Help → Export Error Log…**.
 
 ## Architecture
 
@@ -230,8 +237,8 @@ go/
 │   ├── revocation_test.go
 │   ├── sanitize.go      # SanitizeForLog + StripControlChars: C0, C1, DEL, bidi (shared by gui + ghapi + debuglog)
 │   └── sign.go          # Signing orchestrator (BuildPayload, HandleSign, BuildVerifyURL)
-├── debuglog/            # Debug logging (active in non-release builds only)
-│   └── debuglog.go      # Append-only timestamped file logger; no-op when path is empty
+├── debuglog/            # Always-on error log (debug.log), 30-day retention
+│   └── debuglog.go      # Append-only timestamped file logger, Prune, stdlib log capture
 ├── errorreport/         # Auto error reporting
 │   └── report.go        # Build issue title/body, file via GitHub API or browser fallback
 ├── gui/                 # Fyne GUI (signing app)
@@ -239,6 +246,7 @@ go/
 │   ├── bulk_flow.go     # Bulk sign orchestration (Fyne-free): load plan, PIN once, run
 │   ├── bulk_sign.go     # Bulk sign dialogs: file pick, confirm, progress, summary + export
 │   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi), Export Issuance Log
+│   ├── errorlog_export.go # Help → Export Error Log… save flow; ShowErrorWithLogExport error dialog
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display + Report Issue button
 │   ├── signflow.go      # Extracted signing workflow (testable)
@@ -247,7 +255,7 @@ go/
 ├── ghapi/               # GitHub API client + OAuth device flow
 │   ├── keyring.go       # Keyring interface (OS keychain + FakeKeyring for tests)
 │   ├── auth.go          # OAuth device flow, token storage, session restore
-│   ├── client.go        # GitHub REST API (branches, contents, PRs); safeRedirect, Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath
+│   ├── client.go        # GitHub REST API (branches, contents, PRs); safeRedirect, Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath; UserMessage (safe user-facing error text)
 │   ├── commits.go       # FetchRegistryCommits(baseURL, perPage, etag); commitClient with safeRedirect
 │   ├── commits_test.go
 │   └── issues.go        # CreateIssue (used by errorreport)

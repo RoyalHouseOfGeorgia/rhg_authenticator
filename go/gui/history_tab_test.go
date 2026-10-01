@@ -2,6 +2,7 @@ package gui
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
 
+	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
@@ -202,5 +204,36 @@ func TestDesktopDir(t *testing.T) {
 	}
 	if _, ok := desktopDir(); !ok {
 		t.Error("desktopDir() = false with a Desktop folder")
+	}
+}
+
+// TestRevokeFailureAction pins the revocation-PR error classification: only a
+// 401 (directly or wrapped) restarts login; every other error maps to
+// ghapi.UserMessage and never echoes the raw error text into the dialog.
+func TestRevokeFailureAction(t *testing.T) {
+	const sessionExpired = "Your GitHub session expired. Please log in again."
+	secret := "dial tcp internal.example:443: secret-detail"
+	tests := []struct {
+		name             string
+		err              error
+		wantUnauthorized bool
+	}{
+		{"401", &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}, true},
+		{"wrapped 401", fmt.Errorf("create branch: %w", &ghapi.APIError{StatusCode: 401}), true},
+		{"non-401", &ghapi.APIError{StatusCode: 500, Message: secret}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			unauthorized, msg := revokeFailureAction(tc.err)
+			if unauthorized != tc.wantUnauthorized {
+				t.Errorf("unauthorized = %v, want %v", unauthorized, tc.wantUnauthorized)
+			}
+			if tc.wantUnauthorized && msg != sessionExpired {
+				t.Errorf("msg = %q, want %q", msg, sessionExpired)
+			}
+			if strings.Contains(msg, "secret-detail") {
+				t.Errorf("msg leaks raw error text: %q", msg)
+			}
+		})
 	}
 }

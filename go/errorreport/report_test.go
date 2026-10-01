@@ -4,12 +4,10 @@ package errorreport
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -67,8 +65,8 @@ func isValidUTF8(s string) bool {
 
 // --- BuildIssueBody ---
 
-func TestBuildIssueBody_NoDebugLog(t *testing.T) {
-	body := BuildIssueBody("v1.2.3", "signing", "signature failed", "")
+func TestBuildIssueBody_Fields(t *testing.T) {
+	body := BuildIssueBody("v1.2.3", "signing", "signature failed")
 
 	assertContains(t, body, "**Version:** v1.2.3")
 	assertContains(t, body, "**OS:** "+runtime.GOOS+"/"+runtime.GOARCH)
@@ -76,74 +74,16 @@ func TestBuildIssueBody_NoDebugLog(t *testing.T) {
 	assertContains(t, body, "**Error:** signature failed")
 	assertContains(t, body, "*Auto-reported by RHG Authenticator*")
 
-	if strings.Contains(body, "Debug log") {
-		t.Error("body should not contain debug log section when path is empty")
-	}
-}
-
-func TestBuildIssueBody_WithDebugLog(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "debug.log")
-
-	var lines []string
-	for i := range 60 {
-		lines = append(lines, lineN(i))
-	}
-	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	body := BuildIssueBody("dev-abc1234", "internal", "panic", logPath)
-
-	assertContains(t, body, "**Debug log (last 50 lines):**")
-	// First 10 lines (0-9) should be trimmed; line 10 onward should remain.
-	if strings.Contains(body, "line-00009\n") {
-		t.Error("body should not contain lines outside tail window")
-	}
-	assertContains(t, body, "line-00059")
-	assertContains(t, body, "line-00010")
-}
-
-func TestBuildIssueBody_MissingDebugLog(t *testing.T) {
-	body := BuildIssueBody("v1.0.0", "network", "timeout", "/no/such/file")
-	if strings.Contains(body, "Debug log") {
-		t.Error("body should omit debug log for missing file")
-	}
-}
-
-func TestBuildIssueBody_EmptyDebugLog(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "empty.log")
-	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	body := BuildIssueBody("v1.0.0", "hardware", "no key", logPath)
-	if strings.Contains(body, "Debug log") {
-		t.Error("body should omit debug log for empty file")
-	}
 }
 
 func TestBuildIssueBody_ControlCharsStripped(t *testing.T) {
 	msg := "error\x00with\x1bcontrol\u202achars"
-	body := BuildIssueBody("v1.0.0", "internal", msg, "")
+	body := BuildIssueBody("v1.0.0", "internal", msg)
 	if strings.ContainsAny(body, "\x00\x1b") {
 		t.Error("body contains control characters that should have been stripped")
 	}
 	if strings.Contains(body, "\u202a") {
 		t.Error("body contains bidi override that should have been stripped")
-	}
-}
-
-func TestBuildIssueBody_InvalidUTF8InLog(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "bad.log")
-	if err := os.WriteFile(logPath, []byte("valid\xff\xfeinvalid\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	body := BuildIssueBody("v1.0.0", "internal", "err", logPath)
-	assertContains(t, body, "Debug log")
-	if strings.ToValidUTF8(body, "\xff") != body {
-		t.Error("body contains invalid UTF-8 sequences")
 	}
 }
 
@@ -362,7 +302,7 @@ func TestReportIssue_TokenNotInBody(t *testing.T) {
 	}
 
 	token := "gho_supersecrettoken123"
-	body := BuildIssueBody("v1.0.0", "internal", "error occurred", "")
+	body := BuildIssueBody("v1.0.0", "internal", "error occurred")
 
 	if strings.Contains(body, token) {
 		t.Error("issue body contains token")
@@ -375,41 +315,7 @@ func TestReportIssue_TokenNotInBody(t *testing.T) {
 	}
 }
 
-// --- readTail ---
-
-func TestReadTail_ExactlyNLines(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "exact.log")
-
-	var lines []string
-	for i := range debugLogTailLines {
-		lines = append(lines, lineN(i))
-	}
-	os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
-
-	tail := readTail(path, debugLogTailLines)
-	count := strings.Count(tail, "\n") + 1
-	if count != debugLogTailLines {
-		t.Errorf("tail has %d lines, want %d", count, debugLogTailLines)
-	}
-}
-
-func TestReadTail_FewerThanNLines(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "few.log")
-	os.WriteFile(path, []byte("line1\nline2\nline3\n"), 0o600)
-
-	tail := readTail(path, debugLogTailLines)
-	if !strings.Contains(tail, "line1") || !strings.Contains(tail, "line3") {
-		t.Errorf("tail = %q, want all 3 lines", tail)
-	}
-}
-
 // --- helpers ---
-
-func lineN(n int) string {
-	return fmt.Sprintf("line-%05d", n)
-}
 
 func assertContains(t *testing.T, s, sub string) {
 	t.Helper()

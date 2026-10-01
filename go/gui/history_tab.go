@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	stdlog "log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
@@ -49,13 +51,20 @@ func shouldEnableRevoke(clientNil, cacheReady bool, selected *log.IssuanceRecord
 // NewHistoryTab creates the issuance history tab UI. It returns the tab content
 // and a refreshLoginState closure that re-syncs the login-dependent UI (the
 // sign-in button's visibility and the Revoke button's enablement); the caller
-// invokes it whenever GitHub login state changes.
-func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghapi.Client, loginFn func(), window fyne.Window) (*fyne.Container, func()) {
+// invokes it whenever GitHub login state changes. loginFn is invoked by the
+// "Connect to GitHub" button (logged out, or logged in but offline);
+// onUnauthorized is invoked after the operator dismisses the "Session Expired"
+// dialog shown when a revocation PR fails with HTTP 401. Both run on the Fyne
+// main thread.
+func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghapi.Client, loginFn func(), onUnauthorized func(), window fyne.Window) (*fyne.Container, func()) {
 	var allRecords []log.IssuanceRecord
 	var filtered []log.IssuanceRecord
 	var selectedRecord *log.IssuanceRecord
 	var revokedHashes map[string]bool // key = lowercase payload_sha256
 	var cachedRevocationList *core.RevocationList
+
+	// logPath lives in the data dir, alongside the debug log.
+	debugLogPath := filepath.Join(filepath.Dir(logPath), debuglog.FileName)
 
 	searchEntry := widget.NewEntry()
 	searchEntry.SetPlaceHolder("Search by recipient...")
@@ -154,6 +163,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				// Marshal.
 				content, err := json.MarshalIndent(updatedList, "", "  ")
 				if err != nil {
+					stdlog.Printf("error: marshal revocation list failed: %s", core.SanitizeForLog(err.Error()))
 					fyne.Do(func() {
 						dialog.ShowError(fmt.Errorf("failed to prepare revocation data"), window)
 					})
@@ -163,8 +173,16 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 
 				pr, err := client.CreateRevocationPR(ctx, content, rec.PayloadSHA256)
 				if err != nil {
+					stdlog.Printf("error: revocation PR failed: %s", core.SanitizeForLog(err.Error()))
+					unauthorized, msg := revokeFailureAction(err)
 					fyne.Do(func() {
-						dialog.ShowError(fmt.Errorf("failed to submit revocation"), window)
+						if unauthorized {
+							d := dialog.NewInformation("Session Expired", msg, window)
+							d.SetOnClosed(onUnauthorized)
+							d.Show()
+							return
+						}
+						ShowErrorWithLogExport("Revocation Failed", msg, debugLogPath, window)
 					})
 					return
 				}
@@ -188,7 +206,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		go func() {
 			revList, err := registry.FetchRevocationList(revocationURL)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "history: failed to fetch revocation list: %s\n", core.SanitizeForLog(err.Error()))
+				stdlog.Printf("history: failed to fetch revocation list: %s", core.SanitizeForLog(err.Error()))
 				fyne.Do(func() {
 					revokeButton.Disable()
 					revocationStatus.Importance = widget.WarningImportance
@@ -213,7 +231,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	loadRecords := func() {
 		records, err := log.ReadLog(logPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "history: failed to read log: %v\n", err)
+			stdlog.Printf("history: failed to read log: %s", core.SanitizeForLog(err.Error()))
 			dialog.ShowError(fmt.Errorf("unable to load history"), window)
 			return
 		}
@@ -238,10 +256,12 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		fetchRevocations()
 	})
 
-	// signInButton lets an unauthenticated operator start GitHub login without
-	// leaving the History tab. Shown only when no usable client exists; login is
-	// owned by the Registry tab (the single source of login-state truth).
-	signInButton := widget.NewButton("Login to GitHub", func() { loginFn() })
+	// signInButton lets the operator (re)establish a GitHub session without
+	// leaving the History tab: it starts device login when logged out, or
+	// retries session restore when logged in but offline. Shown only when no
+	// usable client exists; login is owned by the Registry tab (the single
+	// source of login-state truth).
+	signInButton := widget.NewButton("Connect to GitHub", func() { loginFn() })
 
 	// refreshLoginState re-syncs the login-dependent UI. Reads ghClientFn() once
 	// and reuses the result for both the button visibility and the Revoke gate.
@@ -266,6 +286,16 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	buttonBar := container.NewHBox(refreshButton, signInButton, revokeButton, exportButton, revocationStatus)
 	topBar := container.NewBorder(nil, nil, nil, buttonBar, searchEntry)
 	return container.NewBorder(topBar, nil, nil, nil, list), refreshLoginState
+}
+
+// revokeFailureAction classifies a revocation-PR error: a 401 means the
+// session expired (caller restarts login); anything else maps to a
+// user-facing message.
+func revokeFailureAction(err error) (unauthorized bool, msg string) {
+	if ghapi.IsUnauthorized(err) {
+		return true, "Your GitHub session expired. Please log in again."
+	}
+	return false, ghapi.UserMessage(err)
 }
 
 // filterRecords returns records matching the query (case-insensitive substring
@@ -320,7 +350,7 @@ func onIssuanceExportTapped(logPath string, window fyne.Window) {
 		return
 	}
 	if readErr != nil {
-		fmt.Fprintf(os.Stderr, "history: failed to read log for export: %v\n", readErr)
+		stdlog.Printf("history: failed to read log for export: %s", core.SanitizeForLog(readErr.Error()))
 		dialog.ShowError(errors.New("could not read the issuance log"), window)
 		return
 	}
@@ -349,7 +379,7 @@ func onIssuanceExportChosen(data []byte, window fyne.Window, writer fyne.URIWrit
 	// Fyne reports an uncreatable destination as a writer plus a non-nil
 	// error, so err must be checked before writer.
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "history: export save failed: %v\n", err)
+		stdlog.Printf("history: export save failed: %s", core.SanitizeForLog(err.Error()))
 		showSaveError(window, "issuance log")
 		return
 	}
@@ -359,7 +389,7 @@ func onIssuanceExportChosen(data []byte, window fyne.Window, writer fyne.URIWrit
 	_, werr := writer.Write(data)
 	cerr := writer.Close()
 	if werr != nil || cerr != nil {
-		fmt.Fprintf(os.Stderr, "history: export write failed: %v\n", errors.Join(werr, cerr))
+		stdlog.Printf("history: export write failed: %s", core.SanitizeForLog(errors.Join(werr, cerr).Error()))
 		showSaveError(window, "issuance log")
 		return
 	}

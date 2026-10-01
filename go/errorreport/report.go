@@ -3,11 +3,9 @@
 package errorreport
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"runtime"
 	"strings"
 
@@ -20,7 +18,6 @@ const (
 	repoName            = "rhg_authenticator"
 	maxTitleLen         = 256
 	maxBrowserBodyBytes = 1500
-	debugLogTailLines   = 50
 	issueNewURL         = "https://github.com/" + repoOwner + "/" + repoName + "/issues/new"
 )
 
@@ -41,7 +38,10 @@ func BuildIssueTitle(errType, shortDesc string) string {
 }
 
 // BuildIssueBody constructs the markdown body for an auto-reported issue.
-func BuildIssueBody(version, errType, errMsg, debugLogPath string) string {
+// It never includes the error log: issues are posted to the public tracker
+// without a preview, so operators send the log deliberately via
+// Help → Export Error Log….
+func BuildIssueBody(version, errType, errMsg string) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("**Version:** %s\n", version))
@@ -49,41 +49,8 @@ func BuildIssueBody(version, errType, errMsg, debugLogPath string) string {
 	b.WriteString(fmt.Sprintf("**Error type:** %s\n", errType))
 	b.WriteString(fmt.Sprintf("**Error:** %s\n", core.StripControlChars(errMsg)))
 
-	if tail := readTail(debugLogPath, debugLogTailLines); tail != "" {
-		b.WriteString("\n**Debug log (last 50 lines):**\n```\n")
-		b.WriteString(tail)
-		b.WriteString("\n```\n")
-	}
-
 	b.WriteString("\n---\n*Auto-reported by RHG Authenticator*\n")
 	return b.String()
-}
-
-// readTail returns the last n lines of the file at path, or "" if the
-// file is missing, empty, or unreadable. The result is sanitized to
-// valid UTF-8.
-func readTail(path string, n int) string {
-	if path == "" {
-		return ""
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-		if len(lines) > n {
-			lines = lines[1:]
-		}
-	}
-	if len(lines) == 0 {
-		return ""
-	}
-	return strings.ToValidUTF8(strings.Join(lines, "\n"), "")
 }
 
 // ReportIssue attempts to file a GitHub issue via the API. If the user

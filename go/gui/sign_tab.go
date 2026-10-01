@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -45,8 +44,9 @@ var honorTitles = []string{
 type SignTabConfig struct {
 	LogPath string
 	DataDir string
-	Keyring ghapi.Keyring // for issue reporting (may be nil)
-	SafeGo  func(func())  // panic-safe goroutine launcher (may be nil — falls back to plain go)
+	Keyring ghapi.Keyring    // for issue reporting (may be nil)
+	SafeGo  func(func())     // panic-safe goroutine launcher (may be nil — falls back to plain go)
+	Logger  *debuglog.Logger // shared app diagnostic log (nil → no-op)
 }
 
 // QR code output sizes.
@@ -59,7 +59,7 @@ const (
 // function must be called on application shutdown to securely clear the
 // PIN cache.
 func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func()) {
-	logger := debuglog.New(filepath.Join(config.DataDir, "debug.log"))
+	logger := config.Logger
 	pinCache := yubikey.NewPinCache()
 
 	recipientEntry := widget.NewEntry()
@@ -161,7 +161,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 					if !errors.Is(err, ErrSigningCancelled) && !errors.Is(err, ErrPINEntryTimedOut) && config.Keyring != nil {
 						reportBtn := widget.NewButton("Report Issue", func() {
 							title := errorreport.BuildIssueTitle("signing", msg)
-							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error(), logger.Path())
+							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error())
 							resultURL, _ := errorreport.ReportIssue(context.Background(), config.Keyring, config.DataDir, title, body)
 							if resultURL != "" {
 								if u, parseErr := url.Parse(resultURL); parseErr == nil {
@@ -349,7 +349,7 @@ func friendlyYubiKeyError(err error, logger *debuglog.Logger) string {
 	case core.HwErrHardware:
 		return "YubiKey not detected. Ensure the key is plugged in."
 	default:
-		return "Failed to connect to YubiKey. Check debug.log for details."
+		return "Failed to connect to YubiKey. Use Help → Export Error Log… for details."
 	}
 }
 
@@ -399,15 +399,15 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	if errors.As(err, &sfe) {
 		switch sfe.Phase {
 		case PhaseExportKey:
-			return "Failed to read YubiKey. Check debug.log for details."
+			return "Failed to read YubiKey. Use Help → Export Error Log… for details."
 		case PhaseQR:
-			return "QR generation failed. Check debug.log for details."
+			return "QR generation failed. Use Help → Export Error Log… for details."
 		case PhaseSign:
 			logger.Log(core.SanitizeForLog(sfe.Error()))
-			return "Signing failed. Check debug.log for details."
+			return "Signing failed. Use Help → Export Error Log… for details."
 		default:
 			logger.Log(core.SanitizeForLog(sfe.Error()))
-			return "Unexpected error. Check debug.log for details."
+			return "Unexpected error. Use Help → Export Error Log… for details."
 		}
 	}
 	// Adapter open failures arrive here (not wrapped in SignFlowError).
@@ -423,7 +423,7 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	if cat != "" {
 		return friendlyYubiKeyError(err, logger)
 	}
-	return "Signing failed. Check debug.log for details."
+	return "Signing failed. Use Help → Export Error Log… for details."
 }
 
 // buildFilename constructs a default filename for saving QR code output.
