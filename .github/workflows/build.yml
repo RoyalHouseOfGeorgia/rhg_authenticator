@@ -55,6 +55,10 @@ jobs:
       # with the pre-commit hook. Prints the exact command to fix a mismatch.
       - name: Verify verify.js SRI hash
         run: npm run check:sri
+      # check:sri rebuilds verify.js; fail if the committed bundle differs from that build,
+      # since deploy-pages publishes verify/ exactly as committed.
+      - name: Committed verify bundle matches fresh build
+        run: git diff --exit-code -- verify/verify.js verify/index.html
       - run: npm audit --audit-level=moderate
 
   security:

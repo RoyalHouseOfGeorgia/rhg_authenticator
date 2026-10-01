@@ -204,9 +204,8 @@ export function validateRegistry(obj: unknown): Registry {
   }
 
   // Reject extra top-level fields.
-  // Note: Object.keys does NOT enumerate __proto__ after JSON.parse, so this
-  // check cannot catch __proto__ at the registry level. Not a real attack vector
-  // since the value is inaccessible via Object.keys iteration.
+  // JSON.parse defines "__proto__" as an own enumerable key, so this allow-list
+  // also rejects it (and "constructor") at the registry level.
   for (const key of Object.keys(record)) {
     if (!REGISTRY_FIELDS.has(key)) {
       throw new Error(`unexpected field: ${key}`);

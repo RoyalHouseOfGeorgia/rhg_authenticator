@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -483,7 +484,9 @@ func restrictionsText(entry core.KeyEntry) string {
 		if core.StripControlChars(h) != h {
 			return "(invalid)"
 		}
-		trimmed := strings.TrimSpace(h)
+		// Trim like JS String.prototype.trim (which, unlike TrimSpace, also strips
+		// U+FEFF) so this column agrees with the verify page.
+		trimmed := strings.TrimFunc(h, func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' })
 		if trimmed == "" {
 			continue
 		}

@@ -464,6 +464,9 @@ func TestRestrictionsText(t *testing.T) {
 		{"bidi control char", `["A\u202e"]`, "(invalid)"},
 		{"C0 control char", `["A\u0001B"]`, "(invalid)"},
 		{"tab only is control not blank", `["\t"]`, "(invalid)"},
+		// U+FEFF: JS trim() strips it, so the verify page treats these as blank / untrimmed.
+		{"BOM only is blank like JS trim", `["\ufeff"]`, "(none)"},
+		{"trailing BOM is untrimmed like JS trim", `["Medal\ufeff"]`, "(invalid)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
