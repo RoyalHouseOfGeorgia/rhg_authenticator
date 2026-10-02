@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	_ "embed"
 	"fmt"
 	"image/color"
@@ -22,12 +21,12 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/errorreport"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/regmgr"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/update"
 )
 
@@ -35,7 +34,7 @@ import (
 var appIconData []byte
 
 func main() {
-	// Catch panics on the main goroutine. Spawned goroutines use safeGo.
+	// Catch panics on the main goroutine. Spawned goroutines use safego.Go.
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -70,12 +69,12 @@ func main() {
 	// 2. Data directory.
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		fatalDialog(window, fmt.Sprintf("Cannot determine config directory: %v", err), nil, nil, "")
+		fatalDialog(window, fmt.Sprintf("Cannot determine config directory: %v", err))
 		return
 	}
 	dataDir := filepath.Join(configDir, "rhg-authenticator")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		fatalDialog(window, fmt.Sprintf("Cannot create data directory: %v", err), nil, nil, "")
+		fatalDialog(window, fmt.Sprintf("Cannot create data directory: %v", err))
 		return
 	}
 
@@ -88,6 +87,13 @@ func main() {
 		logger.Logf("warning: log prune failed: %v", pruneErr)
 	}
 	debuglog.CaptureStdlib(logger)
+	safego.SetPanicHandler(func(r any, stack []byte) {
+		fmt.Fprintf(os.Stderr, "goroutine panic: %v\n%s\n", r, stack)
+		logger.Logf("PANIC (goroutine): %v %s", r, stack)
+		fyne.Do(func() {
+			dialog.ShowError(fmt.Errorf("an internal error occurred — please restart"), window)
+		})
+	})
 	startMsg := "RHG Authenticator starting (version: " + buildinfo.Version + ")"
 	if buildinfo.IsDebug() {
 		startMsg += " (debug mode)"
@@ -115,7 +121,6 @@ func main() {
 		LogPath: logPath,
 		DataDir: dataDir,
 		Keyring: kr,
-		SafeGo:  func(fn func()) { safeGo(fn, logger, window) },
 		Logger:  logger,
 	}, window)
 	regTab := regmgr.NewRegistryTab(window, dataDir)
@@ -159,7 +164,7 @@ func main() {
 	// so a logged-in session loads from main via the API (see regmgr.Fetch).
 
 	// 9. Non-blocking version check.
-	safeGo(func() {
+	safego.Go(func() {
 		result := update.Check("RoyalHouseOfGeorgia", "rhg_authenticator", buildinfo.Version)
 		logger.Logf("version check: update=%v latest=%s", result.UpdateAvailable, result.LatestVersion)
 		if result.UpdateAvailable {
@@ -174,31 +179,16 @@ func main() {
 				))
 			})
 		}
-	}, logger, window)
+	})
 
 	window.ShowAndRun()
 }
 
 // fatalDialog shows an error dialog and exits after the user dismisses it.
-// If logger is non-nil, the error is logged before the dialog is shown.
-// Best-effort issue reporting is attempted; results are shown in the dialog.
-func fatalDialog(window fyne.Window, message string, logger *debuglog.Logger, kr ghapi.Keyring, configDir string) {
-	logger.Log("FATAL: " + message)
-
-	// Best-effort issue reporting (skip if keyring not yet initialized).
-	var reportLine string
-	if kr != nil {
-		title := errorreport.BuildIssueTitle("internal", message)
-		body := errorreport.BuildIssueBody(buildinfo.Version, "internal", message)
-		if resultURL, reportErr := errorreport.ReportIssue(context.Background(), kr, configDir, title, body); reportErr == nil && resultURL != "" {
-			reportLine = "\n\nError reported: " + resultURL
-		}
-	}
-	if reportLine == "" {
-		reportLine = "\n\nPlease report this error at https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/issues"
-	}
-
-	d := dialog.NewError(fmt.Errorf("%s%s", message, reportLine), window)
+// It runs before the data directory (and so the error log) exists, so the
+// user is asked to report the error manually.
+func fatalDialog(window fyne.Window, message string) {
+	d := dialog.NewError(fmt.Errorf("%s\n\nPlease report this error at https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/issues", message), window)
 	d.SetOnClosed(func() {
 		os.Exit(1)
 	})
@@ -245,29 +235,6 @@ func buildCloseHandler(
 				}
 			}, window)
 	}
-}
-
-// safeGo runs fn in a new goroutine with panic recovery. On panic:
-// 1. Writes stack trace to stderr (guaranteed by OS).
-// 2. Best-effort write to debug.log.
-// 3. Shows an error dialog via fyne.Do.
-// The goroutine returns after recovery — user is informed instead of staring at a frozen UI.
-func safeGo(fn func(), logger *debuglog.Logger, window fyne.Window) {
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				buf := make([]byte, 4096)
-				n := runtime.Stack(buf, false)
-				stack := string(buf[:n])
-				fmt.Fprintf(os.Stderr, "goroutine panic: %v\n%s\n", r, stack)
-				logger.Logf("PANIC (goroutine): %v %s", r, stack)
-				fyne.Do(func() {
-					dialog.ShowError(fmt.Errorf("an internal error occurred — please restart"), window)
-				})
-			}
-		}()
-		fn()
-	}()
 }
 
 // rhgTheme implements fyne.Theme with a Microsoft Office / Fluent UI color scheme.

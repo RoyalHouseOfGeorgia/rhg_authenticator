@@ -24,6 +24,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 )
 
 // appState holds the mutable state for the registry manager UI.
@@ -113,7 +114,7 @@ func (rt *RegistryTab) Fetch() {
 	// Read on the main thread. nil when logged out or offline (offline skips the
 	// API attempt and its timeout and goes straight to the Pages copy).
 	client := rt.ClientForHistory()
-	go func() {
+	safego.Go(func() {
 		reg, err := fetchRegistry(client)
 		var base []byte
 		if err == nil {
@@ -136,7 +137,7 @@ func (rt *RegistryTab) Fetch() {
 			rt.table.Refresh()
 			rt.statusLabel.SetText("Loaded from registry server")
 		})
-	}()
+	})
 }
 
 // fetchRegistry loads the registry from main via the GitHub API when a client
@@ -237,7 +238,7 @@ func (rt *RegistryTab) startLogin() {
 
 	rt.statusLabel.SetText("Requesting device code...")
 
-	go func() {
+	safego.Go(func() {
 		defer rt.loggingIn.Store(false)
 		dcr, err := ghapi.RequestDeviceCode(ctx)
 		if err != nil {
@@ -280,7 +281,7 @@ func (rt *RegistryTab) startLogin() {
 		}
 
 		fyne.Do(func() { rt.completeLogin(tok, username, valErr, cancel) })
-	}()
+	})
 }
 
 // showLoginDialog displays the device code dialog for user interaction.
@@ -317,12 +318,12 @@ func (rt *RegistryTab) showLoginDialog(ctx context.Context, cancel context.Cance
 	d.Show()
 
 	// Dismiss dialog automatically when polling completes.
-	go func() {
+	safego.Go(func() {
 		<-ctx.Done()
 		fyne.Do(func() {
 			d.Hide()
 		})
-	}()
+	})
 }
 
 // HandleUnauthorized reacts to a GitHub 401: it clears the stored token,
@@ -367,7 +368,7 @@ func (rt *RegistryTab) StartLoginOrReconnect() {
 // ends logged out (401, expired token, load failure) falls through to the
 // device login flow.
 func (rt *RegistryTab) restoreSession(interactive bool) {
-	go func() {
+	safego.Go(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		tok, username, loggedIn, offline, err := restoreSessionFunc(ctx, rt.kr, rt.configDir)
@@ -401,7 +402,7 @@ func (rt *RegistryTab) restoreSession(interactive bool) {
 				rt.startLogin()
 			}
 		})
-	}()
+	})
 }
 
 // handleSubmitError handles PR creation errors — shows a dialog and, if the
@@ -507,7 +508,7 @@ func (rt *RegistryTab) submitForReview() {
 
 		rt.statusLabel.SetText("Creating pull request...")
 
-		go func() {
+		safego.Go(func() {
 			defer rt.submitting.Store(false)
 
 			submitCtx, submitCancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -521,7 +522,7 @@ func (rt *RegistryTab) submitForReview() {
 			}
 
 			fyne.Do(func() { rt.handleSubmitSuccess(pr) })
-		}()
+		})
 	})
 }
 

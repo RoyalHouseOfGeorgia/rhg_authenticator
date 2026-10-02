@@ -220,11 +220,15 @@ func TestValidateRegistry_InvalidToDate(t *testing.T) {
 	}
 }
 
-func TestValidateRegistry_DateRangeInvalid(t *testing.T) {
+func TestValidateRegistry_FromAfterToAccepted(t *testing.T) {
 	data := `{"keys": [{"authority":"A","from":"2025-06-01","to":"2025-01-01","algorithm":"Ed25519","public_key":"AAAA","note":""}]}`
-	_, err := ValidateRegistry([]byte(data))
-	if err == nil || !strings.Contains(err.Error(), "invalid date range") {
-		t.Fatalf("expected date range error, got %v", err)
+	reg, err := ValidateRegistry([]byte(data))
+	if err != nil {
+		t.Fatalf("expected from after to to be accepted (from is informational), got %v", err)
+	}
+	k := reg.Keys[0]
+	if k.From != "2025-06-01" || k.To == nil || *k.To != "2025-01-01" {
+		t.Fatalf("entry dates = from %q to %v, want 2025-06-01 / 2025-01-01", k.From, k.To)
 	}
 }
 
@@ -504,6 +508,26 @@ func TestIsDateInRange_AfterTo(t *testing.T) {
 	key.To = strPtr("2025-12-31")
 	if IsDateInRange("2026-01-01", key) {
 		t.Error("expected false for date after to")
+	}
+}
+
+func TestIsDateInRange_FromAfterTo(t *testing.T) {
+	// A key registered with a future from and then revoked (to set earlier)
+	// is bounded by to alone.
+	key := KeyEntry{From: "2026-12-01", To: strPtr("2026-10-02")}
+	cases := []struct {
+		date string
+		want bool
+	}{
+		{"2026-01-15", true},  // before to (and before from)
+		{"2026-10-02", true},  // on to (inclusive)
+		{"2026-10-03", false}, // after to, before from
+		{"2026-12-15", false}, // after to and after from
+	}
+	for _, c := range cases {
+		if got := IsDateInRange(c.date, key); got != c.want {
+			t.Errorf("IsDateInRange(%q) = %v, want %v", c.date, got, c.want)
+		}
 	}
 }
 

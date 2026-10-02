@@ -10,6 +10,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 )
 
 // RegistryStats holds computed statistics about a key registry.
@@ -73,7 +74,7 @@ func NewStatusBar(reg core.Registry, online bool, lastUpdateCh <-chan string) *f
 		updatedLabel,
 	)
 
-	go func() {
+	safego.Go(func() {
 		select {
 		case date := <-lastUpdateCh:
 			t, err := time.Parse(time.RFC3339, date)
@@ -89,7 +90,7 @@ func NewStatusBar(reg core.Registry, online bool, lastUpdateCh <-chan string) *f
 				updatedLabel.SetText("Last update: unknown")
 			})
 		}
-	}()
+	})
 
 	return bar
 }

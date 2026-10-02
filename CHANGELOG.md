@@ -55,8 +55,20 @@ patch component for fix-only releases (`v1.3.1`).
   when clicked. Previously it only offered to log out. Submit for Review does
   the same while offline. The History tab's button now reads
   **Connect to GitHub**.
+- **A key's `from` date may be later than its `to` date.** `from` is
+  informational, so the verification page, the app and the Registry form no
+  longer reject such an entry — for example when revoking a key that was
+  registered with a future start date. Previously one such entry made the
+  verification page reject the whole registry ("Unable to verify" for every
+  credential). App v1.4 and earlier still reject it, so don't add one until
+  every operator runs this version.
+- **QR script matches the app.** `scripts/rhg_qr.py` uses error-correction level
+  Q (it used H, giving denser codes) and refuses URLs over 625 characters.
 
 ### Fixed
+- **Background errors no longer close the app.** An unexpected error in any
+  background task is written to the error log and shown as "an internal error
+  occurred — please restart", instead of the app quitting with nothing logged.
 - **Too-long credentials are refused before signing.** A credential whose
   verification URL wouldn't fit a printable QR code used to be signed and
   logged, then fail at the QR step — and every retry failed the same way. It is

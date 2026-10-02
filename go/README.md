@@ -148,7 +148,7 @@ The **Registry** tab (built into the signing app) manages the key registry:
 - **Auto-fetches** the registry on startup — from GitHub (`main`) when you're logged in, otherwise from the published site, which can lag `main` by 10–15 minutes after a merge
 - **Import from YubiKey** — reads the Ed25519 public key directly from an inserted YubiKey
 - **Import certificates** (`.crt`/`.pem`) — extracts Ed25519 public keys from certificate files
-- **Add/Edit** registry entries with full validation (entries cannot be deleted — revoke by setting an expiry date)
+- **Add/Edit** registry entries with full validation (entries cannot be deleted — revoke by setting an expiry date; the expiry may be earlier than the informational From date)
 - **Calendar date pickers** for key validity ranges
 - **Submit for Review** — creates a GitHub pull request with the updated registry for admin review. It's refused if the registry on GitHub changed since you fetched it: click **Fetch from Server**, re-apply your edits, and submit again
 - **GitHub login** via OAuth Device Flow (enter a code in your browser — no technical setup required)
@@ -218,14 +218,14 @@ The file itself lives here:
 - **GitHub token in OS keychain**: OAuth tokens are stored via `go-keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). File fallback on Linux only (0600 permissions). Token redacted from `fmt.Sprintf` output via `String()`/`GoString()` methods. Tokens expire after 90 days (enforced locally on session restore).
 - **Redirect protection**: HTTP client strips `Authorization` header on cross-origin redirects (allows `*.github.com` only).
 - **Input sanitization**: All untrusted GitHub API responses are sanitized before logging (control characters replaced, truncated to 500 runes). User-facing error messages are mapped to safe generic text.
-- **Panic recovery**: a main-goroutine panic writes a stack trace to the error log (`debug.log`) and stderr before exiting. Goroutines started via `safeGo` (signing, version check) also log the panic and show an error dialog instead of crashing.
+- **Panic recovery**: a main-goroutine panic writes a stack trace to the error log (`debug.log`) and stderr before exiting. Every background goroutine is started via `safego.Go`, which recovers a panic, logs it to stderr and the error log, and shows an error dialog instead of crashing. A guard test (`safego/safego_test.go`) fails on any bare `go` statement in production code.
 - **Error reporting** (`errorreport` package): signing failures offer a **Report Issue** button. If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS, error type and error message — never the error log, because they are posted without a preview. Send the log deliberately with **Help → Export Error Log…**. Fatal startup errors show a dialog with the issues link; they are not filed automatically.
 
 ## Architecture
 
 ```
 go/
-├── main.go              # App entry point, Fyne window, Help menu, panic recovery, safeGo, --version
+├── main.go              # App entry point, Fyne window, Help menu, panic recovery, panic handler, --version
 ├── icon.png             # App icon (embedded)
 ├── packaging/macos/Info.plist # macOS app bundle metadata
 ├── buildinfo/           # Build metadata
@@ -283,6 +283,8 @@ go/
 │   └── issuance.go      # Atomic JSON issuance log: append, read, dedupe (with backup)
 ├── registry/            # Registry fetch
 │   └── fetch.go         # Remote-only registry + revocation list fetch, key/authority lookup; readLimitedBody helper
+├── safego/              # Panic-safe goroutines
+│   └── safego.go        # Go (recover + handler), SetPanicHandler; guard test bans bare `go`
 ├── update/              # Version check
 │   └── check.go         # GitHub releases version check
 ├── testdata/            # Cross-language test vectors + cert fixtures

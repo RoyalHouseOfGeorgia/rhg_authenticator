@@ -25,6 +25,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/errorreport"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/qr"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
@@ -44,7 +45,6 @@ type SignTabConfig struct {
 	LogPath string
 	DataDir string
 	Keyring ghapi.Keyring    // for issue reporting (may be nil)
-	SafeGo  func(func())     // panic-safe goroutine launcher (may be nil — falls back to plain go)
 	Logger  *debuglog.Logger // shared app diagnostic log (nil → no-op)
 }
 
@@ -89,10 +89,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 	// Container for QR preview and action buttons (shown after signing).
 	resultContainer := container.NewVBox()
 
-	launchGo := func(fn func()) { go fn() }
-	if config.SafeGo != nil {
-		launchGo = config.SafeGo
-	}
+	launchGo := safego.Go
 
 	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
 		a, err := yubikey.NewYubiKeyAdapter(readPin)

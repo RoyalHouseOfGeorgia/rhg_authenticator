@@ -13,6 +13,7 @@ import (
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
@@ -106,7 +107,7 @@ func NewYubiKeyTab(reg core.Registry, online bool, window fyne.Window) *fyne.Con
 		resultArea.RemoveAll()
 		statusLabel.SetText("Checking...")
 		checkBtn.Disable()
-		go func() {
+		safego.Go(func() {
 			result := checkYubiKey(reg)
 			fyne.Do(func() {
 				checkBtn.Enable()
@@ -116,7 +117,7 @@ func NewYubiKeyTab(reg core.Registry, online bool, window fyne.Window) *fyne.Con
 					resultArea.Add(widget.NewLabel(line))
 				}
 			})
-		}()
+		})
 	}
 
 	if !online {

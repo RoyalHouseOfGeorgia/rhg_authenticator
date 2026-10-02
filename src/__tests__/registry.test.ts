@@ -293,11 +293,11 @@ describe('validateRegistry', () => {
         );
       });
 
-      it('rejects from after to (invalid date range)', () => {
+      it('accepts from after to (from is informational)', () => {
         const entry = makeEntry({ from: '2025-06-01', to: '2025-01-01' });
-        expect(() => validateRegistry({ keys: [entry] })).toThrow(
-          'invalid date range',
-        );
+        const result = validateRegistry({ keys: [entry] });
+        expect(result.keys[0].from).toBe('2025-06-01');
+        expect(result.keys[0].to).toBe('2025-01-01');
       });
 
       it('sanitizes bidi override characters in date error messages', () => {

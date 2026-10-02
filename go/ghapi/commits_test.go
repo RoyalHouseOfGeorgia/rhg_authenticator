@@ -144,6 +144,39 @@ func TestFetchRegistryCommits_UnexpectedContentType(t *testing.T) {
 	}
 }
 
+func TestFetchRegistryCommits_ContentTypeParsing(t *testing.T) {
+	tests := []struct {
+		ct     string
+		wantOK bool
+	}{
+		{"application/json", true},
+		{"application/json; charset=utf-8", true},
+		{"Application/JSON", true},
+		{"application/jsonx", false},
+		{"application/json-patch+json", false},
+		{"", false},
+		{"application/json; =bad", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ct, func(t *testing.T) {
+			ts := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tt.ct)
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("[]"))
+			})
+			defer ts.Close()
+
+			_, _, err := FetchRegistryCommits(ts.URL, 10, "")
+			if tt.wantOK && err != nil {
+				t.Errorf("Content-Type %q: unexpected error %v", tt.ct, err)
+			}
+			if !tt.wantOK && (err == nil || !strings.Contains(err.Error(), "unexpected Content-Type")) {
+				t.Errorf("Content-Type %q: error = %v, want unexpected Content-Type", tt.ct, err)
+			}
+		})
+	}
+}
+
 func TestFetchRegistryCommits_NonOKStatus(t *testing.T) {
 	ts := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

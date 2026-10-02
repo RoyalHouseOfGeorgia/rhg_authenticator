@@ -131,6 +131,7 @@ decodePublicKey(entry: KeyEntry): Uint8Array   // SPKI DER or raw → 32 bytes
 
 - `validateRegistry` rejects extra fields at both top-level and entry-level; the optional `allowed_honors` is a list of exact honor titles: absent, `null`, `[]` or an all-blank list means unrestricted (the field is omitted), blank items are skipped, and non-string, untrimmed or control-character items are rejected
 - `isDateInRange` checks only the key's `to` (inclusive); `from` is informational, so backdated credentials verify
+- `validateRegistry` does not compare `from` and `to`: `from` may be later than `to` (e.g. a key registered with a future `from` and revoked today)
 - `decodePublicKey` accepts 44-byte SPKI DER (strips 12-byte prefix) or 32-byte raw keys
 
 ### Revocation

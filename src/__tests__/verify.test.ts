@@ -122,6 +122,30 @@ describe("verifyCredential", () => {
     );
   });
 
+  // 6b. Key whose from is after its to (future-dated key revoked early):
+  // the registry validates and only `to` bounds verification.
+  it("verifies against a key whose from is after its to, bounded by to only", () => {
+    const { secretKey, publicKey } = makeKeypair(3);
+    const registry = validateRegistry({
+      keys: [
+        makeKeyEntry(publicKey, { from: "2026-12-01", to: "2026-10-02" }),
+      ],
+    });
+
+    for (const date of ["2026-01-15", "2026-10-02"]) {
+      const payload = encodeCredential(validCredentialObj({ date }));
+      const result = verifyCredential(payload, sign(payload, secretKey), registry);
+      expect(result.valid, date).toBe(true);
+    }
+
+    const late = encodeCredential(validCredentialObj({ date: "2026-10-03" }));
+    const lateResult = verifyCredential(late, sign(late, secretKey), registry);
+    expect(lateResult.valid).toBe(false);
+    expect((lateResult as VerificationFailure).reason).toContain(
+      "credential date outside key validity period",
+    );
+  });
+
   // 7. Key rotation: two keys, credentials in each period validate correctly
   it("handles key rotation — validates against correct era key", () => {
     const pair1 = makeKeypair(1);
