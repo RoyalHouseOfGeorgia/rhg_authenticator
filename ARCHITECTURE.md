@@ -139,7 +139,7 @@ https://verify.royalhouseofgeorgia.ge/?p=<payload>&s=<signature>
 - `p` = Base64URL(canonical JSON bytes)
 - `s` = Base64URL(64-byte Ed25519 signature)
 
-Maximum URL length: 625 chars (conservative limit within QR error correction Q capacity).
+Maximum URL length: 625 chars (conservative limit within QR error correction Q capacity). `core.BuildPayload` enforces it (`MaxVerifyURLLength`, via `VerifyURLLength`, which measures the URL `BuildVerifyURL` would produce), so an over-long credential is refused before the PIN prompt in single and bulk signing — never signed and logged without a QR code. The verification page's own `MAX_PAYLOAD_BYTES = 2048` is unchanged.
 
 ### QR Code
 

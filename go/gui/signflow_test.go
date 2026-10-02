@@ -245,7 +245,7 @@ func TestExecuteSignFlow_AdapterOpenError(t *testing.T) {
 		return nil, nil, fmt.Errorf("pcsc daemon not running")
 	}
 
-	_, err := executeSignFlow(core.SignRequest{}, "", openAdapter, dummyReadPin, nil, nil)
+	_, err := executeSignFlow(inputReq("Distinguished service"), "", openAdapter, dummyReadPin, nil, nil)
 	if err == nil {
 		t.Fatal("expected error from adapter open")
 	}
@@ -263,7 +263,7 @@ func TestExecuteSignFlow_ExportKeyError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 
-	_, err := executeSignFlow(core.SignRequest{}, "", openAdapter, dummyReadPin, nil, logger)
+	_, err := executeSignFlow(inputReq("Distinguished service"), "", openAdapter, dummyReadPin, nil, logger)
 	if err == nil {
 		t.Fatal("expected error from ExportPublicKey")
 	}
@@ -964,8 +964,8 @@ func TestExecuteSignFlow_UnreadableLogBlocksSigning(t *testing.T) {
 	if rerr != nil {
 		t.Fatalf("debug log not written: %v", rerr)
 	}
-	if !strings.Contains(string(data), "duplicate check") {
-		t.Errorf("debug log should record the duplicate-check failure, got: %q", data)
+	if !strings.Contains(string(data), "pre-sign check") {
+		t.Errorf("debug log should record the pre-sign check failure, got: %q", data)
 	}
 }
 

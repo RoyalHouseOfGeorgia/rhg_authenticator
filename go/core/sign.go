@@ -3,9 +3,11 @@ package core
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -13,8 +15,59 @@ import (
 // VerifyBaseURL is the base URL for credential verification pages.
 const VerifyBaseURL = "https://verify.royalhouseofgeorgia.ge/"
 
-// MaxPayloadBytes is the maximum allowed size of the canonical JSON payload.
-const MaxPayloadBytes = 2048
+// MaxVerifyURLLength is the longest verification URL that fits a printable QR
+// code at error-correction level Q (minimum print size 3 cm). BuildPayload
+// refuses credentials whose URL would exceed it, before anything is signed.
+const MaxVerifyURLLength = 625
+
+// sigB64Len is the length of a base64url-encoded (unpadded) Ed25519 signature.
+var sigB64Len = base64.RawURLEncoding.EncodedLen(ed25519.SignatureSize)
+
+// ErrInvalidCredential indicates the credential fields failed validation or
+// canonicalization.
+var ErrInvalidCredential = errors.New("invalid credential data")
+
+// ErrTooLongForQR indicates the credential's verification URL would exceed
+// MaxVerifyURLLength. Match with errors.Is; use errors.As with
+// *TooLongForQRError for the overage.
+var ErrTooLongForQR = errors.New("too long to fit in a QR code")
+
+// TooLongForQRError reports how far a credential exceeds the QR capacity.
+// OverBytes approximates the number of UTF-8 bytes of credential text that
+// must be removed (each base64url character carries 3/4 of a byte).
+type TooLongForQRError struct {
+	OverBytes int
+}
+
+// Error returns a user-readable message. Georgian letters take 3 bytes in
+// UTF-8, so the Georgian estimate is OverBytes/3 rounded up.
+func (e *TooLongForQRError) Error() string {
+	return "too long to fit in a QR code by " + e.Overage() + " — shorten the detail or recipient"
+}
+
+// Overage describes the excess in letters, e.g. "about 4 letters (about 2 in
+// Georgian script)". Georgian letters take three UTF-8 bytes, so the Georgian
+// count is OverBytes/3 rounded up. "letter" is singular for a count of 1.
+func (e *TooLongForQRError) Overage() string {
+	n := e.OverBytes
+	unit := "letters"
+	if n == 1 {
+		unit = "letter"
+	}
+	return fmt.Sprintf("about %d %s (about %d in Georgian script)", n, unit, (n+2)/3)
+}
+
+// Is reports whether target is ErrTooLongForQR.
+func (e *TooLongForQRError) Is(target error) bool {
+	return target == ErrTooLongForQR
+}
+
+// VerifyURLLength returns the length of the verification URL that signing
+// payload would produce. It is derived from BuildVerifyURL so the two cannot
+// drift.
+func VerifyURLLength(payload []byte) int {
+	return len(BuildVerifyURL(Encode(payload), strings.Repeat("A", sigB64Len)))
+}
 
 // SigningAdapter abstracts hardware signing devices (e.g., YubiKey).
 // SignBytes must return exactly 64 bytes (Ed25519 signature) or an error.
@@ -60,18 +113,18 @@ func BuildPayload(req SignRequest) ([]byte, error) {
 
 	// 2. Validate credential.
 	if _, err := ValidateCredential(credObj); err != nil {
-		return nil, fmt.Errorf("invalid credential data: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidCredential, err)
 	}
 
 	// 3. Canonicalize.
 	payloadBytes, err := Canonicalize(credObj)
 	if err != nil {
-		return nil, fmt.Errorf("invalid credential data: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidCredential, err)
 	}
 
-	// 4. Size check.
-	if len(payloadBytes) > MaxPayloadBytes {
-		return nil, fmt.Errorf("payload exceeds maximum size")
+	// 4. QR capacity check: the verification URL must fit a printable QR code.
+	if n := VerifyURLLength(payloadBytes); n > MaxVerifyURLLength {
+		return nil, &TooLongForQRError{OverBytes: ((n-MaxVerifyURLLength)*3 + 3) / 4}
 	}
 	return payloadBytes, nil
 }

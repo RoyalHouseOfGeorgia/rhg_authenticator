@@ -5,11 +5,14 @@ import (
 	"fmt"
 
 	qrcode "github.com/skip2/go-qrcode"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
 // QRMaxURLLength is the maximum URL length accepted for QR code generation,
-// keeping the module count reasonable for print.
-const QRMaxURLLength = 625
+// keeping the module count reasonable for print. It is core.MaxVerifyURLLength
+// so signing refuses exactly the credentials the generator would reject.
+const QRMaxURLLength = core.MaxVerifyURLLength
 
 // newQR validates the URL length and creates a QR code at skip2's qrcode.High,
 // which is error correction level Q (25%).

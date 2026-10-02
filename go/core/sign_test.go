@@ -179,96 +179,6 @@ func TestHandleSign_ValidationError(t *testing.T) {
 	}
 }
 
-func TestHandleSign_PayloadTooLarge(t *testing.T) {
-	sk := testSecretKey()
-	pubKey := testPubKey()
-	adapter := &mockAdapter{secretKey: sk}
-
-	// Create a detail field large enough to exceed MaxPayloadBytes.
-	hugeDetail := strings.Repeat("x", 2000)
-
-	_, err := HandleSign(SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Test Honor",
-		Detail:    hugeDetail,
-		Date:      "2026-03-13",
-	}, adapter, pubKey)
-
-	if err == nil {
-		t.Fatal("expected error for oversized payload")
-	}
-	if !strings.Contains(err.Error(), "payload exceeds maximum size") {
-		t.Errorf("expected 'Payload exceeds maximum size' in error, got: %v", err)
-	}
-}
-
-// TestHandleSign_PayloadSizeBoundary pins the exact `len > MaxPayloadBytes`
-// (strict) boundary: a canonical payload of exactly MaxPayloadBytes must sign,
-// MaxPayloadBytes+1 must fail. Landing exactly on the boundary is the only form
-// that distinguishes `>` from `>=`. The payload is sized by padding `detail`
-// with single-byte ASCII (no JSON escaping, no NFC change), so canonical length
-// scales 1:1 with the pad.
-func TestHandleSign_PayloadSizeBoundary(t *testing.T) {
-	sk := testSecretKey()
-	pubKey := testPubKey()
-	adapter := &mockAdapter{secretKey: sk}
-
-	buildCred := func(detail string) map[string]any {
-		return map[string]any{
-			"version":   float64(1),
-			"recipient": "John Doe",
-			"honor":     "Test Honor",
-			"detail":    detail,
-			"date":      "2026-03-13",
-		}
-	}
-
-	// Measure canonical overhead with an empty detail, then pad to the limit.
-	base, err := Canonicalize(buildCred(""))
-	if err != nil {
-		t.Fatalf("Canonicalize(baseline) error: %v", err)
-	}
-	pad := MaxPayloadBytes - len(base)
-	if pad <= 0 {
-		t.Fatalf("baseline canonical length %d leaves no room to pad to %d", len(base), MaxPayloadBytes)
-	}
-	atLimitDetail := strings.Repeat("x", pad)
-
-	// Sanity-check the realized canonical length is exactly MaxPayloadBytes
-	// before relying on the pass/fail assertions below.
-	atLimit, err := Canonicalize(buildCred(atLimitDetail))
-	if err != nil {
-		t.Fatalf("Canonicalize(at-limit) error: %v", err)
-	}
-	if len(atLimit) != MaxPayloadBytes {
-		t.Fatalf("expected canonical length exactly %d, got %d", MaxPayloadBytes, len(atLimit))
-	}
-
-	// Exactly MaxPayloadBytes must sign (check is strict `>`).
-	if _, err := HandleSign(SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Test Honor",
-		Detail:    atLimitDetail,
-		Date:      "2026-03-13",
-	}, adapter, pubKey); err != nil {
-		t.Errorf("payload of exactly MaxPayloadBytes (%d) should sign, got error: %v", MaxPayloadBytes, err)
-	}
-
-	// One byte over must fail with the size error specifically.
-	_, err = HandleSign(SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Test Honor",
-		Detail:    atLimitDetail + "x",
-		Date:      "2026-03-13",
-	}, adapter, pubKey)
-	if err == nil {
-		t.Fatal("payload of MaxPayloadBytes+1 should fail")
-	}
-	if !strings.Contains(err.Error(), "payload exceeds maximum size") {
-		t.Errorf("expected 'payload exceeds maximum size', got: %v", err)
-	}
-}
-
 func TestHandleSign_SignatureWrongLength(t *testing.T) {
 	sk := testSecretKey()
 	pubKey := testPubKey()
@@ -489,8 +399,8 @@ func TestSignConstants(t *testing.T) {
 	if VerifyBaseURL != "https://verify.royalhouseofgeorgia.ge/" {
 		t.Errorf("VerifyBaseURL = %q", VerifyBaseURL)
 	}
-	if MaxPayloadBytes != 2048 {
-		t.Errorf("MaxPayloadBytes = %d", MaxPayloadBytes)
+	if MaxVerifyURLLength != 625 {
+		t.Errorf("MaxVerifyURLLength = %d", MaxVerifyURLLength)
 	}
 }
 
@@ -534,7 +444,7 @@ func TestBuildPayload_Errors(t *testing.T) {
 	}{
 		{"invalid date", SignRequest{"A", "B", "C", "2026-02-30"}, "invalid credential data"},
 		{"empty recipient", SignRequest{"", "B", "C", "2026-03-13"}, "invalid credential data"},
-		{"too large", SignRequest{strings.Repeat("a", 500), strings.Repeat("b", 200), strings.Repeat("c", 2000), "2026-03-13"}, "payload exceeds maximum size"},
+		{"too large", SignRequest{strings.Repeat("a", 500), strings.Repeat("b", 200), strings.Repeat("c", 2000), "2026-03-13"}, "too long to fit in a QR code"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

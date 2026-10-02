@@ -155,12 +155,10 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 				fyne.Do(func() {
 					msg := signFlowErrorMessage(err, logger)
 					statusLabel.SetText(msg)
-					// Offer "Report Issue" for real errors, not cancellations or
-					// benign PIN-entry timeouts.
-					if !errors.Is(err, ErrSigningCancelled) && !errors.Is(err, ErrPINEntryTimedOut) && config.Keyring != nil {
+					if offerIssueReport(err) && config.Keyring != nil {
 						reportBtn := widget.NewButton("Report Issue", func() {
 							title := errorreport.BuildIssueTitle("signing", msg)
-							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error())
+							body := signIssueBody(err, msg)
 							resultURL, _ := errorreport.ReportIssue(context.Background(), config.Keyring, config.DataDir, title, body)
 							if resultURL != "" {
 								// Only open https://github.com URLs; anything else is not ours.
@@ -360,9 +358,53 @@ func friendlyYubiKeyError(err error, logger *debuglog.Logger) string {
 	}
 }
 
+// invalidCredentialPrefix is the text core.ErrInvalidCredential contributes
+// to a wrapped error message; the operator-facing reason follows it.
+var invalidCredentialPrefix = core.ErrInvalidCredential.Error() + ": "
+
+// offerIssueReport reports whether a sign-flow error warrants a "Report Issue"
+// button. Cancellations, benign PIN-entry timeouts, and operator input errors
+// (invalid or too long for a QR code) are not bugs.
+func offerIssueReport(err error) bool {
+	return !errors.Is(err, ErrSigningCancelled) &&
+		!errors.Is(err, ErrPINEntryTimedOut) &&
+		!errors.Is(err, core.ErrTooLongForQR) &&
+		!errors.Is(err, core.ErrInvalidCredential)
+}
+
+// signIssueBody builds the GitHub issue body for a sign-flow error. It carries
+// the user-facing msg plus only fixed enum strings (the *SignFlowError phase
+// and the core.ClassifyHardwareError category) — never err.Error(), which can
+// contain local file paths and smart-card reader names.
+func signIssueBody(err error, msg string) string {
+	detail := msg
+	var sfe *SignFlowError
+	if errors.As(err, &sfe) {
+		detail += " (phase: " + string(sfe.Phase) + ")"
+	}
+	if cat := core.ClassifyHardwareError(err); cat != "" {
+		detail += " (hardware: " + cat + ")"
+	}
+	return errorreport.BuildIssueBody(buildinfo.Version, "signing", detail)
+}
+
 // signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
 // status message.
 func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
+	// Operator input errors from BuildPayload come first so their reason text
+	// is never misread by the hardware classifier below.
+	var tooLong *core.TooLongForQRError
+	if errors.As(err, &tooLong) {
+		return "Too long to fit in a QR code by " + tooLong.Overage() + ". Shorten the Detail or Recipient and try again."
+	}
+	if errors.Is(err, core.ErrInvalidCredential) {
+		text := err.Error()
+		reason := text
+		if i := strings.LastIndex(text, invalidCredentialPrefix); i >= 0 {
+			reason = text[i+len(invalidCredentialPrefix):]
+		}
+		return "Invalid credential data: " + core.SanitizeForError(reason)
+	}
 	// PIN-flow sentinels are returned bare from readPin (executeSignFlow resolves
 	// the PIN before openAdapter, so piv-go never %v-wraps them), matched via
 	// errors.Is. These MUST be checked before ClassifyHardwareError, whose \bpin\b

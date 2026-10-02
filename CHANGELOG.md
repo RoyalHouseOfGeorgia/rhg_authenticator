@@ -32,6 +32,13 @@ patch component for fix-only releases (`v1.3.1`).
   A backup of the log is saved next to it first.
 
 ### Changed
+- **Keys count as active whatever their start date.** The YubiKey tab and the
+  status bar's active-key count now ignore a key's `from` date, as the
+  verification page always has: a key is active until its `to` date.
+- **Report Issue sends less.** The issue contains the message shown, the
+  signing step and the hardware error category, but no longer the raw error
+  text (which could include local file paths and card-reader names). Input
+  problems (too long, invalid) no longer offer Report Issue.
 - **Releases publish only the build artifacts.** The release job downloads only
   the `rhg-authenticator-*` artifacts, so no other job's uploads can end up as
   release assets.
@@ -45,6 +52,14 @@ patch component for fix-only releases (`v1.3.1`).
   **Connect to GitHub**.
 
 ### Fixed
+- **Too-long credentials are refused before signing.** A credential whose
+  verification URL wouldn't fit a printable QR code used to be signed and
+  logged, then fail at the QR step — and every retry failed the same way. It is
+  now refused before the PIN prompt with how much to shorten ("Too long to fit
+  in a QR code by about N letters (about M in Georgian script)"). Recipient and
+  detail together fit roughly 220–290 Latin or 75–95 Georgian letters. Bulk Sign
+  marks such rows invalid. Other invalid input now says what is wrong instead
+  of "Signing failed".
 - **Revoking a credential no longer un-revokes an earlier one.** Each
   revocation pull request is now built from the current list on GitHub, not
   from the copy loaded when the History tab opened. Before, a second revocation

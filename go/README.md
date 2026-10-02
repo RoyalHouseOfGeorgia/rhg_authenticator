@@ -52,7 +52,9 @@ See [../CHANGELOG.md](../CHANGELOG.md) for release history.
 
 If the same credential (identical recipient, honor, detail and date) is already in the issuance log, the app skips the PIN prompt, says **"Credential previously generated, no new record created."** and shows the original QR code — nothing new is logged. If the issuance log can't be read, signing is blocked until it can (see [Troubleshooting](#troubleshooting)).
 
-If signing fails, the status area shows a diagnostic message and a **Report Issue** button (files a GitHub issue automatically if logged in, or opens a pre-filled browser form). Details are written to the error log — see [Troubleshooting](#troubleshooting) below.
+The verification URL must fit a printable QR code (625 characters), which leaves room for roughly 220–290 Latin or 75–95 Georgian letters for recipient and detail combined (the longer the honor title, the less room). A credential that is too long, or otherwise invalid, is refused before the PIN prompt — nothing is signed or logged — and the status area says how much to shorten (e.g. **"Too long to fit in a QR code by about 40 letters (about 14 in Georgian script)."**). Bulk Sign marks such rows invalid with the same reason.
+
+If signing fails, the status area shows a diagnostic message and a **Report Issue** button (files a GitHub issue automatically if logged in, or opens a pre-filled browser form). The issue contains the message shown, the signing step and the hardware error category — not the raw error text, which can include local file paths and card-reader names. There is no Report Issue button for an input problem (too long or invalid). Details are written to the error log — see [Troubleshooting](#troubleshooting) below.
 
 ### Bulk Sign
 

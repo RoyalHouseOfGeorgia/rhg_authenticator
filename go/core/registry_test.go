@@ -487,8 +487,15 @@ func TestIsDateInRange_AtToBoundary(t *testing.T) {
 func TestIsDateInRange_BeforeFrom(t *testing.T) {
 	key := KeyEntry{From: "2025-01-01"}
 	key.To = strPtr("2025-12-31")
-	if IsDateInRange("2024-12-31", key) {
-		t.Error("expected false for date before from")
+	if !IsDateInRange("2024-12-31", key) {
+		t.Error("expected true for date before from (from is informational)")
+	}
+}
+
+func TestIsDateInRange_FutureFromNilTo(t *testing.T) {
+	key := KeyEntry{From: "2027-01-01", To: nil}
+	if !IsDateInRange("2026-03-15", key) {
+		t.Error("expected true for key with future from and nil to")
 	}
 }
 
