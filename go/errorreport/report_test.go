@@ -247,10 +247,10 @@ func TestBrowserURL_BodyTruncation(t *testing.T) {
 	}
 
 	body := parsed.Query().Get("body")
-	if !strings.HasSuffix(body, "attach full log from your config directory.") {
+	if !strings.HasSuffix(body, "and attach the file.") {
 		t.Error("truncated body should end with truncation notice")
 	}
-	idx := strings.Index(body, "\n\nDebug log truncated")
+	idx := strings.Index(body, "\n\nReport truncated")
 	if idx < 0 {
 		t.Fatal("truncation notice not found in body")
 	}

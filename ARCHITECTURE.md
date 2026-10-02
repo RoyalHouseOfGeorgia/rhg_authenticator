@@ -12,12 +12,14 @@ No blockchain, no third-party verification services. Trust is rooted in Ed25519 
 
 ## Components
 
-The system has three independent components, plus a standalone helper:
+The system has two independent components — the TypeScript verifier (1) and the Go app (2, with its registry manager tab, 3) — plus standalone Python helpers (4–6):
 
 1. **Verification library + page (TypeScript)** — core crypto, credential validation, key registry, and the public-facing verification page on GitHub Pages. This is what the world sees.
 2. **Signing app (Go)** — self-contained desktop application with Fyne GUI. Talks directly to YubiKey via PCSC (`piv-go`), signs credentials, generates QR codes (SVG/PNG). Also signs credentials in bulk from a CSV file (one PIN entry per batch; each row still opens a fresh card session; rows already in the issuance log are skipped). Single binary, no external tools required. See [go/README.md](go/README.md) for details.
 3. **Registry manager (Go, tab in signing app)** — integrated tab for managing the key registry. Imports Ed25519 public keys directly from an inserted YubiKey or from `.crt`/`.pem` certificate files, supports add/edit of registry entries with date pickers (entries cannot be deleted — revoke by setting an expiry date), fetches the live registry from the server. Changes are submitted as GitHub pull requests for admin review via the `ghapi` package (OAuth Device Flow, token stored in OS keychain with 90-day local TTL). Table cells show truncated text with ellipsis; click any cell to see the full value in the status bar.
 4. **URL rebuild tool (Python, `scripts/rebuild_urls.py`)** — standard-library script that rebuilds verification URLs from data already signed (a payload + signature, the signing app's issuance log, or a CSV). It reproduces the canonical JSON to check each entry but holds no keys and does not verify signatures; the verification page remains the only authenticity check.
+5. **QR tool (Python, `scripts/rhg_qr.py`)** — writes an SVG (default) or PNG QR code for a verification URL or payload/signature pair; reuses `rebuild_urls.py` for its checks; needs `segno`.
+6. **Revocation hash tool (Python, `scripts/rhg_revocation_hash.py`)** — standard-library script that prints the lowercase SHA-256 of a URL's `p` payload, the value added to `revocations.json`.
 
 ## Threat Model
 
@@ -29,34 +31,37 @@ The system has three independent components, plus a standalone helper:
 
 ### Accepted Risks
 
-- **Timing side channel in verification diagnostics**: Date- and honor-mismatch diagnostics reveal whether a valid signature exists for a key whose `to` date or `allowed_honors` excludes the credential. This is intentional UX — the registry is public anyway.
+- **Distinguishable verification diagnostics (library only)**: `verifyCredential` returns distinct reasons for date- and honor-mismatch, revealing that a valid signature exists for a key whose `to` date or `allowed_honors` excludes the credential. The public page does not display reasons. Accepted — the registry is public anyway.
 - **Public key registry is public**: By design. The security property is that only the holder of the YubiKey private key can produce valid signatures.
-- **Auto-reported issues never include the error log**: Issues are posted to the public tracker without a preview, so neither signing-failure nor fatal-error reports attach the log; operators send it deliberately via Help → Export Error Log…. The error log contains only sanitized internal state (timestamps, error types, stack traces) — no credential data, PINs, or tokens.
+- **Reported issues never include the error log**: Report Issue (signing-failure) reports are posted to the public tracker without a preview, so they never attach the log; operators send it deliberately via Help → Export Error Log…. The error log contains only sanitized internal state (timestamps, error types, stack traces) — no credential data, PINs, or tokens.
 
 ## Data Flow
 
 ### Issuance Flow
 
+Diagram: [docs/issuance-flow.svg](docs/issuance-flow.svg).
+
 1. Operator opens the signing app (Go desktop binary)
-2. App detects YubiKey via PCSC, reads certificate from PIV slot 9c
-3. Operator plugs in YubiKey (signing does not require registry; works offline)
-4. Operator fills in credential form (recipient, honor, detail, date)
-5. Operator clicks "Sign" → app checks the issuance log for the same payload hash; if found, it skips the PIN prompt and step 6, rebuilds the URL from the logged signature (the same QR as when it was first issued) and adds no log entry. Otherwise it prompts for the YubiKey PIN via GUI dialog
-6. App canonicalizes credential → signs via YubiKey → verifies round-trip → logs
-7. App generates QR code (SVG for print, PNG for preview)
-8. Operator saves SVG, gives to diploma designer for printing
+2. Operator plugs in the YubiKey (signing does not require the registry; works offline)
+3. Operator fills in credential form (recipient, honor, detail, date)
+4. Operator clicks "Sign" → app checks the issuance log for the same payload hash; if found, it skips the PIN prompt and step 5, rebuilds the URL from the logged signature (the same QR as when it was first issued) and adds no log entry. If the issuance log cannot be read, signing is refused; logged records with a malformed signature are ignored. Otherwise it prompts for the YubiKey PIN via GUI dialog (skipped when a cached PIN is available)
+5. App opens the YubiKey via PCSC (fresh session per sign), reads the certificate from PIV slot 9c, canonicalizes → signs → verifies round-trip → logs
+6. App shows a PNG preview; the SVG (for print) and a 2048px PNG are generated when the operator saves them
+7. Operator saves SVG, gives to diploma designer for printing
 
-**Bulk variant:** the operator selects a CSV instead of filling the form. Every row is validated before the PIN prompt (invalid rows are skipped; rows whose payload hash is already in the issuance log are reported as already issued, with the URL rebuilt from the logged signature). The PIN is entered once; each remaining row is then signed and logged as in steps 6–7, minus the QR preview. A failed log write stops the batch, so every signed row is either logged or reported as not logged. The operator can export a results CSV containing each row's verification URL.
+**Bulk variant:** the operator selects a CSV instead of filling the form. Every row is validated before the PIN prompt (invalid rows are skipped; rows whose payload hash is already in the issuance log are reported as already issued, with the URL rebuilt from the logged signature). The PIN is entered once; each remaining row is then signed and logged as in step 5, minus the QR preview. The batch stops at the first failed row (signing error or failed log write) and marks the remaining rows not attempted, so every signed row is either logged or reported as not logged. Rows duplicating an earlier row of the same file are rejected as invalid. The operator can export a results CSV containing each row's verification URL.
 
-**Duplicate cleanup:** logs written before the duplicate check may hold the same credential more than once. **History → Remove Duplicates…** keeps the earliest record with a well-formed signature for each payload hash, drops later copies, and saves a timestamped `.bak-` copy of the log first. Log appends and this rewrite are serialized by a mutex in `log/issuance.go`.
+**Duplicate cleanup:** logs written before the duplicate check may hold the same credential more than once. The History tab's **Remove Duplicates…** button keeps the earliest record with a well-formed signature for each payload hash (case-insensitive) and drops later copies; records with a malformed signature before it, or with an empty hash, are kept as-is. It saves a timestamped `.bak-` copy of the log first. Log appends and this rewrite are serialized by a mutex in `log/issuance.go`.
 
 ### Verification Flow
 
+Diagram: [docs/verification-flow.svg](docs/verification-flow.svg).
+
 1. Anyone scans QR code on diploma with phone camera
 2. Phone opens `https://verify.royalhouseofgeorgia.ge/?p=<payload>&s=<signature>`
-3. Verification page fetches key registry
-4. Ed25519 signature verified client-side in browser
-5. Result displayed: valid credential details or rejection reason
+3. Verification page fetches the key registry and revocation list in parallel (registry failure → error state)
+4. Ed25519 signature verified client-side against every registry key; on a match the credential is checked against the revocation list, then the key's `to` date and `allowed_honors`
+5. Result displayed: Verified (credential details + authority, with a note if revocation status could not be checked), Credential Revoked, Not Verified, or Verification Error — all with generic text; the specific rejection reason is not shown
 
 ## Credential Revocation
 
@@ -67,21 +72,23 @@ Credentials can be revoked after issuance. The revocation mechanism is hash-base
 - **Revocation list** (`verify/keys/revocations.json`) is hosted on GitHub Pages alongside the key registry.
 - **Privacy property**: only opaque SHA-256 hashes of credential payloads are published. No personal data or credential content is exposed.
 - **Verification order**: signature is verified first; revocation is checked only after a valid signature is confirmed.
-- **Soft failure**: if the revocation list is unavailable (network error), verification proceeds with a warning. The system does not block valid credentials due to a fetch failure.
+- **Soft failure**: if the revocation list cannot be fetched or fails validation (or `crypto.subtle` is unavailable), verification proceeds and a valid result shows "Revocation status could not be verified." The system does not block valid credentials due to a fetch failure.
 
 ### Desktop App (Go)
 
 - The **History** tab includes a **Revoke** button with a confirmation dialog. Revoking a credential submits a pull request via the GitHub API (`CreateRevocationPR` in `ghapi`), adding the credential's SHA-256 hash to `revocations.json`.
-- `core/revocation.go` provides `RevocationEntry`, `RevocationList`, `ValidateRevocationList`, `BuildRevocationSet`, `IsRevoked`, and `AppendRevocationEntry` (deep-copies the list and appends a new entry without mutating the input).
+- `core/revocation.go` provides `RevocationEntry`, `RevocationList`, `ValidateRevocationList`, `BuildRevocationSet`, `IsRevoked`, `IsPayloadHash`, and `AppendRevocationEntry` (deep-copies the list and appends a new entry without mutating the input).
 - The PR's `revocations.json` is built inside `CreateRevocationPR` from the current file on upstream `main` (Contents API), never from the copy the History tab loaded, so a second revocation can't drop an earlier one. With several revocation PRs open, merge them one at a time; close any PR that conflicts and re-revoke. No PR is opened if the hash is already in that upstream list (`ErrAlreadyRevoked`) or if the user already has an open PR from a `revoke-<hash16>-` branch (`ErrRevocationPending`). If that open-PR check fails, the PR is opened anyway.
 
 ### Verification Page (TypeScript)
 
-- `revocation.ts` provides `buildRevocationSet` and `isRevoked`.
+- `revocation.ts` provides `validateRevocationList`, `buildRevocationSet` and `isRevoked`.
 - `verify-page.ts` fetches the revocation list via `fetchRevocationList` (using the shared `fetchAndValidate<T>` helper) and passes a `RevocationCheck` to the verification orchestrator.
-- `VerifyPageResult` includes a `'revoked'` status alongside `'valid'` and `'invalid'`.
+- `VerifyPageResult` statuses: `'valid'`, `'revoked'`, `'invalid'`, `'error'`, `'info'` (no parameters).
 
 ## Module Architecture (TypeScript — Verification Library)
+
+Diagram of both the TypeScript modules and the Go packages: [docs/module-architecture.svg](docs/module-architecture.svg).
 
 | Module | Responsibility | External Deps |
 |--------|---------------|---------------|
@@ -89,11 +96,11 @@ Credentials can be revoked after issuance. The revocation mechanism is hash-base
 | `base64url.ts` | Base64URL encode/decode, standard Base64 decode | None (uses `btoa`/`atob`) |
 | `credential.ts` | Credential v1 schema validation, control char rejection, field length limits, `sanitizeForError` | `validation.ts` |
 | `crypto.ts` | Ed25519 sign, verify (`zip215: false`), getPublicKey | `@noble/curves` |
-| `registry.ts` | Registry schema validation, key lookup, SPKI key decoding | `base64url.ts`, `validation.ts` |
+| `registry.ts` | Registry schema validation (incl. `allowed_honors`), key date check (`isDateInRange`, `to`-only), SPKI key decoding | `base64url.ts`, `credential.ts`, `validation.ts` |
 | `validation.ts` | Shared date validation (calendar-correct, no `Date` constructor) | None |
-| `verify.ts` | Single-pass verification orchestrator | `credential.ts`, `crypto.ts`, `registry.ts` |
-| `index.ts` | Barrel export | All core modules |
-| `revocation.ts` | Revocation list validation, `buildRevocationSet`, `isRevoked` | None |
+| `verify.ts` | Single-pass verification orchestrator | `credential.ts`, `crypto.ts`, `registry.ts`, `revocation.ts` |
+| `index.ts` | Public barrel export (verification API: credential, registry, verify, base64url, `crypto.verify`, canonical types) | `base64url.ts`, `canonical.ts` (types), `credential.ts`, `crypto.ts`, `registry.ts`, `verify.ts` |
+| `revocation.ts` | Revocation list validation, `buildRevocationSet`, `isRevoked` | `credential.ts`, `validation.ts` |
 | `verify-page.ts` | Browser verification page: URL parsing, registry/revocation fetch, DOM rendering | `verify.ts`, `revocation.ts`, `base64url.ts`, `registry.ts` |
 
 ## Credential Format
@@ -116,7 +123,7 @@ All five fields are required. No extra fields allowed. Strings must be non-empty
 
 Before signing, the credential is serialized to canonical JSON:
 
-1. Object keys sorted lexicographically at all levels
+1. Object keys sorted by Unicode code point (equivalent to UTF-8 byte order) at all levels
 2. String values NFC-normalized (Unicode normalization); keys are serialized as-is (not normalized)
 3. No whitespace between tokens
 4. Standard JSON escaping per RFC 8259 §7, as `JSON.stringify` does: `\" \\ \b \f \n \r \t`, other control characters as lowercase `\u00xx`; everything else (including U+2028/U+2029 and non-ASCII) is emitted raw
@@ -193,8 +200,8 @@ YubiKey PIV slot 9c via `go-piv/piv-go` v2 — direct PCSC access, Ed25519 (algo
 
 ### PIN Security
 
-- PIN is prompted via a GUI dialog on each sign operation (default)
-- Opt-in caching: PIN stored in `mlock`'d memory (non-swappable), protected by `sync.Mutex` with generation counter (prevents TOCTOU race on timer expiry), auto-zeroed after 5 minutes of inactivity or app close
+- PIN is prompted via a GUI dialog on each single sign and once per bulk batch (default); re-signing an already-logged credential needs no PIN
+- Opt-in caching: PIN stored in `mlock`'d memory (non-swappable), protected by `sync.Mutex` with generation counter (prevents TOCTOU race on timer expiry), auto-zeroed 5 minutes after the PIN was entered (not extended by use), when caching is unticked, or on app close
 - Cached PIN is cleared immediately when the YubiKey rejects it (wrong or blocked PIN), so a mistyped PIN is never silently replayed against the hardware retry counter
 - Platform-specific mlock: `syscall.Mlock` on macOS/Linux, `VirtualLock` via `kernel32.dll` on Windows
 - YubiKey's built-in 3-attempt PIN retry counter is enforced by the hardware
@@ -214,20 +221,20 @@ Verification operates on the original payload bytes, not a re-canonicalized form
 | Control character rejection | `credential.ts` | C0/C1 control characters and bidi overrides rejected in all credential string fields |
 | Per-field length limits | `credential.ts` | Compile-time enforced via `satisfies` |
 | Extra field rejection | `credential.ts`, `registry.ts` | No unexpected fields pass validation |
-| Strict crypto inputs | `crypto.ts` | Length validation on all key/signature/message inputs |
+| Strict crypto inputs | `crypto.ts` | Length validation on key and signature inputs; type checks on all inputs |
 | SPKI prefix verification | `registry.ts` | Byte-by-byte comparison of 12-byte DER header |
 
 ## Design Decisions
 
-- **Sync API**: All crypto operations are synchronous. `@noble/curves` is pure JS — no Web Crypto async overhead.
+- **Sync API**: Ed25519 operations are synchronous (`@noble/curves` is pure JS); only the revocation SHA-256 on the verify page uses async Web Crypto.
 - **No key_id field**: The registry is too small for O(n) lookup to matter. Signature verification is the real authentication gate.
 - **Arithmetic date validation**: Uses manual month/day/leap-year checks instead of `Date` constructor, which silently rolls invalid dates (e.g., Feb 30 → Mar 2).
 - **Single-pass verification**: Verify signature against all registry keys; authority is derived from the matching key. Date-mismatch diagnostics reported for valid-but-expired matches.
-- **Go for signing app**: Single binary, `piv-go` for direct YubiKey access (PIN in-process), `crypto/ed25519` in stdlib, Fyne for cross-platform GUI. Rust was evaluated but its `yubikey` crate lacks Ed25519 PIV support (issue #602, no progress). CGO required on macOS/Linux for PCSC; pure Go on Windows.
+- **Go for signing app**: Single binary, `piv-go` for direct YubiKey access (PIN in-process), `crypto/ed25519` in stdlib, Fyne for cross-platform GUI. Rust was evaluated but its `yubikey` crate lacks Ed25519 PIV support (issue #602, no progress). CGO is required on both platforms (Fyne's OpenGL driver; PCSC on macOS).
 - **SVG as primary QR output**: Vector format scales perfectly for print. No pixel density concerns, no forced QR version needed.
 - **Registry fetch**: remote only (10s timeout), no cache or embedded fallback. If the server is unreachable, the app opens in offline mode (signing still works, but registry-dependent features are unavailable).
 - **Token lifecycle**: OAuth tokens stored in OS keychain (Linux: file fallback with 0600). 90-day local TTL enforced on session restore; expired tokens are cleared and require re-authentication. Tokens validated live against GitHub API on each app startup.
 - **Cross-language compatibility**: Go `core/` package produces byte-identical canonical JSON to TypeScript. Verified by test vectors (ASCII, Georgian, NFC edge cases).
 - **Build info separation**: Version string lives in `buildinfo.Version` (set via `-ldflags` at build time). `buildinfo.IsDebug()` / `buildinfo.IsRelease()` mark debug builds (the startup log line is tagged "(debug mode)"). The error log (`debug.log`) is always on, captures the stdlib `log` output, and is pruned to 30 days at startup.
-- **Panic recovery over silent crash**: Main goroutine and all spawned goroutines use `safeGo` with `recover()`. Panics are written to the error log + stderr and surfaced via an error dialog, so the user is never left staring at a frozen or disappeared window.
+- **Panic recovery**: the main goroutine has a deferred `recover()` that writes the panic to the error log and stderr, then re-panics. Goroutines launched via `safeGo` (version check, signing) log the panic and show an error dialog instead of crashing; other background goroutines have no recovery.
 - **Auto error reporting**: The `errorreport` package builds sanitized issue bodies (version, OS, error — no error log) and files them via the GitHub API if the user is logged in, or falls back to a pre-filled browser URL. Issue titles are prefixed `[Auto]` with labels `bug` + `auto-reported`.

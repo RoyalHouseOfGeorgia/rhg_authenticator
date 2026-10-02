@@ -1,20 +1,20 @@
 # RHG Authenticator — Desktop Signing App
 
-Self-contained desktop application for signing Royal House of Georgia credentials. Produces QR codes (SVG for print, PNG for preview) that are verified by the public verification page.
+Self-contained desktop application for signing Royal House of Georgia credentials. Produces QR codes (SVG for print or a 2048px PNG; PNG preview in the app) that are verified by the public verification page.
 
 To install a released build instead of building from source, see [Download & install](../README.md#download--install).
 
 ## Requirements
 
-- Go 1.26+
+- Go 1.27.1+
 - YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
 ### Platform-Specific
 
-| Platform | PCSC | GUI | Extra Packages |
-|----------|------|-----|----------------|
-| **macOS** | Built-in (PCSC framework) | Built-in (OpenGL) | None |
-| **Windows** | Built-in (WinSCard) | Built-in (OpenGL) | None |
+| Platform | PCSC | GUI | Build toolchain |
+|----------|------|-----|-----------------|
+| **macOS** | Built-in (PCSC framework) | Built-in (OpenGL) | Xcode Command Line Tools (C compiler for cgo) |
+| **Windows** | Built-in (WinSCard) | Built-in (OpenGL) | gcc, e.g. MinGW-w64 (C compiler for cgo) |
 
 ## Build
 
@@ -41,7 +41,7 @@ See [../CHANGELOG.md](../CHANGELOG.md) for release history.
    - **Recipient**: full name
    - **Honor**: select from the dropdown of recognized titles
    - **Detail**: specific distinction or rank
-   - **Date**: YYYY-MM-DD (defaults to today)
+   - **Date**: pick with the 📅 calendar button (defaults to today, UTC; the field itself is read-only)
 2. Plug in your YubiKey
 3. Click **Sign Credential**
 4. Enter your YubiKey PIN when prompted
@@ -100,7 +100,7 @@ Browse previously issued credentials. Search by recipient name. Click any entry 
 
 Revoke needs a working GitHub session. If you aren't logged in, or GitHub couldn't be reached when the app started, click **Connect to GitHub**. If a revocation fails, the error dialog has an **Export Error Log…** button. If the credential is already revoked, or you already have a revocation PR open for it, no new PR is created and the app says so.
 
-**Remove Duplicates…** finds entries in the issuance log for the same credential signed more than once, and removes all but the earliest valid entry after you confirm (entries with a damaged signature are left in place). A backup of the current log (`issuances.json.bak-<UTC timestamp>`, e.g. `issuances.json.bak-20261001T120000Z`) is saved next to it first. Removed entries were the same credential, so any QR code already printed from them still verifies.
+**Remove Duplicates…** finds entries in the issuance log for the same credential signed more than once, and removes all but the earliest valid entry after you confirm (a damaged entry before the first valid copy is left in place). A backup of the current log (`issuances.json.bak-<UTC timestamp>`, e.g. `issuances.json.bak-20261001T120000Z`) is saved next to it first. Removed entries were the same credential, so any QR code already printed from them still verifies.
 
 **Export Issuance Log…** saves a copy of the issuance log. The save dialog opens on the Desktop with a dated name (`rhg-issuances-YYYY-MM-DD.json`); after saving, a message shows exactly where the file went so it can be attached to an email. On a Mac, the first export may ask whether the app can access the Desktop — click **Allow**. If nothing has been signed yet, the button says so instead of opening the dialog.
 
@@ -173,13 +173,13 @@ The app fetches the revocation list (`revocations.json`) alongside the registry 
 
 - **History tab**: the **Revoke** button opens a confirmation dialog, then submits a PR via `ghapi.CreateRevocationPR` adding the credential hash to `revocations.json`.
 - **Upstream-built PRs**: `CreateRevocationPR` reads `revocations.json` from upstream `main` and appends to it, so the History tab's loaded copy is only used for display and gating. With several revocation PRs open, merge them one at a time.
-- **Soft failure**: if the revocation list fetch fails, the app displays feedback via the `revocationStatus` label in the status bar; verification proceeds without revocation checks.
+- **Soft failure**: if the revocation list fetch fails, the History tab shows **Revocation unavailable** next to its buttons and disables Revoke; click **Refresh** to retry.
 
 ## Troubleshooting
 
 The app keeps an error log (`debug.log`) in every build. Entries older than 30 days are removed each time the app starts.
 
-**To send the log:** choose **Help → Export Error Log…** (or click **Export Error Log…** in the Revocation Failed or Submission Failed dialog). The save dialog opens on the Desktop with a dated name (`rhg-error-log-YYYY-MM-DD.log`), ready to attach to an email. The log contains app diagnostics — it may include your GitHub username and file paths, but never PINs or keys.
+**To send the log:** choose **Help → Export Error Log…** (or click **Export Error Log…** in the Revocation Failed, Remove Duplicates Failed or Submission Failed dialog). The save dialog opens on the Desktop with a dated name (`rhg-error-log-YYYY-MM-DD.log`), ready to attach to an email. The log contains app diagnostics — it may include your GitHub username and file paths, but never PINs or keys.
 
 The file itself lives here:
 
@@ -198,7 +198,7 @@ The file itself lives here:
 | **Could not read the issuance log, so duplicates can't be checked** | `issuances.json` (next to `debug.log`) is unreadable or no longer valid JSON | Restore it from the newest `issuances.json.bak-*` next to it or from an exported copy, then sign again. **Help → Export Error Log…** shows the exact error |
 | **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | **Help → Export Error Log…** and send the file |
 | **Offline — Reconnect** (Registry tab) / Revoke stays disabled | GitHub couldn't be reached when the app started | Click **Offline — Reconnect** (or **Connect to GitHub** on the History tab). If it still can't connect, check your network and try again |
-| **Could not save the SVG file / PNG file / issuance log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop**. May be needed again after installing a new version |
+| **Could not save the SVG file / PNG file / issuance log / error log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop**. May be needed again after installing a new version |
 
 ### Verifying YubiKey readiness
 
@@ -210,20 +210,22 @@ The file itself lives here:
 ## Security
 
 - **PIN never leaves the process**: `piv-go` talks directly to the YubiKey via PCSC. No subprocess, no command-line arguments, no `/proc` exposure.
-- **PIN caching** (opt-in): stored in `mlock`'d memory (non-swappable), protected by mutex, auto-zeroed after 5 minutes of inactivity.
+- **PIN caching** (opt-in): stored in `mlock`'d memory (non-swappable), protected by mutex, auto-zeroed 5 minutes after the PIN is entered.
 - **Post-sign verification**: every signature is verified immediately after signing to catch hardware errors.
 - **Atomic log writes**: issuance records use tmp-file + rename pattern for crash safety. Appends and **Remove Duplicates** are serialized, so neither can drop the other's records; Remove Duplicates saves a `.bak-` copy of the log first.
 - **GitHub token in OS keychain**: OAuth tokens are stored via `go-keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). File fallback on Linux only (0600 permissions). Token redacted from `fmt.Sprintf` output via `String()`/`GoString()` methods. Tokens expire after 90 days (enforced locally on session restore).
 - **Redirect protection**: HTTP client strips `Authorization` header on cross-origin redirects (allows `*.github.com` only).
 - **Input sanitization**: All untrusted GitHub API responses are sanitized before logging (control characters replaced, truncated to 500 runes). User-facing error messages are mapped to safe generic text.
-- **Panic recovery**: The main goroutine and all spawned goroutines (`safeGo`) catch panics, write a stack trace to the error log (`debug.log`) and stderr, and show an error dialog instead of silently crashing.
-- **Auto error reporting**: Fatal errors and signing failures offer to file a GitHub issue automatically (via `errorreport` package). If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS and error type — never the error log, because they are posted without a preview. Send the log deliberately with **Help → Export Error Log…**.
+- **Panic recovery**: a main-goroutine panic writes a stack trace to the error log (`debug.log`) and stderr before exiting. Goroutines started via `safeGo` (signing, version check) also log the panic and show an error dialog instead of crashing.
+- **Error reporting** (`errorreport` package): signing failures offer a **Report Issue** button. If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS, error type and error message — never the error log, because they are posted without a preview. Send the log deliberately with **Help → Export Error Log…**. Fatal startup errors show a dialog with the issues link; they are not filed automatically.
 
 ## Architecture
 
 ```
 go/
-├── main.go              # App entry point, Fyne window, panic recovery, safeGo, --version
+├── main.go              # App entry point, Fyne window, Help menu, panic recovery, safeGo, --version
+├── icon.png             # App icon (embedded)
+├── packaging/macos/Info.plist # macOS app bundle metadata
 ├── buildinfo/           # Build metadata
 │   └── buildinfo.go     # Version (set via ldflags), IsRelease/IsDebug helpers
 ├── bulk/                # Bulk signing: CSV input, row planning, sign loop, results CSV
@@ -237,10 +239,10 @@ go/
 │   ├── format.go        # Date display formatting (YYYY-Mon-DD)
 │   ├── hwerror.go       # Hardware error classification (shared by gui + regmgr)
 │   ├── rand.go          # Shared RandomHex utility
+│   ├── redirect.go      # SafeRedirect: HTTPS-only, 10-hop limit for unauthenticated clients
 │   ├── registry.go      # Key registry schema, lookup, fingerprint
 │   ├── revocation.go    # RevocationEntry, RevocationList, ValidateRevocationList, BuildRevocationSet, IsRevoked
-│   ├── revocation_test.go
-│   ├── sanitize.go      # SanitizeForLog + StripControlChars: C0, C1, DEL, bidi (shared by gui + ghapi + debuglog)
+│   ├── sanitize.go      # SanitizeForLog + StripControlChars (C0, C1, DEL, bidi; 500-rune log cap) + TrimJS; used across packages
 │   └── sign.go          # Signing orchestrator (BuildPayload, HandleSign, BuildVerifyURL)
 ├── debuglog/            # Always-on error log (debug.log), 30-day retention
 │   └── debuglog.go      # Append-only timestamped file logger, Prune, stdlib log capture
@@ -250,25 +252,24 @@ go/
 │   ├── audit_tab.go     # Registry audit (renders commit history from ghapi/commits)
 │   ├── bulk_flow.go     # Bulk sign orchestration (Fyne-free): load plan, PIN once, run
 │   ├── bulk_sign.go     # Bulk sign dialogs: file pick, confirm, progress, summary + export
-│   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi; skips already-revoked/pending), Export Issuance Log, Remove Duplicates
+│   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi; skips already-revoked/pending), Export Issuance Log, Remove Duplicates, Revocation unavailable status
 │   ├── errorlog_export.go # Help → Export Error Log… save flow; ShowErrorWithLogExport error dialog
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display + Report Issue button
 │   ├── signflow.go      # Extracted signing workflow incl. duplicate-issuance check (testable)
-│   ├── statusbar.go     # Bottom status bar (key stats, online status, lastUpdateCh coordination, revocationStatus label)
+│   ├── statusbar.go     # Bottom status bar (key stats, online status, last registry update via lastUpdateCh)
 │   └── yubikey_tab.go   # YubiKey registry check (no PIN)
 ├── ghapi/               # GitHub API client + OAuth device flow
 │   ├── keyring.go       # Keyring interface (OS keychain + FakeKeyring for tests)
 │   ├── auth.go          # OAuth device flow, token storage, session restore
-│   ├── client.go        # GitHub REST API (branches, contents, PRs); safeRedirect, Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath; UserMessage (safe user-facing error text)
-│   ├── commits.go       # FetchRegistryCommits(baseURL, perPage, etag); commitClient with safeRedirect
-│   ├── commits_test.go
+│   ├── client.go        # GitHub REST API (branches, contents, forks, PRs incl. CreateRegistryPR/CreateRevocationPR); safeCheckRedirect (auth stripping), Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath; UserMessage (safe user-facing error text)
+│   ├── commits.go       # FetchRegistryCommits(baseURL, perPage, etag); commitClient with core.SafeRedirect
 │   └── issues.go        # CreateIssue (used by errorreport)
 ├── regmgr/              # Registry Manager (tab in main app)
 │   ├── app.go           # Main UI: toolbar, table, login, submit, state management
 │   ├── form.go          # Add/Edit entry dialogs (cert import, calendar)
 │   ├── certparse.go     # X.509 → Ed25519 key extraction
-│   └── fileio.go        # Registry marshal + atomic write
+│   └── fileio.go        # MarshalRegistry: indented JSON + re-validation
 ├── yubikey/             # YubiKey hardware adapter
 │   ├── adapter.go       # piv-go PIV signing
 │   ├── pincache.go      # Secure PIN cache (mlock + mutex + generation counter)
@@ -279,12 +280,13 @@ go/
 ├── log/                 # Issuance log
 │   └── issuance.go      # Atomic JSON issuance log: append, read, dedupe (with backup)
 ├── registry/            # Registry fetch
-│   └── fetch.go         # Remote-only registry fetch; readLimitedBody helper
+│   └── fetch.go         # Remote-only registry + revocation list fetch, key/authority lookup; readLimitedBody helper
 ├── update/              # Version check
 │   └── check.go         # GitHub releases version check
 ├── testdata/            # Cross-language test vectors + cert fixtures
 │   ├── gen_vectors.go   # Vector generator (//go:build ignore)
-│   └── vectors.json
+│   ├── vectors.json
+│   └── test-ed25519.crt, test-rsa.crt  # cert fixtures
 ├── Makefile
 ├── go.mod
 └── go.sum
@@ -292,4 +294,4 @@ go/
 
 ## Cross-Language Compatibility
 
-The Go `core/` package produces byte-identical output to the TypeScript verification library. This is verified by cross-language test vectors in `testdata/vectors.json` (generated from TypeScript, validated in Go). Credentials signed by the Go app verify correctly on the TypeScript verification page.
+The Go `core/` package produces byte-identical output to the TypeScript verification library. This is verified by cross-language test vectors in `testdata/vectors.json` (generated by `testdata/gen_vectors.go`; the Go, TypeScript and Python tests all check against it). Credentials signed by the Go app verify correctly on the TypeScript verification page.

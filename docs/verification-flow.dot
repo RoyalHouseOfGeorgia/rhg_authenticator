@@ -8,7 +8,7 @@ digraph verification_flow {
     qr [label="QR Code\non Diploma", shape=note, fillcolor="#ffe3e3"];
     scan [label="Scan → open URL", fillcolor="#dbe4ff"];
 
-    // Verification steps
+    // Verification steps (src/verify-page.ts → src/verify.ts)
     subgraph cluster_browser {
         label="Verification Page (client-side, GitHub Pages)";
         labeljust=l;
@@ -19,31 +19,36 @@ digraph verification_flow {
         fontcolor="#495057";
 
         parse [label="1. Parse URL params\n?p=...&s=..."];
-        decode [label="2. Base64URL decode\n→ payload + signature bytes"];
-        fetch_reg [label="3. Fetch\n/keys/registry.json"];
-        parse_cred [label="4. Parse + validate\ncredential JSON"];
-        verify_sig [label="5. Verify Ed25519 signature\nagainst all registry keys\n(single pass)"];
-        derive [label="6. Derive authority\nfrom matching key"];
-        render [label="7. Render result"];
+        fetch [label="2. Fetch registry.json +\nrevocations.json (parallel)"];
+        decode [label="3. Base64URL decode\n→ payload + signature bytes\nSHA-256 the payload"];
+        checks [label="4. Payload ≤ 2048 bytes,\nvalid credential JSON,\n64-byte signature"];
+        keys [label="5. Single pass over registry keys:\nsignature match → revoked?\n→ date ≤ key.to (from ignored)\n→ honor in allowed_honors (if set)"];
     }
 
     registry [label="Key Registry\n(registry.json)", shape=cylinder, fillcolor="#d3f9d8"];
+    revocations [label="Revocation List\n(revocations.json)", shape=cylinder, fillcolor="#d3f9d8"];
 
-    // Success/failure
-    success [label="Verified\n(credential details\n+ authority)", fillcolor="#b2f2bb", shape=oval];
-    failure [label="Rejected\n(reason displayed)", fillcolor="#ffc9c9", shape=oval];
+    // Outcomes (renderResult)
+    info [label="Info page\n(no p/s params)", fillcolor="#e7f5ff", shape=oval];
+    error [label="Verification Error\n(registry fetch or\ndecode failure)", fillcolor="#fff3bf", shape=oval];
+    success [label="Verified\n(details + authority from key;\nnote if revocation status unknown)", fillcolor="#b2f2bb", shape=oval];
+    revoked [label="Credential Revoked", fillcolor="#ffd8a8", shape=oval];
+    failure [label="Not Verified\n(generic message;\nreason not shown)", fillcolor="#ffc9c9", shape=oval];
 
     // Edges
     qr -> scan;
     scan -> parse;
-    parse -> decode;
-    decode -> fetch_reg;
-    fetch_reg -> registry [style=dashed, dir=both, label="HTTPS"];
-    fetch_reg -> parse_cred;
-    parse_cred -> verify_sig;
-    verify_sig -> derive [label="matching key"];
-    derive -> render;
-    render -> success [label="valid"];
-    verify_sig -> render [label="no match", style=dashed];
-    render -> failure [label="invalid"];
+    parse -> info [label="missing/invalid", style=dashed];
+    parse -> fetch;
+    fetch -> registry [style=dashed, dir=both, label="HTTPS"];
+    fetch -> revocations [style=dashed, dir=both, label="HTTPS\n(failure tolerated)"];
+    fetch -> error [label="registry\nunavailable", style=dashed];
+    fetch -> decode;
+    decode -> error [label="bad Base64URL", style=dashed];
+    decode -> checks;
+    checks -> failure [label="fails", style=dashed];
+    checks -> keys;
+    keys -> revoked [label="hash in list"];
+    keys -> success [label="key valid\nfor date + honor"];
+    keys -> failure [label="no key matches", style=dashed];
 }
