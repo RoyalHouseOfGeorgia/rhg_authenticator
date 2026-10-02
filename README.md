@@ -26,7 +26,7 @@
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 | **URL rebuild tool** | Python | **Complete** | `scripts/rebuild_urls.py` — rebuild verification URLs from existing signatures, no YubiKey |
 
-1312 tests passing (869 Go + 409 TypeScript + 34 Python).
+1361 tests passing (905 Go + 422 TypeScript + 34 Python).
 
 ## Download & install
 
@@ -65,7 +65,7 @@ make build          # → release/rhg-authenticator
 
 The app has five tabs:
 - **Sign** — fill in credential form, sign with YubiKey, generate QR code; or **Bulk Sign from File…** to sign every row of a CSV in one session
-- **History** — browse previously issued credentials, search by recipient; **Export Issuance Log…** saves a copy of the log (e.g. to the Desktop)
+- **History** — browse previously issued credentials, search by recipient; **Export Issuance Log…** saves a copy of the log (e.g. to the Desktop); **Remove Duplicates…** removes repeat entries for the same credential
 - **Registry** — manage the key registry (import from YubiKey or .crt/.pem, add/edit entries, submit as PR for review)
 - **Audit** — view GitHub commit history of the registry file (tamper detection)
 - **YubiKey** — check if the inserted YubiKey is authorized in the registry
@@ -80,7 +80,7 @@ See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
 ```bash
 npm install
-npm test              # 392 tests
+npm test              # 422 tests
 npm run lint          # tsc --noEmit
 npm run build:verify  # Bundle verification page JS
 ```

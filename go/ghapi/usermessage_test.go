@@ -11,6 +11,8 @@ const (
 	msgRateLimit = "GitHub rate limit reached. Try again in a few minutes."
 	msgForbidden = "Permission denied. Check your GitHub account permissions."
 	msgGeneric   = "An error occurred. Please try again later."
+	msgRevoked   = "This credential is already revoked."
+	msgPending   = "A revocation for this credential is already awaiting review on GitHub."
 )
 
 func TestUserMessage(t *testing.T) {
@@ -28,6 +30,8 @@ func TestUserMessage(t *testing.T) {
 		{"nil error", nil, msgGeneric},
 		{"fork error", &ForkError{Phase: "create", Wrapped: fmt.Errorf("network error")}, msgFork},
 		{"wrapped fork error", fmt.Errorf("request failed: %w", &ForkError{Phase: "poll", Wrapped: fmt.Errorf("timeout")}), msgFork},
+		{"already revoked", ErrAlreadyRevoked, msgRevoked},
+		{"revocation pending", ErrRevocationPending, msgPending},
 		// Fork wins over the permission/rate-limit message it wraps.
 		{"fork over 403", &ForkError{Phase: "create", Wrapped: &APIError{StatusCode: 403, Message: "forbidden"}}, msgFork},
 		{"fork over 429", &ForkError{Phase: "poll", Wrapped: &APIError{StatusCode: 429, Message: "rate limited"}}, msgFork},

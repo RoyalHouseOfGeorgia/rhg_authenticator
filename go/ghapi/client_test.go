@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1029,15 +1030,27 @@ type revocationFake struct {
 	branchRef    string
 	prTitle      string
 	prBody       string
+	pullsGET     string // path?query of the open-PR list GET
+
+	// Response for the open-PR list GET; tests may override after construction.
+	pullsStatus int
+	pullsBody   string
 }
 
 // newRevocationFakeServer serves a full fork-PR flow. Every contents GET (the
 // upstream fetch and the fork's blob-SHA lookup) returns upstream, line-wrapped.
 func newRevocationFakeServer(t *testing.T, upstream []byte) (*httptest.Server, *revocationFake) {
 	t.Helper()
-	f := &revocationFake{}
+	f := &revocationFake{pullsStatus: 200, pullsBody: `[]`}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		// Must precede waitForFork, which matches any GET under /repos/testuser/.
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			f.calls = append(f.calls, "listPulls")
+			f.pullsGET = r.URL.Path + "?" + r.URL.RawQuery
+			w.WriteHeader(f.pullsStatus)
+			w.Write([]byte(f.pullsBody))
+
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/forks"):
 			f.calls = append(f.calls, "forkRepo")
 			w.WriteHeader(202)
@@ -1132,7 +1145,7 @@ func TestCreateRevocationPR_Success(t *testing.T) {
 	}
 
 	// Upstream fetch happens before any fork work.
-	expected := []string{"getContents", "forkRepo", "waitForFork", "syncFork", "getRef", "createRef", "getContents", "updateContents", "createPR"}
+	expected := []string{"getContents", "listPulls", "forkRepo", "waitForFork", "syncFork", "getRef", "createRef", "getContents", "updateContents", "createPR"}
 	if len(f.calls) != len(expected) {
 		t.Fatalf("call sequence = %v, want %v", f.calls, expected)
 	}
@@ -1144,6 +1157,10 @@ func TestCreateRevocationPR_Success(t *testing.T) {
 
 	if !strings.Contains(f.branchRef, "revoke-") {
 		t.Errorf("branch ref = %q, want to contain 'revoke-'", f.branchRef)
+	}
+	wantPulls := "/repos/" + DefaultOwner + "/" + DefaultRepo + "/pulls?per_page=100&state=open"
+	if f.pullsGET != wantPulls {
+		t.Errorf("open-PR list GET = %q, want %q", f.pullsGET, wantPulls)
 	}
 	for _, p := range f.contentsGETs {
 		if !strings.Contains(p, "revocations.json") {
@@ -1227,6 +1244,62 @@ func TestCreateRevocationPR_BranchUsesShortHash(t *testing.T) {
 	}
 	if strings.Contains(f.branchRef, testRevHashB) {
 		t.Errorf("branch ref = %q, should not contain full hash", f.branchRef)
+	}
+}
+
+func TestCreateRevocationPR_AlreadyRevoked(t *testing.T) {
+	upstream := []byte(`{"revocations": [{"hash": "` + testRevHashB + `", "revoked_on": "2026-09-30"}]}`)
+	srv, f := newRevocationFakeServer(t, upstream)
+
+	c := newTestClientWithUser(srv, "tok", "testuser")
+	_, err := c.CreateRevocationPR(context.Background(), strings.ToUpper(testRevHashB), "2026-10-01")
+	if !errors.Is(err, ErrAlreadyRevoked) {
+		t.Fatalf("error = %v, want ErrAlreadyRevoked", err)
+	}
+	if len(f.calls) != 1 || f.calls[0] != "getContents" {
+		t.Errorf("calls = %v, want only the upstream getContents", f.calls)
+	}
+}
+
+func TestCreateRevocationPR_OpenPRCheck(t *testing.T) {
+	ownRef := "revoke-" + testRevHashB[:16] + "-abc"
+	cases := []struct {
+		name        string
+		status      int
+		body        string
+		wantPending bool
+	}{
+		{"own open PR (login case-insensitive)", 200, `[{"head": {"ref": "` + ownRef + `", "user": {"login": "TestUser"}}}]`, true},
+		{"same ref, another login", 200, `[{"head": {"ref": "` + ownRef + `", "user": {"login": "someoneelse"}}}]`, false},
+		{"own login, different hash", 200, `[{"head": {"ref": "revoke-` + testRevHashA[:16] + `-abc", "user": {"login": "testuser"}}}]`, false},
+		{"lookup fails (fail open)", 500, `{"message": "boom"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, f := newRevocationFakeServer(t, []byte(`{"revocations": []}`))
+			f.pullsStatus, f.pullsBody = tc.status, tc.body
+
+			c := newTestClientWithUser(srv, "tok", "testuser")
+			pr, err := c.CreateRevocationPR(context.Background(), testRevHashB, "2026-10-01")
+			if tc.wantPending {
+				if !errors.Is(err, ErrRevocationPending) {
+					t.Fatalf("error = %v, want ErrRevocationPending", err)
+				}
+				if slices.Contains(f.calls, "forkRepo") || slices.Contains(f.calls, "createPR") {
+					t.Errorf("calls = %v, want no fork or PR work", f.calls)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if pr.Number != 99 {
+				t.Errorf("PR number = %d, want 99", pr.Number)
+			}
+			if !slices.Contains(f.calls, "listPulls") || !slices.Contains(f.calls, "createPR") {
+				t.Errorf("calls = %v, want listPulls and createPR", f.calls)
+			}
+		})
 	}
 }
 

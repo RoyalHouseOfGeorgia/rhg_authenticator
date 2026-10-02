@@ -122,6 +122,19 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		dialog.ShowInformation("Issuance Record", detail, window)
 	}
 
+	// markRevoked records hash as revoked locally (submitted, already revoked or
+	// pending) and leaves Revoke disabled. UI thread only.
+	markRevoked := func(hash string) {
+		revokeInFlight = false
+		if revokedHashes == nil {
+			revokedHashes = make(map[string]bool)
+		}
+		revokedHashes[strings.ToLower(hash)] = true
+		list.Refresh()
+		selectedRecord = nil
+		revokeButton.Disable()
+	}
+
 	// Wire up the revoke button's action (defined after list so we can reference filtered).
 	revokeButton.OnTapped = func() {
 		if selectedRecord == nil {
@@ -136,7 +149,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 
 		// Check if already revoked.
 		if revokedHashes[strings.ToLower(rec.PayloadSHA256)] {
-			dialog.ShowInformation("Already Revoked", "This credential has already been revoked.", window)
+			dialog.ShowInformation("Already Revoked", ghapi.UserMessage(ghapi.ErrAlreadyRevoked), window)
 			return
 		}
 
@@ -153,7 +166,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 			}
 			// Prevent a second tap from opening a duplicate PR while this one is
 			// in flight (updateRevokeButton honours the flag); re-enabled on
-			// failure, left disabled on success.
+			// failure, left disabled once the hash is revoked or pending.
 			revokeInFlight = true
 			revokeButton.Disable()
 
@@ -165,8 +178,18 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				// revocations merged since the last fetch are never dropped.
 				pr, err := client.CreateRevocationPR(ctx, rec.PayloadSHA256, time.Now().UTC().Format("2006-01-02"))
 				if err != nil {
+					unauthorized, infoTitle, msg := revokeFailureAction(err)
+					if infoTitle != "" {
+						// Nothing to submit: the hash is already revoked upstream
+						// or awaiting review, so mark it locally like a success.
+						stdlog.Printf("info: revocation not submitted: %s", core.SanitizeForLog(err.Error()))
+						fyne.Do(func() {
+							markRevoked(rec.PayloadSHA256)
+							dialog.ShowInformation(infoTitle, msg, window)
+						})
+						return
+					}
 					stdlog.Printf("error: revocation PR failed: %s", core.SanitizeForLog(err.Error()))
-					unauthorized, msg := revokeFailureAction(err)
 					fyne.Do(func() {
 						revokeInFlight = false
 						updateRevokeButton(ghClientFn() == nil)
@@ -182,16 +205,8 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				}
 
 				fyne.Do(func() {
-					revokeInFlight = false
+					markRevoked(rec.PayloadSHA256)
 					dialog.ShowInformation("Revocation Submitted", fmt.Sprintf("Pull request #%d created:\n%s\n\nIf several revocation PRs are open, merge them one at a time.", pr.Number, pr.HTMLURL), window)
-					// Update local state.
-					if revokedHashes == nil {
-						revokedHashes = make(map[string]bool)
-					}
-					revokedHashes[strings.ToLower(rec.PayloadSHA256)] = true
-					list.Refresh()
-					selectedRecord = nil
-					revokeButton.Disable()
 				})
 			}()
 		}, window)
@@ -274,23 +289,35 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		onIssuanceExportTapped(logPath, window)
 	})
 
+	dedupButton := widget.NewButton("Remove Duplicates…", func() {
+		onRemoveDuplicatesTapped(logPath, debugLogPath, loadRecords, window)
+	})
+
 	// Initial load.
 	loadRecords()
 	fetchRevocations()
 
-	buttonBar := container.NewHBox(refreshButton, signInButton, revokeButton, exportButton, revocationStatus)
+	buttonBar := container.NewHBox(refreshButton, signInButton, revokeButton, exportButton, dedupButton, revocationStatus)
 	topBar := container.NewBorder(nil, nil, nil, buttonBar, searchEntry)
 	return container.NewBorder(topBar, nil, nil, nil, list), refreshLoginState
 }
 
 // revokeFailureAction classifies a revocation-PR error: a 401 means the
-// session expired (caller restarts login); anything else maps to a
-// user-facing message.
-func revokeFailureAction(err error) (unauthorized bool, msg string) {
+// session expired (caller restarts login); an already-revoked or pending
+// revocation is not a failure and returns a non-empty infoTitle (caller shows
+// an information dialog and marks the record revoked); anything else maps to
+// a user-facing message.
+func revokeFailureAction(err error) (unauthorized bool, infoTitle, msg string) {
 	if ghapi.IsUnauthorized(err) {
-		return true, "Your GitHub session expired. Please log in again."
+		return true, "", "Your GitHub session expired. Please log in again."
 	}
-	return false, ghapi.UserMessage(err)
+	if errors.Is(err, ghapi.ErrAlreadyRevoked) {
+		return false, "Already Revoked", ghapi.UserMessage(err)
+	}
+	if errors.Is(err, ghapi.ErrRevocationPending) {
+		return false, "Revocation Pending", ghapi.UserMessage(err)
+	}
+	return false, "", ghapi.UserMessage(err)
 }
 
 // filterRecords returns records matching the query (case-insensitive substring
@@ -362,6 +389,49 @@ func onIssuanceExportTapped(logPath string, window fyne.Window) {
 		saveDialog.SetLocation(desktop)
 	}
 	saveDialog.Show()
+}
+
+// onRemoveDuplicatesTapped previews the duplicate count read-only, then asks
+// for confirmation before RemoveDuplicates re-reads and rewrites the log
+// (backing it up first). onRemoved reloads the list after a rewrite.
+func onRemoveDuplicatesTapped(logPath, debugLogPath string, onRemoved func(), window fyne.Window) {
+	records, err := log.ReadLog(logPath)
+	if err != nil {
+		stdlog.Printf("history: failed to read log for dedup: %s", core.SanitizeForLog(err.Error()))
+		ShowErrorWithLogExport("Remove Duplicates Failed", "Could not read the issuance log.", debugLogPath, window)
+		return
+	}
+	_, n := log.Dedupe(records)
+	if n == 0 {
+		showNoDuplicates(window)
+		return
+	}
+	msg := fmt.Sprintf("Found %d duplicate entries. The earliest valid entry of each credential is kept and later copies are removed. A backup of the current log is saved first. Continue?", n)
+	d := dialog.NewConfirm("Remove Duplicates", msg, func(ok bool) {
+		if !ok {
+			return
+		}
+		removed, backup, err := log.RemoveDuplicates(logPath)
+		if err != nil {
+			stdlog.Printf("history: remove duplicates failed: %s", core.SanitizeForLog(err.Error()))
+			ShowErrorWithLogExport("Remove Duplicates Failed", "Could not remove duplicates. The issuance log was not changed.", debugLogPath, window)
+			return
+		}
+		if removed == 0 {
+			// The log changed between the preview and the confirm.
+			showNoDuplicates(window)
+			return
+		}
+		dialog.ShowInformation("Duplicates Removed", fmt.Sprintf("Removed %d entries. Backup saved to %s.", removed, backup), window)
+		onRemoved()
+	}, window)
+	d.SetConfirmText("Remove Entries")
+	d.SetDismissText("Cancel")
+	d.Show()
+}
+
+func showNoDuplicates(window fyne.Window) {
+	dialog.ShowInformation("No Duplicates", "The issuance log has no duplicate entries.", window)
 }
 
 func showNothingToExport(window fyne.Window) {

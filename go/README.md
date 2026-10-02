@@ -50,6 +50,8 @@ See [../CHANGELOG.md](../CHANGELOG.md) for release history.
 6. Click **Save SVG** (primary — vector for print) or **Save PNG** (2048px alternative). The save dialog opens on the Desktop; on a Mac, the first save may ask whether the app can access the Desktop — click **Allow**
 7. Copy the verification URL to clipboard via **Copy URL**
 
+If the same credential (identical recipient, honor, detail and date) is already in the issuance log, the app skips the PIN prompt, says **"Credential previously generated, no new record created."** and shows the original QR code — nothing new is logged. If the issuance log can't be read, signing is blocked until it can (see [Troubleshooting](#troubleshooting)).
+
 If signing fails, the status area shows a diagnostic message and a **Report Issue** button (files a GitHub issue automatically if logged in, or opens a pre-filled browser form). Details are written to the error log — see [Troubleshooting](#troubleshooting) below.
 
 ### Bulk Sign
@@ -96,7 +98,9 @@ A wrong PIN, a YubiKey error, or a failure to write the issuance log stops the b
 
 Browse previously issued credentials. Search by recipient name. Click any entry for full details. **Revoke** a credential via the Revoke button — this submits a GitHub PR to add the credential's SHA-256 hash to the revocation list.
 
-Revoke needs a working GitHub session. If you aren't logged in, or GitHub couldn't be reached when the app started, click **Connect to GitHub**. If a revocation fails, the error dialog has an **Export Error Log…** button.
+Revoke needs a working GitHub session. If you aren't logged in, or GitHub couldn't be reached when the app started, click **Connect to GitHub**. If a revocation fails, the error dialog has an **Export Error Log…** button. If the credential is already revoked, or you already have a revocation PR open for it, no new PR is created and the app says so.
+
+**Remove Duplicates…** finds entries in the issuance log for the same credential signed more than once, and removes all but the earliest valid entry after you confirm (entries with a damaged signature are left in place). A backup of the current log (`issuances.json.bak-<UTC timestamp>`, e.g. `issuances.json.bak-20261001T120000Z`) is saved next to it first. Removed entries were the same credential, so any QR code already printed from them still verifies.
 
 **Export Issuance Log…** saves a copy of the issuance log. The save dialog opens on the Desktop with a dated name (`rhg-issuances-YYYY-MM-DD.json`); after saving, a message shows exactly where the file went so it can be attached to an email. On a Mac, the first export may ask whether the app can access the Desktop — click **Allow**. If nothing has been signed yet, the button says so instead of opening the dialog.
 
@@ -191,6 +195,7 @@ The file itself lives here:
 | **YubiKey not detected** | No YubiKey visible to the smart card service | Unplug and replug the key. Verify CCID is enabled: `ykman config usb` |
 | **Smart card service not available** | OS smart card service not running | macOS: built-in, should always work. Windows: ensure the "Smart Card" service is running (`services.msc`) |
 | **No signing certificate found on YubiKey (PIV slot 9c)** | Slot 9c has no certificate, or the certificate does not contain an Ed25519 key | Follow [YubiKey Setup](#yubikey-setup) to generate a key and import the certificate. Ed25519 requires firmware >= 5.7 — check with `ykman info` |
+| **Could not read the issuance log, so duplicates can't be checked** | `issuances.json` (next to `debug.log`) is unreadable or no longer valid JSON | Restore it from the newest `issuances.json.bak-*` next to it or from an exported copy, then sign again. **Help → Export Error Log…** shows the exact error |
 | **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | **Help → Export Error Log…** and send the file |
 | **Offline — Reconnect** (Registry tab) / Revoke stays disabled | GitHub couldn't be reached when the app started | Click **Offline — Reconnect** (or **Connect to GitHub** on the History tab). If it still can't connect, check your network and try again |
 | **Could not save the SVG file / PNG file / issuance log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop**. May be needed again after installing a new version |
@@ -207,7 +212,7 @@ The file itself lives here:
 - **PIN never leaves the process**: `piv-go` talks directly to the YubiKey via PCSC. No subprocess, no command-line arguments, no `/proc` exposure.
 - **PIN caching** (opt-in): stored in `mlock`'d memory (non-swappable), protected by mutex, auto-zeroed after 5 minutes of inactivity.
 - **Post-sign verification**: every signature is verified immediately after signing to catch hardware errors.
-- **Atomic log writes**: issuance records use tmp-file + rename pattern for crash safety.
+- **Atomic log writes**: issuance records use tmp-file + rename pattern for crash safety. Appends and **Remove Duplicates** are serialized, so neither can drop the other's records; Remove Duplicates saves a `.bak-` copy of the log first.
 - **GitHub token in OS keychain**: OAuth tokens are stored via `go-keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). File fallback on Linux only (0600 permissions). Token redacted from `fmt.Sprintf` output via `String()`/`GoString()` methods. Tokens expire after 90 days (enforced locally on session restore).
 - **Redirect protection**: HTTP client strips `Authorization` header on cross-origin redirects (allows `*.github.com` only).
 - **Input sanitization**: All untrusted GitHub API responses are sanitized before logging (control characters replaced, truncated to 500 runes). User-facing error messages are mapped to safe generic text.
@@ -245,11 +250,11 @@ go/
 │   ├── audit_tab.go     # Registry audit (renders commit history from ghapi/commits)
 │   ├── bulk_flow.go     # Bulk sign orchestration (Fyne-free): load plan, PIN once, run
 │   ├── bulk_sign.go     # Bulk sign dialogs: file pick, confirm, progress, summary + export
-│   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi), Export Issuance Log
+│   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi; skips already-revoked/pending), Export Issuance Log, Remove Duplicates
 │   ├── errorlog_export.go # Help → Export Error Log… save flow; ShowErrorWithLogExport error dialog
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display + Report Issue button
-│   ├── signflow.go      # Extracted signing workflow (testable)
+│   ├── signflow.go      # Extracted signing workflow incl. duplicate-issuance check (testable)
 │   ├── statusbar.go     # Bottom status bar (key stats, online status, lastUpdateCh coordination, revocationStatus label)
 │   └── yubikey_tab.go   # YubiKey registry check (no PIN)
 ├── ghapi/               # GitHub API client + OAuth device flow
@@ -272,7 +277,7 @@ go/
 ├── qr/                  # QR code generation
 │   └── generate.go      # SVG (vector) + PNG output
 ├── log/                 # Issuance log
-│   └── issuance.go      # Atomic append-only JSON log
+│   └── issuance.go      # Atomic JSON issuance log: append, read, dedupe (with backup)
 ├── registry/            # Registry fetch
 │   └── fetch.go         # Remote-only registry fetch; readLimitedBody helper
 ├── update/              # Version check

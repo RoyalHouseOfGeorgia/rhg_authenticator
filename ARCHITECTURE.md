@@ -41,12 +41,14 @@ The system has three independent components, plus a standalone helper:
 2. App detects YubiKey via PCSC, reads certificate from PIV slot 9c
 3. Operator plugs in YubiKey (signing does not require registry; works offline)
 4. Operator fills in credential form (recipient, honor, detail, date)
-5. Operator clicks "Sign" → app prompts for YubiKey PIN via GUI dialog
+5. Operator clicks "Sign" → app checks the issuance log for the same payload hash; if found, it skips the PIN prompt and step 6, rebuilds the URL from the logged signature (the same QR as when it was first issued) and adds no log entry. Otherwise it prompts for the YubiKey PIN via GUI dialog
 6. App canonicalizes credential → signs via YubiKey → verifies round-trip → logs
 7. App generates QR code (SVG for print, PNG for preview)
 8. Operator saves SVG, gives to diploma designer for printing
 
 **Bulk variant:** the operator selects a CSV instead of filling the form. Every row is validated before the PIN prompt (invalid rows are skipped; rows whose payload hash is already in the issuance log are reported as already issued, with the URL rebuilt from the logged signature). The PIN is entered once; each remaining row is then signed and logged as in steps 6–7, minus the QR preview. A failed log write stops the batch, so every signed row is either logged or reported as not logged. The operator can export a results CSV containing each row's verification URL.
+
+**Duplicate cleanup:** logs written before the duplicate check may hold the same credential more than once. **History → Remove Duplicates…** keeps the earliest record with a well-formed signature for each payload hash, drops later copies, and saves a timestamped `.bak-` copy of the log first. Log appends and this rewrite are serialized by a mutex in `log/issuance.go`.
 
 ### Verification Flow
 
@@ -71,7 +73,7 @@ Credentials can be revoked after issuance. The revocation mechanism is hash-base
 
 - The **History** tab includes a **Revoke** button with a confirmation dialog. Revoking a credential submits a pull request via the GitHub API (`CreateRevocationPR` in `ghapi`), adding the credential's SHA-256 hash to `revocations.json`.
 - `core/revocation.go` provides `RevocationEntry`, `RevocationList`, `ValidateRevocationList`, `BuildRevocationSet`, `IsRevoked`, and `AppendRevocationEntry` (deep-copies the list and appends a new entry without mutating the input).
-- The PR's `revocations.json` is built inside `CreateRevocationPR` from the current file on upstream `main` (Contents API), never from the copy the History tab loaded, so a second revocation can't drop an earlier one. With several revocation PRs open, merge them one at a time; close any PR that conflicts and re-revoke.
+- The PR's `revocations.json` is built inside `CreateRevocationPR` from the current file on upstream `main` (Contents API), never from the copy the History tab loaded, so a second revocation can't drop an earlier one. With several revocation PRs open, merge them one at a time; close any PR that conflicts and re-revoke. No PR is opened if the hash is already in that upstream list (`ErrAlreadyRevoked`) or if the user already has an open PR from a `revoke-<hash16>-` branch (`ErrRevocationPending`). If that open-PR check fails, the PR is opened anyway.
 
 ### Verification Page (TypeScript)
 

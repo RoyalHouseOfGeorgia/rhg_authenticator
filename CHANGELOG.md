@@ -18,6 +18,16 @@ patch component for fix-only releases (`v1.3.1`).
 - **Export Error Log.** **Help → Export Error Log…** saves the log to the
   Desktop so it can be emailed. The Revocation Failed and Submission Failed
   dialogs have the same button.
+- **No duplicate issuances.** Signing a credential that is already in the
+  issuance log no longer asks for the PIN or adds a second log entry. The app
+  says "Credential previously generated, no new record created." and shows the
+  same QR code as when the credential was first issued.
+- **No duplicate revocations.** Revoke no longer opens a pull request when the
+  credential is already on the revocation list ("Already Revoked") or when you
+  already have an open revocation pull request for it ("Revocation Pending").
+- **Remove Duplicates.** **History → Remove Duplicates…** removes duplicate
+  entries from the issuance log, keeping the earliest valid entry for each credential.
+  A backup of the log is saved next to it first.
 
 ### Changed
 - **Releases publish only the build artifacts.** The release job downloads only

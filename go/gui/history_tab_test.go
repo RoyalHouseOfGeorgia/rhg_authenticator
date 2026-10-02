@@ -208,7 +208,8 @@ func TestDesktopDir(t *testing.T) {
 }
 
 // TestRevokeFailureAction pins the revocation-PR error classification: only a
-// 401 (directly or wrapped) restarts login; every other error maps to
+// 401 (directly or wrapped) restarts login; already-revoked and pending
+// errors (directly or wrapped) are informational; every other error maps to
 // ghapi.UserMessage and never echoes the raw error text into the dialog.
 func TestRevokeFailureAction(t *testing.T) {
 	const sessionExpired = "Your GitHub session expired. Please log in again."
@@ -217,19 +218,28 @@ func TestRevokeFailureAction(t *testing.T) {
 		name             string
 		err              error
 		wantUnauthorized bool
+		wantInfoTitle    string
+		wantMsg          string // checked only when non-empty
 	}{
-		{"401", &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}, true},
-		{"wrapped 401", fmt.Errorf("create branch: %w", &ghapi.APIError{StatusCode: 401}), true},
-		{"non-401", &ghapi.APIError{StatusCode: 500, Message: secret}, false},
+		{"401", &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}, true, "", sessionExpired},
+		{"wrapped 401", fmt.Errorf("create branch: %w", &ghapi.APIError{StatusCode: 401}), true, "", sessionExpired},
+		{"non-401", &ghapi.APIError{StatusCode: 500, Message: secret}, false, "", ""},
+		{"already revoked", ghapi.ErrAlreadyRevoked, false, "Already Revoked", ghapi.UserMessage(ghapi.ErrAlreadyRevoked)},
+		{"wrapped already revoked", fmt.Errorf("x: %w", ghapi.ErrAlreadyRevoked), false, "Already Revoked", ghapi.UserMessage(ghapi.ErrAlreadyRevoked)},
+		{"pending", ghapi.ErrRevocationPending, false, "Revocation Pending", ghapi.UserMessage(ghapi.ErrRevocationPending)},
+		{"wrapped pending", fmt.Errorf("x: %w", ghapi.ErrRevocationPending), false, "Revocation Pending", ghapi.UserMessage(ghapi.ErrRevocationPending)},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			unauthorized, msg := revokeFailureAction(tc.err)
+			unauthorized, infoTitle, msg := revokeFailureAction(tc.err)
 			if unauthorized != tc.wantUnauthorized {
 				t.Errorf("unauthorized = %v, want %v", unauthorized, tc.wantUnauthorized)
 			}
-			if tc.wantUnauthorized && msg != sessionExpired {
-				t.Errorf("msg = %q, want %q", msg, sessionExpired)
+			if infoTitle != tc.wantInfoTitle {
+				t.Errorf("infoTitle = %q, want %q", infoTitle, tc.wantInfoTitle)
+			}
+			if tc.wantMsg != "" && msg != tc.wantMsg {
+				t.Errorf("msg = %q, want %q", msg, tc.wantMsg)
 			}
 			if strings.Contains(msg, "secret-detail") {
 				t.Errorf("msg leaks raw error text: %q", msg)
