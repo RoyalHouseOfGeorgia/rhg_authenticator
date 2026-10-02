@@ -7,12 +7,12 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-// QRMaxURLLength is the maximum URL length accepted for QR code generation.
-// At error correction level H (30%), 625 bytes is within the capacity of a
-// version 20 QR code, keeping the module count reasonable for print.
+// QRMaxURLLength is the maximum URL length accepted for QR code generation,
+// keeping the module count reasonable for print.
 const QRMaxURLLength = 625
 
-// newQR validates the URL length and creates a QR code at High error correction.
+// newQR validates the URL length and creates a QR code at skip2's qrcode.High,
+// which is error correction level Q (25%).
 func newQR(url string) (*qrcode.QRCode, error) {
 	if len(url) > QRMaxURLLength {
 		return nil, fmt.Errorf("URL exceeds maximum length (%d > %d)", len(url), QRMaxURLLength)
@@ -21,9 +21,10 @@ func newQR(url string) (*qrcode.QRCode, error) {
 }
 
 // GenerateSVG generates a QR code as SVG bytes (vector format, scales to any print size).
-// Error correction level H (30%). Version auto-selected.
-// SVG is manually rendered: header + rect per dark module + 4-module quiet zone.
-// viewBox="0 0 {N+8} {N+8}" where N = number of modules.
+// Error correction level Q (25%). Version auto-selected.
+// SVG is manually rendered: header + rect per dark module. Bitmap() already
+// includes skip2's 4-module quiet zone, and 4 more modules are added on each
+// side, so viewBox = bitmap size + 8.
 func GenerateSVG(url string) ([]byte, error) {
 	qr, err := newQR(url)
 	if err != nil {
@@ -32,7 +33,7 @@ func GenerateSVG(url string) ([]byte, error) {
 
 	bitmap := qr.Bitmap()
 	n := len(bitmap)
-	total := n + 8 // 4-module quiet zone on each side
+	total := n + 8 // 4 extra modules on each side, on top of skip2's quiet zone
 
 	var buf bytes.Buffer
 	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
@@ -57,8 +58,8 @@ func GenerateSVG(url string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// GeneratePNG generates a QR code as PNG bytes for screen preview.
-// Error correction level H (30%). Version auto-selected.
+// GeneratePNG generates a QR code as PNG bytes (512px preview, 2048px for Save PNG).
+// Error correction level Q (25%). Version auto-selected.
 func GeneratePNG(url string, width int) ([]byte, error) {
 	qr, err := newQR(url)
 	if err != nil {

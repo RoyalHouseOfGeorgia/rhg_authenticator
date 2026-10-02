@@ -178,7 +178,12 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 			}
 
 			fyne.Do(func() {
-				statusLabel.SetText("Signed successfully.")
+				if result.Existing {
+					statusLabel.SetText("Credential previously generated.")
+					dialog.ShowInformation("Already Issued", "Credential previously generated, no new record created.", window)
+				} else {
+					statusLabel.SetText("Signed successfully.")
+				}
 
 				// QR preview image.
 				qrImage := canvas.NewImageFromResource(
@@ -372,6 +377,11 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	}
 	if errors.Is(err, ErrPINCacheUnavailable) {
 		return "Could not secure the PIN in memory. Please restart the app."
+	}
+	// Checked before ClassifyHardwareError for the same reason as ErrNotLogged:
+	// the wrapped read/parse error text must not be misread as a hardware fault.
+	if errors.Is(err, ErrIssuanceLogUnreadable) {
+		return "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable."
 	}
 	// Checked before ClassifyHardwareError, whose regex could misread the
 	// wrapped OS file error (e.g. a path or errno text) as a hardware fault.

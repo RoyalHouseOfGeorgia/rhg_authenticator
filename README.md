@@ -14,7 +14,7 @@
 ## How It Works
 
 1. **Issuance**: The operator opens the RHG Authenticator desktop app, fills in the credential form, and signs with a YubiKey
-2. **Encoding**: The signed credential is encoded into a QR code (SVG for print, PNG for preview)
+2. **Encoding**: The signed credential is encoded into a QR code (saved as SVG for print or high-resolution PNG; PNG preview in the app)
 3. **Verification**: Anyone scans the QR code, opening a public page that checks the signature against a key registry
 
 ## Components
@@ -22,11 +22,11 @@
 | Component | Language | Status | Description |
 |-----------|----------|--------|-------------|
 | **Desktop app** | Go | **Complete** | Self-contained binary with Fyne GUI — 5 tabs: Sign, History, Registry, Audit, YubiKey |
-| **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry |
+| **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry, revocation list |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
-| **URL rebuild tool** | Python | **Complete** | `scripts/rebuild_urls.py` — rebuild verification URLs from existing signatures, no YubiKey |
+| **Python tools** | Python | **Complete** | `scripts/rebuild_urls.py` (rebuild verification URLs from existing signatures, no YubiKey), `scripts/rhg_qr.py` (QR image from a URL), `scripts/rhg_revocation_hash.py` (revocation hash for a URL) |
 
-1312 tests passing (869 Go + 409 TypeScript + 34 Python).
+1361 tests passing (905 Go + 422 TypeScript + 34 Python).
 
 ## Download & install
 
@@ -55,7 +55,7 @@ Download **`rhg-authenticator-windows-amd64.exe`** and double-click it. If Windo
 
 ## Quick Start — Signing App (build from source)
 
-**Requirements**: Go 1.26+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
+**Requirements**: Go 1.27.1+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
 ```bash
 cd go
@@ -65,14 +65,14 @@ make build          # → release/rhg-authenticator
 
 The app has five tabs:
 - **Sign** — fill in credential form, sign with YubiKey, generate QR code; or **Bulk Sign from File…** to sign every row of a CSV in one session
-- **History** — browse previously issued credentials, search by recipient; **Export Issuance Log…** saves a copy of the log (e.g. to the Desktop)
+- **History** — browse previously issued credentials, search by recipient; **Revoke** a credential (log in to GitHub; the app opens a PR against the revocation list); **Export Issuance Log…** saves a copy of the log (e.g. to the Desktop); **Remove Duplicates…** removes repeat entries for the same credential
 - **Registry** — manage the key registry (import from YubiKey or .crt/.pem, add/edit entries, submit as PR for review)
 - **Audit** — view GitHub commit history of the registry file (tamper detection)
 - **YubiKey** — check if the inserted YubiKey is authorized in the registry
 
 **Platform-specific build dependencies:**
-- macOS: none (PCSC framework + OpenGL built-in)
-- Windows: none (WinSCard + OpenGL built-in)
+- macOS: Xcode Command Line Tools (C compiler for cgo); PCSC framework and OpenGL are built in
+- Windows: a gcc toolchain such as MinGW-w64 (C compiler for cgo); WinSCard and OpenGL are built in
 
 See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
@@ -80,7 +80,7 @@ See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
 ```bash
 npm install
-npm test              # 392 tests
+npm test              # 422 tests
 npm run lint          # tsc --noEmit
 npm run build:verify  # Bundle verification page JS
 ```
@@ -120,7 +120,7 @@ python3 scripts/rhg_revocation_hash.py '<verification URL>'
 ```
 
 - `rhg_qr.py` needs [segno](https://pypi.org/project/segno/): `pip install segno` (Debian: `sudo apt install python3-segno`). It never overwrites an existing file; pass `-o` so QR images of real credentials don't land in the checkout.
-- These two scripts are maintainer tools with no tests and are excluded from CI.
+- These two scripts are maintainer tools with no tests; changes to them don't trigger the Python test workflow (CodeQL still scans them).
 
 ## Documentation
 
@@ -156,6 +156,7 @@ Compare the output with the hash in `SHA256SUMS.txt`.
 | [`fyne.io/fyne/v2`](https://fyne.io) | Cross-platform GUI |
 | [`skip2/go-qrcode`](https://github.com/skip2/go-qrcode) | QR code generation (SVG + PNG) |
 | [`zalando/go-keyring`](https://github.com/zalando/go-keyring) | OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) |
+| [`fyne.io/x/fyne`](https://github.com/fyne-io/fyne-x) | Fyne extension widgets (calendar date picker) |
 | `golang.org/x/text` | NFC Unicode normalization |
 | Go stdlib | `crypto/ed25519`, `crypto/sha256`, `encoding/json`, `encoding/base64` |
 
@@ -164,5 +165,5 @@ Compare the output with the hash in `SHA256SUMS.txt`.
 | Dependency | Purpose | Type |
 |-----------|---------|------|
 | [`@noble/curves`](https://github.com/paulmillr/noble-curves) | Audited Ed25519 implementation | Runtime |
-| `typescript`, `vitest`, `esbuild`, `happy-dom` | Build + test toolchain | Dev |
+| `typescript`, `vitest`, `esbuild`, `happy-dom`, `tsx`, `@types/node` | Build + test toolchain | Dev |
 

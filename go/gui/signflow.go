@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"golang.org/x/text/unicode/norm"
@@ -34,11 +35,64 @@ type SignFlowError struct {
 func (e *SignFlowError) Error() string { return string(e.Phase) + ": " + e.Err.Error() }
 func (e *SignFlowError) Unwrap() error { return e.Err }
 
+// ErrIssuanceLogUnreadable indicates the issuance log could not be read or
+// parsed, so the duplicate check cannot run. Signing is refused rather than
+// risking a duplicate record.
+var ErrIssuanceLogUnreadable = errors.New("issuance log unreadable")
+
 // SignFlowResult holds the output of a successful signing operation.
+// Existing is true when the response was rebuilt from a previously logged
+// issuance instead of a fresh signature.
 type SignFlowResult struct {
 	Response   core.SignResponse
 	PNGPreview []byte
 	Hash8      string
+	Existing   bool
+}
+
+// findExistingIssuance looks up req in the issuance log at logPath by payload
+// SHA-256. On a match it rebuilds the SignResponse from the logged signature —
+// the same credential and QR as when it was first issued (Ed25519 is
+// deterministic per key). The stored signature is not re-verified against the
+// registry; a malformed one is skipped as if absent.
+//
+// An empty logPath never matches. BuildPayload validation errors are returned
+// unwrapped; log read failures wrap ErrIssuanceLogUnreadable.
+func findExistingIssuance(req core.SignRequest, logPath string) (core.SignResponse, bool, error) {
+	if logPath == "" {
+		return core.SignResponse{}, false, nil
+	}
+
+	payload, err := core.BuildPayload(req)
+	if err != nil {
+		return core.SignResponse{}, false, err
+	}
+	hash := core.PayloadSHA256Hex(payload)
+
+	records, err := issuancelog.ReadLog(logPath)
+	if err != nil {
+		return core.SignResponse{}, false, fmt.Errorf("%w: %w", ErrIssuanceLogUnreadable, err)
+	}
+
+	for _, rec := range records {
+		if !strings.EqualFold(rec.PayloadSHA256, hash) {
+			continue
+		}
+		// A malformed stored signature is never reused; a later valid match
+		// or a fresh signature takes its place.
+		if !issuancelog.SignatureWellFormed(rec.SignatureB64URL) {
+			continue
+		}
+		payloadB64 := core.Encode(payload)
+		return core.SignResponse{
+			Signature:     rec.SignatureB64URL,
+			Payload:       payloadB64,
+			URL:           core.BuildVerifyURL(payloadB64, rec.SignatureB64URL),
+			PayloadSHA256: hash,
+		}, true, nil
+	}
+
+	return core.SignResponse{}, false, nil
 }
 
 // signAndLog opens the adapter with a pre-resolved PIN, exports the public
@@ -102,8 +156,14 @@ func signAndLog(
 	return resp, nil
 }
 
-// executeSignFlow runs the signing workflow: resolve PIN, open adapter, export
-// key, sign, log, generate QR, compute hash8.
+// executeSignFlow runs the signing workflow: check the issuance log for an
+// identical prior issuance, resolve PIN, open adapter, export key, sign, log,
+// generate QR, compute hash8.
+//
+// If the request was already issued, the PIN prompt, card access, signing and
+// log append are all skipped; the response is rebuilt from the logged
+// signature and returned with Existing set. An unreadable log blocks signing
+// (ErrIssuanceLogUnreadable) since duplicates cannot be ruled out.
 func executeSignFlow(
 	req core.SignRequest,
 	logPath string,
@@ -112,32 +172,44 @@ func executeSignFlow(
 	onConnecting func(),
 	logger *debuglog.Logger,
 ) (SignFlowResult, error) {
-	// 1. Resolve the PIN up-front, BEFORE opening the card. piv-go holds an
-	//    exclusive PCSC transaction (SCARD_SHARE_EXCLUSIVE + an open transaction)
-	//    for the whole connection lifetime, and its lazy PINPrompt fires inside
-	//    that transaction. Prompting for the PIN after Open would hold the
-	//    exclusive transaction open across human PIN entry, inviting a PC/SC
-	//    card reset on the subsequent VERIFY/sign APDU. Resolving first shrinks
-	//    the held-transaction window to cert-read + login + sign.
-	pin, err := readPin()
+	// 0. Duplicate check, before any PIN prompt or card access. A logged
+	//    issuance of the same payload is returned as-is (the credential first
+	//    issued), so no duplicate record is written.
+	resp, existing, err := findExistingIssuance(req, logPath)
 	if err != nil {
-		// ErrSigningCancelled / ErrPINEntryTimedOut / ErrPINCacheUnavailable are
-		// surfaced as-is; signFlowErrorMessage maps them via errors.Is.
+		logger.Log("duplicate check: " + core.SanitizeForLog(err.Error()))
 		return SignFlowResult{}, err
 	}
 
-	if onConnecting != nil {
-		onConnecting()
-	}
+	if !existing {
+		// 1. Resolve the PIN up-front, BEFORE opening the card. piv-go holds an
+		//    exclusive PCSC transaction (SCARD_SHARE_EXCLUSIVE + an open
+		//    transaction) for the whole connection lifetime, and its lazy
+		//    PINPrompt fires inside that transaction. Prompting for the PIN after
+		//    Open would hold the exclusive transaction open across human PIN
+		//    entry, inviting a PC/SC card reset on the subsequent VERIFY/sign
+		//    APDU. Resolving first shrinks the held-transaction window to
+		//    cert-read + login + sign.
+		pin, err := readPin()
+		if err != nil {
+			// ErrSigningCancelled / ErrPINEntryTimedOut / ErrPINCacheUnavailable
+			// are surfaced as-is; signFlowErrorMessage maps them via errors.Is.
+			return SignFlowResult{}, err
+		}
 
-	// 2. Open (fresh per sign, with the pre-resolved PIN), export key, sign,
-	//    and append the issuance record.
-	resp, err := signAndLog(req, logPath, openAdapter, pin, logger)
-	if err != nil && !errors.Is(err, core.ErrNotLogged) {
-		return SignFlowResult{}, err
+		if onConnecting != nil {
+			onConnecting()
+		}
+
+		// 2. Open (fresh per sign, with the pre-resolved PIN), export key, sign,
+		//    and append the issuance record.
+		resp, err = signAndLog(req, logPath, openAdapter, pin, logger)
+		if err != nil && !errors.Is(err, core.ErrNotLogged) {
+			return SignFlowResult{}, err
+		}
+		// A log-append failure is non-fatal for single-sign: the credential is
+		// already signed and signAndLog has recorded the failure in the debug log.
 	}
-	// A log-append failure is non-fatal for single-sign: the credential is
-	// already signed and signAndLog has recorded the failure in the debug log.
 
 	// 3. Generate QR preview.
 	pngData, err := qr.GeneratePNG(resp.URL, qrPreviewPx)
@@ -153,6 +225,7 @@ func executeSignFlow(
 		Response:   resp,
 		PNGPreview: pngData,
 		Hash8:      hash8,
+		Existing:   existing,
 	}, nil
 }
 

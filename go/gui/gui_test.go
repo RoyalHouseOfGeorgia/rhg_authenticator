@@ -654,6 +654,16 @@ func TestSignFlowErrorMessage_MlockFailure(t *testing.T) {
 	}
 }
 
+func TestSignFlowErrorMessage_IssuanceLogUnreadable(t *testing.T) {
+	// The wrapped parse error must not be classified as a hardware fault.
+	err := fmt.Errorf("%w: %w", ErrIssuanceLogUnreadable, fmt.Errorf("parsing log file: unexpected end of JSON input"))
+	got := signFlowErrorMessage(err, nil)
+	want := "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable."
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestSignFlowErrorMessage_WrongPINWithRetries(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))

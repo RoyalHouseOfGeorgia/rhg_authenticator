@@ -27,7 +27,9 @@ const signatureBytes = sign(payloadBytes, secretKey);
 const p = base64urlEncode(payloadBytes);
 const s = base64urlEncode(signatureBytes);
 
-const base = 'http://localhost:8080/verify/';
+// Serve verify/ as the site root (npx http-server verify -p 8080) so the
+// page's root-relative /keys/registry.json fetch resolves.
+const base = 'http://localhost:8080/';
 
 console.log('=== Test Credential ===');
 console.log(`Recipient: ${credential.recipient}`);
@@ -53,19 +55,18 @@ console.log('Tampered payload (should show red "Not Verified"):');
 console.log(`${base}?p=${tp}&s=${s}`);
 console.log();
 
-console.log('Missing params (should show amber "Verification Error"):');
+console.log('Missing params (should show the "Digital Credential Verification" info page):');
 console.log(base);
 console.log();
 
 console.log('=== Registry Entry ===');
-console.log('To make the valid URL work, update verify/keys/registry.json with:');
+console.log('To make the valid URL work, temporarily add this entry to the "keys" array');
+console.log('of verify/keys/registry.json (the production registry; do NOT commit it):');
 console.log(JSON.stringify({
-  keys: [{
-    authority: 'Test Authority',
-    from: '2025-01-01',
-    to: null,
-    algorithm: 'Ed25519',
-    public_key: btoa(String.fromCharCode(...publicKey)),
-    note: 'Test key for UI preview',
-  }],
+  authority: 'Test Authority',
+  from: '2025-01-01',
+  to: null,
+  algorithm: 'Ed25519',
+  public_key: btoa(String.fromCharCode(...publicKey)),
+  note: 'Test key for UI preview',
 }, null, 2));

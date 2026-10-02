@@ -2,7 +2,7 @@ VERSION := $(shell git describe --tags --always 2>/dev/null || echo "dev")
 LDFLAGS := -s -w -X github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo.Version=$(VERSION)
 BINARY := rhg-authenticator
 
-# Native build only — CGO required for PCSC on macOS/Linux.
+# Native build only — CGO required (Fyne/GLFW on every platform, PCSC on macOS).
 # Cross-compilation is NOT supported. Use CI with native runners per platform.
 .PHONY: build test vet clean checksums
 

@@ -845,3 +845,173 @@ func TestExecuteSignFlow_LogPathMissingDirIsNonFatal(t *testing.T) {
 		t.Errorf("Hash8 length = %d, want 8", len(result.Hash8))
 	}
 }
+
+// countingStubs returns readPin/openAdapter stubs that count invocations; the
+// adapter signs with priv.
+func countingStubs(priv ed25519.PrivateKey) (readPin func() (string, error), openAdapter func(func() (string, error)) (core.SigningAdapter, io.Closer, error), pinCalls, openCalls *int) {
+	pinCalls, openCalls = new(int), new(int)
+	readPin = func() (string, error) { *pinCalls++; return "123456", nil }
+	openAdapter = func(func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		*openCalls++
+		return &mockSignAdapter{secretKey: priv}, nopCloser{}, nil
+	}
+	return readPin, openAdapter, pinCalls, openCalls
+}
+
+func TestExecuteSignFlow_ExistingIssuanceSkipsSigning(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	logPath := filepath.Join(tmpDir, "issuances.json")
+	req := validSignRequest()
+
+	// Seed the log via the real sign path.
+	seedOpen := func(func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return &mockSignAdapter{secretKey: priv}, nopCloser{}, nil
+	}
+	orig, err := signAndLog(req, logPath, seedOpen, "123456", logger)
+	if err != nil {
+		t.Fatalf("seed signAndLog: %v", err)
+	}
+
+	readPin, openAdapter, pinCalls, openCalls := countingStubs(priv)
+	connecting := 0
+	result, err := executeSignFlow(req, logPath, openAdapter, readPin, func() { connecting++ }, logger)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *pinCalls != 0 || *openCalls != 0 || connecting != 0 {
+		t.Errorf("readPin/openAdapter/onConnecting calls = %d/%d/%d, want 0/0/0", *pinCalls, *openCalls, connecting)
+	}
+	if !result.Existing {
+		t.Error("Existing = false, want true")
+	}
+	if result.Response != orig {
+		t.Errorf("Response = %+v, want %+v", result.Response, orig)
+	}
+	if len(result.PNGPreview) == 0 {
+		t.Error("expected non-empty PNGPreview")
+	}
+	if result.Hash8 != orig.PayloadSHA256[:8] {
+		t.Errorf("Hash8 = %q, want %q", result.Hash8, orig.PayloadSHA256[:8])
+	}
+
+	records, err := issuancelog.ReadLog(logPath)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(records) != 1 {
+		t.Errorf("log has %d records, want 1", len(records))
+	}
+}
+
+func TestExecuteSignFlow_NoMatchSignsAndAppends(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	logPath := filepath.Join(tmpDir, "issuances.json")
+
+	// Seed a different issuance so the log is non-empty but has no match.
+	other := validSignRequest()
+	other.Recipient = "Jane Roe"
+	seedOpen := func(func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+		return &mockSignAdapter{secretKey: priv}, nopCloser{}, nil
+	}
+	if _, err := signAndLog(other, logPath, seedOpen, "123456", logger); err != nil {
+		t.Fatalf("seed signAndLog: %v", err)
+	}
+
+	readPin, openAdapter, pinCalls, openCalls := countingStubs(priv)
+	result, err := executeSignFlow(validSignRequest(), logPath, openAdapter, readPin, nil, logger)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *pinCalls != 1 || *openCalls != 1 {
+		t.Errorf("readPin/openAdapter calls = %d/%d, want 1/1", *pinCalls, *openCalls)
+	}
+	if result.Existing {
+		t.Error("Existing = true, want false")
+	}
+
+	records, err := issuancelog.ReadLog(logPath)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(records) != 2 {
+		t.Errorf("log has %d records, want 2", len(records))
+	}
+}
+
+func TestExecuteSignFlow_UnreadableLogBlocksSigning(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	tmpDir := t.TempDir()
+	debugPath := filepath.Join(tmpDir, "debug.log")
+	logger := debuglog.New(debugPath)
+	logPath := filepath.Join(tmpDir, "issuances.json")
+	if err := os.WriteFile(logPath, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	readPin, openAdapter, pinCalls, openCalls := countingStubs(priv)
+	_, err := executeSignFlow(validSignRequest(), logPath, openAdapter, readPin, nil, logger)
+	if !errors.Is(err, ErrIssuanceLogUnreadable) {
+		t.Fatalf("err = %v, want ErrIssuanceLogUnreadable", err)
+	}
+	if *pinCalls != 0 || *openCalls != 0 {
+		t.Errorf("readPin/openAdapter calls = %d/%d, want 0/0", *pinCalls, *openCalls)
+	}
+	data, rerr := os.ReadFile(debugPath)
+	if rerr != nil {
+		t.Fatalf("debug log not written: %v", rerr)
+	}
+	if !strings.Contains(string(data), "duplicate check") {
+		t.Errorf("debug log should record the duplicate-check failure, got: %q", data)
+	}
+}
+
+func TestExecuteSignFlow_MalformedStoredSignatureIsResigned(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	tmpDir := t.TempDir()
+	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
+	logPath := filepath.Join(tmpDir, "issuances.json")
+	req := validSignRequest()
+
+	payload, err := core.BuildPayload(req)
+	if err != nil {
+		t.Fatalf("BuildPayload: %v", err)
+	}
+	rec := issuancelog.IssuanceRecord{
+		Timestamp:       "2026-03-14T00:00:00Z",
+		Recipient:       req.Recipient,
+		Honor:           req.Honor,
+		Detail:          req.Detail,
+		Date:            req.Date,
+		PayloadSHA256:   core.PayloadSHA256Hex(payload),
+		SignatureB64URL: core.Encode(make([]byte, 32)), // valid base64url, wrong length
+	}
+	if err := issuancelog.AppendRecord(logPath, rec); err != nil {
+		t.Fatalf("AppendRecord: %v", err)
+	}
+
+	readPin, openAdapter, pinCalls, openCalls := countingStubs(priv)
+	result, err := executeSignFlow(req, logPath, openAdapter, readPin, nil, logger)
+	if err != nil {
+		t.Fatalf("executeSignFlow: %v", err)
+	}
+	if result.Existing {
+		t.Error("Existing = true, want false (malformed signature must not be reused)")
+	}
+	if *pinCalls != 1 || *openCalls != 1 {
+		t.Errorf("readPin/openAdapter calls = %d/%d, want 1/1", *pinCalls, *openCalls)
+	}
+	records, err := issuancelog.ReadLog(logPath)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("log has %d records, want 2 (malformed kept + fresh appended)", len(records))
+	}
+	if got := records[1].SignatureB64URL; got != result.Response.Signature || got == rec.SignatureB64URL {
+		t.Errorf("appended signature = %q, want the fresh signature %q", got, result.Response.Signature)
+	}
+}

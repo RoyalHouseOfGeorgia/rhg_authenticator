@@ -81,7 +81,7 @@ func ReportIssue(ctx context.Context, kr ghapi.Keyring, configDir string, title,
 func browserURL(title, body string) string {
 	if len(body) > maxBrowserBodyBytes {
 		body = truncateToValidUTF8(body, maxBrowserBodyBytes)
-		body += "\n\nDebug log truncated \u2014 attach full log from your config directory."
+		body += "\n\nReport truncated \u2014 use Help \u2192 Export Error Log\u2026 and attach the file."
 	}
 	v := url.Values{
 		"title":  {title},

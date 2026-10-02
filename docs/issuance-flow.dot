@@ -17,12 +17,14 @@ digraph issuance_flow {
         form [label="Credential Form\n(recipient, honor,\ndetail, date)", fillcolor="#dbe4ff"];
         validate [label="Validate\ncredential"];
         canonicalize [label="Canonicalize\n(JSON → bytes)"];
+        dup [label="Already in\nissuance log?\n(payload hash)", shape=diamond, style=filled, fillcolor="#e6fcf5"];
         sign_req [label="Sign via\npiv-go (PCSC)"];
         verify_rt [label="Verify\nround-trip"];
         log [label="Append to\nissuance log"];
         encode [label="Base64URL\nencode"];
         build_url [label="Build\nverification URL"];
-        gen_qr [label="Generate QR\n(SVG + PNG)"];
+        gen_qr [label="QR: PNG preview;\nSVG / 2048px PNG\non save"];
+        refuse [label="Signing refused\n(log unreadable)", fillcolor="#ffc9c9"];
     }
 
     yubikey [label="YubiKey\nPIV slot 9c\nEd25519", shape=cylinder, fillcolor="#fff3bf"];
@@ -31,7 +33,10 @@ digraph issuance_flow {
     // Flow
     form -> validate [label="credential fields"];
     validate -> canonicalize;
-    canonicalize -> sign_req [label="canonical bytes"];
+    canonicalize -> dup [label="canonical bytes"];
+    dup -> sign_req [label="no"];
+    dup -> refuse [label="log unreadable", style=dashed];
+    dup -> encode [label="yes: reuse logged\nsignature, no PIN,\nno new record", style=dashed];
     sign_req -> yubikey [label="PIN via\nGUI dialog", style=dashed];
     yubikey -> sign_req [label="64-byte signature", style=dashed];
     sign_req -> verify_rt [label="signature"];
@@ -39,5 +44,5 @@ digraph issuance_flow {
     log -> encode;
     encode -> build_url [label="p=...&s=..."];
     build_url -> gen_qr [label="verification URL"];
-    gen_qr -> qr [label="SVG for print\nPNG for preview"];
+    gen_qr -> qr [label="SVG or PNG\nfor print"];
 }

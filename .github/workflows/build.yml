@@ -88,8 +88,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Required by gitleaks-action for API access
 
-  # Race detection on macOS only. Windows excluded: -race requires
-  # CGO_ENABLED=1 and a C compiler not available on windows-latest runners.
+  # Race detection on macOS only. The Windows build job also compiles cgo
+  # (Fyne/GLFW) with the runner's preinstalled MinGW gcc; -race is not run there.
   test-race:
     runs-on: macos-26
     steps:

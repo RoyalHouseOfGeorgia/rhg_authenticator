@@ -21,6 +21,7 @@ digraph module_architecture {
         credential [label="credential.ts\n(schema + sanitize)", fillcolor="#dbe4ff", color="#4263eb"];
         crypto [label="crypto.ts\n(Ed25519)", fillcolor="#dbe4ff", color="#4263eb"];
         registry [label="registry.ts\n(key registry)", fillcolor="#dbe4ff", color="#4263eb"];
+        revocation [label="revocation.ts\n(revocation list)", fillcolor="#dbe4ff", color="#4263eb"];
         validation [label="validation.ts\n(date utils)", fillcolor="#dbe4ff", color="#4263eb"];
         base64url [label="base64url.ts\n(encoding)", fillcolor="#dbe4ff", color="#4263eb"];
         canonical [label="canonical.ts\n(JSON serializer)", fillcolor="#dbe4ff", color="#4263eb"];
@@ -36,6 +37,7 @@ digraph module_architecture {
         fontsize=10;
         fontcolor="#e67700";
 
+        go_main [label="main.go\n(app wiring, Help menu,\nupdate check)", fillcolor="#ffe8cc", color="#e67700"];
         go_gui [label="gui/\n(Fyne GUI — 5 tabs)", fillcolor="#fff3bf", color="#e67700"];
         go_bulk [label="bulk/\n(CSV bulk signing)", fillcolor="#fff3bf", color="#e67700"];
         go_core [label="core/\n(credential, canonical,\nregistry, sign)", fillcolor="#fff3bf", color="#e67700"];
@@ -45,6 +47,10 @@ digraph module_architecture {
         go_qr [label="qr/\n(SVG + PNG)", fillcolor="#fff3bf", color="#e67700"];
         go_log [label="log/\n(issuance log)", fillcolor="#fff3bf", color="#e67700"];
         go_registry [label="registry/\n(remote fetch)", fillcolor="#fff3bf", color="#e67700"];
+        go_debuglog [label="debuglog/\n(error log,\n30-day retention)", fillcolor="#fff3bf", color="#e67700"];
+        go_errorreport [label="errorreport/\n(Report Issue)", fillcolor="#fff3bf", color="#e67700"];
+        go_update [label="update/\n(release check)", fillcolor="#fff3bf", color="#e67700"];
+        go_buildinfo [label="buildinfo/\n(version)", fillcolor="#fff3bf", color="#e67700"];
     }
 
     // External deps
@@ -57,28 +63,62 @@ digraph module_architecture {
     vectors [label="Cross-language\ntest vectors", shape=note, fillcolor="#e9ecef", color="#868e96"];
 
     // TypeScript core deps
+    index -> verify;
+    index -> registry;
+    index -> credential;
+    index -> crypto;
+    index -> base64url;
+    index -> canonical;
     verify -> credential;
     verify -> crypto;
     verify -> registry;
+    verify -> revocation;
     verify_page -> verify;
     verify_page -> base64url;
     verify_page -> registry;
+    verify_page -> revocation;
     credential -> validation;
     registry -> base64url;
+    registry -> credential;
     registry -> validation;
+    revocation -> credential;
+    revocation -> validation;
     crypto -> noble;
 
-    // Go internal deps
+    // Go internal deps (from `go list`; core is imported by nearly every package)
+    go_main -> go_gui;
+    go_main -> go_regmgr;
+    go_main -> go_update;
+    go_main -> go_buildinfo;
+    go_main -> go_debuglog;
+    go_main -> go_errorreport;
+    go_main -> go_ghapi;
+    go_main -> go_log;
+    go_main -> go_registry;
     go_gui -> go_core;
     go_gui -> go_bulk;
-    go_bulk -> go_core;
     go_gui -> go_yubikey;
     go_gui -> go_qr;
     go_gui -> go_log;
     go_gui -> go_registry;
+    go_gui -> go_ghapi;
+    go_gui -> go_debuglog;
+    go_gui -> go_errorreport;
+    go_gui -> go_buildinfo;
+    go_bulk -> go_core;
+    go_log -> go_core;
+    go_registry -> go_core;
+    go_ghapi -> go_core;
+    go_debuglog -> go_core;
+    go_update -> go_core;
+    go_errorreport -> go_core;
+    go_errorreport -> go_ghapi;
+    go_regmgr -> go_gui;
     go_regmgr -> go_core;
     go_regmgr -> go_ghapi;
     go_regmgr -> go_yubikey;
+    go_regmgr -> go_registry;
+    go_regmgr -> go_debuglog;
     go_yubikey -> pivgo;
     go_gui -> fyne;
     go_regmgr -> fyne;

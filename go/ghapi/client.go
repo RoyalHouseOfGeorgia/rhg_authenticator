@@ -29,6 +29,14 @@ const (
 	maxBranchRetries  = 3
 )
 
+// ErrAlreadyRevoked is returned by CreateRevocationPR when the hash is already
+// present in the upstream revocation list.
+var ErrAlreadyRevoked = errors.New("credential is already revoked")
+
+// ErrRevocationPending is returned by CreateRevocationPR when the user already
+// has an open revocation PR for the hash.
+var ErrRevocationPending = errors.New("a revocation pull request is already open")
+
 var (
 	forkPollInterval    = 3 * time.Second
 	forkMaxPollAttempts = 15
@@ -84,6 +92,12 @@ func IsForkError(err error) bool {
 // display in dialogs. It never includes err's text, so internal details
 // (hosts, response bodies) are not leaked to the user.
 func UserMessage(err error) string {
+	if errors.Is(err, ErrAlreadyRevoked) {
+		return "This credential is already revoked."
+	}
+	if errors.Is(err, ErrRevocationPending) {
+		return "A revocation for this credential is already awaiting review on GitHub."
+	}
 	// Fork errors are checked first: a ForkError unwraps to its wrapped
 	// *APIError, so a fork failure caused by a 403/429 must still surface the
 	// fork message rather than the rate-limit/permission message.
@@ -580,6 +594,8 @@ func (c *Client) CreateRegistryPR(ctx context.Context, content []byte, title str
 // revocation list on main and opens a fork-based PR with the result.
 // The list is always rebuilt from upstream main (never a locally cached copy)
 // so that revocations merged since the caller last fetched are preserved.
+// Returns ErrAlreadyRevoked if hash is already in the upstream list, and
+// ErrRevocationPending if the user already has an open revocation PR for it.
 // hash must be a 64-character hex SHA-256 (any case); revokedOn is a YYYY-MM-DD date.
 func (c *Client) CreateRevocationPR(ctx context.Context, hash, revokedOn string) (PRResult, error) {
 	if c.username == "" {
@@ -599,6 +615,17 @@ func (c *Client) CreateRevocationPR(ctx context.Context, hash, revokedOn string)
 		return PRResult{}, fmt.Errorf("validating upstream revocation list: %w", err)
 	}
 
+	if core.IsRevoked(hash, core.BuildRevocationSet(list)) {
+		return PRResult{}, ErrAlreadyRevoked
+	}
+	// Fail open: a redundant PR is harmless, a blocked revocation is not.
+	pending, err := c.findOpenRevocationPR(ctx, hash)
+	if err != nil {
+		log.Printf("warning: open-PR lookup failed: %s", core.SanitizeForLog(err.Error()))
+	} else if pending {
+		return PRResult{}, ErrRevocationPending
+	}
+
 	updated := core.AppendRevocationEntry(list, hash, revokedOn)
 	content, err := json.MarshalIndent(updated, "", "  ")
 	if err != nil {
@@ -607,9 +634,41 @@ func (c *Client) CreateRevocationPR(ctx context.Context, hash, revokedOn string)
 	content = append(content, '\n')
 
 	shortHash := hash[:16]
-	branchPrefix := "revoke-" + shortHash + "-"
 	title := fmt.Sprintf("Revoke credential %s", shortHash)
 	body := fmt.Sprintf("Revoke credential with payload hash: %s", hash)
 
-	return c.createForkFilePR(ctx, revocationPath, content, branchPrefix, title, body)
+	return c.createForkFilePR(ctx, revocationPath, content, revocationBranchPrefix(hash), title, body)
+}
+
+// findOpenRevocationPR reports whether c.username has an open upstream PR
+// whose head branch is a revocation branch for hash (as named by
+// CreateRevocationPR). hash must be a validated, lowercased payload hash.
+func (c *Client) findOpenRevocationPR(ctx context.Context, hash string) (bool, error) {
+	// Only the first page is checked: the repo has a handful of open PRs at
+	// most, far below per_page.
+	path := fmt.Sprintf("/repos/%s/%s/pulls", c.Owner, c.Repo) + "?" + url.Values{"state": {"open"}, "per_page": {"100"}}.Encode()
+	var pulls []struct {
+		Head struct {
+			Ref  string `json:"ref"`
+			User struct {
+				Login string `json:"login"`
+			} `json:"user"`
+		} `json:"head"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &pulls); err != nil {
+		return false, fmt.Errorf("listing open pull requests: %w", err)
+	}
+	prefix := revocationBranchPrefix(hash)
+	for _, p := range pulls {
+		if strings.HasPrefix(p.Head.Ref, prefix) && strings.EqualFold(p.Head.User.Login, c.username) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// revocationBranchPrefix is the fork branch prefix CreateRevocationPR uses for
+// hash; findOpenRevocationPR matches on it, so both must share this helper.
+func revocationBranchPrefix(hash string) string {
+	return "revoke-" + hash[:16] + "-"
 }
