@@ -100,7 +100,7 @@ A wrong PIN, a YubiKey error, or a failure to write the issuance log stops the b
 
 Browse previously issued credentials. Search by recipient name. Click any entry for full details. **Revoke** a credential via the Revoke button — this submits a GitHub PR to add the credential's SHA-256 hash to the revocation list.
 
-Revoke needs a working GitHub session. If you aren't logged in, or GitHub couldn't be reached when the app started, click **Connect to GitHub**. If a revocation fails, the error dialog has an **Export Error Log…** button. If the credential is already revoked, or you already have a revocation PR open for it, no new PR is created and the app says so.
+Revoke needs a working GitHub session and **Write (collaborator) access** to the repository — the PR is opened from a branch in the repository itself, not from a personal fork; without access the app says "ask the maintainer to add you as a collaborator". If you aren't logged in, or GitHub couldn't be reached when the app started, click **Connect to GitHub**. If a revocation fails, the error dialog has an **Export Error Log…** button. If the credential is already revoked, or a revocation PR for it is already open (from either operator), no new PR is created and the app says so.
 
 **Remove Duplicates…** finds entries in the issuance log for the same credential signed more than once, and removes all but the earliest valid entry after you confirm (a damaged entry before the first valid copy is left in place). A backup of the current log (`issuances.json.bak-<UTC timestamp>`, e.g. `issuances.json.bak-20261001T120000Z`) is saved next to it first. Removed entries were the same credential, so any QR code already printed from them still verifies.
 
@@ -159,7 +159,7 @@ Workflow:
 1. Open the **Registry** tab — it fetches the current production registry automatically
 2. Log in to GitHub (one-time — click "Login to GitHub", enter the code shown in your browser)
 3. Add/edit entries as needed (entries cannot be deleted — revoke by setting an expiry date)
-4. Click **Submit for Review** — a pull request is created automatically
+4. Click **Submit for Review** — a pull request is created automatically from a branch in the repository (needs Write collaborator access)
 5. The repository admin reviews and merges the PR
 6. Deploy (the verification page and signing app both fetch from the hosted registry)
 
@@ -264,7 +264,7 @@ go/
 ├── ghapi/               # GitHub API client + OAuth device flow
 │   ├── keyring.go       # Keyring interface (OS keychain + FakeKeyring for tests)
 │   ├── auth.go          # OAuth device flow, token storage, session restore
-│   ├── client.go        # GitHub REST API (branches, contents, forks, PRs incl. CreateRegistryPR/CreateRevocationPR); safeCheckRedirect (auth stripping), Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath; UserMessage (safe user-facing error text)
+│   ├── client.go        # GitHub REST API (branches, contents, same-repository PRs incl. CreateRegistryPR/CreateRevocationPR); safeCheckRedirect (auth stripping), Client.BaseURL for testability, exported DefaultOwner/DefaultRepo/RegistryFilePath; UserMessage (safe user-facing error text)
 │   ├── commits.go       # FetchRegistryCommits(baseURL, perPage, etag); commitClient with core.SafeRedirect
 │   └── issues.go        # CreateIssue (used by errorreport)
 ├── regmgr/              # Registry Manager (tab in main app)

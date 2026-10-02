@@ -24,7 +24,7 @@ const (
 // Package-level function variables for test injection.
 var (
 	restoreSessionFunc = ghapi.RestoreSession
-	newClientFunc      = ghapi.NewClientWithUser
+	newClientFunc      = ghapi.NewClient
 )
 
 // BuildIssueTitle constructs the issue title. The result is truncated
@@ -56,13 +56,13 @@ func BuildIssueBody(version, errType, errMsg string) string {
 // ReportIssue attempts to file a GitHub issue via the API. If the user
 // is not logged in or offline, it returns a pre-filled browser URL instead.
 func ReportIssue(ctx context.Context, kr ghapi.Keyring, configDir string, title, body string) (resultURL string, err error) {
-	tok, username, loggedIn, offline, err := restoreSessionFunc(ctx, kr, configDir)
+	tok, _, loggedIn, offline, err := restoreSessionFunc(ctx, kr, configDir)
 	if err != nil {
 		return browserURL(title, body), nil
 	}
 
 	if loggedIn && !offline {
-		client := newClientFunc(tok.AccessToken, username)
+		client := newClientFunc(tok.AccessToken)
 		result, createErr := client.CreateIssue(ctx, title, body, []string{"bug", "auto-reported"})
 		if createErr != nil {
 			// Fall through to browser URL on API failure.

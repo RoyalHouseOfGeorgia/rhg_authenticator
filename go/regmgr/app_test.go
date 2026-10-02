@@ -512,14 +512,26 @@ func TestClientForHistory_EmptyAccessToken(t *testing.T) {
 	}
 }
 
+func TestClientForHistory_Offline(t *testing.T) {
+	rt := &RegistryTab{state: &appState{
+		loggedIn:    true,
+		offline:     true,
+		githubToken: ghapi.Token{AccessToken: "tok-123"},
+	}}
+	if rt.ClientForHistory() != nil {
+		t.Error("expected nil when offline")
+	}
+}
+
+// The display name is not needed to build a client: PRs are same-repo.
 func TestClientForHistory_EmptyUsername(t *testing.T) {
 	rt := &RegistryTab{state: &appState{
 		loggedIn:    true,
 		githubUser:  "",
 		githubToken: ghapi.Token{AccessToken: "tok-123"},
 	}}
-	if rt.ClientForHistory() != nil {
-		t.Error("expected nil when githubUser is empty")
+	if rt.ClientForHistory() == nil {
+		t.Error("expected a client when githubUser is empty")
 	}
 }
 

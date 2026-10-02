@@ -97,13 +97,13 @@ func (rt *RegistryTab) IsDirty() bool {
 	return rt.state.dirty
 }
 
-// ClientForHistory returns a configured ghapi.Client if logged in, or nil.
-// Must be called on the Fyne main thread (reads rt.state).
+// ClientForHistory returns a configured ghapi.Client if logged in and online,
+// or nil. Must be called on the Fyne main thread (reads rt.state).
 func (rt *RegistryTab) ClientForHistory() *ghapi.Client {
-	if !rt.state.loggedIn || rt.state.githubToken.AccessToken == "" || rt.state.githubUser == "" {
+	if !rt.state.loggedIn || rt.state.offline || rt.state.githubToken.AccessToken == "" {
 		return nil
 	}
-	return ghapi.NewClientWithUser(rt.state.githubToken.AccessToken, rt.state.githubUser)
+	return ghapi.NewClient(rt.state.githubToken.AccessToken)
 }
 
 // Fetch fetches the registry from the remote server asynchronously.
@@ -113,9 +113,6 @@ func (rt *RegistryTab) Fetch() {
 	// Read on the main thread. nil when logged out or offline (offline skips the
 	// API attempt and its timeout and goes straight to the Pages copy).
 	client := rt.ClientForHistory()
-	if rt.state.offline {
-		client = nil
-	}
 	go func() {
 		reg, err := fetchRegistry(client)
 		var base []byte
@@ -506,14 +503,7 @@ func (rt *RegistryTab) submitForReview() {
 			return
 		}
 		token := rt.state.githubToken.AccessToken
-		username := rt.state.githubUser
 		base := rt.state.baseBytes
-
-		if username == "" {
-			rt.submitting.Store(false)
-			dialog.ShowError(fmt.Errorf("GitHub username not available. Please log out and log in again."), rt.window)
-			return
-		}
 
 		rt.statusLabel.SetText("Creating pull request...")
 
@@ -523,7 +513,7 @@ func (rt *RegistryTab) submitForReview() {
 			submitCtx, submitCancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer submitCancel()
 
-			client := ghapi.NewClientWithUser(token, username)
+			client := ghapi.NewClient(token)
 			pr, err := submitRegistry(submitCtx, client, base, content, "Registry update")
 			if err != nil {
 				fyne.Do(func() { rt.handleSubmitError(err) })

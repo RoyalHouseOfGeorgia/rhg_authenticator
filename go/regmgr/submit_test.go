@@ -32,7 +32,7 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 // TestSubmitForReview_Integration validates the MarshalRegistry → CreateRegistryPR pipeline
-// using an httptest server that mocks the full fork-based PR flow.
+// using an httptest server that mocks the full same-repo PR flow.
 func TestSubmitForReview_Integration(t *testing.T) {
 	// 1. Build a valid registry with one entry using a real Ed25519 key.
 	_, priv, err := ed25519.GenerateKey(nil)
@@ -61,10 +61,10 @@ func TestSubmitForReview_Integration(t *testing.T) {
 		t.Fatal("MarshalRegistry returned empty content")
 	}
 
-	// 3. Set up httptest server mocking the fork flow endpoints.
+	// 3. Set up httptest server mocking the same-repo PR flow endpoints.
 	owner := ghapi.DefaultOwner
 	repo := ghapi.DefaultRepo
-	username := "testuser"
+	repoPath := fmt.Sprintf("/repos/%s/%s", owner, repo)
 
 	var putBody []byte
 
@@ -73,38 +73,28 @@ func TestSubmitForReview_Integration(t *testing.T) {
 		method := r.Method
 
 		switch {
-		// POST /repos/{owner}/{repo}/forks → 202 (fork created)
-		case method == http.MethodPost && path == fmt.Sprintf("/repos/%s/%s/forks", owner, repo):
-			w.WriteHeader(http.StatusAccepted)
-			fmt.Fprintf(w, `{"full_name":"%s/%s"}`, username, repo)
-
-		// GET /repos/{username}/{repo} → 200 (fork ready)
-		case method == http.MethodGet && path == fmt.Sprintf("/repos/%s/%s", username, repo):
+		// GET /repos/{owner}/{repo} → 200 with push permission
+		case method == http.MethodGet && path == repoPath:
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"full_name":"%s/%s"}`, username, repo)
+			fmt.Fprintf(w, `{"full_name":"%s/%s","permissions":{"push":true}}`, owner, repo)
 
-		// POST /repos/{username}/{repo}/merge-upstream → 200 (sync done)
-		case method == http.MethodPost && path == fmt.Sprintf("/repos/%s/%s/merge-upstream", username, repo):
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"message":"Successfully fetched and fast-forwarded from upstream"}`)
-
-		// GET /repos/{username}/{repo}/git/refs/heads/main → 200 with SHA
-		case method == http.MethodGet && path == fmt.Sprintf("/repos/%s/%s/git/refs/heads/main", username, repo):
+		// GET /repos/{owner}/{repo}/git/refs/heads/main → 200 with SHA
+		case method == http.MethodGet && path == repoPath+"/git/refs/heads/main":
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, `{"object":{"sha":"abc123deadbeef"}}`)
 
-		// POST /repos/{username}/{repo}/git/refs → 201 (branch created)
-		case method == http.MethodPost && path == fmt.Sprintf("/repos/%s/%s/git/refs", username, repo):
+		// POST /repos/{owner}/{repo}/git/refs → 201 (branch created)
+		case method == http.MethodPost && path == repoPath+"/git/refs":
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprintf(w, `{"ref":"refs/heads/registry-update-branch"}`)
 
-		// GET /repos/{username}/{repo}/contents/{path}?ref=main → 200 with file SHA
-		case method == http.MethodGet && strings.HasPrefix(path, fmt.Sprintf("/repos/%s/%s/contents/", username, repo)):
+		// GET /repos/{owner}/{repo}/contents/{path}?ref={branch} → 200 with file SHA
+		case method == http.MethodGet && strings.HasPrefix(path, repoPath+"/contents/"):
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, `{"sha":"existingfilesha456"}`)
 
-		// PUT /repos/{username}/{repo}/contents/{path} → 200 (file updated)
-		case method == http.MethodPut && strings.HasPrefix(path, fmt.Sprintf("/repos/%s/%s/contents/", username, repo)):
+		// PUT /repos/{owner}/{repo}/contents/{path} → 200 (file updated)
+		case method == http.MethodPut && strings.HasPrefix(path, repoPath+"/contents/"):
 			body, readErr := io.ReadAll(r.Body)
 			if readErr != nil {
 				http.Error(w, "failed to read body", http.StatusInternalServerError)
@@ -127,7 +117,7 @@ func TestSubmitForReview_Integration(t *testing.T) {
 	defer srv.Close()
 
 	// 4. Create client pointed at test server.
-	client := ghapi.NewClientWithUser("test-token", username)
+	client := ghapi.NewClient("test-token")
 	client.HTTPClient = srv.Client()
 	client.HTTPClient.Transport = &rewriteTransport{
 		base:      srv.Client().Transport,
@@ -203,7 +193,7 @@ func testKeyEntry(t *testing.T, authority string, to *string) core.KeyEntry {
 }
 
 // submitFake is an httptest GitHub API covering the upstream registry read
-// and the fork-based PR flow. It records every "METHOD path" it serves.
+// and the same-repo PR flow. It records every "METHOD path" it serves.
 type submitFake struct {
 	mu   sync.Mutex
 	hits []string
@@ -217,11 +207,11 @@ func (f *submitFake) hitList() []string {
 
 // newSubmitFake starts the fake. upstream is served as the upstream main
 // registry.json; upstreamStatus != 200 makes that GET fail instead.
-func newSubmitFake(t *testing.T, username string, upstream []byte, upstreamStatus int) (*submitFake, *ghapi.Client) {
+func newSubmitFake(t *testing.T, upstream []byte, upstreamStatus int) (*submitFake, *ghapi.Client) {
 	t.Helper()
 	owner, repo := ghapi.DefaultOwner, ghapi.DefaultRepo
-	upstreamPath := fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, ghapi.RegistryFilePath)
-	forkPrefix := fmt.Sprintf("/repos/%s/%s", username, repo)
+	repoPath := fmt.Sprintf("/repos/%s/%s", owner, repo)
+	upstreamPath := repoPath + "/contents/" + ghapi.RegistryFilePath
 	f := &submitFake{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -231,10 +221,9 @@ func newSubmitFake(t *testing.T, username string, upstream []byte, upstreamStatu
 		f.mu.Unlock()
 
 		switch {
-		case method == http.MethodGet && path == upstreamPath:
-			if r.URL.Query().Get("ref") != "main" {
-				t.Errorf("upstream GET ref = %q, want main", r.URL.Query().Get("ref"))
-			}
+		// The upstream read is on main; the PR flow's blob-SHA lookup is on
+		// the new branch (same path, different ref).
+		case method == http.MethodGet && path == upstreamPath && r.URL.Query().Get("ref") == "main":
 			if upstreamStatus != http.StatusOK {
 				w.WriteHeader(upstreamStatus)
 				fmt.Fprint(w, `{"message":"boom"}`)
@@ -245,21 +234,16 @@ func newSubmitFake(t *testing.T, username string, upstream []byte, upstreamStatu
 				"encoding": "base64",
 				"sha":      "upstreamsha123",
 			})
-		case method == http.MethodPost && path == fmt.Sprintf("/repos/%s/%s/forks", owner, repo):
-			w.WriteHeader(http.StatusAccepted)
-			fmt.Fprintf(w, `{"full_name":"%s/%s"}`, username, repo)
-		case method == http.MethodGet && path == forkPrefix:
-			fmt.Fprintf(w, `{"full_name":"%s/%s"}`, username, repo)
-		case method == http.MethodPost && path == forkPrefix+"/merge-upstream":
-			fmt.Fprint(w, `{"message":"ok"}`)
-		case method == http.MethodGet && path == forkPrefix+"/git/refs/heads/main":
+		case method == http.MethodGet && path == repoPath:
+			fmt.Fprint(w, `{"permissions":{"push":true}}`)
+		case method == http.MethodGet && path == repoPath+"/git/refs/heads/main":
 			fmt.Fprint(w, `{"object":{"sha":"abc123deadbeef"}}`)
-		case method == http.MethodPost && path == forkPrefix+"/git/refs":
+		case method == http.MethodPost && path == repoPath+"/git/refs":
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{"ref":"refs/heads/registry-update-branch"}`)
-		case method == http.MethodGet && strings.HasPrefix(path, forkPrefix+"/contents/"):
+		case method == http.MethodGet && strings.HasPrefix(path, repoPath+"/contents/"):
 			fmt.Fprint(w, `{"sha":"existingfilesha456"}`)
-		case method == http.MethodPut && strings.HasPrefix(path, forkPrefix+"/contents/"):
+		case method == http.MethodPut && strings.HasPrefix(path, repoPath+"/contents/"):
 			fmt.Fprint(w, `{"content":{"sha":"newfilesha789"}}`)
 		case method == http.MethodPost && path == fmt.Sprintf("/repos/%s/%s/pulls", owner, repo):
 			w.WriteHeader(http.StatusCreated)
@@ -271,14 +255,14 @@ func newSubmitFake(t *testing.T, username string, upstream []byte, upstreamStatu
 	}))
 	t.Cleanup(srv.Close)
 
-	client := ghapi.NewClientWithUser("test-token", username)
+	client := ghapi.NewClient("test-token")
 	client.HTTPClient = srv.Client()
 	client.HTTPClient.Transport = &rewriteTransport{base: srv.Client().Transport, targetURL: srv.URL}
 	return f, client
 }
 
 // upstreamOnly asserts the fake saw exactly the upstream registry GET — no
-// fork, ref, PUT or pulls call.
+// repo, ref, PUT or pulls call.
 func upstreamOnly(t *testing.T, f *submitFake) {
 	t.Helper()
 	want := fmt.Sprintf("GET /repos/%s/%s/contents/%s", ghapi.DefaultOwner, ghapi.DefaultRepo, ghapi.RegistryFilePath)
@@ -311,7 +295,7 @@ func TestSubmitRegistry_UpstreamUnchanged_CreatesPR(t *testing.T) {
 		t.Fatalf("MarshalRegistry: %v", err)
 	}
 
-	f, client := newSubmitFake(t, "testuser", upstream, http.StatusOK)
+	f, client := newSubmitFake(t, upstream, http.StatusOK)
 	pr, err := submitRegistry(context.Background(), client, base, content, "Registry update")
 	if err != nil {
 		t.Fatalf("submitRegistry: %v", err)
@@ -344,7 +328,7 @@ func TestSubmitRegistry_UpstreamChanged_Refuses(t *testing.T) {
 		t.Fatalf("MarshalRegistry: %v", err)
 	}
 
-	f, client := newSubmitFake(t, "testuser", upstream, http.StatusOK)
+	f, client := newSubmitFake(t, upstream, http.StatusOK)
 	_, err = submitRegistry(context.Background(), client, base, base, "Registry update")
 	if !errors.Is(err, errRegistryChanged) {
 		t.Fatalf("err = %v, want errRegistryChanged", err)
@@ -359,7 +343,7 @@ func TestSubmitRegistry_EmptyBase_Refuses(t *testing.T) {
 		t.Fatalf("MarshalRegistry: %v", err)
 	}
 
-	f, client := newSubmitFake(t, "testuser", upstream, http.StatusOK)
+	f, client := newSubmitFake(t, upstream, http.StatusOK)
 	_, err = submitRegistry(context.Background(), client, nil, upstream, "Registry update")
 	if !errors.Is(err, errRegistryChanged) {
 		t.Fatalf("err = %v, want errRegistryChanged", err)
@@ -384,7 +368,7 @@ func TestSubmitRegistry_UpstreamErrors(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			f, client := newSubmitFake(t, "testuser", tc.upstream, tc.status)
+			f, client := newSubmitFake(t, tc.upstream, tc.status)
 			_, err := submitRegistry(context.Background(), client, base, base, "Registry update")
 			if err == nil || !strings.Contains(err.Error(), tc.wantMsg) {
 				t.Fatalf("err = %v, want containing %q", err, tc.wantMsg)
@@ -404,7 +388,7 @@ func TestFetchRegistry_LoggedInReadsMainViaAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalRegistry: %v", err)
 	}
-	f, client := newSubmitFake(t, "testuser", up, http.StatusOK)
+	f, client := newSubmitFake(t, up, http.StatusOK)
 
 	got, err := fetchRegistry(client)
 	if err != nil {

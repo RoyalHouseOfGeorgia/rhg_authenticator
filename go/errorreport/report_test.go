@@ -119,11 +119,10 @@ func TestReportIssue_LoggedIn_CreatesIssue(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	var capturedToken, capturedUser string
-	newClientFunc = func(token, username string) *ghapi.Client {
+	var capturedToken string
+	newClientFunc = func(token string) *ghapi.Client {
 		capturedToken = token
-		capturedUser = username
-		c := ghapi.NewClientWithUser(token, username)
+		c := ghapi.NewClient(token)
 		c.BaseURL = ts.URL
 		return c
 	}
@@ -141,9 +140,6 @@ func TestReportIssue_LoggedIn_CreatesIssue(t *testing.T) {
 	}
 	if capturedToken != "tok123" {
 		t.Errorf("token = %q, want %q", capturedToken, "tok123")
-	}
-	if capturedUser != "testuser" {
-		t.Errorf("username = %q, want %q", capturedUser, "testuser")
 	}
 }
 
@@ -167,8 +163,8 @@ func TestReportIssue_APIError_FallsThrough(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	newClientFunc = func(token, username string) *ghapi.Client {
-		c := ghapi.NewClientWithUser(token, username)
+	newClientFunc = func(token string) *ghapi.Client {
+		c := ghapi.NewClient(token)
 		c.BaseURL = ts.URL
 		return c
 	}

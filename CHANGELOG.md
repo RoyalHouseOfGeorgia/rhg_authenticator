@@ -32,6 +32,11 @@ patch component for fix-only releases (`v1.3.1`).
   A backup of the log is saved next to it first.
 
 ### Changed
+- **No more personal forks.** Revocation and registry pull requests are opened
+  from a branch in the main repository. Operators need Write (collaborator)
+  access; without it the app says to ask the maintainer. Previously the app
+  used a personal fork that could silently fall behind and was never updated.
+  Old forks are no longer used and can be deleted.
 - **Keys count as active whatever their start date.** The YubiKey tab and the
   status bar's active-key count now ignore a key's `from` date, as the
   verification page always has: a key is active until its `to` date.
