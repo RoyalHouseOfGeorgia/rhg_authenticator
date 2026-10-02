@@ -32,6 +32,10 @@ patch component for fix-only releases (`v1.3.1`).
   A backup of the log is saved next to it first.
 
 ### Changed
+- **Sharp app icon.** The Mac app icon is built from a 1024-pixel image of the
+  arms (it was a blurry 120-pixel upscale), and the Windows `.exe` now shows the
+  arms in Explorer and the taskbar instead of a generic icon. The in-app window
+  icon uses the same image.
 - **No more personal forks.** Revocation and registry pull requests are opened
   from a branch in the main repository. Operators need Write (collaborator)
   access; without it the app says to ask the maintainer. Previously the app

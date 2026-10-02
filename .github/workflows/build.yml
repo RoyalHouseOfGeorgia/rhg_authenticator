@@ -153,6 +153,17 @@ jobs:
       - name: govulncheck
         working-directory: go
         run: go tool govulncheck ./...
+      # Embed the app icon in the .exe. Runs after the tests so the .syso only
+      # affects this build. No manifest: the exe has never had one, so DPI and
+      # common-controls behaviour stay unchanged. go run keeps the tool out of
+      # go.mod, so its dependencies can't move the app's.
+      - name: Embed Windows icon
+        if: runner.os == 'Windows'
+        working-directory: go
+        run: |
+          go run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --icon icon.png --manifest none
+          if (-not (Test-Path rsrc_windows_amd64.syso)) { Write-Error "go-winres did not produce rsrc_windows_amd64.syso"; exit 1 }
+        shell: pwsh
       - if: runner.os == 'Windows'
         working-directory: go
         run: go build -trimpath -ldflags "-s -w -H windowsgui -X github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo.Version=$env:GITHUB_REF_NAME" -o ../release/rhg-authenticator-${{ matrix.suffix }}.exe .
@@ -190,12 +201,12 @@ jobs:
           cp go/packaging/macos/Info.plist "$APP/Contents/Info.plist"
           plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
           plutil -replace CFBundleVersion -string "$GITHUB_RUN_NUMBER" "$APP/Contents/Info.plist"
-          sips --padToHeightWidth 120 120 go/icon.png --out "$RUNNER_TEMP/icon-square.png"
+          # go/icon.png is a 1024×1024 square with the standard ~10% margin.
           ICONSET="$RUNNER_TEMP/icon.iconset"
           mkdir -p "$ICONSET"
           for s in 16 32 128 256 512; do
-            sips -z $s $s "$RUNNER_TEMP/icon-square.png" --out "$ICONSET/icon_${s}x${s}.png"
-            sips -z $((s * 2)) $((s * 2)) "$RUNNER_TEMP/icon-square.png" --out "$ICONSET/icon_${s}x${s}@2x.png"
+            sips -z $s $s go/icon.png --out "$ICONSET/icon_${s}x${s}.png"
+            sips -z $((s * 2)) $((s * 2)) go/icon.png --out "$ICONSET/icon_${s}x${s}@2x.png"
           done
           iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/icon.icns"
           codesign --force --sign - "$APP"

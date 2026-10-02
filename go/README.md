@@ -226,7 +226,7 @@ The file itself lives here:
 ```
 go/
 ├── main.go              # App entry point, Fyne window, Help menu, panic recovery, panic handler, --version
-├── icon.png             # App icon (embedded)
+├── icon.png             # App icon, 1024×1024 (embedded; also the macOS .icns and Windows .exe icon — see DEVELOPER.md "App Icon")
 ├── packaging/macos/Info.plist # macOS app bundle metadata
 ├── buildinfo/           # Build metadata
 │   └── buildinfo.go     # Version (set via ldflags), IsRelease/IsDebug helpers

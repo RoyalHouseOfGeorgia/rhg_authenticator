@@ -257,6 +257,24 @@ byte-identical: `TestCrossLanguageVectors` (Go) and the vitest
 `scripts/test_rebuild_urls.py`, reads `go/testdata/vectors.json` directly; run
 `python3 -m unittest discover -s scripts` after regenerating.
 
+## App Icon
+
+`go/icon.png` (1024×1024, transparent) is the single source for the in-app window icon (embedded), the macOS `.icns` (CI "Package macOS app" step, `sips` + `iconutil`) and the Windows `.exe` icon (CI "Embed Windows icon" step, `go-winres` → `go/rsrc_windows_amd64.syso`, gitignored). It is generated from the full-size arms in `royal-arms.png` with the standard ~10% margin (artwork fitted to 824×824, centred). To regenerate after `royal-arms.png` changes:
+
+```bash
+python3 - <<'EOF'
+from PIL import Image
+src = Image.open("royal-arms.png").convert("RGBA")
+art = src.crop(src.getchannel("A").getbbox())
+side = max(art.size)
+sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+sq.paste(art, ((side - art.width) // 2, (side - art.height) // 2))
+out = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+out.paste(sq.resize((824, 824), Image.LANCZOS), (100, 100))
+out.save("go/icon.png", optimize=True)
+EOF
+```
+
 ## Deployment Checklist — Verification Page
 
 The verification page (`verify/`) requires these HTTP headers from the hosting server:
