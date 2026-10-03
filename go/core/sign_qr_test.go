@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -109,7 +110,7 @@ func TestBuildPayload_QRBoundaryGeorgian(t *testing.T) {
 		t.Fatalf("first over count gave URL length %d", overLen)
 	}
 	_, err := BuildPayload(qrReq(over))
-	assertTooLong(t, err, ((overLen-MaxVerifyURLLength)*3+3)/4)
+	assertTooLong(t, err, overBytes(overLen))
 }
 
 // TestBuildPayload_TooLongOverBytesScales checks OverBytes reflects how far
@@ -202,19 +203,36 @@ func TestTooLongForQRError_Error(t *testing.T) {
 	}
 }
 
-func TestTooLongForQRError_Overage(t *testing.T) {
-	tests := []struct {
-		over int
-		want string
-	}{
-		{1, "about 1 letter (about 1 in Georgian script)"},
-		{3, "about 3 letters (about 1 in Georgian script)"},
-		{4, "about 4 letters (about 2 in Georgian script)"},
+func TestOverBytes(t *testing.T) {
+	// Hand-computed ceil(excess × 3/4), independent of the implementation.
+	tests := []struct{ urlLen, want int }{
+		{626, 1}, {627, 2}, {628, 3}, {629, 3}, {630, 4}, {645, 15},
 	}
 	for _, tt := range tests {
-		if got := (&TooLongForQRError{OverBytes: tt.over}).Overage(); got != tt.want {
-			t.Errorf("Overage(%d) = %q, want %q", tt.over, got, tt.want)
+		if got := overBytes(tt.urlLen); got != tt.want {
+			t.Errorf("overBytes(%d) = %d, want %d", tt.urlLen, got, tt.want)
 		}
+	}
+}
+
+func TestInvalidCredentialError(t *testing.T) {
+	reason := errors.New("detail exceeds maximum length of 2000")
+	var err error = &InvalidCredentialError{Reason: reason}
+	if got, want := err.Error(), "invalid credential data: detail exceeds maximum length of 2000"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(err, ErrInvalidCredential) || !errors.Is(err, reason) {
+		t.Error("errors.Is must match the sentinel and the reason")
+	}
+	if errors.Is(err, ErrTooLongForQR) {
+		t.Error("must not match ErrTooLongForQR")
+	}
+	if got := (&InvalidCredentialError{}).Error(); got != "invalid credential data" {
+		t.Errorf("nil Reason: Error() = %q", got)
+	}
+	var ice *InvalidCredentialError
+	if !errors.As(fmt.Errorf("wrapped: %w", err), &ice) || ice.Reason != reason {
+		t.Error("errors.As through a wrap must expose Reason")
 	}
 }
 

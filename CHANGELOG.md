@@ -25,8 +25,9 @@ patch component for fix-only releases (`v1.3.1`).
   can't be read, signing is blocked with an explanation until it is readable,
   since duplicates can't be ruled out.
 - **No duplicate revocations.** Revoke no longer opens a pull request when the
-  credential is already on the revocation list ("Already Revoked") or when you
-  already have an open revocation pull request for it ("Revocation Pending").
+  credential is already on the revocation list ("Already Revoked") or when a
+  revocation pull request for it is already open from either operator
+  ("Revocation Pending").
 - **Remove Duplicates.** The History tab's **Remove Duplicates…** button removes duplicate
   entries from the issuance log, keeping the earliest valid entry for each credential.
   A backup of the log is saved next to it first.
@@ -40,7 +41,8 @@ patch component for fix-only releases (`v1.3.1`).
   from a branch in the main repository. Operators need Write (collaborator)
   access; without it the app says to ask the maintainer. Previously the app
   used a personal fork that could silently fall behind and was never updated.
-  Old forks are no longer used and can be deleted.
+  Old forks are no longer used and can be deleted — merge or close any
+  revocation PRs still open from them first (the app doesn't see those).
 - **Keys count as active whatever their start date.** The YubiKey tab and the
   status bar's active-key count now ignore a key's `from` date, as the
   verification page always has: a key is active until its `to` date.
@@ -68,8 +70,19 @@ patch component for fix-only releases (`v1.3.1`).
   every operator runs this version.
 - **QR script matches the app.** `scripts/rhg_qr.py` uses error-correction level
   Q (it used H, giving denser codes) and refuses URLs over 625 characters.
+- **Release versions are always vX.Y.Z** (e.g. `v1.5.0`). The build refuses
+  any other tag before building, and the app's update notice ignores
+  releases on any other tag.
+- **Build provenance check documented.** The README gives the
+  `gh attestation verify` command pinned to the release workflow and tag —
+  stronger than the checksums file, which sits on the same release page.
 
 ### Fixed
+- **Update notice can't be spoofed by a collaborator.** Only releases on a
+  maintainer-only `vX.Y.Z` tag, published by the release workflow
+  (github-actions[bot]), can show "Version … available". Before, a
+  collaborator's account could publish a release on a tag like `9.9` that the
+  app would have offered as an update.
 - **Background errors no longer close the app.** An unexpected error in any
   background task is written to the error log and shown as "an internal error
   occurred — please restart", instead of the app quitting with nothing logged.
@@ -94,6 +107,9 @@ patch component for fix-only releases (`v1.3.1`).
   (zero-width no-break space, common when pasting from Word or Excel) at the
   start or end of a field is removed before signing. Previously the credential
   was signed but always failed verification.
+- **Report Issue no longer freezes the window.** Filing the report runs in
+  the background (up to 30 seconds); the button reads "Reporting…" meanwhile
+  and "Issue Reported" afterwards, so the same issue isn't filed twice.
 - **Report Issue only opens GitHub links.** A link returned by the GitHub API is
   opened only if it is an `https://github.com` URL.
 - **Maintainer tooling.** `go.mod` now requires Go 1.27.1 or newer, and CI

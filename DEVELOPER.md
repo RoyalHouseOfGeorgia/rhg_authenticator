@@ -233,7 +233,7 @@ if (result.valid) {
 - No mocking of internal modules — tests exercise the real code paths
 - Verification page tests use `// @vitest-environment happy-dom` per-file directive
 - `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page tests
-- 422 tests total (10 test files)
+- 423 tests total (10 test files)
 
 ### Regenerating cross-language test vectors
 

@@ -124,7 +124,7 @@ func main() {
 		Logger:  logger,
 	}, window)
 	regTab := regmgr.NewRegistryTab(window, dataDir)
-	historyContent, refreshHistoryLogin := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, regTab.ClientForHistory, regTab.StartLoginOrReconnect, regTab.HandleUnauthorized, window)
+	historyContent, refreshHistoryLogin := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, regTab.GitHubClient, regTab.StartLoginOrReconnect, regTab.HandleUnauthorized, window)
 	// Push login-state changes (from either tab) into the History tab, then sync
 	// once now to reflect the current state. The observer nil-guard makes this
 	// correct regardless of whether the async session restore has completed.

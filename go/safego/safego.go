@@ -1,8 +1,8 @@
 // Package safego launches goroutines with panic recovery.
 //
 // An unrecovered panic in any goroutine terminates the whole process, and in
-// release builds nothing would be logged. All production goroutines must be
-// started with Go so a panic is recovered, logged, and surfaced to the user
+// release builds nothing would be logged. Every production go statement must
+// go through Go so a panic is recovered, logged, and surfaced to the user
 // instead of killing the app. A guard test enforces that no other package
 // uses a bare go statement.
 package safego
@@ -55,6 +55,10 @@ func dispatch(r any, stack []byte) {
 	}
 	defer func() {
 		if hr := recover(); hr != nil {
+			// The default handler logs through the same stdlib logger the
+			// installed handler may have just panicked in; never let that
+			// second failure escape.
+			defer func() { _ = recover() }()
 			defaultHandler(fmt.Sprintf("%v (panic handler also panicked: %v)", r, hr), stack)
 		}
 	}()

@@ -131,6 +131,15 @@ jobs:
             suffix: windows-amd64
     runs-on: ${{ matrix.os }}
     steps:
+      # Release versions are always vX.Y.Z (the app's update check ignores
+      # anything else), so a misnamed tag fails here instead of publishing.
+      - name: Release tag is vX.Y.Z
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tag '$GITHUB_REF_NAME' must be vX.Y.Z (e.g. v1.5.0)"; exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
@@ -153,6 +162,13 @@ jobs:
       - name: govulncheck
         working-directory: go
         run: go tool govulncheck ./...
+      # Go links every .syso in the package into the binary; the only one
+      # allowed is the icon resource generated below, never a committed blob.
+      - name: No committed .syso files
+        shell: bash
+        run: |
+          files=$(git ls-files '*.syso')
+          if [ -n "$files" ]; then echo "::error::committed .syso files are not allowed: $files"; exit 1; fi
       # Embed the app icon in the .exe. Runs after the tests so the .syso only
       # affects this build. No manifest: the exe has never had one, so DPI and
       # common-controls behaviour stay unchanged. go run keeps the tool out of

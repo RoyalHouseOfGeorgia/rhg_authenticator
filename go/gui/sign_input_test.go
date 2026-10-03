@@ -73,8 +73,8 @@ func TestSignFlowErrorMessage_TooLongForQR(t *testing.T) {
 		over int
 		want string
 	}{
-		{10, "Too long to fit in a QR code by about 10 letters (about 4 in Georgian script). Shorten the Detail or Recipient and try again."},
-		{1, "Too long to fit in a QR code by about 1 letter (about 1 in Georgian script). Shorten the Detail or Recipient and try again."},
+		{10, "Too long to fit in a QR code by about 10 letters (about 4 in Georgian script) — shorten the detail or recipient."},
+		{1, "Too long to fit in a QR code by about 1 letter (about 1 in Georgian script) — shorten the detail or recipient."},
 	}
 	for _, tc := range cases {
 		err := error(&core.TooLongForQRError{OverBytes: tc.over})
@@ -89,12 +89,15 @@ func TestSignFlowErrorMessage_TooLongForQR(t *testing.T) {
 }
 
 // TestSignFlowErrorMessage_TooLongFromBuildPayload exercises the real error
-// produced by BuildPayload, not a hand-built one.
+// produced by BuildPayload and checks the Sign tab shows the same text Bulk
+// Sign does (the core message), capitalized with a full stop.
 func TestSignFlowErrorMessage_TooLongFromBuildPayload(t *testing.T) {
 	_, err := core.BuildPayload(inputReq(strings.Repeat("x", 600)))
 	got := signFlowErrorMessage(err, nil)
-	if !strings.HasPrefix(got, "Too long to fit in a QR code by about ") ||
-		!strings.HasSuffix(got, ". Shorten the Detail or Recipient and try again.") {
+	if !strings.HasSuffix(got, " — shorten the detail or recipient.") || strings.Contains(got, "..") {
+		t.Errorf("unexpected message: %q", got)
+	}
+	if !strings.HasPrefix(got, "Too long to fit in a QR code by about ") {
 		t.Errorf("unexpected message: %q", got)
 	}
 }
@@ -104,7 +107,7 @@ func TestSignFlowErrorMessage_InvalidCredential(t *testing.T) {
 	if !errors.Is(bare, core.ErrInvalidCredential) {
 		t.Fatalf("setup: want ErrInvalidCredential, got %v", bare)
 	}
-	want := "Invalid credential data: detail exceeds maximum length of 2000"
+	want := "Invalid credential data: detail exceeds maximum length of 2000."
 	cases := map[string]error{
 		"bare":    bare,
 		"wrapped": &SignFlowError{Phase: PhaseSign, Err: bare},
@@ -120,29 +123,37 @@ func TestSignFlowErrorMessage_InvalidCredential(t *testing.T) {
 // TestSignFlowErrorMessage_InvalidCredentialSanitized verifies control
 // characters in the reason are stripped from the status text.
 func TestSignFlowErrorMessage_InvalidCredentialSanitized(t *testing.T) {
-	err := fmt.Errorf("%w: %w", core.ErrInvalidCredential, errors.New("bad\x07 field\x1b"))
-	if got, want := signFlowErrorMessage(err, nil), "Invalid credential data: bad field"; got != want {
+	err := &core.InvalidCredentialError{Reason: errors.New("bad\x07 field\x1b")}
+	if got, want := signFlowErrorMessage(err, nil), "Invalid credential data: bad field."; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-// TestSignFlowErrorMessage_InvalidCredentialNoPrefix covers a chain that
-// matches ErrInvalidCredential but whose text lacks the sentinel prefix (a
-// custom Error() on a wrapper); the whole text is used as the reason.
-func TestSignFlowErrorMessage_InvalidCredentialNoPrefix(t *testing.T) {
-	err := &prefixlessErr{msg: "something odd", inner: core.ErrInvalidCredential}
-	if got, want := signFlowErrorMessage(err, nil), "Invalid credential data: something odd"; got != want {
-		t.Errorf("got %q, want %q", got, want)
+func TestCapitalize(t *testing.T) {
+	for in, want := range map[string]string{"": "", "abc": "Abc", "Abc": "Abc", "ábc": "Ábc", "1a": "1a"} {
+		if got := capitalize(in); got != want {
+			t.Errorf("capitalize(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
-type prefixlessErr struct {
-	msg   string
-	inner error
+func TestIsOperatorInputError(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want bool
+	}{
+		"too long":        {&core.TooLongForQRError{OverBytes: 1}, true},
+		"invalid":         {&core.InvalidCredentialError{Reason: errors.New("x")}, true},
+		"wrapped invalid": {&SignFlowError{Phase: PhaseSign, Err: &core.InvalidCredentialError{Reason: errors.New("x")}}, true},
+		"cancelled":       {ErrSigningCancelled, false},
+		"generic":         {errors.New("boom"), false},
+	}
+	for name, tc := range cases {
+		if got := isOperatorInputError(tc.err); got != tc.want {
+			t.Errorf("%s: got %v, want %v", name, got, tc.want)
+		}
+	}
 }
-
-func (e *prefixlessErr) Error() string { return e.msg }
-func (e *prefixlessErr) Unwrap() error { return e.inner }
 
 func TestSignIssueBody_OmitsRawError(t *testing.T) {
 	err := &SignFlowError{Phase: PhaseQR, Err: errors.New("open /home/alice/secret/issuance.log: denied")}

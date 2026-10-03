@@ -50,23 +50,15 @@ type SignFlowResult struct {
 	Existing   bool
 }
 
-// findExistingIssuance looks up req in the issuance log at logPath by payload
-// SHA-256. On a match it rebuilds the SignResponse from the logged signature —
-// the same credential and QR as when it was first issued (Ed25519 is
-// deterministic per key). The stored signature is not re-verified against the
-// registry; a malformed one is skipped as if absent.
+// findExistingIssuance looks up payload (from core.BuildPayload) in the
+// issuance log at logPath by SHA-256. On a match it rebuilds the SignResponse
+// from the logged signature — the same credential and QR as when it was first
+// issued (Ed25519 is deterministic per key). The stored signature is not
+// re-verified against the registry; a malformed one is skipped as if absent.
 //
-// BuildPayload runs first, even for an empty logPath, so a request that is
-// invalid (core.ErrInvalidCredential) or too long for a QR code
-// (core.ErrTooLongForQR) is refused before any PIN prompt; those errors are
-// returned unwrapped. An empty logPath never matches. Log read failures wrap
+// An empty logPath never matches. Log read failures wrap
 // ErrIssuanceLogUnreadable.
-func findExistingIssuance(req core.SignRequest, logPath string) (core.SignResponse, bool, error) {
-	payload, err := core.BuildPayload(req)
-	if err != nil {
-		return core.SignResponse{}, false, err
-	}
-
+func findExistingIssuance(payload []byte, logPath string) (core.SignResponse, bool, error) {
 	if logPath == "" {
 		return core.SignResponse{}, false, nil
 	}
@@ -176,11 +168,17 @@ func executeSignFlow(
 	onConnecting func(),
 	logger *debuglog.Logger,
 ) (SignFlowResult, error) {
-	// 0. Payload check and duplicate check, before any PIN prompt or card
-	//    access. An invalid or too-long-for-QR request is refused here. A
-	//    logged issuance of the same payload is returned as-is (the credential
-	//    first issued), so no duplicate record is written.
-	resp, existing, err := findExistingIssuance(req, logPath)
+	// 0. Before any PIN prompt or card access: build the payload, which
+	//    refuses an invalid or too-long-for-QR request (*core.InvalidCredentialError,
+	//    *core.TooLongForQRError), then check the issuance log. A logged
+	//    issuance of the same payload is returned as-is (the credential first
+	//    issued), so no duplicate record is written.
+	payload, err := core.BuildPayload(req)
+	if err != nil {
+		logger.Log("pre-sign check: " + core.SanitizeForLog(err.Error()))
+		return SignFlowResult{}, err
+	}
+	resp, existing, err := findExistingIssuance(payload, logPath)
 	if err != nil {
 		logger.Log("pre-sign check: " + core.SanitizeForLog(err.Error()))
 		return SignFlowResult{}, err

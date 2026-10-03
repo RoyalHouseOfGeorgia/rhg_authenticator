@@ -98,9 +98,9 @@ func (rt *RegistryTab) IsDirty() bool {
 	return rt.state.dirty
 }
 
-// ClientForHistory returns a configured ghapi.Client if logged in and online,
+// GitHubClient returns a configured ghapi.Client if logged in and online,
 // or nil. Must be called on the Fyne main thread (reads rt.state).
-func (rt *RegistryTab) ClientForHistory() *ghapi.Client {
+func (rt *RegistryTab) GitHubClient() *ghapi.Client {
 	if !rt.state.loggedIn || rt.state.offline || rt.state.githubToken.AccessToken == "" {
 		return nil
 	}
@@ -113,7 +113,7 @@ func (rt *RegistryTab) Fetch() {
 	rt.statusLabel.SetText("Fetching...")
 	// Read on the main thread. nil when logged out or offline (offline skips the
 	// API attempt and its timeout and goes straight to the Pages copy).
-	client := rt.ClientForHistory()
+	client := rt.GitHubClient()
 	safego.Go(func() {
 		reg, err := fetchRegistry(client)
 		var base []byte

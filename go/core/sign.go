@@ -23,13 +23,30 @@ const MaxVerifyURLLength = 625
 // sigB64Len is the length of a base64url-encoded (unpadded) Ed25519 signature.
 var sigB64Len = base64.RawURLEncoding.EncodedLen(ed25519.SignatureSize)
 
-// ErrInvalidCredential indicates the credential fields failed validation or
-// canonicalization.
+// ErrInvalidCredential matches (via errors.Is) an *InvalidCredentialError.
 var ErrInvalidCredential = errors.New("invalid credential data")
 
-// ErrTooLongForQR indicates the credential's verification URL would exceed
-// MaxVerifyURLLength. Match with errors.Is; use errors.As with
-// *TooLongForQRError for the overage.
+// InvalidCredentialError reports credential fields that failed validation or
+// canonicalization. Reason is the operator-facing cause (e.g. "detail exceeds
+// maximum length of 2000").
+type InvalidCredentialError struct {
+	Reason error
+}
+
+func (e *InvalidCredentialError) Error() string {
+	if e.Reason == nil {
+		return ErrInvalidCredential.Error()
+	}
+	return ErrInvalidCredential.Error() + ": " + e.Reason.Error()
+}
+
+// Unwrap returns the underlying validation error.
+func (e *InvalidCredentialError) Unwrap() error { return e.Reason }
+
+// Is reports whether target is ErrInvalidCredential.
+func (e *InvalidCredentialError) Is(target error) bool { return target == ErrInvalidCredential }
+
+// ErrTooLongForQR matches (via errors.Is) a *TooLongForQRError.
 var ErrTooLongForQR = errors.New("too long to fit in a QR code")
 
 // TooLongForQRError reports how far a credential exceeds the QR capacity.
@@ -39,27 +56,28 @@ type TooLongForQRError struct {
 	OverBytes int
 }
 
-// Error returns a user-readable message. Georgian letters take 3 bytes in
-// UTF-8, so the Georgian estimate is OverBytes/3 rounded up.
+// Error is the operator-facing message, shown as-is by Bulk Sign and
+// capitalized by the Sign tab, e.g. "too long to fit in a QR code by about 4
+// letters (about 2 in Georgian script) — shorten the detail or recipient".
+// Georgian letters take three UTF-8 bytes, so that count is OverBytes/3
+// rounded up.
 func (e *TooLongForQRError) Error() string {
-	return "too long to fit in a QR code by " + e.Overage() + " — shorten the detail or recipient"
-}
-
-// Overage describes the excess in letters, e.g. "about 4 letters (about 2 in
-// Georgian script)". Georgian letters take three UTF-8 bytes, so the Georgian
-// count is OverBytes/3 rounded up. "letter" is singular for a count of 1.
-func (e *TooLongForQRError) Overage() string {
 	n := e.OverBytes
 	unit := "letters"
 	if n == 1 {
 		unit = "letter"
 	}
-	return fmt.Sprintf("about %d %s (about %d in Georgian script)", n, unit, (n+2)/3)
+	return fmt.Sprintf("%s by about %d %s (about %d in Georgian script) — shorten the detail or recipient",
+		ErrTooLongForQR.Error(), n, unit, (n+2)/3)
 }
 
 // Is reports whether target is ErrTooLongForQR.
-func (e *TooLongForQRError) Is(target error) bool {
-	return target == ErrTooLongForQR
+func (e *TooLongForQRError) Is(target error) bool { return target == ErrTooLongForQR }
+
+// overBytes converts a URL length over MaxVerifyURLLength into the number of
+// payload bytes to remove: ceil(excess base64url chars × 3/4).
+func overBytes(urlLen int) int {
+	return ((urlLen-MaxVerifyURLLength)*3 + 3) / 4
 }
 
 // VerifyURLLength returns the length of the verification URL that signing
@@ -113,18 +131,18 @@ func BuildPayload(req SignRequest) ([]byte, error) {
 
 	// 2. Validate credential.
 	if _, err := ValidateCredential(credObj); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidCredential, err)
+		return nil, &InvalidCredentialError{Reason: err}
 	}
 
 	// 3. Canonicalize.
 	payloadBytes, err := Canonicalize(credObj)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidCredential, err)
+		return nil, &InvalidCredentialError{Reason: err}
 	}
 
 	// 4. QR capacity check: the verification URL must fit a printable QR code.
 	if n := VerifyURLLength(payloadBytes); n > MaxVerifyURLLength {
-		return nil, &TooLongForQRError{OverBytes: ((n-MaxVerifyURLLength)*3 + 3) / 4}
+		return nil, &TooLongForQRError{OverBytes: overBytes(n)}
 	}
 	return payloadBytes, nil
 }

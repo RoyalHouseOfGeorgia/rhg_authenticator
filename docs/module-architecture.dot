@@ -51,6 +51,7 @@ digraph module_architecture {
         go_errorreport [label="errorreport/\n(Report Issue)", fillcolor="#fff3bf", color="#e67700"];
         go_update [label="update/\n(release check)", fillcolor="#fff3bf", color="#e67700"];
         go_buildinfo [label="buildinfo/\n(version)", fillcolor="#fff3bf", color="#e67700"];
+        go_safego [label="safego/\n(panic-safe\ngoroutines)", fillcolor="#fff3bf", color="#e67700"];
     }
 
     // External deps
@@ -91,7 +92,7 @@ digraph module_architecture {
     go_main -> go_update;
     go_main -> go_buildinfo;
     go_main -> go_debuglog;
-    go_main -> go_errorreport;
+    go_main -> go_safego;
     go_main -> go_ghapi;
     go_main -> go_log;
     go_main -> go_registry;
@@ -105,6 +106,8 @@ digraph module_architecture {
     go_gui -> go_debuglog;
     go_gui -> go_errorreport;
     go_gui -> go_buildinfo;
+    go_gui -> go_safego;
+    go_qr -> go_core;
     go_bulk -> go_core;
     go_log -> go_core;
     go_registry -> go_core;
@@ -119,6 +122,7 @@ digraph module_architecture {
     go_regmgr -> go_yubikey;
     go_regmgr -> go_registry;
     go_regmgr -> go_debuglog;
+    go_regmgr -> go_safego;
     go_yubikey -> pivgo;
     go_gui -> fyne;
     go_regmgr -> fyne;

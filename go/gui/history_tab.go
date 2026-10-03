@@ -97,7 +97,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	revokeButton.Disable() // Disabled until an entry is selected.
 
 	// updateRevokeButton applies the shared enable rule. clientNil is passed in
-	// so each caller reads ghClientFn() exactly once (ClientForHistory allocates).
+	// so each caller reads ghClientFn() exactly once (GitHubClient allocates).
 	updateRevokeButton := func(clientNil bool) {
 		if !revokeInFlight && shouldEnableRevoke(clientNil, revocationsLoaded, selectedRecord, revokedHashes) {
 			revokeButton.Enable()

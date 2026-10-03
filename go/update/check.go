@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,12 @@ import (
 )
 
 const checkTimeout = 5 * time.Second
+
+// releaseTagRE matches the only tags a release may come from: vX.Y.Z (the
+// release workflow refuses any other tag). Only the maintainer can create v*
+// tags (repository ruleset); collaborators can still publish releases on
+// other tags, so anything else is ignored rather than offered as an update.
+var releaseTagRE = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
 // CheckResult is the outcome of a version check.
 type CheckResult struct {
@@ -26,7 +33,15 @@ type CheckResult struct {
 type githubRelease struct {
 	TagName string `json:"tag_name"`
 	HTMLURL string `json:"html_url"`
+	Author  struct {
+		Login string `json:"login"`
+	} `json:"author"`
 }
+
+// releaseAuthor is the account the release workflow publishes as. Collaborators
+// can create a release on an existing v* tag by hand before the workflow does;
+// only workflow-published releases are offered as updates.
+const releaseAuthor = "github-actions[bot]"
 
 // Check queries the GitHub Releases API for the latest release and compares
 // it with the current version. Returns immediately with UpdateAvailable=false
@@ -57,7 +72,7 @@ func checkInternal(url, currentVersion string, timeout time.Duration) CheckResul
 		return result
 	}
 
-	if release.TagName == "" {
+	if !releaseTagRE.MatchString(release.TagName) || release.Author.Login != releaseAuthor {
 		return result
 	}
 

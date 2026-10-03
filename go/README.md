@@ -26,7 +26,9 @@ make checksums      # Generate SHA256SUMS.txt
 make clean          # Remove release directory
 ```
 
-The binary embeds the version from `git describe --tags`.
+The binary embeds the version from `git describe --tags`. Release tags are always `vX.Y.Z` (e.g. `v1.5.0`): CI refuses to build a release from any other tag, and only the maintainer can create tags.
+
+At startup the app checks GitHub for a newer release and shows **Version … available — Download** if there is one. It only considers a release tagged `vX.Y.Z` and published by the release workflow (`github-actions[bot]`), so a release created by hand — even by a collaborator — is never offered.
 
 See [../CHANGELOG.md](../CHANGELOG.md) for release history.
 
@@ -52,7 +54,7 @@ See [../CHANGELOG.md](../CHANGELOG.md) for release history.
 
 If the same credential (identical recipient, honor, detail and date) is already in the issuance log, the app skips the PIN prompt, says **"Credential previously generated, no new record created."** and shows the original QR code — nothing new is logged. If the issuance log can't be read, signing is blocked until it can (see [Troubleshooting](#troubleshooting)).
 
-The verification URL must fit a printable QR code (625 characters), which leaves room for roughly 220–290 Latin or 75–95 Georgian letters for recipient and detail combined (the longer the honor title, the less room). A credential that is too long, or otherwise invalid, is refused before the PIN prompt — nothing is signed or logged — and the status area says how much to shorten (e.g. **"Too long to fit in a QR code by about 40 letters (about 14 in Georgian script)."**). Bulk Sign marks such rows invalid with the same reason.
+The verification URL must fit a printable QR code (625 characters), which leaves room for roughly 220–290 Latin or 75–95 Georgian letters for recipient and detail combined (the longer the honor title, the less room). A credential that is too long, or otherwise invalid, is refused before the PIN prompt — nothing is signed or logged — and the status area says how much to shorten (e.g. **"Too long to fit in a QR code by about 40 letters (about 14 in Georgian script) — shorten the detail or recipient."**). Bulk Sign marks such rows invalid with the same reason.
 
 If signing fails, the status area shows a diagnostic message and a **Report Issue** button (files a GitHub issue automatically if logged in, or opens a pre-filled browser form). The issue contains the message shown, the signing step and the hardware error category — not the raw error text, which can include local file paths and card-reader names. There is no Report Issue button for an input problem (too long or invalid). Details are written to the error log — see [Troubleshooting](#troubleshooting) below.
 
@@ -100,7 +102,7 @@ A wrong PIN, a YubiKey error, or a failure to write the issuance log stops the b
 
 Browse previously issued credentials. Search by recipient name. Click any entry for full details. **Revoke** a credential via the Revoke button — this submits a GitHub PR to add the credential's SHA-256 hash to the revocation list.
 
-Revoke needs a working GitHub session and **Write (collaborator) access** to the repository — the PR is opened from a branch in the repository itself, not from a personal fork; without access the app says "ask the maintainer to add you as a collaborator". If you aren't logged in, or GitHub couldn't be reached when the app started, click **Connect to GitHub**. If a revocation fails, the error dialog has an **Export Error Log…** button. If the credential is already revoked, or a revocation PR for it is already open (from either operator), no new PR is created and the app says so.
+Revoke needs a working GitHub session and **Write (collaborator) access** to the repository — the PR is opened from a branch in the repository itself, not from a personal fork; without access the app says "ask the maintainer to add you as a collaborator". If you aren't logged in, or GitHub couldn't be reached when the app started, click **Connect to GitHub**. If a revocation fails, the error dialog has an **Export Error Log…** button. If the credential is already revoked, or a revocation PR for it is already open from a branch in the repository (by either operator — open PRs from the old fork-based flow are not detected), no new PR is created and the app says so.
 
 **Remove Duplicates…** finds entries in the issuance log for the same credential signed more than once, and removes all but the earliest valid entry after you confirm (a damaged entry before the first valid copy is left in place). A backup of the current log (`issuances.json.bak-<UTC timestamp>`, e.g. `issuances.json.bak-20261001T120000Z`) is saved next to it first. Removed entries were the same credential, so any QR code already printed from them still verifies.
 
@@ -198,6 +200,9 @@ The file itself lives here:
 | **Smart card service not available** | OS smart card service not running | macOS: built-in, should always work. Windows: ensure the "Smart Card" service is running (`services.msc`) |
 | **No signing certificate found on YubiKey (PIV slot 9c)** | Slot 9c has no certificate, or the certificate does not contain an Ed25519 key | Follow [YubiKey Setup](#yubikey-setup) to generate a key and import the certificate. Ed25519 requires firmware >= 5.7 — check with `ykman info` |
 | **Could not read the issuance log, so duplicates can't be checked** | `issuances.json` (next to `debug.log`) is unreadable or no longer valid JSON | Restore it from the newest `issuances.json.bak-*` next to it or from an exported copy, then sign again. **Help → Export Error Log…** shows the exact error |
+| **Too long to fit in a QR code by about N letters …** | Recipient + detail don't fit a printable QR code (roughly 220–290 Latin or 75–95 Georgian letters combined) | Shorten the Detail (or Recipient) by at least the amount shown. Nothing was signed or logged |
+| **Invalid credential data: …** | A field breaks a rule (e.g. detail over 2000 characters, invalid date, control characters) | Fix the field named in the message and sign again |
+| **Your GitHub account can't submit changes to this repository** | The logged-in GitHub account isn't a collaborator with Write access | Ask the maintainer to add you as a collaborator and accept the e-mailed invitation, then try again |
 | **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | **Help → Export Error Log…** and send the file |
 | **Offline — Reconnect** (Registry tab) / Revoke stays disabled | GitHub couldn't be reached when the app started | Click **Offline — Reconnect** (or **Connect to GitHub** on the History tab). If it still can't connect, check your network and try again |
 | **Could not save the SVG file / PNG file / issuance log / error log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop**. May be needed again after installing a new version |
@@ -218,8 +223,8 @@ The file itself lives here:
 - **GitHub token in OS keychain**: OAuth tokens are stored via `go-keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). File fallback on Linux only (0600 permissions). Token redacted from `fmt.Sprintf` output via `String()`/`GoString()` methods. Tokens expire after 90 days (enforced locally on session restore).
 - **Redirect protection**: HTTP client strips `Authorization` header on cross-origin redirects (allows `*.github.com` only).
 - **Input sanitization**: All untrusted GitHub API responses are sanitized before logging (control characters replaced, truncated to 500 runes). User-facing error messages are mapped to safe generic text.
-- **Panic recovery**: a main-goroutine panic writes a stack trace to the error log (`debug.log`) and stderr before exiting. Every background goroutine is started via `safego.Go`, which recovers a panic, logs it to stderr and the error log, and shows an error dialog instead of crashing. A guard test (`safego/safego_test.go`) fails on any bare `go` statement in production code.
-- **Error reporting** (`errorreport` package): signing failures offer a **Report Issue** button. If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS, error type and error message — never the error log, because they are posted without a preview. Send the log deliberately with **Help → Export Error Log…**. Fatal startup errors show a dialog with the issues link; they are not filed automatically.
+- **Panic recovery**: a main-goroutine panic writes a stack trace to the error log (`debug.log`) and stderr before exiting. Every goroutine started with a `go` statement is started via `safego.Go`, which recovers a panic, logs it to stderr and the error log, and shows an error dialog instead of crashing. A guard test (`safego/safego_test.go`) fails on any bare `go` statement in production code. (Timer callbacks such as the PIN cache's `time.AfterFunc` are not covered; they only lock and clear memory.)
+- **Error reporting** (`errorreport` package): signing failures offer a **Report Issue** button. If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS, error type, the message shown to the user and, for signing errors, the signing step and hardware error category — never the raw error text or the error log, because they are posted without a preview. Send the log deliberately with **Help → Export Error Log…**. Fatal startup errors show a dialog with the issues link; they are not filed automatically.
 
 ## Architecture
 
@@ -286,7 +291,7 @@ go/
 ├── safego/              # Panic-safe goroutines
 │   └── safego.go        # Go (recover + handler), SetPanicHandler; guard test bans bare `go`
 ├── update/              # Version check
-│   └── check.go         # GitHub releases version check
+│   └── check.go         # Latest-release check: only vX.Y.Z tags published by github-actions[bot]
 ├── testdata/            # Cross-language test vectors + cert fixtures
 │   ├── gen_vectors.go   # Vector generator (//go:build ignore)
 │   ├── vectors.json

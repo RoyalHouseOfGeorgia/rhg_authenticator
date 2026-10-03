@@ -185,3 +185,22 @@ func TestNoBareGoStatements(t *testing.T) {
 		t.Errorf("bare go statements found (use safego.Go):\n%s", strings.Join(violations, "\n"))
 	}
 }
+
+type panicWriter struct{}
+
+func (panicWriter) Write([]byte) (int, error) { panic("log sink failed") }
+
+// TestDispatch_FallbackPanicIsContained covers the case where the installed
+// handler panics and the default handler's logging panics too (the log sink
+// itself is broken): dispatch must still return instead of crashing.
+func TestDispatch_FallbackPanicIsContained(t *testing.T) {
+	prev := handler
+	t.Cleanup(func() { handler = prev })
+	SetPanicHandler(func(any, []byte) { panic("handler failed") })
+
+	prevOut := log.Writer()
+	log.SetOutput(panicWriter{})
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+
+	dispatch("boom", []byte("stack"))
+}

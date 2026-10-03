@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -89,8 +91,6 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 	// Container for QR preview and action buttons (shown after signing).
 	resultContainer := container.NewVBox()
 
-	launchGo := safego.Go
-
 	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
 		a, err := yubikey.NewYubiKeyAdapter(readPin)
 		if err != nil {
@@ -137,7 +137,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 			Date:      date,
 		}
 
-		launchGo(func() {
+		safego.Go(func() {
 			defer fyne.Do(func() { setBusy(false) })
 
 			// Set after the PIN is resolved (Item 1 prompts before Open), so the
@@ -153,18 +153,41 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 					msg := signFlowErrorMessage(err, logger)
 					statusLabel.SetText(msg)
 					if offerIssueReport(err) && config.Keyring != nil {
-						reportBtn := widget.NewButton("Report Issue", func() {
+						var reportBtn *widget.Button
+						reportBtn = widget.NewButton("Report Issue", func() {
+							// Keychain read + GitHub calls: off the UI thread,
+							// with the button disabled until they finish.
+							reportBtn.Disable()
+							reportBtn.SetText("Reporting…")
 							title := errorreport.BuildIssueTitle("signing", msg)
 							body := signIssueBody(err, msg)
-							resultURL, _ := errorreport.ReportIssue(context.Background(), config.Keyring, config.DataDir, title, body)
-							if resultURL != "" {
-								// Only open https://github.com URLs; anything else is not ours.
-								if u := parseGitHubURL(resultURL); u != nil {
-									fyne.CurrentApp().OpenURL(u)
-								} else {
-									logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(resultURL))
-								}
-							}
+							safego.Go(func() {
+								resultURL := ""
+								// Deferred so the button comes back even if the
+								// report panics (safego recovers it).
+								defer fyne.Do(func() {
+									reportBtn.SetText("Report Issue")
+									if strings.Contains(resultURL, "/issues/new") || resultURL == "" {
+										reportBtn.Enable() // browser form or failure: allow another try
+									} else {
+										reportBtn.SetText("Issue Reported") // filed via API: no duplicates
+									}
+								})
+								ctx, cancel := context.WithTimeout(context.Background(), reportIssueTimeout)
+								defer cancel()
+								resultURL, _ = errorreport.ReportIssue(ctx, config.Keyring, config.DataDir, title, body)
+								fyne.Do(func() {
+									if resultURL == "" {
+										return
+									}
+									// Only open https://github.com URLs; anything else is not ours.
+									if u := parseGitHubURL(resultURL); u != nil {
+										fyne.CurrentApp().OpenURL(u)
+									} else {
+										logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(resultURL))
+									}
+								})
+							})
 						})
 						resultContainer.Add(reportBtn)
 					}
@@ -268,7 +291,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 		startBulkSign(bulkSignDeps{
 			window:      window,
 			logPath:     config.LogPath,
-			launchGo:    launchGo,
+			launchGo:    safego.Go,
 			openAdapter: openAdapter,
 			pinCache:    pinCache,
 			logger:      logger,
@@ -355,18 +378,22 @@ func friendlyYubiKeyError(err error, logger *debuglog.Logger) string {
 	}
 }
 
-// invalidCredentialPrefix is the text core.ErrInvalidCredential contributes
-// to a wrapped error message; the operator-facing reason follows it.
-var invalidCredentialPrefix = core.ErrInvalidCredential.Error() + ": "
+// reportIssueTimeout bounds the Report Issue keychain read and GitHub calls.
+const reportIssueTimeout = 30 * time.Second
+
+// isOperatorInputError reports whether err is a problem with what the operator
+// typed (invalid, or too long for a QR code) rather than a fault.
+func isOperatorInputError(err error) bool {
+	return errors.Is(err, core.ErrTooLongForQR) || errors.Is(err, core.ErrInvalidCredential)
+}
 
 // offerIssueReport reports whether a sign-flow error warrants a "Report Issue"
 // button. Cancellations, benign PIN-entry timeouts, and operator input errors
-// (invalid or too long for a QR code) are not bugs.
+// are not bugs.
 func offerIssueReport(err error) bool {
 	return !errors.Is(err, ErrSigningCancelled) &&
 		!errors.Is(err, ErrPINEntryTimedOut) &&
-		!errors.Is(err, core.ErrTooLongForQR) &&
-		!errors.Is(err, core.ErrInvalidCredential)
+		!isOperatorInputError(err)
 }
 
 // signIssueBody builds the GitHub issue body for a sign-flow error. It carries
@@ -385,22 +412,28 @@ func signIssueBody(err error, msg string) string {
 	return errorreport.BuildIssueBody(buildinfo.Version, "signing", detail)
 }
 
+// capitalize upper-cases the first letter of s.
+func capitalize(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	if size == 0 {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[size:]
+}
+
 // signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
 // status message.
 func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	// Operator input errors from BuildPayload come first so their reason text
-	// is never misread by the hardware classifier below.
+	// is never misread by the hardware classifier below. The core error text
+	// is the message (shared with Bulk Sign), capitalized for the status line.
 	var tooLong *core.TooLongForQRError
 	if errors.As(err, &tooLong) {
-		return "Too long to fit in a QR code by " + tooLong.Overage() + ". Shorten the Detail or Recipient and try again."
+		return capitalize(tooLong.Error()) + "."
 	}
-	if errors.Is(err, core.ErrInvalidCredential) {
-		text := err.Error()
-		reason := text
-		if i := strings.LastIndex(text, invalidCredentialPrefix); i >= 0 {
-			reason = text[i+len(invalidCredentialPrefix):]
-		}
-		return "Invalid credential data: " + core.SanitizeForError(reason)
+	var invalid *core.InvalidCredentialError
+	if errors.As(err, &invalid) {
+		return capitalize(core.SanitizeForError(invalid.Error())) + "."
 	}
 	// PIN-flow sentinels are returned bare from readPin (executeSignFlow resolves
 	// the PIN before openAdapter, so piv-go never %v-wraps them), matched via

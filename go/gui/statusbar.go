@@ -13,8 +13,8 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 )
 
-// RegistryStats holds computed statistics about a key registry.
-type RegistryStats struct {
+// registryStats holds computed statistics about a key registry.
+type registryStats struct {
 	ActiveKeys      int
 	RecentlyExpired int // expired within the past 30 days
 }
@@ -23,8 +23,8 @@ type RegistryStats struct {
 // from a registry using the given date (YYYY-MM-DD format) as "today".
 // A key is active when today is on or before its to date (see core.IsDateInRange);
 // from is informational, so a key with a future from date counts as active.
-func computeRegistryStats(reg core.Registry, today string) RegistryStats {
-	var stats RegistryStats
+func computeRegistryStats(reg core.Registry, today string) registryStats {
+	var stats registryStats
 
 	todayTime, err := time.Parse("2006-01-02", today)
 	if err != nil {
