@@ -259,7 +259,7 @@ byte-identical: `TestCrossLanguageVectors` (Go) and the vitest
 
 ## App Icon
 
-`go/icon.png` (1024×1024, transparent) is the single source for the in-app window icon (embedded), the macOS `.icns` (CI "Package macOS app" step, `sips` + `iconutil`) and the Windows `.exe` icon (CI "Embed Windows icon" step, `go-winres` → `go/rsrc_windows_amd64.syso`, gitignored). It is generated from the full-size arms in `royal-arms.png` with the standard ~10% margin (artwork fitted to 824×824, centred). To regenerate after `royal-arms.png` changes:
+`go/icon.png` (1024×1024, transparent) is the single source for the in-app window icon (embedded), the macOS `.icns` (CI "Package macOS app" step, `sips` + `iconutil`) and the Windows `.exe` icon (CI "Embed Windows icon" step, `go-winres` → `go/rsrc_windows_amd64.syso`, gitignored). It is generated from the full-size arms in `royal-arms.png` with the standard ~10% margin (artwork fitted to 824×824, centred). `TestAppIconIsSquare1024` (go/main_test.go) fails if it is replaced by anything that isn't a 1024×1024 PNG with a transparent corner. To regenerate after `royal-arms.png` changes:
 
 ```bash
 python3 - <<'EOF'

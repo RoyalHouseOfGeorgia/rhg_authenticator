@@ -224,7 +224,7 @@ The file itself lives here:
 - **Redirect protection**: HTTP client strips `Authorization` header on cross-origin redirects (allows `*.github.com` only).
 - **Input sanitization**: All untrusted GitHub API responses are sanitized before logging (control characters replaced, truncated to 500 runes). User-facing error messages are mapped to safe generic text.
 - **Panic recovery**: a main-goroutine panic writes a stack trace to the error log (`debug.log`) and stderr before exiting. Every goroutine started with a `go` statement is started via `safego.Go`, which recovers a panic, logs it to stderr and the error log, and shows an error dialog instead of crashing. A guard test (`safego/safego_test.go`) fails on any bare `go` statement in production code. (Timer callbacks such as the PIN cache's `time.AfterFunc` are not covered; they only lock and clear memory.)
-- **Error reporting** (`errorreport` package): signing failures offer a **Report Issue** button. If the user is logged in, the issue is created via the API; otherwise a pre-filled browser URL is opened. Issue bodies include version, OS, error type, the message shown to the user and, for signing errors, the signing step and hardware error category — never the raw error text or the error log, because they are posted without a preview. Send the log deliberately with **Help → Export Error Log…**. Fatal startup errors show a dialog with the issues link; they are not filed automatically.
+- **Error reporting** (`errorreport` package): signing failures offer a **Report Issue** button. It runs in the background (up to 30 s; the button reads "Reporting…"). If the user is logged in, the issue is created via the API and the button then reads "Issue Reported" so it isn't filed twice; otherwise a pre-filled browser URL is opened. Input errors (too long for a QR code, invalid fields) don't offer the button. Issue bodies include version, OS, error type, the message shown to the user and, for signing errors, the signing step and hardware error category — never the raw error text or the error log, because they are posted without a preview. Send the log deliberately with **Help → Export Error Log…**. Fatal startup errors show a dialog with the issues link; they are not filed automatically.
 
 ## Architecture
 
@@ -250,7 +250,7 @@ go/
 │   ├── registry.go      # Key registry schema, lookup, fingerprint
 │   ├── revocation.go    # RevocationEntry, RevocationList, ValidateRevocationList, BuildRevocationSet, IsRevoked
 │   ├── sanitize.go      # SanitizeForLog + StripControlChars (C0, C1, DEL, bidi; 500-rune log cap) + TrimJS; used across packages
-│   └── sign.go          # Signing orchestrator (BuildPayload, HandleSign, BuildVerifyURL)
+│   └── sign.go          # Signing orchestrator (BuildPayload, HandleSign, BuildVerifyURL); BuildPayload refuses invalid input (InvalidCredentialError) and URLs over 625 chars (TooLongForQRError, MaxVerifyURLLength)
 ├── debuglog/            # Always-on error log (debug.log), 30-day retention
 │   └── debuglog.go      # Append-only timestamped file logger, Prune, stdlib log capture
 ├── errorreport/         # Auto error reporting
@@ -262,8 +262,8 @@ go/
 │   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi; skips already-revoked/pending), Export Issuance Log, Remove Duplicates, Revocation unavailable status
 │   ├── errorlog_export.go # Help → Export Error Log… save flow; ShowErrorWithLogExport error dialog
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
-│   ├── sign_tab.go      # Credential form + QR display + Report Issue button
-│   ├── signflow.go      # Extracted signing workflow incl. duplicate-issuance check (testable)
+│   ├── sign_tab.go      # Credential form + QR display + Report Issue button (runs in the background; input errors get no button)
+│   ├── signflow.go      # Extracted signing workflow: pre-sign payload check (before the PIN), duplicate-issuance check (testable)
 │   ├── statusbar.go     # Bottom status bar (key stats, online status, last registry update via lastUpdateCh)
 │   └── yubikey_tab.go   # YubiKey registry check (no PIN)
 ├── ghapi/               # GitHub API client + OAuth device flow
@@ -283,7 +283,7 @@ go/
 │   ├── mlock_unix.go    # mlock for macOS/Linux
 │   └── mlock_windows.go # VirtualLock for Windows
 ├── qr/                  # QR code generation
-│   └── generate.go      # SVG (vector) + PNG output
+│   └── generate.go      # SVG (vector) + PNG output; rejects URLs over core.MaxVerifyURLLength
 ├── log/                 # Issuance log
 │   └── issuance.go      # Atomic JSON issuance log: append, read, dedupe (with backup)
 ├── registry/            # Registry fetch
