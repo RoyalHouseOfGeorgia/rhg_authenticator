@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"image/color"
+	"image/png"
 	"math"
 	"testing"
 
@@ -264,5 +266,21 @@ func TestRhgTheme_ButtonTextContrast(t *testing.T) {
 		if got := contrastRatio(th.Color(p.fg, v), th.Color(p.bg, v)); got < 4.5 {
 			t.Errorf("%s text contrast = %.2f:1, want >= 4.5:1", p.name, got)
 		}
+	}
+}
+
+// TestAppIconIsSquare1024 guards the CI packaging steps, which resize
+// go/icon.png straight into the macOS .icns and Windows .exe icon: a
+// non-square or smaller replacement would be distorted or blurry.
+func TestAppIconIsSquare1024(t *testing.T) {
+	img, err := png.Decode(bytes.NewReader(appIconData))
+	if err != nil {
+		t.Fatalf("icon.png does not decode as PNG: %v", err)
+	}
+	if b := img.Bounds(); b.Dx() != 1024 || b.Dy() != 1024 {
+		t.Errorf("icon.png is %dx%d, want 1024x1024 (see DEVELOPER.md \"App Icon\")", b.Dx(), b.Dy())
+	}
+	if _, _, _, a := img.At(0, 0).RGBA(); a != 0 {
+		t.Error("icon.png corner is not transparent; it needs an alpha channel and margin")
 	}
 }

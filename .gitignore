@@ -24,6 +24,7 @@ node_modules/
 # Build output
 dist/
 go/release/
+go/rsrc_windows_*.syso
 build/
 
 # OS artifacts

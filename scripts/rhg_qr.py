@@ -7,7 +7,8 @@ Usage:
     python3 scripts/rhg_qr.py [--png] [-o FILE] URL
     python3 scripts/rhg_qr.py [--png] [-o FILE] --payload=P --signature=S
 
-Writes SVG by default (rhg-qr.svg), or PNG with --png (rhg-qr.png).
+Writes SVG by default (rhg-qr.svg), or PNG with --png (rhg-qr.png), at error
+correction level Q like the app. URLs over 625 characters are refused.
 Never overwrites an existing file. Use the "=" form for --payload/--signature:
 signatures may start with "-".
 
@@ -21,6 +22,10 @@ import sys
 from pathlib import Path
 
 from rebuild_urls import ROW_ERRORS, _reason, row_from_payload
+
+# Same limit as the app (core.MaxVerifyURLLength): the longest URL that fits a
+# printable QR code at error-correction level Q.
+MAX_URL_LENGTH = 625
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,6 +54,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {_reason(e)}", file=sys.stderr)
             return 1
 
+    if len(url) > MAX_URL_LENGTH:
+        print(
+            f"error: URL is {len(url)} characters; a printable QR code fits at most "
+            f"{MAX_URL_LENGTH} (the app refuses such a credential before signing)",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         import segno  # only this tool needs it; rebuild_urls stays stdlib-only
     except ImportError:
@@ -56,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     out = Path(args.output or ("rhg-qr.png" if args.png else "rhg-qr.svg"))
-    qr = segno.make(url, error="h")
+    qr = segno.make(url, error="q")  # level Q, as the app (skip2 qrcode.High)
     try:
         with out.open("xb") as f:
             if args.png:

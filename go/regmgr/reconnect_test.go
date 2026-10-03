@@ -143,8 +143,8 @@ func TestStartLoginOrReconnect_ReconnectSuccess(t *testing.T) {
 	if n := calls.Load(); n != 1 {
 		t.Errorf("restoreSessionFunc called %d times, want 1", n)
 	}
-	if rt.ClientForHistory() == nil {
-		t.Error("ClientForHistory() = nil, want client after successful reconnect")
+	if rt.GitHubClient() == nil {
+		t.Error("GitHubClient() = nil, want client after successful reconnect")
 	}
 	if rt.state.offline {
 		t.Error("offline should be false after successful reconnect")
@@ -174,8 +174,8 @@ func TestStartLoginOrReconnect_StillOffline(t *testing.T) {
 	if !rt.state.loggedIn {
 		t.Error("loggedIn should remain true")
 	}
-	if rt.ClientForHistory() != nil {
-		t.Error("ClientForHistory() should be nil while offline")
+	if rt.GitHubClient() != nil {
+		t.Error("GitHubClient() should be nil while offline")
 	}
 	if rt.loginBtn.Text != offlineBtnText {
 		t.Errorf("loginBtn.Text = %q, want %q", rt.loginBtn.Text, offlineBtnText)
@@ -239,8 +239,8 @@ func TestRestoreSession_NonInteractive(t *testing.T) {
 	if n := calls.Load(); n != 1 {
 		t.Errorf("restoreSessionFunc called %d times, want 1", n)
 	}
-	if rt.ClientForHistory() == nil {
-		t.Error("ClientForHistory() = nil, want client after restore")
+	if rt.GitHubClient() == nil {
+		t.Error("GitHubClient() = nil, want client after restore")
 	}
 	// Silent restore must not touch the status label or loggingIn.
 	if rt.statusLabel.Text != "Fetching..." {
@@ -275,7 +275,7 @@ func TestRestoreSession_NonInteractiveRunsOnRestoredAfterState(t *testing.T) {
 	done := make(chan bool, 1)
 	rt.onRestored = func() {
 		// Login state must already be applied, so Fetch can use the API client.
-		done <- rt.ClientForHistory() != nil
+		done <- rt.GitHubClient() != nil
 	}
 
 	rt.restoreSession(false)

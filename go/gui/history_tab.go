@@ -24,6 +24,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 )
 
 // maxHonorDisplay is the maximum number of characters to show for the honor
@@ -96,7 +97,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	revokeButton.Disable() // Disabled until an entry is selected.
 
 	// updateRevokeButton applies the shared enable rule. clientNil is passed in
-	// so each caller reads ghClientFn() exactly once (ClientForHistory allocates).
+	// so each caller reads ghClientFn() exactly once (GitHubClient allocates).
 	updateRevokeButton := func(clientNil bool) {
 		if !revokeInFlight && shouldEnableRevoke(clientNil, revocationsLoaded, selectedRecord, revokedHashes) {
 			revokeButton.Enable()
@@ -170,7 +171,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 			revokeInFlight = true
 			revokeButton.Disable()
 
-			go func() {
+			safego.Go(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), revocationTimeout)
 				defer cancel()
 
@@ -208,12 +209,12 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 					markRevoked(rec.PayloadSHA256)
 					dialog.ShowInformation("Revocation Submitted", fmt.Sprintf("Pull request #%d created:\n%s\n\nIf several revocation PRs are open, merge them one at a time.", pr.Number, pr.HTMLURL), window)
 				})
-			}()
+			})
 		}, window)
 	}
 
 	fetchRevocations := func() {
-		go func() {
+		safego.Go(func() {
 			revList, err := registry.FetchRevocationList(revocationURL)
 			if err != nil {
 				stdlog.Printf("history: failed to fetch revocation list: %s", core.SanitizeForLog(err.Error()))
@@ -235,7 +236,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				// Re-evaluate revoke button based on current selection.
 				updateRevokeButton(ghClientFn() == nil)
 			})
-		}()
+		})
 	}
 
 	loadRecords := func() {

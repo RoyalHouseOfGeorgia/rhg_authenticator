@@ -10,18 +10,21 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 )
 
-// RegistryStats holds computed statistics about a key registry.
-type RegistryStats struct {
+// registryStats holds computed statistics about a key registry.
+type registryStats struct {
 	ActiveKeys      int
 	RecentlyExpired int // expired within the past 30 days
 }
 
-// ComputeRegistryStats computes active key count and recently-expired count
+// computeRegistryStats computes active key count and recently-expired count
 // from a registry using the given date (YYYY-MM-DD format) as "today".
-func ComputeRegistryStats(reg core.Registry, today string) RegistryStats {
-	var stats RegistryStats
+// A key is active when today is on or before its to date (see core.IsDateInRange);
+// from is informational, so a key with a future from date counts as active.
+func computeRegistryStats(reg core.Registry, today string) registryStats {
+	var stats registryStats
 
 	todayTime, err := time.Parse("2006-01-02", today)
 	if err != nil {
@@ -30,7 +33,7 @@ func ComputeRegistryStats(reg core.Registry, today string) RegistryStats {
 	thirtyDaysAgo := todayTime.AddDate(0, 0, -30).Format("2006-01-02")
 
 	for _, key := range reg.Keys {
-		active := today >= key.From && (key.To == nil || today <= *key.To)
+		active := core.IsDateInRange(today, key)
 		if active {
 			stats.ActiveKeys++
 			continue
@@ -57,7 +60,7 @@ func NewStatusBar(reg core.Registry, online bool, lastUpdateCh <-chan string) *f
 	}
 
 	today := time.Now().UTC().Format("2006-01-02")
-	stats := ComputeRegistryStats(reg, today)
+	stats := computeRegistryStats(reg, today)
 
 	activeLabel := widget.NewLabel(fmt.Sprintf("Active keys: %d", stats.ActiveKeys))
 	recentLabel := widget.NewLabel(fmt.Sprintf("Expired (30d): %d", stats.RecentlyExpired))
@@ -71,7 +74,7 @@ func NewStatusBar(reg core.Registry, online bool, lastUpdateCh <-chan string) *f
 		updatedLabel,
 	)
 
-	go func() {
+	safego.Go(func() {
 		select {
 		case date := <-lastUpdateCh:
 			t, err := time.Parse(time.RFC3339, date)
@@ -87,7 +90,7 @@ func NewStatusBar(reg core.Registry, online bool, lastUpdateCh <-chan string) *f
 				updatedLabel.SetText("Last update: unknown")
 			})
 		}
-	}()
+	})
 
 	return bar
 }

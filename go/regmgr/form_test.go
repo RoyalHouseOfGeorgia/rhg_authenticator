@@ -187,13 +187,11 @@ func TestValidateEntryForm_ToRequiredWhenNoExpiryUnchecked(t *testing.T) {
 	}
 }
 
-func TestValidateEntryForm_ToBeforeFrom(t *testing.T) {
-	err := validateEntryForm("Auth", "2026-06-01", "key", false, "2025-01-01")
-	if err == nil {
-		t.Fatal("expected error when to < from")
-	}
-	if !strings.Contains(err.Error(), "must not be before") {
-		t.Errorf("error = %v, want containing %q", err, "must not be before")
+func TestValidateEntryForm_ToBeforeFromAccepted(t *testing.T) {
+	// from is informational: revoking a key registered with a future From
+	// sets To to today, which is before From.
+	if err := validateEntryForm("Auth", "2026-06-01", "key", false, "2025-01-01"); err != nil {
+		t.Errorf("unexpected error when to < from: %v", err)
 	}
 }
 

@@ -492,44 +492,56 @@ func TestEntryCellText_InvalidColumn(t *testing.T) {
 	}
 }
 
-// --- ClientForHistory tests ---
+// --- GitHubClient tests ---
 
-func TestClientForHistory_NotLoggedIn(t *testing.T) {
+func TestGitHubClient_NotLoggedIn(t *testing.T) {
 	rt := &RegistryTab{state: &appState{loggedIn: false}}
-	if rt.ClientForHistory() != nil {
+	if rt.GitHubClient() != nil {
 		t.Error("expected nil when not logged in")
 	}
 }
 
-func TestClientForHistory_EmptyAccessToken(t *testing.T) {
+func TestGitHubClient_EmptyAccessToken(t *testing.T) {
 	rt := &RegistryTab{state: &appState{
 		loggedIn:    true,
 		githubUser:  "testuser",
 		githubToken: ghapi.Token{AccessToken: ""},
 	}}
-	if rt.ClientForHistory() != nil {
+	if rt.GitHubClient() != nil {
 		t.Error("expected nil when AccessToken is empty")
 	}
 }
 
-func TestClientForHistory_EmptyUsername(t *testing.T) {
+func TestGitHubClient_Offline(t *testing.T) {
+	rt := &RegistryTab{state: &appState{
+		loggedIn:    true,
+		offline:     true,
+		githubToken: ghapi.Token{AccessToken: "tok-123"},
+	}}
+	if rt.GitHubClient() != nil {
+		t.Error("expected nil when offline")
+	}
+}
+
+// The display name is not needed to build a client: PRs are same-repo.
+func TestGitHubClient_EmptyUsername(t *testing.T) {
 	rt := &RegistryTab{state: &appState{
 		loggedIn:    true,
 		githubUser:  "",
 		githubToken: ghapi.Token{AccessToken: "tok-123"},
 	}}
-	if rt.ClientForHistory() != nil {
-		t.Error("expected nil when githubUser is empty")
+	if rt.GitHubClient() == nil {
+		t.Error("expected a client when githubUser is empty")
 	}
 }
 
-func TestClientForHistory_AllConditionsMet(t *testing.T) {
+func TestGitHubClient_AllConditionsMet(t *testing.T) {
 	rt := &RegistryTab{state: &appState{
 		loggedIn:    true,
 		githubUser:  "testuser",
 		githubToken: ghapi.Token{AccessToken: "tok-123"},
 	}}
-	client := rt.ClientForHistory()
+	client := rt.GitHubClient()
 	if client == nil {
 		t.Fatal("expected non-nil client when all conditions met")
 	}

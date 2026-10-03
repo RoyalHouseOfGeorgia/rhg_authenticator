@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="royal-arms.png" alt="Royal Arms of Georgia" width="120" height="120">
+  <img src="verify/royal-arms-120.png" alt="Royal Arms of Georgia" width="120" height="120">
 </p>
 
 <h1 align="center">Royal House of Georgia — Digital Honor Authenticator</h1>
@@ -26,7 +26,7 @@
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 | **Python tools** | Python | **Complete** | `scripts/rebuild_urls.py` (rebuild verification URLs from existing signatures, no YubiKey), `scripts/rhg_qr.py` (QR image from a URL), `scripts/rhg_revocation_hash.py` (revocation hash for a URL) |
 
-1361 tests passing (905 Go + 422 TypeScript + 34 Python).
+1369 tests passing (912 Go + 423 TypeScript + 34 Python).
 
 ## Download & install
 
@@ -65,8 +65,8 @@ make build          # → release/rhg-authenticator
 
 The app has five tabs:
 - **Sign** — fill in credential form, sign with YubiKey, generate QR code; or **Bulk Sign from File…** to sign every row of a CSV in one session
-- **History** — browse previously issued credentials, search by recipient; **Revoke** a credential (log in to GitHub; the app opens a PR against the revocation list); **Export Issuance Log…** saves a copy of the log (e.g. to the Desktop); **Remove Duplicates…** removes repeat entries for the same credential
-- **Registry** — manage the key registry (import from YubiKey or .crt/.pem, add/edit entries, submit as PR for review)
+- **History** — browse previously issued credentials, search by recipient; **Revoke** a credential (log in to GitHub with an account that has Write access to this repository; the app opens a PR against the revocation list); **Export Issuance Log…** saves a copy of the log (e.g. to the Desktop); **Remove Duplicates…** removes repeat entries for the same credential
+- **Registry** — manage the key registry (import from YubiKey or .crt/.pem, add/edit entries, submit as PR for review — also needs Write access)
 - **Audit** — view GitHub commit history of the registry file (tamper detection)
 - **YubiKey** — check if the inserted YubiKey is authorized in the registry
 
@@ -80,7 +80,7 @@ See [go/README.md](go/README.md) for detailed usage and YubiKey setup.
 
 ```bash
 npm install
-npm test              # 422 tests
+npm test              # 423 tests
 npm run lint          # tsc --noEmit
 npm run build:verify  # Bundle verification page JS
 ```
@@ -119,7 +119,7 @@ python3 scripts/rhg_qr.py --png -o ~/Desktop/credential.png --payload=<p> --sign
 python3 scripts/rhg_revocation_hash.py '<verification URL>'
 ```
 
-- `rhg_qr.py` needs [segno](https://pypi.org/project/segno/): `pip install segno` (Debian: `sudo apt install python3-segno`). It never overwrites an existing file; pass `-o` so QR images of real credentials don't land in the checkout.
+- `rhg_qr.py` needs [segno](https://pypi.org/project/segno/): `pip install segno` (Debian: `sudo apt install python3-segno`). It never overwrites an existing file; pass `-o` so QR images of real credentials don't land in the checkout. It uses error-correction level Q, like the app, and refuses URLs over 625 characters — the app's limit for a printable QR code.
 - These two scripts are maintainer tools with no tests; changes to them don't trigger the Python test workflow (CodeQL still scans them).
 
 ## Documentation
@@ -145,6 +145,17 @@ certutil -hashfile rhg-authenticator-windows-amd64.exe SHA256
 ```
 
 Compare the output with the hash in `SHA256SUMS.txt`.
+
+**Stronger check — build provenance** (needs the [GitHub CLI](https://cli.github.com/); replace `v1.5.0` with the release's tag and the file name with the one you downloaded):
+```bash
+gh attestation verify rhg-authenticator-windows-amd64.exe \
+  --repo RoyalHouseOfGeorgia/rhg_authenticator \
+  --signer-workflow RoyalHouseOfGeorgia/rhg_authenticator/.github/workflows/build.yml \
+  --source-ref refs/tags/v1.5.0
+```
+This proves the file was built by the release workflow from that tag. Only the maintainer can create tags, so pinning `--source-ref` rejects provenance produced from any other branch or tag. The checksums file lives on the same release page as the download, so on its own it only detects a corrupted download.
+
+A genuine release has a `vX.Y.Z` tag (e.g. `v1.5.0`) and is published by **github-actions[bot]** — the release page shows the author. Don't install from a release that differs; the app's own update notice ignores such releases.
 
 ## Dependencies
 

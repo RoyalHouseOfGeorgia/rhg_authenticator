@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -25,6 +27,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/errorreport"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/qr"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
@@ -44,7 +47,6 @@ type SignTabConfig struct {
 	LogPath string
 	DataDir string
 	Keyring ghapi.Keyring    // for issue reporting (may be nil)
-	SafeGo  func(func())     // panic-safe goroutine launcher (may be nil — falls back to plain go)
 	Logger  *debuglog.Logger // shared app diagnostic log (nil → no-op)
 }
 
@@ -88,11 +90,6 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 
 	// Container for QR preview and action buttons (shown after signing).
 	resultContainer := container.NewVBox()
-
-	launchGo := func(fn func()) { go fn() }
-	if config.SafeGo != nil {
-		launchGo = config.SafeGo
-	}
 
 	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
 		a, err := yubikey.NewYubiKeyAdapter(readPin)
@@ -140,7 +137,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 			Date:      date,
 		}
 
-		launchGo(func() {
+		safego.Go(func() {
 			defer fyne.Do(func() { setBusy(false) })
 
 			// Set after the PIN is resolved (Item 1 prompts before Open), so the
@@ -155,21 +152,42 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 				fyne.Do(func() {
 					msg := signFlowErrorMessage(err, logger)
 					statusLabel.SetText(msg)
-					// Offer "Report Issue" for real errors, not cancellations or
-					// benign PIN-entry timeouts.
-					if !errors.Is(err, ErrSigningCancelled) && !errors.Is(err, ErrPINEntryTimedOut) && config.Keyring != nil {
-						reportBtn := widget.NewButton("Report Issue", func() {
+					if offerIssueReport(err) && config.Keyring != nil {
+						var reportBtn *widget.Button
+						reportBtn = widget.NewButton("Report Issue", func() {
+							// Keychain read + GitHub calls: off the UI thread,
+							// with the button disabled until they finish.
+							reportBtn.Disable()
+							reportBtn.SetText("Reporting…")
 							title := errorreport.BuildIssueTitle("signing", msg)
-							body := errorreport.BuildIssueBody(buildinfo.Version, "signing", err.Error())
-							resultURL, _ := errorreport.ReportIssue(context.Background(), config.Keyring, config.DataDir, title, body)
-							if resultURL != "" {
-								// Only open https://github.com URLs; anything else is not ours.
-								if u := parseGitHubURL(resultURL); u != nil {
-									fyne.CurrentApp().OpenURL(u)
-								} else {
-									logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(resultURL))
-								}
-							}
+							body := signIssueBody(err, msg)
+							safego.Go(func() {
+								resultURL := ""
+								// Deferred so the button comes back even if the
+								// report panics (safego recovers it).
+								defer fyne.Do(func() {
+									reportBtn.SetText("Report Issue")
+									if strings.Contains(resultURL, "/issues/new") || resultURL == "" {
+										reportBtn.Enable() // browser form or failure: allow another try
+									} else {
+										reportBtn.SetText("Issue Reported") // filed via API: no duplicates
+									}
+								})
+								ctx, cancel := context.WithTimeout(context.Background(), reportIssueTimeout)
+								defer cancel()
+								resultURL, _ = errorreport.ReportIssue(ctx, config.Keyring, config.DataDir, title, body)
+								fyne.Do(func() {
+									if resultURL == "" {
+										return
+									}
+									// Only open https://github.com URLs; anything else is not ours.
+									if u := parseGitHubURL(resultURL); u != nil {
+										fyne.CurrentApp().OpenURL(u)
+									} else {
+										logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(resultURL))
+									}
+								})
+							})
 						})
 						resultContainer.Add(reportBtn)
 					}
@@ -273,7 +291,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 		startBulkSign(bulkSignDeps{
 			window:      window,
 			logPath:     config.LogPath,
-			launchGo:    launchGo,
+			launchGo:    safego.Go,
 			openAdapter: openAdapter,
 			pinCache:    pinCache,
 			logger:      logger,
@@ -360,9 +378,63 @@ func friendlyYubiKeyError(err error, logger *debuglog.Logger) string {
 	}
 }
 
+// reportIssueTimeout bounds the Report Issue keychain read and GitHub calls.
+const reportIssueTimeout = 30 * time.Second
+
+// isOperatorInputError reports whether err is a problem with what the operator
+// typed (invalid, or too long for a QR code) rather than a fault.
+func isOperatorInputError(err error) bool {
+	return errors.Is(err, core.ErrTooLongForQR) || errors.Is(err, core.ErrInvalidCredential)
+}
+
+// offerIssueReport reports whether a sign-flow error warrants a "Report Issue"
+// button. Cancellations, benign PIN-entry timeouts, and operator input errors
+// are not bugs.
+func offerIssueReport(err error) bool {
+	return !errors.Is(err, ErrSigningCancelled) &&
+		!errors.Is(err, ErrPINEntryTimedOut) &&
+		!isOperatorInputError(err)
+}
+
+// signIssueBody builds the GitHub issue body for a sign-flow error. It carries
+// the user-facing msg plus only fixed enum strings (the *SignFlowError phase
+// and the core.ClassifyHardwareError category) — never err.Error(), which can
+// contain local file paths and smart-card reader names.
+func signIssueBody(err error, msg string) string {
+	detail := msg
+	var sfe *SignFlowError
+	if errors.As(err, &sfe) {
+		detail += " (phase: " + string(sfe.Phase) + ")"
+	}
+	if cat := core.ClassifyHardwareError(err); cat != "" {
+		detail += " (hardware: " + cat + ")"
+	}
+	return errorreport.BuildIssueBody(buildinfo.Version, "signing", detail)
+}
+
+// capitalize upper-cases the first letter of s.
+func capitalize(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	if size == 0 {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[size:]
+}
+
 // signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
 // status message.
 func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
+	// Operator input errors from BuildPayload come first so their reason text
+	// is never misread by the hardware classifier below. The core error text
+	// is the message (shared with Bulk Sign), capitalized for the status line.
+	var tooLong *core.TooLongForQRError
+	if errors.As(err, &tooLong) {
+		return capitalize(tooLong.Error()) + "."
+	}
+	var invalid *core.InvalidCredentialError
+	if errors.As(err, &invalid) {
+		return capitalize(core.SanitizeForError(invalid.Error())) + "."
+	}
 	// PIN-flow sentinels are returned bare from readPin (executeSignFlow resolves
 	// the PIN before openAdapter, so piv-go never %v-wraps them), matched via
 	// errors.Is. These MUST be checked before ClassifyHardwareError, whose \bpin\b

@@ -273,15 +273,29 @@ func TestFindMatchingAuthorityAt_Expired(t *testing.T) {
 	}
 }
 
-func TestFindMatchingAuthorityAt_NotYetValid(t *testing.T) {
+func TestFindMatchingAuthorityAt_FutureFromMatches(t *testing.T) {
 	reg, err := core.ValidateRegistry(validRegistryJSONWithDates("2027-01-01", ""))
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
-	_, err = FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14")
-	if err == nil {
-		t.Fatal("expected error for not-yet-valid key")
+	authority, err := FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14")
+	if err != nil {
+		t.Fatalf("expected match for future from (from is informational), got: %v", err)
+	}
+	if authority != "Test Authority" {
+		t.Errorf("expected 'Test Authority', got %q", authority)
+	}
+}
+
+func TestFindMatchingAuthorityAt_ToEqualsDateMatches(t *testing.T) {
+	reg, err := core.ValidateRegistry(validRegistryJSONWithDates("2025-01-01", "2026-03-14"))
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	if _, err := FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14"); err != nil {
+		t.Fatalf("expected match when to == date (inclusive), got: %v", err)
 	}
 }
 
@@ -430,6 +444,20 @@ func TestFindMatchingEntryAt_NotFound(t *testing.T) {
 	entry := FindMatchingEntryAt(reg, wrongKey, "2026-03-15")
 	if entry != nil {
 		t.Errorf("expected nil for non-matching key, got: %+v", entry)
+	}
+}
+
+func TestFindMatchingEntryAt_FutureFrom(t *testing.T) {
+	reg, err := core.ValidateRegistry(validRegistryJSONWithDates("2027-01-01", ""))
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	entry := FindMatchingEntryAt(reg, testPubKey, "2026-03-15")
+	if entry == nil {
+		t.Fatal("expected matching entry for future from, got nil")
+	}
+	if entry.From != "2027-01-01" {
+		t.Errorf("from = %q, want %q", entry.From, "2027-01-01")
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 )
 
 const (
@@ -117,7 +118,7 @@ func NewAuditTab(window fyne.Window, lastUpdateCh chan<- string) *fyne.Container
 		refreshBtn.Disable()
 		statusLabel.SetText("Fetching...")
 		currentETag := lastETag // capture under UI thread
-		go func() {
+		safego.Go(func() {
 			result, newETag, err := ghapi.FetchRegistryCommits("", commitsPerPage, currentETag)
 			fyne.Do(func() {
 				fetching.Store(false)
@@ -146,7 +147,7 @@ func NewAuditTab(window fyne.Window, lastUpdateCh chan<- string) *fyne.Container
 					statusLabel.SetText("No changes since last check")
 				}
 			})
-		}()
+		})
 	}
 
 	refreshBtn = widget.NewButton("Refresh", doFetch)

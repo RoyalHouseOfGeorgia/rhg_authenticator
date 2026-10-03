@@ -3,7 +3,7 @@
  *
  * A registry holds an array of key entries that map authorities to their
  * Ed25519 public keys. A key's `to` date bounds which credential dates it
- * verifies (`from` is informational). An optional `allowed_honors` list
+ * verifies (`from` is informational and may be later than `to`). An optional `allowed_honors` list
  * restricts a key to specific honors; when absent, null, empty or all-blank
  * the key is unrestricted.
  */
@@ -100,9 +100,8 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
     }
   }
 
-  if (typeof record.to === 'string' && record.to < record.from) {
-    throw new Error(`keys[${index}]: invalid date range: from (${sanitizeForError(record.from as string)}) is after to (${sanitizeForError(record.to as string)})`);
-  }
+  // No from/to ordering check: from is informational, so an entry whose from
+  // is after its to (e.g. a future-dated key revoked today) is valid.
 
   // algorithm: exactly 'Ed25519'.
   if (!('algorithm' in record)) {

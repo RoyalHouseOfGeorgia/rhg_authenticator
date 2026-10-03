@@ -9,9 +9,16 @@ import (
 	"time"
 )
 
+// botRelease builds a release as the release workflow publishes it.
+func botRelease(tag, htmlURL string) githubRelease {
+	r := githubRelease{TagName: tag, HTMLURL: htmlURL}
+	r.Author.Login = releaseAuthor
+	return r
+}
+
 func TestCheck_UpdateAvailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(githubRelease{TagName: "v2.0.0", HTMLURL: "https://github.com/example/releases/v2.0.0"})
+		json.NewEncoder(w).Encode(botRelease("v2.0.0", "https://github.com/example/releases/v2.0.0"))
 	}))
 	defer server.Close()
 
@@ -29,7 +36,7 @@ func TestCheck_UpdateAvailable(t *testing.T) {
 
 func TestCheck_SameVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(githubRelease{TagName: "v1.0.0", HTMLURL: "https://example.com"})
+		json.NewEncoder(w).Encode(botRelease("v1.0.0", "https://example.com"))
 	}))
 	defer server.Close()
 
@@ -41,7 +48,7 @@ func TestCheck_SameVersion(t *testing.T) {
 
 func TestCheck_OlderVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(githubRelease{TagName: "v0.9.0", HTMLURL: "https://example.com"})
+		json.NewEncoder(w).Encode(botRelease("v0.9.0", "https://example.com"))
 	}))
 	defer server.Close()
 
@@ -90,13 +97,74 @@ func TestCheck_InvalidJSON(t *testing.T) {
 
 func TestCheck_EmptyTagName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(githubRelease{TagName: "", HTMLURL: "https://example.com"})
+		json.NewEncoder(w).Encode(botRelease("", "https://example.com"))
 	}))
 	defer server.Close()
 
 	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on empty tag")
+	}
+}
+
+// TestCheck_OnlyVTagsOfferUpdates: only maintainer-only v* tags may produce an
+// update banner; a release on any other tag (which a collaborator could
+// create) is ignored entirely.
+func TestCheck_OnlyVTagsOfferUpdates(t *testing.T) {
+	cases := []struct {
+		tag  string
+		want bool
+	}{
+		{"v9.9.0", true},
+		{"v9.9.1", true},
+		{"v9.9", false},
+		{"9.9", false},
+		{"9.9.0", false},
+		{"V9.9", false},
+		{"v9.9-rc1", false},
+		{"v9.9.1.2", false},
+		{"v9", false},
+		{"release-v9.9", false},
+		{"v9.9\n", false},
+		{"v9.9.0\n", false},
+		{"v9.9.0 ", false},
+		{"v９.9.0", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tag, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(botRelease(tc.tag, "https://github.com/x/y/releases/tag/"+tc.tag))
+			}))
+			defer server.Close()
+
+			result := checkInternal(server.URL, "v1.4", checkTimeout)
+			if result.UpdateAvailable != tc.want {
+				t.Errorf("tag %q: UpdateAvailable = %v, want %v", tc.tag, result.UpdateAvailable, tc.want)
+			}
+			if !tc.want && (result.LatestVersion != "" || result.DownloadURL != "") {
+				t.Errorf("tag %q: rejected release must not populate LatestVersion/DownloadURL", tc.tag)
+			}
+		})
+	}
+}
+
+// TestCheck_OnlyWorkflowReleasesOfferUpdates: a release created by hand on a
+// v* tag (e.g. by a collaborator before the workflow publishes) is ignored.
+func TestCheck_OnlyWorkflowReleasesOfferUpdates(t *testing.T) {
+	for _, author := range []string{"", "some-collaborator", "github-actions"} {
+		t.Run(author, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				rel := botRelease("v9.9.0", "https://github.com/x/y/releases/tag/v9.9.0")
+				rel.Author.Login = author
+				json.NewEncoder(w).Encode(rel)
+			}))
+			defer server.Close()
+
+			result := checkInternal(server.URL, "v1.4", checkTimeout)
+			if result.UpdateAvailable || result.DownloadURL != "" {
+				t.Errorf("author %q: release must be ignored, got %+v", author, result)
+			}
+		})
 	}
 }
 

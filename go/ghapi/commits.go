@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -67,7 +67,8 @@ func FetchRegistryCommits(baseURL string, perPage int, etag string) ([]RegistryC
 		return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+	ct := resp.Header.Get("Content-Type")
+	if mt, _, err := mime.ParseMediaType(ct); err != nil || mt != "application/json" {
 		return nil, "", fmt.Errorf("unexpected Content-Type: %s", core.SanitizeForLog(ct))
 	}
 

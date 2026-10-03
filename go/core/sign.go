@@ -3,9 +3,11 @@ package core
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -13,8 +15,77 @@ import (
 // VerifyBaseURL is the base URL for credential verification pages.
 const VerifyBaseURL = "https://verify.royalhouseofgeorgia.ge/"
 
-// MaxPayloadBytes is the maximum allowed size of the canonical JSON payload.
-const MaxPayloadBytes = 2048
+// MaxVerifyURLLength is the longest verification URL that fits a printable QR
+// code at error-correction level Q (minimum print size 3 cm). BuildPayload
+// refuses credentials whose URL would exceed it, before anything is signed.
+const MaxVerifyURLLength = 625
+
+// sigB64Len is the length of a base64url-encoded (unpadded) Ed25519 signature.
+var sigB64Len = base64.RawURLEncoding.EncodedLen(ed25519.SignatureSize)
+
+// ErrInvalidCredential matches (via errors.Is) an *InvalidCredentialError.
+var ErrInvalidCredential = errors.New("invalid credential data")
+
+// InvalidCredentialError reports credential fields that failed validation or
+// canonicalization. Reason is the operator-facing cause (e.g. "detail exceeds
+// maximum length of 2000").
+type InvalidCredentialError struct {
+	Reason error
+}
+
+func (e *InvalidCredentialError) Error() string {
+	if e.Reason == nil {
+		return ErrInvalidCredential.Error()
+	}
+	return ErrInvalidCredential.Error() + ": " + e.Reason.Error()
+}
+
+// Unwrap returns the underlying validation error.
+func (e *InvalidCredentialError) Unwrap() error { return e.Reason }
+
+// Is reports whether target is ErrInvalidCredential.
+func (e *InvalidCredentialError) Is(target error) bool { return target == ErrInvalidCredential }
+
+// ErrTooLongForQR matches (via errors.Is) a *TooLongForQRError.
+var ErrTooLongForQR = errors.New("too long to fit in a QR code")
+
+// TooLongForQRError reports how far a credential exceeds the QR capacity.
+// OverBytes approximates the number of UTF-8 bytes of credential text that
+// must be removed (each base64url character carries 3/4 of a byte).
+type TooLongForQRError struct {
+	OverBytes int
+}
+
+// Error is the operator-facing message, shown as-is by Bulk Sign and
+// capitalized by the Sign tab, e.g. "too long to fit in a QR code by about 4
+// letters (about 2 in Georgian script) — shorten the detail or recipient".
+// Georgian letters take three UTF-8 bytes, so that count is OverBytes/3
+// rounded up.
+func (e *TooLongForQRError) Error() string {
+	n := e.OverBytes
+	unit := "letters"
+	if n == 1 {
+		unit = "letter"
+	}
+	return fmt.Sprintf("%s by about %d %s (about %d in Georgian script) — shorten the detail or recipient",
+		ErrTooLongForQR.Error(), n, unit, (n+2)/3)
+}
+
+// Is reports whether target is ErrTooLongForQR.
+func (e *TooLongForQRError) Is(target error) bool { return target == ErrTooLongForQR }
+
+// overBytes converts a URL length over MaxVerifyURLLength into the number of
+// payload bytes to remove: ceil(excess base64url chars × 3/4).
+func overBytes(urlLen int) int {
+	return ((urlLen-MaxVerifyURLLength)*3 + 3) / 4
+}
+
+// VerifyURLLength returns the length of the verification URL that signing
+// payload would produce. It is derived from BuildVerifyURL so the two cannot
+// drift.
+func VerifyURLLength(payload []byte) int {
+	return len(BuildVerifyURL(Encode(payload), strings.Repeat("A", sigB64Len)))
+}
 
 // SigningAdapter abstracts hardware signing devices (e.g., YubiKey).
 // SignBytes must return exactly 64 bytes (Ed25519 signature) or an error.
@@ -60,18 +131,18 @@ func BuildPayload(req SignRequest) ([]byte, error) {
 
 	// 2. Validate credential.
 	if _, err := ValidateCredential(credObj); err != nil {
-		return nil, fmt.Errorf("invalid credential data: %w", err)
+		return nil, &InvalidCredentialError{Reason: err}
 	}
 
 	// 3. Canonicalize.
 	payloadBytes, err := Canonicalize(credObj)
 	if err != nil {
-		return nil, fmt.Errorf("invalid credential data: %w", err)
+		return nil, &InvalidCredentialError{Reason: err}
 	}
 
-	// 4. Size check.
-	if len(payloadBytes) > MaxPayloadBytes {
-		return nil, fmt.Errorf("payload exceeds maximum size")
+	// 4. QR capacity check: the verification URL must fit a printable QR code.
+	if n := VerifyURLLength(payloadBytes); n > MaxVerifyURLLength {
+		return nil, &TooLongForQRError{OverBytes: overBytes(n)}
 	}
 	return payloadBytes, nil
 }

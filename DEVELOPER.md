@@ -131,6 +131,7 @@ decodePublicKey(entry: KeyEntry): Uint8Array   // SPKI DER or raw → 32 bytes
 
 - `validateRegistry` rejects extra fields at both top-level and entry-level; the optional `allowed_honors` is a list of exact honor titles: absent, `null`, `[]` or an all-blank list means unrestricted (the field is omitted), blank items are skipped, and non-string, untrimmed or control-character items are rejected
 - `isDateInRange` checks only the key's `to` (inclusive); `from` is informational, so backdated credentials verify
+- `validateRegistry` does not compare `from` and `to`: `from` may be later than `to` (e.g. a key registered with a future `from` and revoked today)
 - `decodePublicKey` accepts 44-byte SPKI DER (strips 12-byte prefix) or 32-byte raw keys
 
 ### Revocation
@@ -232,7 +233,7 @@ if (result.valid) {
 - No mocking of internal modules — tests exercise the real code paths
 - Verification page tests use `// @vitest-environment happy-dom` per-file directive
 - `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page tests
-- 422 tests total (10 test files)
+- 423 tests total (10 test files)
 
 ### Regenerating cross-language test vectors
 
@@ -255,6 +256,24 @@ byte-identical: `TestCrossLanguageVectors` (Go) and the vitest
 `cross-language.test.ts` suite each consume one copy. A third consumer,
 `scripts/test_rebuild_urls.py`, reads `go/testdata/vectors.json` directly; run
 `python3 -m unittest discover -s scripts` after regenerating.
+
+## App Icon
+
+`go/icon.png` (1024×1024, transparent) is the single source for the in-app window icon (embedded), the macOS `.icns` (CI "Package macOS app" step, `sips` + `iconutil`) and the Windows `.exe` icon (CI "Embed Windows icon" step, `go-winres` → `go/rsrc_windows_amd64.syso`, gitignored). It is generated from the full-size arms in `royal-arms.png` with the standard ~10% margin (artwork fitted to 824×824, centred). `TestAppIconIsSquare1024` (go/main_test.go) fails if it is replaced by anything that isn't a 1024×1024 PNG with a transparent corner. To regenerate after `royal-arms.png` changes:
+
+```bash
+python3 - <<'EOF'
+from PIL import Image
+src = Image.open("royal-arms.png").convert("RGBA")
+art = src.crop(src.getchannel("A").getbbox())
+side = max(art.size)
+sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+sq.paste(art, ((side - art.width) // 2, (side - art.height) // 2))
+out = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+out.paste(sq.resize((824, 824), Image.LANCZOS), (100, 100))
+out.save("go/icon.png", optimize=True)
+EOF
+```
 
 ## Deployment Checklist — Verification Page
 

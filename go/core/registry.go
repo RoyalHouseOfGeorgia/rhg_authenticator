@@ -207,10 +207,8 @@ func validateEntry(data json.RawMessage, index int) (KeyEntry, error) {
 		to = &toStr
 	}
 
-	// Date range validation.
-	if to != nil && *to < from {
-		return KeyEntry{}, fmt.Errorf("keys[%d]: invalid date range: from (%s) is after to (%s)", index, SanitizeForError(from), SanitizeForError(*to))
-	}
+	// No from/to ordering check: from is informational, so an entry whose
+	// from is after its to (e.g. a future-dated key revoked today) is valid.
 
 	// algorithm: exactly "Ed25519".
 	if _, ok := raw["algorithm"]; !ok {
@@ -312,13 +310,12 @@ func FindKeysByAuthority(reg Registry, authority string) []KeyEntry {
 }
 
 // IsDateInRange checks if a credential date falls within a key's validity range.
-// Uses lexicographic comparison, inclusive on both ends. to=nil means no upper bound.
+// Only the key's to date applies (inclusive, lexicographic comparison); from is
+// informational (and may be later than to), so dates before from are in range
+// (backdated honors verify). to=nil means no upper bound. Mirrors isDateInRange in src/registry.ts.
 // Returns false for malformed dates (callers validate format at input boundaries).
 func IsDateInRange(credDate string, key KeyEntry) bool {
 	if !dateRE.MatchString(credDate) {
-		return false
-	}
-	if credDate < key.From {
 		return false
 	}
 	if key.To != nil && credDate > *key.To {

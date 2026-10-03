@@ -17,6 +17,8 @@ digraph issuance_flow {
         form [label="Credential Form\n(recipient, honor,\ndetail, date)", fillcolor="#dbe4ff"];
         validate [label="Validate\ncredential"];
         canonicalize [label="Canonicalize\n(JSON → bytes)"];
+        fits [label="Fits a QR code?\n(URL ≤ 625 chars)", shape=diamond, style=filled, fillcolor="#e6fcf5"];
+        refuse_input [label="Refused before PIN:\ninvalid, or too long\n(says how much to cut)", fillcolor="#ffc9c9"];
         dup [label="Already in\nissuance log?\n(payload hash)", shape=diamond, style=filled, fillcolor="#e6fcf5"];
         sign_req [label="Sign via\npiv-go (PCSC)"];
         verify_rt [label="Verify\nround-trip"];
@@ -33,7 +35,10 @@ digraph issuance_flow {
     // Flow
     form -> validate [label="credential fields"];
     validate -> canonicalize;
-    canonicalize -> dup [label="canonical bytes"];
+    validate -> refuse_input [label="invalid", style=dashed];
+    canonicalize -> fits [label="canonical bytes"];
+    fits -> dup [label="yes"];
+    fits -> refuse_input [label="no", style=dashed];
     dup -> sign_req [label="no"];
     dup -> refuse [label="log unreadable", style=dashed];
     dup -> encode [label="yes: reuse logged\nsignature, no PIN,\nno new record", style=dashed];

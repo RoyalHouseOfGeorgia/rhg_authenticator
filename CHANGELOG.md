@@ -25,13 +25,31 @@ patch component for fix-only releases (`v1.3.1`).
   can't be read, signing is blocked with an explanation until it is readable,
   since duplicates can't be ruled out.
 - **No duplicate revocations.** Revoke no longer opens a pull request when the
-  credential is already on the revocation list ("Already Revoked") or when you
-  already have an open revocation pull request for it ("Revocation Pending").
+  credential is already on the revocation list ("Already Revoked") or when a
+  revocation pull request for it is already open from either operator
+  ("Revocation Pending").
 - **Remove Duplicates.** The History tab's **Remove Duplicates…** button removes duplicate
   entries from the issuance log, keeping the earliest valid entry for each credential.
   A backup of the log is saved next to it first.
 
 ### Changed
+- **Sharp app icon.** The Mac app icon is built from a 1024-pixel image of the
+  arms (it was a blurry 120-pixel upscale), and the Windows `.exe` now shows the
+  arms in Explorer and the taskbar instead of a generic icon. The in-app window
+  icon uses the same image.
+- **No more personal forks.** Revocation and registry pull requests are opened
+  from a branch in the main repository. Operators need Write (collaborator)
+  access; without it the app says to ask the maintainer. Previously the app
+  used a personal fork that could silently fall behind and was never updated.
+  Old forks are no longer used and can be deleted — merge or close any
+  revocation PRs still open from them first (the app doesn't see those).
+- **Keys count as active whatever their start date.** The YubiKey tab and the
+  status bar's active-key count now ignore a key's `from` date, as the
+  verification page always has: a key is active until its `to` date.
+- **Report Issue sends less.** The issue contains the message shown, the
+  signing step and the hardware error category, but no longer the raw error
+  text (which could include local file paths and card-reader names). Input
+  problems (too long, invalid) no longer offer Report Issue.
 - **Releases publish only the build artifacts.** The release job downloads only
   the `rhg-authenticator-*` artifacts, so no other job's uploads can end up as
   release assets.
@@ -43,8 +61,39 @@ patch component for fix-only releases (`v1.3.1`).
   when clicked. Previously it only offered to log out. Submit for Review does
   the same while offline. The History tab's button now reads
   **Connect to GitHub**.
+- **A key's `from` date may be later than its `to` date.** `from` is
+  informational, so the verification page, the app and the Registry form no
+  longer reject such an entry — for example when revoking a key that was
+  registered with a future start date. Previously one such entry made the
+  verification page reject the whole registry ("Unable to verify" for every
+  credential). App v1.4 and earlier still reject it, so don't add one until
+  every operator runs this version.
+- **QR script matches the app.** `scripts/rhg_qr.py` uses error-correction level
+  Q (it used H, giving denser codes) and refuses URLs over 625 characters.
+- **Release versions are always vX.Y.Z** (e.g. `v1.5.0`). The build refuses
+  any other tag before building, and the app's update notice ignores
+  releases on any other tag.
+- **Build provenance check documented.** The README gives the
+  `gh attestation verify` command pinned to the release workflow and tag —
+  stronger than the checksums file, which sits on the same release page.
 
 ### Fixed
+- **Update notice can't be spoofed by a collaborator.** Only releases on a
+  maintainer-only `vX.Y.Z` tag, published by the release workflow
+  (github-actions[bot]), can show "Version … available". Before, a
+  collaborator's account could publish a release on a tag like `9.9` that the
+  app would have offered as an update.
+- **Background errors no longer close the app.** An unexpected error in any
+  background task is written to the error log and shown as "an internal error
+  occurred — please restart", instead of the app quitting with nothing logged.
+- **Too-long credentials are refused before signing.** A credential whose
+  verification URL wouldn't fit a printable QR code used to be signed and
+  logged, then fail at the QR step — and every retry failed the same way. It is
+  now refused before the PIN prompt with how much to shorten ("Too long to fit
+  in a QR code by about N letters (about M in Georgian script)"). Recipient and
+  detail together fit roughly 220–290 Latin or 75–95 Georgian letters. Bulk Sign
+  marks such rows invalid. Other invalid input now says what is wrong instead
+  of "Signing failed".
 - **Revoking a credential no longer un-revokes an earlier one.** Each
   revocation pull request is now built from the current list on GitHub, not
   from the copy loaded when the History tab opened. Before, a second revocation
@@ -58,6 +107,9 @@ patch component for fix-only releases (`v1.3.1`).
   (zero-width no-break space, common when pasting from Word or Excel) at the
   start or end of a field is removed before signing. Previously the credential
   was signed but always failed verification.
+- **Report Issue no longer freezes the window.** Filing the report runs in
+  the background (up to 30 seconds); the button reads "Reporting…" meanwhile
+  and "Issue Reported" afterwards, so the same issue isn't filed twice.
 - **Report Issue only opens GitHub links.** A link returned by the GitHub API is
   opened only if it is an `https://github.com` URL.
 - **Maintainer tooling.** `go.mod` now requires Go 1.27.1 or newer, and CI
