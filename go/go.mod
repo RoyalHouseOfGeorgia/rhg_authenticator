@@ -6,6 +6,7 @@ require (
 	fyne.io/x/fyne v0.0.0-20260219123538-e09698d18b34
 	github.com/go-piv/piv-go/v2 v2.6.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // unmaintained (2020); TODO(2027): evaluate maintained alternative. Security audit 2026-03: no known CVEs, input is app-controlled.
+	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.42.0
 )
 
@@ -56,7 +57,6 @@ require (
 	github.com/yuin/goldmark v1.8.2 // indirect
 	golang.org/x/image v0.43.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 )
 
 tool golang.org/x/vuln/cmd/govulncheck

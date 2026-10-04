@@ -272,3 +272,98 @@ func TestCheck_OversizedResponse(t *testing.T) {
 		t.Fatal("expected no update when response exceeds 1MB limit")
 	}
 }
+
+// assetServer serves a bot release for v9.9.0 with the given assets.
+func assetServer(t *testing.T, assets []githubAsset) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rel := botRelease("v9.9.0", "https://github.com/x/y/releases/tag/v9.9.0")
+		rel.Assets = assets
+		json.NewEncoder(w).Encode(rel)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// botAsset returns an asset uploaded by the release workflow.
+func botAsset(name, url string) githubAsset {
+	a := githubAsset{Name: name, BrowserDownloadURL: url}
+	a.Uploader.Login = releaseAuthor
+	return a
+}
+
+func TestCheck_AssetURL(t *testing.T) {
+	const good = "https://github.com/x/y/releases/download/v9.9.0/" + darwinAssetName
+	collab := botAsset(darwinAssetName, good)
+	collab.Uploader.Login = "some-collaborator"
+	cases := []struct {
+		name   string
+		assets []githubAsset
+		want   string
+	}{
+		{"present", []githubAsset{
+			botAsset("rhg-authenticator-windows-amd64.zip", "https://example.com/win.zip"),
+			botAsset(darwinAssetName, good),
+		}, good},
+		{"uploaded by a collaborator", []githubAsset{collab}, ""},
+		{"no uploader", []githubAsset{{Name: darwinAssetName, BrowserDownloadURL: good}}, ""},
+		{"no assets", nil, ""},
+		{"missing", []githubAsset{{Name: "other.zip", BrowserDownloadURL: "https://example.com/o.zip"}}, ""},
+		{"name not exact", []githubAsset{{Name: darwinAssetName + ".sig", BrowserDownloadURL: "https://example.com/s"}}, ""},
+		{"http", []githubAsset{botAsset(darwinAssetName, "http://example.com/a.zip")}, ""},
+		{"relative", []githubAsset{botAsset(darwinAssetName, "/a.zip")}, ""},
+		{"no host", []githubAsset{botAsset(darwinAssetName, "https:///a.zip")}, ""},
+		{"empty", []githubAsset{botAsset(darwinAssetName, "")}, ""},
+		{"unparsable", []githubAsset{botAsset(darwinAssetName, "https://exa mple.com/%zz")}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := assetServer(t, tc.assets)
+			result := checkInternal(server.URL, "v1.0.0", checkTimeout)
+			if !result.UpdateAvailable {
+				t.Fatal("expected update available")
+			}
+			if result.AssetURL != tc.want {
+				t.Errorf("AssetURL = %q, want %q", result.AssetURL, tc.want)
+			}
+			if result.DownloadURL != "https://github.com/x/y/releases/tag/v9.9.0" {
+				t.Errorf("DownloadURL = %q, want release page", result.DownloadURL)
+			}
+		})
+	}
+}
+
+// TestCheck_AssetsDecodedFromJSON exercises the real GitHub field names
+// rather than round-tripping our own struct.
+func TestCheck_AssetsDecodedFromJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"tag_name":"v9.9.0","html_url":"https://github.com/x/y/releases/tag/v9.9.0",` +
+			`"author":{"login":"github-actions[bot]"},` +
+			`"assets":[{"name":"rhg-authenticator-darwin-arm64.zip",` +
+			`"browser_download_url":"https://github.com/x/y/releases/download/v9.9.0/rhg-authenticator-darwin-arm64.zip",` +
+			`"uploader":{"login":"github-actions[bot]"}}]}`))
+	}))
+	defer server.Close()
+
+	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
+	want := "https://github.com/x/y/releases/download/v9.9.0/rhg-authenticator-darwin-arm64.zip"
+	if result.AssetURL != want {
+		t.Fatalf("AssetURL = %q, want %q", result.AssetURL, want)
+	}
+}
+
+// TestCheck_RejectedReleaseHasNoAssetURL: a release ignored for its tag or
+// author must not leak an asset URL either.
+func TestCheck_RejectedReleaseHasNoAssetURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rel := botRelease("v9.9.0", "https://github.com/x/y/releases/tag/v9.9.0")
+		rel.Author.Login = "some-collaborator"
+		rel.Assets = []githubAsset{{Name: darwinAssetName, BrowserDownloadURL: "https://example.com/a.zip"}}
+		json.NewEncoder(w).Encode(rel)
+	}))
+	defer server.Close()
+
+	if got := checkInternal(server.URL, "v1.0.0", checkTimeout).AssetURL; got != "" {
+		t.Fatalf("AssetURL = %q, want empty", got)
+	}
+}
