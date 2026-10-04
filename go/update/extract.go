@@ -16,10 +16,11 @@ import (
 // Precondition: scanZip accepted the archive. Entry names and types are
 // re-validated here anyway (cheap, and the file could change in between), so
 // every target path is local to destDir. Directories are created 0o755;
-// regular files get the entry's permission bits (preserving the exec bit on
-// Contents/MacOS/<bin>) and are opened O_CREATE|O_EXCL (plus O_NOFOLLOW where
-// available), so no pre-existing path — symlink, file or duplicate entry — is
-// ever written through. No symlinks are created.
+// regular files are created 0o644, or 0o755 if the entry has any exec bit
+// (archive modes are untrusted: codesign does not seal them). Files are
+// opened O_CREATE|O_EXCL (plus O_NOFOLLOW where available), so no
+// pre-existing path — symlink, file or duplicate entry — is ever written
+// through. No symlinks are created.
 //
 // The bytes actually written across all entries are capped at
 // maxUncompressedBytes, independently of the declared sizes scanZip checked;
@@ -37,6 +38,11 @@ func extractZip(zipPath, destDir string) error {
 	for _, f := range r.File {
 		if _, err := zipEntrySegments(f.Name); err != nil {
 			return err
+		}
+		// Redundant with zipEntrySegments, but kept next to the Join so static
+		// analysis (CodeQL go/zipslip) sees the guard on the same value.
+		if strings.Contains(f.Name, "..") {
+			return fmt.Errorf("update archive entry name %q is not a safe relative path", f.Name)
 		}
 		target := filepath.Join(destDir, filepath.FromSlash(strings.TrimSuffix(f.Name, "/")))
 		mode := f.Mode()

@@ -122,7 +122,9 @@ func scanZip(path string) (string, error) {
 func zipEntrySegments(name string) ([]string, error) {
 	invalid := fmt.Errorf("update archive entry name %q is not a safe relative path", name)
 	trimmed := strings.TrimSuffix(name, "/")
-	if trimmed == "" || strings.HasPrefix(trimmed, "/") ||
+	// ".." anywhere (not just as a whole segment) is rejected too: it is the
+	// guard CodeQL's zip-slip query recognizes, and no real bundle needs it.
+	if trimmed == "" || strings.HasPrefix(trimmed, "/") || strings.Contains(trimmed, "..") ||
 		strings.ContainsFunc(trimmed, func(r rune) bool { return r == '\\' || r < 0x20 || r == 0x7f }) {
 		return nil, invalid
 	}

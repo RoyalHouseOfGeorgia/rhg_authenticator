@@ -87,6 +87,11 @@ type cleanupResult struct {
 // are joined into the returned error alongside the (still valid) result.
 func cleanup(root, running string) (cleanupResult, error) {
 	var res cleanupResult
+	// Check the root is a directory first: reading a file as a directory
+	// reports "not exist" on Windows but ENOTDIR elsewhere.
+	if fi, err := os.Stat(root); err == nil && !fi.IsDir() {
+		return res, fmt.Errorf("read staging root: %s is not a directory", root)
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

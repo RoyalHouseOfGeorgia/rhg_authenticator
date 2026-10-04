@@ -23,9 +23,10 @@ on:
       - 'scripts/*.py'  # Python tools: covered by python.yml
       - '.github/workflows/python.yml'
 
-# Deduplicate: when a tag push and branch push fire simultaneously,
-# each event type gets its own group so a release run is never cancelled
-# by a concurrent branch run.
+# Deduplicate per ref: a branch, a tag and a PR merge ref each get their own
+# group, so a release (tag) run is never cancelled by a concurrent branch run
+# of the same commit. Keying on event_name instead would put branch and tag
+# pushes (both "push") in one group and let them cancel each other.
 concurrency:
   group: build-${{ github.sha }}-${{ github.ref }}
   cancel-in-progress: true

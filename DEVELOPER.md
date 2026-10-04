@@ -279,10 +279,16 @@ EOF
 
 On `v*` tags, once the build and security jobs pass, the `sign-macos` CI job re-signs the Mac app with a self-signed release certificate, and a separate `verify-macos` job (which never receives the key — a runner holds a job's secrets for the whole job) runs the built app's own update check (`rhg-authenticator --verify-update-zip <zip> <tag>`) against the exact zip that will be published. The in-app updater accepts only bundles that satisfy `PinnedRequirement` in `go/update/requirement.go` and were uploaded by `github-actions[bot]`. `release` needs `verify-macos`, so if signing or verification fails nothing is published. On every non-tag build, `sign-macos-dryrun` runs the same scripts with a throwaway certificate; add it to the main ruleset's required checks so a broken signing path cannot merge (it is skipped on tags, which counts as passing).
 
-1. **Confirm the tag ruleset is active.** Only protected tags may reach the signing key:
+1. **Confirm the tag ruleset protects `v*` tags.** It is the only thing keeping anyone else from creating a `v*` tag, and a tag run uses the workflow from the tagged commit, so this is what keeps the signing key from other accounts:
    ```bash
-   gh api repos/RoyalHouseOfGeorgia/rhg_authenticator/rulesets
+   gh api repos/RoyalHouseOfGeorgia/rhg_authenticator/rulesets \
+     --jq '.[] | select(.target=="tag") | .id' |
+   while read -r id; do
+     gh api "repos/RoyalHouseOfGeorgia/rhg_authenticator/rulesets/$id" \
+       --jq '{name, target, enforcement, include: .conditions.ref_name.include, rules: [.rules[].type]}'
+   done
    ```
+   Required: `"target":"tag"`, `"enforcement":"active"`, `include` contains `refs/tags/v*` (or `~ALL`), and `rules` contains `creation` and `update`. Then open Settings → Rules → Rulesets → that ruleset → **Bypass list** and confirm it holds only **Repository admin** (the API does not show bypass actors to every token).
 2. **Create the `release` environment, restricted to `v*` tags.** In the UI: Settings → Environments → New environment `release` → Deployment branches and tags → Selected branches and tags → add a **tag** rule `v*`. Or:
    ```bash
    gh api -X PUT repos/RoyalHouseOfGeorgia/rhg_authenticator/environments/release \

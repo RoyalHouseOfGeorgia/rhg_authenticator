@@ -111,8 +111,10 @@ func darwinAssetURL(assets []githubAsset) string {
 		if a.Name != darwinAssetName {
 			continue
 		}
-		// The release author is pinned, but a collaborator can still replace
-		// assets on a bot-authored release; only bot-uploaded assets count.
+		// A filter, not the security control: it drops assets a collaborator
+		// uploaded by hand, but a workflow on an unprotected branch can still
+		// upload as the bot. What actually stops a bad bundle is the pinned
+		// code-signing requirement plus the sealed version == tag (stage).
 		if a.Uploader.Login != releaseAuthor {
 			return ""
 		}

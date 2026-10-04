@@ -42,7 +42,23 @@ P12="$RUNNER_TEMP/rhg-signing.p12"
 APPDIR="$RUNNER_TEMP/app"
 trap 'security delete-keychain "$KC" 2>/dev/null || true; rm -f "$P12"; rm -rf "$APPDIR"' EXIT
 
-# 2. Unpack the unsigned bundle.
+# 2. Unpack the unsigned bundle. The zip comes from the build job, so it is
+#    untrusted here: before ditto writes anything, refuse entries that could
+#    land outside the bundle or redirect writes (the real bundle has none).
+command -v zipinfo >/dev/null || die "zipinfo not found"
+ENTRIES=$(zipinfo -1 "$IN") || die "cannot list $IN"
+while IFS= read -r entry; do
+  case "$entry" in
+    "$APP_NAME" | "$APP_NAME"/*) ;;
+    *) die "unexpected entry outside $APP_NAME: $entry" ;;
+  esac
+  case "/$entry/" in
+    */../* | */./*) die "entry with a relative path component: $entry" ;;
+  esac
+done <<< "$ENTRIES"
+if zipinfo "$IN" | grep -q '^l'; then
+  die "$IN contains a symlink entry"
+fi
 rm -rf "$APPDIR"
 ditto -x -k "$IN" "$APPDIR"
 APP="$APPDIR/$APP_NAME"

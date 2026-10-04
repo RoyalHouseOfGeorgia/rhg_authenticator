@@ -122,6 +122,7 @@ func TestScanZip_Rejects(t *testing.T) {
 		{"backslash", with(zipEntry{name: top + "\\..\\evil", body: "x"}), "not a safe relative path"},
 		{"backslash top", []zipEntry{{name: "A.app\\x", body: "x"}}, "not a safe relative path"},
 		{"empty segment", with(zipEntry{name: top + "//x", body: "x"}), "not a safe relative path"},
+		{"dotdot inside a name", with(zipEntry{name: top + "/foo..bar", body: "x"}), "not a safe relative path"},
 		{"newline", with(zipEntry{name: top + "/x\ny", body: "x"}), "not a safe relative path"},
 		{"DEL", with(zipEntry{name: top + "/x\x7fy", body: "x"}), "not a safe relative path"},
 		{"nul byte", with(zipEntry{name: top + "/x\x00y", body: "x"}), "not a safe relative path"},

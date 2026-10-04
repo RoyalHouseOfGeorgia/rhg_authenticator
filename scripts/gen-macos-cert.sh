@@ -12,7 +12,8 @@ umask 077
 #   password.txt    random p12 password          -> MACOS_SIGNING_P12_PASSWORD
 #   requirement.txt code-signing requirement     -> go/update/requirement.go PinnedRequirement
 #   cert.pem        the public certificate
-# The unencrypted private key is deleted once the p12 is built. All logging goes
+# key.pem is written encrypted with the p12 password and removed once the p12
+# is built, so the private key never touches disk in the clear. All logging goes
 # to stderr; stdout stays empty. Shared by the one-time setup and the CI dry-run
 # job, so this is the single source of the certificate recipe.
 
@@ -42,7 +43,7 @@ log "Using: $OPENSSL_VERSION"
 CERT_DAYS=7305 # 20 years including leap days; replacing the cert forces a manual reinstall
 mkdir -p "$OUTDIR"
 cd "$OUTDIR"
-# Never leave the unencrypted private key behind; on failure also remove the
+# Never leave key.pem behind (even encrypted); on failure also remove the
 # partial outputs (incl. password.txt) so a rerun into the same dir works.
 cleanup() {
   local rc=$?
