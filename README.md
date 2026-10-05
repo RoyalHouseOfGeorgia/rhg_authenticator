@@ -45,9 +45,13 @@ Requires an Apple Silicon Mac (Apple menu → **About This Mac** → **Chip** sa
 
 If the **Open Anyway** button isn't there, double-click the app again, then go back to System Settings.
 
-After this, the app opens normally. **Each time you install a new version you'll need to do this again:** quit the app, drag the new one into Applications, choose **Replace**, then repeat steps 4–6.
+After this, the app opens normally.
 
 The first time you save a QR code, macOS asks whether RHG Authenticator can access your Desktop folder — click **Allow**.
+
+**Updates install automatically** as long as the app is in your **Applications** folder. When a new version has downloaded, a banner at the top of the app says "Version … is ready to install." Click **Restart now**, or just keep working — it installs the next time you close the app. You won't need to click **Open Anyway** or allow Desktop access again. If the app isn't in Applications — or an update couldn't be installed — the banner offers a **Download** link instead; if the banner asks you to, move the app into Applications to get updates automatically.
+
+**Upgrading from an earlier version to 1.5.0:** install it by hand one last time — quit the app, drag the new one into Applications, choose **Replace**, then repeat steps 4–6 above. Every version after 1.5.0 installs itself.
 
 ### Windows
 
@@ -155,7 +159,7 @@ gh attestation verify rhg-authenticator-windows-amd64.exe \
 ```
 This proves the file was built by the release workflow from that tag. Only the maintainer can create tags, so pinning `--source-ref` rejects provenance produced from any other branch or tag. The checksums file lives on the same release page as the download, so on its own it only detects a corrupted download.
 
-A genuine release has a `vX.Y.Z` tag (e.g. `v1.5.0`) and is published by **github-actions[bot]** — the release page shows the author. Don't install from a release that differs; the app's own update notice ignores such releases.
+A genuine release has a `vX.Y.Z` tag (e.g. `v1.5.0`) and is published by **github-actions[bot]** — the release page shows the author. Don't install from a release that differs; the app's own updater ignores such releases.
 
 ## Dependencies
 

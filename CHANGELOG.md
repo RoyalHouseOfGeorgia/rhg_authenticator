@@ -3,12 +3,24 @@
 All notable changes to the RHG Authenticator are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project uses `vMAJOR.MINOR` version tags (`v1.0`, `v1.1`, …), adding a
-patch component for fix-only releases (`v1.3.1`).
+and release tags are `vMAJOR.MINOR.PATCH` (`v1.5.0`). Older releases used
+two-part tags (`v1.0`, `v1.1`, …) with a patch component only for fix-only
+releases (`v1.3.1`); CI and the app's update check now accept only three-part
+tags.
 
 ## [Unreleased]
 
 ### Added
+- **Automatic updates on Mac.** When the app is in your Applications folder, it
+  downloads new versions in the background and checks that each one was built
+  and signed by this project's release workflow. A banner says "Version … is
+  ready to install." — click **Restart now**, or the update installs the next
+  time you close the app. After updating, the app shows
+  "Updated to version …" with a **What's new** link. If the app isn't in
+  Applications, or an update can't be installed, the banner offers a
+  **Download** link as before. Because releases are now signed with the same
+  certificate every time, macOS no longer asks again for Desktop access after
+  an update. This is the last version that has to be installed by hand.
 - **Restrictions column.** The Registry tab shows each key's `allowed_honors`
   restriction, "(none)" when the key is unrestricted, or "(invalid)" when the
   verification page would reject the value.
