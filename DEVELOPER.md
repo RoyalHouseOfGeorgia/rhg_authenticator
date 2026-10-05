@@ -275,6 +275,60 @@ out.save("go/icon.png", optimize=True)
 EOF
 ```
 
+## macOS release signing (one-time setup)
+
+On `v*` tags, once the build and security jobs pass, the `sign-macos` CI job re-signs the Mac app with a self-signed release certificate, and a separate `verify-macos` job (which never receives the key — a runner holds a job's secrets for the whole job) runs the built app's own update check (`rhg-authenticator --verify-update-zip <zip> <tag>`) against the exact zip that will be published. The in-app updater (`go/update/`; flow in ARCHITECTURE.md "App Update Flow (macOS)") downloads that published `rhg-authenticator-darwin-arm64.zip` and accepts only bundles that satisfy `PinnedRequirement` in `go/update/requirement.go` and were uploaded by `github-actions[bot]`. `release` needs `verify-macos`, so if signing or verification fails nothing is published. On every non-tag build, `sign-macos-dryrun` runs the same scripts with a throwaway certificate; add it to the main ruleset's required checks so a broken signing path cannot merge (it is skipped on tags, which counts as passing).
+
+1. **Confirm the tag ruleset protects `v*` tags.** It is the only thing keeping anyone else from creating a `v*` tag, and a tag run uses the workflow from the tagged commit, so this is what keeps the signing key from other accounts:
+   ```bash
+   gh api repos/RoyalHouseOfGeorgia/rhg_authenticator/rulesets \
+     --jq '.[] | select(.target=="tag") | .id' |
+   while read -r id; do
+     gh api "repos/RoyalHouseOfGeorgia/rhg_authenticator/rulesets/$id" \
+       --jq '{name, target, enforcement, include: .conditions.ref_name.include, rules: [.rules[].type]}'
+   done
+   ```
+   Required: `"target":"tag"`, `"enforcement":"active"`, `include` contains `refs/tags/v*` (or `~ALL`), and `rules` contains `creation` and `update`. Then open Settings → Rules → Rulesets → that ruleset → **Bypass list** and confirm it holds only **Repository admin** (the API does not show bypass actors to every token).
+2. **Create the `release` environment, restricted to `v*` tags.** In the UI: Settings → Environments → New environment `release` → Deployment branches and tags → Selected branches and tags → add a **tag** rule `v*`. Or:
+   ```bash
+   gh api -X PUT repos/RoyalHouseOfGeorgia/rhg_authenticator/environments/release \
+     -F deployment_branch_policy[protected_branches]=false \
+     -F deployment_branch_policy[custom_branch_policies]=true
+   gh api -X POST repos/RoyalHouseOfGeorgia/rhg_authenticator/environments/release/deployment-branch-policies \
+     -f name='v*' -f type=tag
+   ```
+   **Do this before step 4.** A workflow that references a missing environment makes GitHub create it with no restrictions, and secrets added to that would be readable from any branch. Confirm the only policy is the `v*` tag rule:
+   ```bash
+   gh api repos/RoyalHouseOfGeorgia/rhg_authenticator/environments/release/deployment-branch-policies --jq '.branch_policies[] | {name, type}'
+   ```
+3. **Generate the certificate** (needs OpenSSL 3; the script refuses anything else). On Linux, in a RAM-backed directory:
+   ```bash
+   W=$(mktemp -d /dev/shm/rhg-sign.XXXXXX)
+   bash scripts/gen-macos-cert.sh openssl "$W"
+   ```
+   On macOS there is no `/dev/shm`, and `/usr/bin/openssl` is LibreSSL, so use Homebrew's `openssl@3` and a private temp dir (deleted in step 7):
+   ```bash
+   W=$(mktemp -d)
+   bash scripts/gen-macos-cert.sh "$(brew --prefix --installed openssl@3)/bin/openssl" "$W"
+   ```
+   This writes `cert.p12`, `cert.p12.b64`, `password.txt`, `requirement.txt` and `cert.pem` (the private key is written only encrypted, then exists only inside the p12; RSA-3072). It refuses to overwrite existing output.
+4. **Store the environment secrets:**
+   ```bash
+   gh secret set MACOS_SIGNING_P12 --env release < "$W/cert.p12.b64"
+   gh secret set MACOS_SIGNING_P12_PASSWORD --env release < "$W/password.txt"
+   ```
+5. **Pin the certificate:** paste the contents of `requirement.txt` verbatim as `PinnedRequirement` in `go/update/requirement.go` and commit it.
+6. **Back up** before deleting anything: a password-manager entry with `cert.p12` attached and the password, plus an offline copy (`gpg -c` of the p12) whose passphrase is stored separately.
+7. **Delete the working copies:** `rm -rf "$W"`.
+
+**If `sign-macos` fails on a tag**, nothing is published:
+
+- *Secret, password or environment problem* — restore the **same** backed-up p12 and password in the environment, then **Re-run failed jobs** on that tag's run. No version is burned; this works within the 7-day artifact retention and re-runs the original commit's workflow.
+- *After 7 days, a second failure, or a regenerated certificate* — treat it as a code problem.
+- *Code or workflow problem* — fix it on a branch/PR until `sign-macos-dryrun` is green, then ship the next patch tag (tags are ruleset-protected, so the failed one is not reused).
+
+**Replacing the certificate** (compromise or loss) changes the pin: installed apps reject updates signed with the new certificate, so every user must reinstall manually once. The certificate is valid for 20 years, so this should only happen on compromise.
+
 ## Deployment Checklist — Verification Page
 
 The verification page (`verify/`) requires these HTTP headers from the hosting server:

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"image/color"
@@ -9,14 +10,11 @@ import (
 	"runtime"
 	"time"
 
-	"net/url"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -49,6 +47,12 @@ func main() {
 			panic(r) // re-panic so the OS gets the signal
 		}
 	}()
+
+	// Release CI verifies the signed update zip with the app's own install
+	// check; like --version, this must run before any GUI initialization.
+	if len(os.Args) > 1 && os.Args[1] == "--verify-update-zip" {
+		os.Exit(update.VerifyZipCLI(os.Args[2:], os.Stdout, os.Stderr))
+	}
 
 	// Handle --version before any GUI initialization.
 	for _, arg := range os.Args[1:] {
@@ -163,25 +167,40 @@ func main() {
 	// 8. The registry tab fetches itself once the async login restore finishes,
 	// so a logged-in session loads from main via the API (see regmgr.Fetch).
 
-	// 9. Non-blocking version check.
-	safego.Go(func() {
-		result := update.Check("RoyalHouseOfGeorgia", "rhg_authenticator", buildinfo.Version)
-		logger.Logf("version check: update=%v latest=%s", result.UpdateAvailable, result.LatestVersion)
-		if result.UpdateAvailable {
-			u, err := url.Parse(result.DownloadURL)
-			if err != nil || u.Scheme != "https" || u.Host != "github.com" {
-				return
-			}
-			fyne.Do(func() {
-				updateBanner.Add(container.NewHBox(
-					widget.NewLabel(fmt.Sprintf("Version %s available —", result.LatestVersion)),
-					widget.NewHyperlink("Download", u),
-				))
-			})
-		}
+	// 9. Auto-update. "Restart now" reuses the close handler, so unsubmitted
+	// registry changes get the same confirm and Cancel never sets relaunch.
+	// Fyne 2.8 runs widget callbacks on the main goroutine, so relaunch is
+	// written (button tap) and read (after ShowAndRun) on one goroutine.
+	var relaunch bool
+	restart := buildCloseHandler(
+		regTab.IsDirty,
+		signCleanup,
+		markRelaunchAndQuit(&relaunch, a.Quit),
+		window,
+	)
+	banner := newUpdateBannerView(updateBanner, restart)
+	ctx, cancel := context.WithCancel(context.Background())
+	manager := update.NewManager(update.Config{
+		DataDir: dataDir,
+		Running: buildinfo.Version,
+		Owner:   "RoyalHouseOfGeorgia",
+		Repo:    "rhg_authenticator",
+		OnStatus: func(s update.Status) {
+			fyne.Do(func() { banner.showStatus(s) })
+		},
+		OnUpdated: func(version, releaseURL string) {
+			fyne.Do(func() { banner.showUpdated(version, releaseURL) })
+		},
+		Logf: logger.Logf,
 	})
+	safego.Go(func() { manager.Run(ctx) })
 
 	window.ShowAndRun()
+
+	// The UI has exited: stop checking, then install a Ready update (silently
+	// on a normal quit; relaunching after "Restart now").
+	cancel()
+	manager.ApplyIfReady(relaunch)
 }
 
 // fatalDialog shows an error dialog and exits after the user dismisses it.

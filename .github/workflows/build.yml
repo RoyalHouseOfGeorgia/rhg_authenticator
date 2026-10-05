@@ -23,11 +23,12 @@ on:
       - 'scripts/*.py'  # Python tools: covered by python.yml
       - '.github/workflows/python.yml'
 
-# Deduplicate: when a tag push and branch push fire simultaneously,
-# each event type gets its own group so a release run is never cancelled
-# by a concurrent branch run.
+# Deduplicate per ref: a branch, a tag and a PR merge ref each get their own
+# group, so a release (tag) run is never cancelled by a concurrent branch run
+# of the same commit. Keying on event_name instead would put branch and tag
+# pushes (both "push") in one group and let them cancel each other.
 concurrency:
-  group: build-${{ github.sha }}-${{ github.event_name }}
+  group: build-${{ github.sha }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -227,17 +228,112 @@ jobs:
           iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/icon.icns"
           codesign --force --sign - "$APP"
           codesign --verify --strict --verbose=2 "$APP"
-          (cd release && ditto -c -k --keepParent "RHG Authenticator.app" rhg-authenticator-${{ matrix.suffix }}.zip)
+          # No resource forks, xattrs or quarantine: AppleDouble ._* / __MACOSX
+          # entries would fail the in-app updater's single-top-level-dir check.
+          (cd release && ditto -c -k --norsrc --noextattr --noqtn --keepParent "RHG Authenticator.app" rhg-authenticator-${{ matrix.suffix }}.zip)
           rm -rf "$APP" release/rhg-authenticator-${{ matrix.suffix }}
+      # On tags the ad-hoc Mac zip goes to sign-macos under a name outside the
+      # release job's rhg-authenticator-* pattern, so only the signed zip is
+      # published. Zipped, it keeps the exec bit that artifact upload would drop.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: runner.os != 'macOS' || github.ref_type != 'tag'
         with:
           name: rhg-authenticator-${{ matrix.suffix }}
           path: release/rhg-authenticator-${{ matrix.suffix }}*
           retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: runner.os == 'macOS' && github.ref_type == 'tag'
+        with:
+          name: unsigned-${{ matrix.suffix }}
+          path: release/rhg-authenticator-${{ matrix.suffix }}.zip
+          retention-days: 7
+
+  # Re-sign the Mac app with the pinned release certificate. Tag-only; the
+  # `release` environment (deployment restricted to v* tags) holds the p12.
+  # Nothing from the build runs here: no p12 in the build job (tests,
+  # govulncheck, `go run` tools) and no build binary in this one.
+  sign-macos:
+    if: github.ref_type == 'tag'
+    # Sign only once every release gate has passed, so no signed bundle exists
+    # for a tag run that will not publish.
+    needs: [build, security, gitleaks]
+    runs-on: macos-26
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: unsigned-darwin-arm64
+          path: in
+      # The runner holds a job's secrets for the whole job, so nothing from the
+      # build (its binary, its Go dependencies) ever runs in this job; the
+      # signed zip is verified in verify-macos on a fresh runner.
+      - name: Sign app bundle
+        env:
+          P12_B64: ${{ secrets.MACOS_SIGNING_P12 }}
+          P12_PW: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: bash scripts/sign-macos.sh in/rhg-authenticator-darwin-arm64.zip out/rhg-authenticator-darwin-arm64.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: rhg-authenticator-darwin-arm64
+          path: out/rhg-authenticator-darwin-arm64.zip
+          retention-days: 7
+
+  # Runs the app's real install-verification path (scanZip, extract,
+  # codesign -R PinnedRequirement, sealed version, executable main binary)
+  # against the exact zip that will be published. Separate job with no
+  # environment: the build's binary must never run where the key was loaded.
+  verify-macos:
+    if: github.ref_type == 'tag'
+    needs: sign-macos
+    runs-on: macos-26
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: rhg-authenticator-darwin-arm64
+          path: out
+      - name: Verify signed zip with the app's update check
+        run: bash scripts/verify-macos.sh out/rhg-authenticator-darwin-arm64.zip "$GITHUB_REF_NAME"
+
+  # Same signing + verification path as sign-macos, with a throwaway cert, on
+  # every non-tag build so a broken script surfaces before a release tag.
+  # No environment, no repository signing material. Required on main (ruleset):
+  # it is skipped on tags, which counts as passing.
+  sign-macos-dryrun:
+    if: github.ref_type != 'tag'
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: rhg-authenticator-darwin-arm64  # ad-hoc build, Info.plist version 0.0.0
+          path: in
+      # /usr/bin/openssl is LibreSSL; the cert recipe needs OpenSSL 3.
+      - name: Sign with a throwaway certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          OPENSSL_PREFIX=$(brew --prefix --installed openssl@3)
+          bash scripts/gen-macos-cert.sh "$OPENSSL_PREFIX/bin/openssl" gen/
+          P12_B64=$(cat gen/cert.p12.b64)
+          P12_PW=$(cat gen/password.txt)
+          export P12_B64 P12_PW
+          bash scripts/sign-macos.sh in/rhg-authenticator-darwin-arm64.zip out/rhg-authenticator-darwin-arm64.zip
+      - name: Verify signed zip with the app's update check
+        run: bash scripts/verify-macos.sh out/rhg-authenticator-darwin-arm64.zip v0.0.0 "$(cat gen/requirement.txt)"
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, security, gitleaks]
+    needs: [verify-macos, sign-macos, build, security, gitleaks]
     runs-on: ubuntu-latest
     # id-token and attestations needed only by attest-build-provenance step,
     # but GitHub Actions requires job-level permissions. All actions are SHA-pinned;
