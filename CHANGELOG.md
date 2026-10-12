@@ -3,12 +3,26 @@
 All notable changes to the RHG Authenticator are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project uses `vMAJOR.MINOR` version tags (`v1.0`, `v1.1`, …), adding a
-patch component for fix-only releases (`v1.3.1`).
+and release tags are `vMAJOR.MINOR.PATCH` (`v1.5.0`). Older releases used
+two-part tags (`v1.0`, `v1.1`, …) with a patch component only for fix-only
+releases (`v1.3.1`); CI and the app's update check now accept only three-part
+tags.
 
 ## [Unreleased]
 
+## [v1.5.0] — 2026-10-12
+
 ### Added
+- **Automatic updates on Mac.** When the app is in your Applications folder, it
+  downloads new versions in the background and checks that each one was built
+  and signed by this project's release workflow. A banner says "Version … is
+  ready to install." — click **Restart now**, or the update installs the next
+  time you close the app. After updating, the app shows
+  "Updated to version …" with a **What's new** link. If the app isn't in
+  Applications, or an update can't be installed, the banner offers a
+  **Download** link as before. Because releases are now signed with the same
+  certificate every time, macOS should no longer ask again for Desktop access
+  after an update. This is the last version that has to be installed by hand.
 - **Restrictions column.** The Registry tab shows each key's `allowed_honors`
   restriction, "(none)" when the key is unrestricted, or "(invalid)" when the
   verification page would reject the value.
@@ -112,7 +126,7 @@ patch component for fix-only releases (`v1.3.1`).
   and "Issue Reported" afterwards, so the same issue isn't filed twice.
 - **Report Issue only opens GitHub links.** A link returned by the GitHub API is
   opened only if it is an `https://github.com` URL.
-- **Maintainer tooling.** `go.mod` now requires Go 1.27.1 or newer, and CI
+- **Maintainer tooling.** `go.mod` now requires Go 1.27.2 or newer, and CI
   reads its Go version from `go.mod`. The revocation hash script strips terminal
   control characters from what it prints.
 - **Revocation errors are explained.** A failed revocation now shows why (for
@@ -124,6 +138,15 @@ patch component for fix-only releases (`v1.3.1`).
 - **Issue reports no longer include the log.** Report Issue (signing-failure)
   reports don't attach it, because they are posted to the public
   tracker without a preview. Use **Help → Export Error Log…** to send it.
+
+### Security
+- **Go 1.27.2 and golang.org/x/net 0.60.0.** Picks up the Go standard-library
+  fixes for HTTP/2 and HTTP/1 handling in `net/http`, MIME header parsing in
+  `net/textproto` and `crypto/tls` (GO-2026-6603, -6605, -6607, -6608, -6610,
+  -6611, -6613, -6617), which `govulncheck` reported as reachable from the
+  app's GitHub requests.
+- **Test tooling.** `source-map-js` (a test-runner dependency, not shipped)
+  updated to 1.2.2 for GHSA-68fv-2mgg-jv7q.
 
 ## [v1.4] — 2026-09-30
 
@@ -312,7 +335,8 @@ verifying Royal honors.
 - SLSA build provenance attestations and `SHA256SUMS.txt` on all release
   binaries.
 
-[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.4...HEAD
+[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.0...HEAD
+[v1.5.0]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.4...v1.5.0
 [v1.4]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3.1...v1.4
 [v1.3.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3...v1.3.1
 [v1.3]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.2...v1.3

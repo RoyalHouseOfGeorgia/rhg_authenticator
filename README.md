@@ -21,12 +21,12 @@
 
 | Component | Language | Status | Description |
 |-----------|----------|--------|-------------|
-| **Desktop app** | Go | **Complete** | Self-contained binary with Fyne GUI — 5 tabs: Sign, History, Registry, Audit, YubiKey |
+| **Desktop app** | Go | **Complete** | Self-contained binary with Fyne GUI — 5 tabs: Sign, History, Registry, Audit, YubiKey; updates itself on Mac |
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry, revocation list |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 | **Python tools** | Python | **Complete** | `scripts/rebuild_urls.py` (rebuild verification URLs from existing signatures, no YubiKey), `scripts/rhg_qr.py` (QR image from a URL), `scripts/rhg_revocation_hash.py` (revocation hash for a URL) |
 
-1369 tests passing (912 Go + 423 TypeScript + 34 Python).
+1517 tests passing (1060 Go + 423 TypeScript + 34 Python).
 
 ## Download & install
 
@@ -45,9 +45,13 @@ Requires an Apple Silicon Mac (Apple menu → **About This Mac** → **Chip** sa
 
 If the **Open Anyway** button isn't there, double-click the app again, then go back to System Settings.
 
-After this, the app opens normally. **Each time you install a new version you'll need to do this again:** quit the app, drag the new one into Applications, choose **Replace**, then repeat steps 4–6.
+After this, the app opens normally.
 
 The first time you save a QR code, macOS asks whether RHG Authenticator can access your Desktop folder — click **Allow**.
+
+**Updates install automatically** as long as the app is in your **Applications** folder. When a new version has downloaded, a banner at the top of the app says "Version … is ready to install." Click **Restart now**, or just keep working — it installs the next time you close the app. You shouldn't need to click **Open Anyway** or allow Desktop access again; if macOS does ask, allow it as before. If the app isn't in Applications — or an update couldn't be installed — the banner offers a **Download** link instead; if the banner asks you to, move the app into Applications to get updates automatically.
+
+**Upgrading from an earlier version to 1.5.0:** install it by hand one last time — quit the app, drag the new one into Applications, choose **Replace**, then repeat steps 4–6 above. Every version after 1.5.0 installs itself.
 
 ### Windows
 
@@ -55,7 +59,7 @@ Download **`rhg-authenticator-windows-amd64.exe`** and double-click it. If Windo
 
 ## Quick Start — Signing App (build from source)
 
-**Requirements**: Go 1.27.1+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
+**Requirements**: Go 1.27.2+, YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
 ```bash
 cd go
@@ -155,7 +159,7 @@ gh attestation verify rhg-authenticator-windows-amd64.exe \
 ```
 This proves the file was built by the release workflow from that tag. Only the maintainer can create tags, so pinning `--source-ref` rejects provenance produced from any other branch or tag. The checksums file lives on the same release page as the download, so on its own it only detects a corrupted download.
 
-A genuine release has a `vX.Y.Z` tag (e.g. `v1.5.0`) and is published by **github-actions[bot]** — the release page shows the author. Don't install from a release that differs; the app's own update notice ignores such releases.
+A genuine release has a `vX.Y.Z` tag (e.g. `v1.5.0`) and is published by **github-actions[bot]** — the release page shows the author. Don't install from a release that differs; the app's own updater ignores such releases.
 
 ## Dependencies
 

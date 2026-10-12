@@ -6,7 +6,7 @@ To install a released build instead of building from source, see [Download & ins
 
 ## Requirements
 
-- Go 1.27.1+
+- Go 1.27.2+
 - YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
 ### Platform-Specific
@@ -28,7 +28,7 @@ make clean          # Remove release directory
 
 The binary embeds the version from `git describe --tags`. Release tags are always `vX.Y.Z` (e.g. `v1.5.0`): CI refuses to build a release from any other tag, and only the maintainer can create tags.
 
-At startup the app checks GitHub for a newer release and shows **Version … available — Download** if there is one. It only considers a release tagged `vX.Y.Z` and published by the release workflow (`github-actions[bot]`), so a release created by hand — even by a collaborator — is never offered.
+At startup and every 6 hours the app checks GitHub for a newer release. It only considers a release tagged `vX.Y.Z` and published by the release workflow (`github-actions[bot]`), so a release created by hand — even by a collaborator — is never offered. On a Mac with the app in **Applications**, it downloads and verifies the update in the background, then shows **Version … is ready to install.** with **Restart now** — or the update installs the next time the app is closed. Elsewhere (Windows, the app outside Applications, or after an update couldn't be installed) it shows **Version … is available — Download**. See [../ARCHITECTURE.md](../ARCHITECTURE.md#app-update-flow-macos) for the update flow; update problems are logged as `update: …` lines in the error log.
 
 See [../CHANGELOG.md](../CHANGELOG.md) for release history.
 
@@ -205,7 +205,8 @@ The file itself lives here:
 | **Your GitHub account can't submit changes to this repository** | The logged-in GitHub account isn't a collaborator with Write access | Ask the maintainer to add you as a collaborator and accept the e-mailed invitation, then try again |
 | **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | **Help → Export Error Log…** and send the file |
 | **Offline — Reconnect** (Registry tab) / Revoke stays disabled | GitHub couldn't be reached when the app started | Click **Offline — Reconnect** (or **Connect to GitHub** on the History tab). If it still can't connect, check your network and try again |
-| **Could not save the SVG file / PNG file / issuance log / error log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop**. May be needed again after installing a new version |
+| **Version … is available — Download** stays instead of **ready to install** (Mac) | The app isn't in **Applications** (or runs from the Downloads folder), or that update couldn't be downloaded or verified | Move the app into **Applications** and reopen it; otherwise click **Download** and install by hand. **Help → Export Error Log…** shows the reason in its `update:` lines |
+| **Could not save the SVG file / PNG file / issuance log / error log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop** |
 
 ### Verifying YubiKey readiness
 
@@ -230,7 +231,8 @@ The file itself lives here:
 
 ```
 go/
-├── main.go              # App entry point, Fyne window, Help menu, panic recovery, panic handler, --version
+├── main.go              # App entry point, Fyne window, Help menu, panic recovery, panic handler, update manager wiring, --version, --verify-update-zip
+├── update_banner.go     # Update banner (Ready / Download / Updated to) and Restart now
 ├── icon.png             # App icon, 1024×1024 (embedded; also the macOS .icns and Windows .exe icon — see DEVELOPER.md "App Icon")
 ├── packaging/macos/Info.plist # macOS app bundle metadata
 ├── buildinfo/           # Build metadata
@@ -290,8 +292,16 @@ go/
 │   └── fetch.go         # Remote-only registry + revocation list fetch, key/authority lookup; readLimitedBody helper
 ├── safego/              # Panic-safe goroutines
 │   └── safego.go        # Go (recover + handler), SetPanicHandler; guard test bans bare `go`
-├── update/              # Version check
-│   └── check.go         # Latest-release check: only vX.Y.Z tags published by github-actions[bot]
+├── update/              # Version check + macOS in-place updater
+│   ├── manager.go       # Lifecycle: startup cleanup, 6 h checks, Ready/ManualOnly status, ApplyIfReady after the UI exits
+│   ├── check.go         # Latest-release check: only vX.Y.Z tags published by github-actions[bot]
+│   ├── cleanup.go       # Startup pruning of the staging root; last-version ("Updated to") record
+│   ├── eligible*.go     # In-place update eligibility: in Applications, not translocated, writable
+│   ├── download.go, scanzip.go, extract*.go, stage.go  # Fetch, pre-scan, extract and verify into staged-<ver>/
+│   ├── requirement.go   # PinnedRequirement — the release code-signing certificate pin
+│   ├── verify.go, verify_darwin.go  # codesign --verify against the pin; sealed version == tag
+│   ├── apply*.go        # Re-verify + atomic RENAME_SWAP on quit, relaunch
+│   └── verifycli.go     # --verify-update-zip, used by release CI
 ├── testdata/            # Cross-language test vectors + cert fixtures
 │   ├── gen_vectors.go   # Vector generator (//go:build ignore)
 │   ├── vectors.json

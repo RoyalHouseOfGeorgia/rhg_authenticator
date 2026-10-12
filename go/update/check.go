@@ -1,4 +1,3 @@
-// Package update provides a non-blocking version check against GitHub Releases.
 package update
 
 import (
@@ -7,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -22,12 +19,29 @@ const checkTimeout = 5 * time.Second
 // other tags, so anything else is ignored rather than offered as an update.
 var releaseTagRE = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
+// darwinAssetName is the exact release asset name the in-app macOS updater
+// downloads. Any other asset (or none) means the update must be done manually.
+const darwinAssetName = "rhg-authenticator-darwin-arm64.zip"
+
 // CheckResult is the outcome of a version check.
 type CheckResult struct {
 	UpdateAvailable bool
 	LatestVersion   string
-	DownloadURL     string
-	CurrentVersion  string
+	// DownloadURL is the release page (html_url), for manual updates.
+	DownloadURL    string
+	CurrentVersion string
+	// AssetURL is the https browser_download_url of the darwinAssetName asset,
+	// or empty if the release has no such asset or its URL is not https.
+	// Empty means the caller must fall back to the manual update path.
+	AssetURL string
+}
+
+type githubAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+	Uploader           struct {
+		Login string `json:"login"`
+	} `json:"uploader"`
 }
 
 type githubRelease struct {
@@ -36,6 +50,7 @@ type githubRelease struct {
 	Author  struct {
 		Login string `json:"login"`
 	} `json:"author"`
+	Assets []githubAsset `json:"assets"`
 }
 
 // releaseAuthor is the account the release workflow publishes as. Collaborators
@@ -47,17 +62,17 @@ const releaseAuthor = "github-actions[bot]"
 // it with the current version. Returns immediately with UpdateAvailable=false
 // if anything fails (network, parse, invalid version). Never panics.
 func Check(owner, repo, currentVersion string) CheckResult {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
-	return checkInternal(url, currentVersion, checkTimeout)
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	return checkInternal(apiURL, currentVersion, checkTimeout)
 }
 
 // checkInternal is the testable core of Check with injectable URL and timeout.
-func checkInternal(url, currentVersion string, timeout time.Duration) CheckResult {
+func checkInternal(apiURL, currentVersion string, timeout time.Duration) CheckResult {
 	result := CheckResult{CurrentVersion: currentVersion}
 
 	client := &http.Client{Timeout: timeout, CheckRedirect: core.SafeRedirect}
 
-	resp, err := client.Get(url)
+	resp, err := client.Get(apiURL)
 	if err != nil {
 		return result
 	}
@@ -78,6 +93,7 @@ func checkInternal(url, currentVersion string, timeout time.Duration) CheckResul
 
 	result.LatestVersion = release.TagName
 	result.DownloadURL = release.HTMLURL
+	result.AssetURL = darwinAssetURL(release.Assets)
 
 	if isNewer(release.TagName, currentVersion) {
 		result.UpdateAvailable = true
@@ -86,46 +102,26 @@ func checkInternal(url, currentVersion string, timeout time.Duration) CheckResul
 	return result
 }
 
-// isNewer returns true if latest is a higher semver than current.
-// Strips leading "v" from both. Returns false on any parse error.
-func isNewer(latest, current string) bool {
-	latestParts, ok1 := parseSemver(latest)
-	currentParts, ok2 := parseSemver(current)
-	if !ok1 || !ok2 {
-		return false
-	}
-
-	for i := 0; i < 3; i++ {
-		if latestParts[i] > currentParts[i] {
-			return true
+// darwinAssetURL returns the browser_download_url of the asset named exactly
+// darwinAssetName, provided it parses as an absolute https URL with a host.
+// Returns "" otherwise. The first asset with the exact name wins; GitHub
+// rejects duplicate asset names within one release.
+func darwinAssetURL(assets []githubAsset) string {
+	for _, a := range assets {
+		if a.Name != darwinAssetName {
+			continue
 		}
-		if latestParts[i] < currentParts[i] {
-			return false
+		// A filter, not the security control: it drops assets a collaborator
+		// uploaded by hand, but a workflow on an unprotected branch can still
+		// upload as the bot. What actually stops a bad bundle is the pinned
+		// code-signing requirement plus the sealed version == tag (stage).
+		if a.Uploader.Login != releaseAuthor {
+			return ""
 		}
-	}
-	return false
-}
-
-// parseSemver parses "v1.2.3" or "1.2.3" into [3]int{1, 2, 3}.
-func parseSemver(s string) ([3]int, bool) {
-	s = strings.TrimPrefix(s, "v")
-	// Release tags are two-component (v1.3) or three-component (v1.3.1);
-	// a missing patch component counts as 0.
-	parts := strings.Split(s, ".")
-	if len(parts) < 2 || len(parts) > 3 {
-		return [3]int{}, false
-	}
-	var result [3]int
-	for i, p := range parts {
-		// Strip any pre-release suffix (e.g., "3-rc1")
-		if idx := strings.IndexAny(p, "-+"); idx >= 0 {
-			p = p[:idx]
+		if !isHTTPSURL(a.BrowserDownloadURL) {
+			return ""
 		}
-		n, err := strconv.Atoi(p)
-		if err != nil || n < 0 {
-			return [3]int{}, false
-		}
-		result[i] = n
+		return a.BrowserDownloadURL
 	}
-	return result, true
+	return ""
 }

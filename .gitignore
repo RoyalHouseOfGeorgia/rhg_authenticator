@@ -17,6 +17,10 @@ github_token.json
 *.gpg
 *.cert
 github_token.json.tmp.*
+# scripts/gen-macos-cert.sh outputs (signing key as base64, its password; gen/ is the CI dry-run dir)
+*.p12.b64
+password.txt
+/gen/
 
 # Dependencies
 node_modules/
