@@ -26,7 +26,7 @@
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 | **Python tools** | Python | **Complete** | `scripts/rebuild_urls.py` (rebuild verification URLs from existing signatures, no YubiKey), `scripts/rhg_qr.py` (QR image from a URL), `scripts/rhg_revocation_hash.py` (revocation hash for a URL) |
 
-1369 tests passing (912 Go + 423 TypeScript + 34 Python).
+1517 tests passing (1060 Go + 423 TypeScript + 34 Python).
 
 ## Download & install
 

@@ -10,6 +10,8 @@ tags.
 
 ## [Unreleased]
 
+## [v1.5.0] — 2026-10-12
+
 ### Added
 - **Automatic updates on Mac.** When the app is in your Applications folder, it
   downloads new versions in the background and checks that each one was built
@@ -324,7 +326,8 @@ verifying Royal honors.
 - SLSA build provenance attestations and `SHA256SUMS.txt` on all release
   binaries.
 
-[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.4...HEAD
+[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.0...HEAD
+[v1.5.0]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.4...v1.5.0
 [v1.4]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3.1...v1.4
 [v1.3.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3...v1.3.1
 [v1.3]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.2...v1.3
