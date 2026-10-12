@@ -205,6 +205,7 @@ The file itself lives here:
 | **Your GitHub account can't submit changes to this repository** | The logged-in GitHub account isn't a collaborator with Write access | Ask the maintainer to add you as a collaborator and accept the e-mailed invitation, then try again |
 | **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | **Help → Export Error Log…** and send the file |
 | **Offline — Reconnect** (Registry tab) / Revoke stays disabled | GitHub couldn't be reached when the app started | Click **Offline — Reconnect** (or **Connect to GitHub** on the History tab). If it still can't connect, check your network and try again |
+| **Version … is available — Download** stays instead of **ready to install** (Mac) | The app isn't in **Applications** (or runs from the Downloads folder), or that update couldn't be downloaded or verified | Move the app into **Applications** and reopen it; otherwise click **Download** and install by hand. **Help → Export Error Log…** shows the reason in its `update:` lines |
 | **Could not save the SVG file / PNG file / issuance log / error log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop** |
 
 ### Verifying YubiKey readiness
@@ -230,7 +231,7 @@ The file itself lives here:
 
 ```
 go/
-├── main.go              # App entry point, Fyne window, Help menu, panic recovery, panic handler, --version
+├── main.go              # App entry point, Fyne window, Help menu, panic recovery, panic handler, update manager wiring, --version, --verify-update-zip
 ├── update_banner.go     # Update banner (Ready / Download / Updated to) and Restart now
 ├── icon.png             # App icon, 1024×1024 (embedded; also the macOS .icns and Windows .exe icon — see DEVELOPER.md "App Icon")
 ├── packaging/macos/Info.plist # macOS app bundle metadata

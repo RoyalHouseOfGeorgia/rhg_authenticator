@@ -21,7 +21,7 @@
 
 | Component | Language | Status | Description |
 |-----------|----------|--------|-------------|
-| **Desktop app** | Go | **Complete** | Self-contained binary with Fyne GUI — 5 tabs: Sign, History, Registry, Audit, YubiKey |
+| **Desktop app** | Go | **Complete** | Self-contained binary with Fyne GUI — 5 tabs: Sign, History, Registry, Audit, YubiKey; updates itself on Mac |
 | **Verification library** | TypeScript | **Complete** | Core crypto, credential validation, key registry, revocation list |
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 | **Python tools** | Python | **Complete** | `scripts/rebuild_urls.py` (rebuild verification URLs from existing signatures, no YubiKey), `scripts/rhg_qr.py` (QR image from a URL), `scripts/rhg_revocation_hash.py` (revocation hash for a URL) |

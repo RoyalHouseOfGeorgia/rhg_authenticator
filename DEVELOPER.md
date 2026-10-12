@@ -67,12 +67,15 @@ verify/
     ├── registry.json     # Public key registry (all registered signing keys)
     └── revocations.json  # Revocation list (SHA-256 hashes of revoked credentials)
 scripts/
+├── gen-macos-cert.sh     # Create the self-signed macOS release certificate (one-time setup; also used by sign-macos-dryrun)
 ├── generate-test-url.ts  # Generate signed test URLs for UI preview
 ├── rebuild_urls.py       # Rebuild verification URLs from a payload+signature, issuance log, or CSV
 ├── rhg_qr.py             # QR code (SVG/PNG) for a verification URL or payload+signature; needs segno; no tests (CodeQL only)
 ├── rhg_revocation_hash.py  # Revocation hash for a verification URL (for revocations.json); no tests (CodeQL only)
+├── sign-macos.sh         # CI only: sign the Mac app with the release certificate
 ├── test_rebuild_urls.py  # unittest suite for rebuild_urls.py (reads go/testdata/vectors.json)
-└── update-sri.sh         # Rebuild verify.js and update SRI hash in index.html
+├── update-sri.sh         # Rebuild verify.js and update SRI hash in index.html
+└── verify-macos.sh       # CI only: check a signed Mac zip with the app's own --verify-update-zip
 ```
 
 ## API Reference

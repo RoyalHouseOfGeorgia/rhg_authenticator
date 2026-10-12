@@ -37,7 +37,7 @@ digraph module_architecture {
         fontsize=10;
         fontcolor="#e67700";
 
-        go_main [label="main.go\n(app wiring, Help menu,\nupdate check)", fillcolor="#ffe8cc", color="#e67700"];
+        go_main [label="main.go\n(app wiring, Help menu,\nupdate banner)", fillcolor="#ffe8cc", color="#e67700"];
         go_gui [label="gui/\n(Fyne GUI — 5 tabs)", fillcolor="#fff3bf", color="#e67700"];
         go_bulk [label="bulk/\n(CSV bulk signing)", fillcolor="#fff3bf", color="#e67700"];
         go_core [label="core/\n(credential, canonical,\nregistry, sign)", fillcolor="#fff3bf", color="#e67700"];
@@ -49,7 +49,7 @@ digraph module_architecture {
         go_registry [label="registry/\n(remote fetch)", fillcolor="#fff3bf", color="#e67700"];
         go_debuglog [label="debuglog/\n(error log,\n30-day retention)", fillcolor="#fff3bf", color="#e67700"];
         go_errorreport [label="errorreport/\n(Report Issue)", fillcolor="#fff3bf", color="#e67700"];
-        go_update [label="update/\n(release check)", fillcolor="#fff3bf", color="#e67700"];
+        go_update [label="update/\n(check, download, verify,\ninstall on quit)", fillcolor="#fff3bf", color="#e67700"];
         go_buildinfo [label="buildinfo/\n(version)", fillcolor="#fff3bf", color="#e67700"];
         go_safego [label="safego/\n(panic-safe\ngoroutines)", fillcolor="#fff3bf", color="#e67700"];
     }
