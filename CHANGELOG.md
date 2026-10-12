@@ -126,7 +126,7 @@ tags.
   and "Issue Reported" afterwards, so the same issue isn't filed twice.
 - **Report Issue only opens GitHub links.** A link returned by the GitHub API is
   opened only if it is an `https://github.com` URL.
-- **Maintainer tooling.** `go.mod` now requires Go 1.27.1 or newer, and CI
+- **Maintainer tooling.** `go.mod` now requires Go 1.27.2 or newer, and CI
   reads its Go version from `go.mod`. The revocation hash script strips terminal
   control characters from what it prints.
 - **Revocation errors are explained.** A failed revocation now shows why (for
@@ -138,6 +138,15 @@ tags.
 - **Issue reports no longer include the log.** Report Issue (signing-failure)
   reports don't attach it, because they are posted to the public
   tracker without a preview. Use **Help → Export Error Log…** to send it.
+
+### Security
+- **Go 1.27.2 and golang.org/x/net 0.60.0.** Picks up the Go standard-library
+  fixes for HTTP/2 and HTTP/1 handling in `net/http`, MIME header parsing in
+  `net/textproto` and `crypto/tls` (GO-2026-6603, -6605, -6607, -6608, -6610,
+  -6611, -6613, -6617), which `govulncheck` reported as reachable from the
+  app's GitHub requests.
+- **Test tooling.** `source-map-js` (a test-runner dependency, not shipped)
+  updated to 1.2.2 for GHSA-68fv-2mgg-jv7q.
 
 ## [v1.4] — 2026-09-30
 

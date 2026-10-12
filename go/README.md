@@ -6,7 +6,7 @@ To install a released build instead of building from source, see [Download & ins
 
 ## Requirements
 
-- Go 1.27.1+
+- Go 1.27.2+
 - YubiKey with Ed25519 key in PIV slot 9c (firmware >= 5.7)
 
 ### Platform-Specific
