@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -19,7 +20,7 @@ const checkInterval = 6 * time.Hour
 const (
 	reasonNoAsset     = "no-asset"
 	reasonApplyFailed = "apply-failed" // rejected at stage or failed to apply
-	reasonRetrying    = "retrying"     // failed twice in a row; still retried
+	reasonRetrying    = "retrying"     // failed again after an earlier temporary failure; still retried
 )
 
 // State is what the UI should offer for updates.
@@ -349,11 +350,28 @@ func (m *Manager) downloadAndStage(ctx context.Context, ver string, res CheckRes
 // one-off failure shows nothing, but a repeat offers the release as a
 // Download so a persistent problem (blocked download host, unwritable
 // staging root) never hides the update.
+//
+// Earlier failures are remembered across launches (download-failed-<ver>),
+// since most sessions end before the first tick. A Download banner already
+// showing for an older release is switched to ver at once.
 func (m *Manager) retryLater(ver, releaseURL string) {
-	if m.lastFailed == ver {
+	marker := filepath.Join(m.root, downloadFailedPrefix+ver)
+	_, statErr := os.Lstat(marker)
+	cur := m.currentStatus()
+	if m.lastFailed == ver || statErr == nil || (cur.State == StateManualOnly && cur.Version != ver) {
 		m.setManualOnly(ver, releaseURL, reasonRetrying)
 	}
 	m.lastFailed = ver
+	if statErr == nil {
+		return
+	}
+	err := os.MkdirAll(m.root, 0o700)
+	if err == nil {
+		err = os.WriteFile(marker, nil, 0o600)
+	}
+	if err != nil {
+		m.logf("update: record download failure: %s", sanitizeErr(err))
+	}
 }
 
 // takeKept returns the staged bundle cleanup kept, if the app is eligible,
@@ -391,6 +409,9 @@ func (m *Manager) removeStaged(sb stagedBundle) {
 // setReady records sb as the update to apply and moves to Ready.
 func (m *Manager) setReady(sb stagedBundle, releaseURL string) {
 	m.logf("update: ready v%s", sb.Version)
+	if err := os.Remove(filepath.Join(m.root, downloadFailedPrefix+sb.Version)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		m.logf("update: %s", sanitizeErr(err))
+	}
 	m.mu.Lock()
 	m.ready, m.bundle = sb, m.eligBundle
 	m.mu.Unlock()

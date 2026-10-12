@@ -16,19 +16,21 @@ import (
 //	staged-<ver>.tmp/              extraction in progress (transient)
 //	staged-<ver>/                  verified bundle awaiting apply
 //	apply-failed-<ver>             marker: applying <ver> failed; manual only
+//	download-failed-<ver>          marker: downloading/staging <ver> failed once; retried
 //	last-version                   version that ran last (see readLastVersion)
 //	last-version.*.tmp             interrupted last-version write (transient)
 //
 // <ver> is always the canonical form from normalizeVersion when written by
 // this package; cleanup also accepts any spelling parseSemver understands.
 const (
-	stagingDirName      = "update"
-	stagedPrefix        = "staged-"
-	tmpSuffix           = ".tmp"
-	zipSuffix           = ".zip"
-	partialSuffix       = ".partial"
-	applyFailedPrefix   = "apply-failed-"
-	lastVersionFileName = "last-version"
+	stagingDirName       = "update"
+	stagedPrefix         = "staged-"
+	tmpSuffix            = ".tmp"
+	zipSuffix            = ".zip"
+	partialSuffix        = ".partial"
+	applyFailedPrefix    = "apply-failed-"
+	downloadFailedPrefix = "download-failed-"
+	lastVersionFileName  = "last-version"
 )
 
 // maxLastVersionBytes bounds how much of the last-version file is read.
@@ -75,7 +77,8 @@ type cleanupResult struct {
 // last-version temp files from an interrupted writeLastVersion;
 // staged-<ver> entries whose version is <= running, unparsable, not a real
 // directory (e.g. a symlink), or superseded by a higher staged version; and
-// apply-failed-<ver> markers whose version is <= running or unparsable; and a
+// apply-failed-<ver> and download-failed-<ver> markers whose version is <=
+// running or unparsable; and a
 // staged bundle whose version has an apply-failed marker (applying it already
 // failed, so retrying on every quit would only fail again).
 // Anything else (e.g. last-version) is left alone.
@@ -142,6 +145,11 @@ func cleanup(root, running string) (cleanupResult, error) {
 				continue
 			}
 			res.ApplyFailed = append(res.ApplyFailed, ver)
+
+		case strings.HasPrefix(name, downloadFailedPrefix):
+			if _, ok := newerVersion(strings.TrimPrefix(name, downloadFailedPrefix), running); !ok {
+				remove(name)
+			}
 		}
 	}
 

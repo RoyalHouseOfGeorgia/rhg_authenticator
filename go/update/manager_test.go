@@ -87,10 +87,12 @@ func newFakeEnv(t *testing.T) *fakeEnv {
 }
 
 // available returns a CheckResult offering ver, with the macOS asset if asset.
+// URLs are built from ver, so a status naming one release with another's link
+// is caught.
 func available(ver string, asset bool) CheckResult {
-	res := CheckResult{UpdateAvailable: true, LatestVersion: ver, DownloadURL: testReleaseURL, CurrentVersion: "v1.5.0"}
+	res := CheckResult{UpdateAvailable: true, LatestVersion: ver, DownloadURL: "https://github.com/o/r/releases/tag/" + ver, CurrentVersion: "v1.5.0"}
 	if asset {
-		res.AssetURL = testAssetURL
+		res.AssetURL = "https://github.com/o/r/releases/download/" + ver + "/" + darwinAssetName
 	}
 	return res
 }
@@ -138,7 +140,7 @@ func (e *fakeEnv) deps() managerDeps {
 		},
 		download: func(_ context.Context, url, destDir, version string) (string, error) {
 			e.downloadCalls++
-			if url != testAssetURL || destDir != e.root {
+			if url != "https://github.com/o/r/releases/download/v"+version+"/"+darwinAssetName || destDir != e.root {
 				e.t.Errorf("download(%q, %q)", url, destDir)
 			}
 			if e.downloadErr != nil {
@@ -205,7 +207,9 @@ func (e *fakeEnv) manager() *Manager { return newManager(e.config(), e.deps()) }
 
 // runFor starts Run, waits for the launch attempt, delivers ticks one by one
 // (each send completes only once the previous attempt has finished), then
-// cancels and waits for Run.
+// cancels and waits for Run. The last tick's attempt may overlap the cancel:
+// fakes must ignore ctx, or a test asserting that attempt's ctx-dependent
+// outcome must call startup/attempt directly.
 func (e *fakeEnv) runFor(m *Manager, ticks int) {
 	e.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -416,12 +420,14 @@ func TestManager_LeftoverStagedDirUnremovableSkipsDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(leftover, 0o700) })
-	e.runFor(e.manager(), 0)
+	e.runFor(e.manager(), 1)
 	e.requireLog("update: remove leftover staged 1.5.1: ")
 	if e.downloadCalls != 0 {
 		t.Errorf("download calls = %d, want 0", e.downloadCalls)
 	}
-	e.requireStatuses()
+	// Retried on the tick; the repeat offers Download, still without downloading.
+	e.requireLog("update: manual only v1.5.1 (retrying)")
+	e.requireStatuses(manualStatus)
 }
 
 func TestManager_PersistentDownloadFailureShowsDownload(t *testing.T) {
@@ -438,6 +444,60 @@ func TestManager_PersistentDownloadFailureShowsDownload(t *testing.T) {
 	}
 }
 
+func TestManager_DownloadFailureRememberedAcrossLaunches(t *testing.T) {
+	marker := func(e *fakeEnv) string { return filepath.Join(e.root, downloadFailedPrefix+"1.5.1") }
+
+	// Launch 1: one failure, nothing shown, marker recorded.
+	e := newFakeEnv(t)
+	e.downloadErr = errors.New("HTTP 500")
+	e.runFor(e.manager(), 0)
+	e.requireStatuses()
+	if !exists(t, marker(e)) {
+		t.Fatal("download-failed marker not written")
+	}
+
+	// Launch 2 (same data dir): the first failure is already a repeat.
+	e2 := newFakeEnv(t)
+	e2.dataDir, e2.root = e.dataDir, e.root
+	e2.downloadErr = errors.New("HTTP 500")
+	e2.runFor(e2.manager(), 0)
+	e2.requireStatuses(manualStatus)
+
+	// Launch 3: success clears the marker.
+	e3 := newFakeEnv(t)
+	e3.dataDir, e3.root = e.dataDir, e.root
+	e3.runFor(e3.manager(), 0)
+	e3.requireStatuses(readyStatus)
+	if exists(t, marker(e3)) {
+		t.Error("download-failed marker not removed on Ready")
+	}
+}
+
+func TestManager_DownloadFailureMarkerRemoveFailureLogged(t *testing.T) {
+	e := newFakeEnv(t)
+	// A non-empty directory in the marker's place cannot be os.Remove'd.
+	populate(t, e.root, []string{downloadFailedPrefix + "1.5.1"}, nil)
+	e.runFor(e.manager(), 0)
+	e.requireStatuses(readyStatus)
+	e.requireLog("update: remove ")
+}
+
+func TestManager_DownloadFailureMarkerWriteFailureLogged(t *testing.T) {
+	e := newFakeEnv(t)
+	e.downloadErr = errors.New("HTTP 500")
+	// A file where the staging root should be: the marker cannot be written.
+	if err := os.WriteFile(e.root, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := e.manager()
+	m.deps.download = func(context.Context, string, string, string) (string, error) {
+		return "", errors.New("HTTP 500")
+	}
+	m.startup()
+	m.attempt(context.Background())
+	e.requireLog("update: record download failure: ")
+}
+
 func TestManager_RepeatFailureNamesNewRelease(t *testing.T) {
 	// ManualOnly for 1.5.1 (no asset); 1.5.2 then fails to download twice.
 	// Attempts run directly: a tick's attempt may overlap runFor's cancel,
@@ -451,7 +511,8 @@ func TestManager_RepeatFailureNamesNewRelease(t *testing.T) {
 	for range 3 {
 		m.attempt(context.Background())
 	}
-	e.requireStatuses(manualStatus, Status{State: StateManualOnly, Version: "1.5.2", ReleaseURL: testReleaseURL})
+	// The visible 1.5.1 banner switches to 1.5.2 on its first failure.
+	e.requireStatuses(manualStatus, Status{State: StateManualOnly, Version: "1.5.2", ReleaseURL: "https://github.com/o/r/releases/tag/v1.5.2"})
 }
 
 func TestManager_LeftoverStagedDirRemovedBeforeDownload(t *testing.T) {

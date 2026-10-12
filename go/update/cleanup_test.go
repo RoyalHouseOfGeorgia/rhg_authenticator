@@ -210,6 +210,24 @@ func TestCleanup_ApplyFailedMarkers(t *testing.T) {
 	}
 }
 
+func TestCleanup_DownloadFailedMarkers(t *testing.T) {
+	root := t.TempDir()
+	populate(t, root, nil, []string{
+		"download-failed-1.4.0", "download-failed-1.5.0", "download-failed-garbage",
+		"download-failed-1.6.0",
+	})
+	res, err := cleanup(root, "v1.5.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ApplyFailed) != 0 || res.Staged != nil {
+		t.Fatalf("result = %+v", res)
+	}
+	if got := listDir(t, root); !slices.Equal(got, []string{"download-failed-1.6.0"}) {
+		t.Fatalf("remaining = %v", got)
+	}
+}
+
 func TestCleanup_RemovalErrorsReported(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("relies on POSIX directory permissions as non-root")
