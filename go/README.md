@@ -231,6 +231,7 @@ The file itself lives here:
 ```
 go/
 ├── main.go              # App entry point, Fyne window, Help menu, panic recovery, panic handler, --version
+├── update_banner.go     # Update banner (Ready / Download / Updated to) and Restart now
 ├── icon.png             # App icon, 1024×1024 (embedded; also the macOS .icns and Windows .exe icon — see DEVELOPER.md "App Icon")
 ├── packaging/macos/Info.plist # macOS app bundle metadata
 ├── buildinfo/           # Build metadata
@@ -291,7 +292,10 @@ go/
 ├── safego/              # Panic-safe goroutines
 │   └── safego.go        # Go (recover + handler), SetPanicHandler; guard test bans bare `go`
 ├── update/              # Version check + macOS in-place updater
+│   ├── manager.go       # Lifecycle: startup cleanup, 6 h checks, Ready/ManualOnly status, ApplyIfReady after the UI exits
 │   ├── check.go         # Latest-release check: only vX.Y.Z tags published by github-actions[bot]
+│   ├── cleanup.go       # Startup pruning of the staging root; last-version ("Updated to") record
+│   ├── eligible*.go     # In-place update eligibility: in Applications, not translocated, writable
 │   ├── download.go, scanzip.go, extract*.go, stage.go  # Fetch, pre-scan, extract and verify into staged-<ver>/
 │   ├── requirement.go   # PinnedRequirement — the release code-signing certificate pin
 │   ├── verify.go, verify_darwin.go  # codesign --verify against the pin; sealed version == tag

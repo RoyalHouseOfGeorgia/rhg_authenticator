@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -170,7 +171,7 @@ func (e *fakeEnv) deps() managerDeps {
 			return stagedBundle{Dir: dir, App: filepath.Join(dir, "RHG Authenticator.app"), Version: version}, nil
 		},
 		verify: func(string, string) error { return nil },
-		readyStaged: func(sb stagedBundle, _ applyDeps) (stagedBundle, error) {
+		readyStaged: func(sb stagedBundle) (stagedBundle, error) {
 			e.readyCalls++
 			if e.readyErr != nil {
 				return stagedBundle{}, e.readyErr
@@ -178,7 +179,7 @@ func (e *fakeEnv) deps() managerDeps {
 			sb.App = filepath.Join(sb.Dir, "RHG Authenticator.app")
 			return sb, nil
 		},
-		apply: func(root string, sb stagedBundle, currentBundle, running string, _ applyDeps) error {
+		apply: func(root string, sb stagedBundle, currentBundle, running string) error {
 			e.applyCalls++
 			if root != e.root || running != e.running {
 				e.t.Errorf("apply(%q, _, _, %q)", root, running)
@@ -292,7 +293,6 @@ func TestManager_IdleToReady(t *testing.T) {
 }
 
 func TestManager_ManualOnly(t *testing.T) {
-	transient := fmt.Errorf("stage update: %w", errTransient)
 	rejected := fmt.Errorf("stage update: %w: bad signature", errBundleRejected)
 	tests := []struct {
 		name     string
@@ -314,9 +314,7 @@ func TestManager_ManualOnly(t *testing.T) {
 			}
 		}, reason: reasonApplyFailed, marker: true},
 		{name: "apply-failed from cleanup", setup: func(e *fakeEnv) { e.cleanupRes.ApplyFailed = []string{"1.5.1"} }, reason: reasonApplyFailed},
-		{name: "download error", setup: func(e *fakeEnv) { e.downloadErr = errors.New("HTTP 500") }, reason: reasonDownloadFailed, download: true},
-		{name: "transient stage error", setup: func(e *fakeEnv) { e.stageErrs = []error{transient} }, reason: reasonStageFailed, download: true},
-		{name: "rejected bundle", setup: func(e *fakeEnv) { e.stageErrs = []error{rejected} }, reason: reasonRejected, download: true, marker: true},
+		{name: "rejected bundle", setup: func(e *fakeEnv) { e.stageErrs = []error{rejected} }, reason: reasonApplyFailed, download: true, marker: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -379,9 +377,96 @@ func TestManager_TransientStageRetriedOnTick(t *testing.T) {
 	if isApplyFailed(e.root, "1.5.1") {
 		t.Error("transient stage error wrote an apply-failed marker")
 	}
-	// ManualOnly is reported once (unchanged on the second failure), then Ready.
-	e.requireStatuses(manualStatus, readyStatus)
+	// A single failure shows nothing; the repeat offers Download (while still
+	// retrying); the third attempt succeeds.
+	retrying := manualStatus
+	e.requireStatuses(retrying, readyStatus)
+	e.requireLog("update: manual only v1.5.1 (retrying)")
+	e.requireLog("update: stage v1.5.1 failed: ")
 	e.requireZipsGone()
+}
+
+func TestManager_DownloadFailedRetriedOnTick(t *testing.T) {
+	e := newFakeEnv(t)
+	e.downloadErr = errors.New("HTTP 500")
+	m := e.manager()
+	download := m.deps.download
+	m.deps.download = func(ctx context.Context, url, destDir, version string) (string, error) {
+		p, err := download(ctx, url, destDir, version)
+		e.downloadErr = nil // only the first download fails
+		return p, err
+	}
+	e.runFor(m, 1)
+
+	if e.downloadCalls != 2 {
+		t.Fatalf("download calls = %d, want 2", e.downloadCalls)
+	}
+	e.requireLog("update: download v1.5.1 failed: HTTP 500")
+	e.requireStatuses(readyStatus)
+}
+
+func TestManager_LeftoverStagedDirUnremovableSkipsDownload(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX directory permissions as a non-root user")
+	}
+	e := newFakeEnv(t)
+	leftover := filepath.Join(e.root, stagedPrefix+"1.5.1")
+	populate(t, leftover, []string{"f"}, nil)
+	if err := os.Chmod(leftover, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(leftover, 0o700) })
+	e.runFor(e.manager(), 0)
+	e.requireLog("update: remove leftover staged 1.5.1: ")
+	if e.downloadCalls != 0 {
+		t.Errorf("download calls = %d, want 0", e.downloadCalls)
+	}
+	e.requireStatuses()
+}
+
+func TestManager_PersistentDownloadFailureShowsDownload(t *testing.T) {
+	e := newFakeEnv(t)
+	e.downloadErr = errors.New("connection refused")
+	e.runFor(e.manager(), 3)
+
+	if e.downloadCalls != 4 {
+		t.Errorf("download calls = %d, want 4 (retried every tick)", e.downloadCalls)
+	}
+	e.requireStatuses(manualStatus)
+	if isApplyFailed(e.root, "1.5.1") {
+		t.Error("download failure wrote an apply-failed marker")
+	}
+}
+
+func TestManager_RepeatFailureNamesNewRelease(t *testing.T) {
+	// ManualOnly for 1.5.1 (no asset); 1.5.2 then fails to download twice.
+	// Attempts run directly: a tick's attempt may overlap runFor's cancel,
+	// and a cancelled download is deliberately not counted as a failure.
+	e := newFakeEnv(t)
+	v152 := available("v1.5.2", true)
+	e.checks = []CheckResult{available("v1.5.1", false), v152}
+	e.downloadErr = errors.New("HTTP 500")
+	m := e.manager()
+	m.startup()
+	for range 3 {
+		m.attempt(context.Background())
+	}
+	e.requireStatuses(manualStatus, Status{State: StateManualOnly, Version: "1.5.2", ReleaseURL: testReleaseURL})
+}
+
+func TestManager_LeftoverStagedDirRemovedBeforeDownload(t *testing.T) {
+	e := newFakeEnv(t)
+	leftover := filepath.Join(e.root, stagedPrefix+"1.5.1")
+	populate(t, e.root, []string{stagedPrefix + "1.5.1"}, nil)
+	m := e.manager()
+	m.deps.download = func(ctx context.Context, url, destDir, version string) (string, error) {
+		if exists(t, leftover) {
+			t.Error("leftover staged dir still present at download")
+		}
+		return e.deps().download(ctx, url, destDir, version)
+	}
+	e.runFor(m, 0)
+	e.requireStatuses(readyStatus)
 }
 
 func TestManager_RejectedStaysManualWithoutRedownload(t *testing.T) {
@@ -399,13 +484,18 @@ func TestManager_RejectedStaysManualWithoutRedownload(t *testing.T) {
 }
 
 func TestManager_MarkerWriteFailureLogged(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX directory permissions as a non-root user")
+	}
 	e := newFakeEnv(t)
-	// A file where the staging root should be: last-version and the marker
-	// cannot be written.
-	if err := os.WriteFile(e.root, nil, 0o600); err != nil {
+	// A read-only staging root: the marker cannot be written.
+	if err := os.MkdirAll(e.root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	e.downloadErr = nil
+	if err := os.Chmod(e.root, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(e.root, 0o700) })
 	e.stageErrs = []error{fmt.Errorf("%w: bad", errBundleRejected)}
 	m := e.manager()
 	m.deps.download = func(context.Context, string, string, string) (string, error) {
@@ -413,16 +503,7 @@ func TestManager_MarkerWriteFailureLogged(t *testing.T) {
 	}
 	e.runFor(m, 1)
 
-	// One from writeLastVersion, one from markApplyFailed.
-	n := 0
-	for _, l := range e.logs {
-		if strings.HasPrefix(l, "update: create staging root") {
-			n++
-		}
-	}
-	if n != 2 {
-		t.Errorf("logs %q: want 2 staging-root failures", e.logs)
-	}
+	e.requireLog("update: write apply-failed marker: ")
 	// The in-memory record keeps the version manual-only without a marker.
 	if e.stageCalls != 1 {
 		t.Errorf("stage calls = %d, want 1", e.stageCalls)
@@ -457,15 +538,15 @@ func TestManager_UpToDateClearsManualOnly(t *testing.T) {
 	e := newFakeEnv(t)
 	e.checks = []CheckResult{available("v1.5.1", false), {LatestVersion: "v1.5.0"}}
 	e.runFor(e.manager(), 1)
-	e.requireStatuses(Status{State: StateManualOnly, Version: "1.5.1", ReleaseURL: testReleaseURL}, Status{})
+	e.requireStatuses(manualStatus, Status{})
 }
 
 func TestManager_CheckFailedKeepsState(t *testing.T) {
 	e := newFakeEnv(t)
 	e.checks = []CheckResult{available("v1.5.1", false), {}}
 	e.runFor(e.manager(), 2)
-	e.requireLog("update: check failed")
-	e.requireStatuses(Status{State: StateManualOnly, Version: "1.5.1", ReleaseURL: testReleaseURL})
+	e.requireLog("update: check failed or no eligible release")
+	e.requireStatuses(manualStatus)
 }
 
 func TestManager_InvalidReleaseVersion(t *testing.T) {
@@ -541,6 +622,32 @@ func TestManager_StagedReuse(t *testing.T) {
 			t.Errorf("readyStaged %d, download %d calls", e.readyCalls, e.downloadCalls)
 		}
 		e.requireStatuses(readyStatus)
+	})
+
+	t.Run("pulled release is never reused later", func(t *testing.T) {
+		// Up to date (1.5.1 was pulled), then offline on the next tick.
+		e := newFakeEnv(t)
+		sb := e.keepStaged("1.5.1")
+		e.checks = []CheckResult{{LatestVersion: "v1.5.0"}, {}}
+		e.runFor(e.manager(), 1)
+		if e.readyCalls != 0 {
+			t.Errorf("readyStaged calls = %d, want 0", e.readyCalls)
+		}
+		if exists(t, sb.Dir) {
+			t.Error("stale staged dir not removed")
+		}
+		e.requireStatuses()
+	})
+
+	t.Run("staged dropped when release is manual only", func(t *testing.T) {
+		e := newFakeEnv(t)
+		sb := e.keepStaged("1.5.1")
+		e.checks = []CheckResult{available("v1.5.1", false), {}}
+		e.runFor(e.manager(), 1)
+		if e.readyCalls != 0 || exists(t, sb.Dir) {
+			t.Errorf("readyStaged %d calls, dir exists %v", e.readyCalls, exists(t, sb.Dir))
+		}
+		e.requireStatuses(manualStatus)
 	})
 
 	t.Run("ineligible never reuses staged", func(t *testing.T) {
@@ -651,13 +758,15 @@ func TestManager_ApplyIfReady(t *testing.T) {
 		relaunchErr  error
 		wantApply    bool
 		wantRelaunch bool
-		wantLog      string
+		wantLog      string // prefix
 	}{
 		{name: "not ready", relaunch: true},
-		{name: "ready, no relaunch", ready: true, wantApply: true, wantLog: "update: applied v1.5.1"},
-		{name: "ready, relaunch", ready: true, relaunch: true, wantApply: true, wantRelaunch: true, wantLog: "update: applied v1.5.1"},
-		{name: "apply fails", ready: true, relaunch: true, applyErr: errors.New("swap failed"), wantApply: true,
-			wantLog: "update: apply v1.5.1 failed: swap failed"},
+		{name: "ready, no relaunch", ready: true, wantApply: true, wantLog: "update: applied v1.5.1 in "},
+		{name: "ready, relaunch", ready: true, relaunch: true, wantApply: true, wantRelaunch: true, wantLog: "update: applied v1.5.1 in "},
+		{name: "apply fails, relaunch restarts old app", ready: true, relaunch: true, applyErr: errors.New("swap failed"), wantApply: true,
+			wantRelaunch: true, wantLog: "update: apply v1.5.1 failed after "},
+		{name: "apply fails, no relaunch", ready: true, applyErr: errors.New("swap failed"), wantApply: true,
+			wantLog: "update: apply v1.5.1 failed after "},
 		{name: "relaunch fails", ready: true, relaunch: true, relaunchErr: errors.New("no open"), wantApply: true,
 			wantRelaunch: true, wantLog: "update: relaunch: no open"},
 	}
@@ -673,8 +782,12 @@ func TestManager_ApplyIfReady(t *testing.T) {
 			m.ApplyIfReady(tt.relaunch)
 			m.ApplyIfReady(tt.relaunch) // at most once
 
-			if got := e.applyCalls; got != map[bool]int{true: 1}[tt.wantApply] {
-				t.Errorf("apply calls = %d, want apply %v", got, tt.wantApply)
+			wantCalls := 0
+			if tt.wantApply {
+				wantCalls = 1
+			}
+			if e.applyCalls != wantCalls {
+				t.Errorf("apply calls = %d, want %d", e.applyCalls, wantCalls)
 			}
 			if tt.wantApply {
 				if e.appliedBundle != testRunningBundle || e.appliedSB.Version != "1.5.1" || e.appliedSB.App == "" {
@@ -688,8 +801,8 @@ func TestManager_ApplyIfReady(t *testing.T) {
 			if !slices.Equal(e.relaunchCalls, wantRelaunch) {
 				t.Errorf("relaunch calls = %q, want %q", e.relaunchCalls, wantRelaunch)
 			}
-			if tt.wantLog != "" && !slices.Contains(e.logs, tt.wantLog) {
-				t.Errorf("logs %q lack exact %q", e.logs, tt.wantLog)
+			if tt.wantLog != "" {
+				e.requireLog(tt.wantLog)
 			}
 			if !tt.wantApply && e.hasLog("update: appl") {
 				t.Errorf("unexpected apply log: %q", e.logs)
@@ -715,9 +828,19 @@ func TestManager_ApplyIfReadyConcurrentWithRun(t *testing.T) {
 		defer close(done)
 		m.Run(ctx)
 	}()
-	m.ApplyIfReady(false) // may or may not see Ready; must not race
+	<-e.started // Ready
+	ticked := make(chan struct{})
+	go func() {
+		defer close(ticked)
+		e.tick <- time.Time{} // Run handles a tick while Ready
+	}()
+	m.ApplyIfReady(false)
+	<-ticked
 	cancel()
 	<-done
+	if e.applyCalls != 1 || e.checkCalls != 1 || len(e.relaunchCalls) != 0 {
+		t.Errorf("apply %d, check %d calls, relaunch %v", e.applyCalls, e.checkCalls, e.relaunchCalls)
+	}
 }
 
 func TestManager_NilCallbacks(t *testing.T) {
@@ -736,8 +859,16 @@ func TestNewManager_ProductionDeps(t *testing.T) {
 	d := m.deps
 	if d.check == nil || d.eligible == nil || d.cleanup == nil || d.download == nil || d.stage == nil ||
 		d.verify == nil || d.readyStaged == nil || d.apply == nil || d.relaunch == nil ||
-		d.applyDeps.verify == nil || d.newTicker == nil {
+		d.newTicker == nil {
 		t.Fatalf("missing production dependency: %+v", d)
+	}
+	// The wrappers bind the shared apply deps; a missing bundle fails cleanly.
+	missing := stagedBundle{Dir: filepath.Join(t.TempDir(), "staged-1.5.1"), Version: "1.5.1"}
+	if _, err := d.readyStaged(missing); err == nil {
+		t.Error("readyStaged accepted a missing staged dir")
+	}
+	if err := d.apply(t.TempDir(), missing, "/nonexistent/X.app", "v1.5.0"); err == nil {
+		t.Error("apply accepted a missing bundle")
 	}
 	tick, stop := d.newTicker(time.Millisecond)
 	defer stop()

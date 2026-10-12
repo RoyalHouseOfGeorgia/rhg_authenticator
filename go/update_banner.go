@@ -14,23 +14,22 @@ import (
 
 // Update banner copy. Versions are canonical "X.Y.Z" (no "v" prefix).
 const (
-	readyTitleFmt   = "Version %s is ready to install."
-	readyDetail     = "It will also install the next time you close the app."
-	restartNowText  = "Restart now"
-	manualFmt       = "Version %s is available —"
-	downloadText    = "Download"
-	moveToAppsHint  = "To get updates automatically, move RHG Authenticator into your Applications folder."
-	updatedFmt      = "Updated to version %s."
-	whatsNewText    = "What's new"
-	releaseURLHost  = "github.com"
-	releaseURLProto = "https"
+	readyTitleFmt  = "Version %s is ready to install."
+	readyDetail    = "It will also install the next time you close the app."
+	restartNowText = "Restart now"
+	manualFmt      = "Version %s is available —"
+	downloadText   = "Download"
+	moveToAppsHint = "To get updates automatically, move RHG Authenticator into your Applications folder."
+	updatedFmt     = "Updated to version %s."
+	whatsNewText   = "What's new"
 )
 
 // githubURL parses raw and returns it only if it is an https URL on
-// github.com, so banner links can never point anywhere else.
+// github.com without embedded credentials, so banner links can never point
+// anywhere else.
 func githubURL(raw string) (*url.URL, bool) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != releaseURLProto || u.Host != releaseURLHost {
+	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil {
 		return nil, false
 	}
 	return u, true

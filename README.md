@@ -49,7 +49,7 @@ After this, the app opens normally.
 
 The first time you save a QR code, macOS asks whether RHG Authenticator can access your Desktop folder — click **Allow**.
 
-**Updates install automatically** as long as the app is in your **Applications** folder. When a new version has downloaded, a banner at the top of the app says "Version … is ready to install." Click **Restart now**, or just keep working — it installs the next time you close the app. You won't need to click **Open Anyway** or allow Desktop access again. If the app isn't in Applications — or an update couldn't be installed — the banner offers a **Download** link instead; if the banner asks you to, move the app into Applications to get updates automatically.
+**Updates install automatically** as long as the app is in your **Applications** folder. When a new version has downloaded, a banner at the top of the app says "Version … is ready to install." Click **Restart now**, or just keep working — it installs the next time you close the app. You shouldn't need to click **Open Anyway** or allow Desktop access again; if macOS does ask, allow it as before. If the app isn't in Applications — or an update couldn't be installed — the banner offers a **Download** link instead; if the banner asks you to, move the app into Applications to get updates automatically.
 
 **Upgrading from an earlier version to 1.5.0:** install it by hand one last time — quit the app, drag the new one into Applications, choose **Replace**, then repeat steps 4–6 above. Every version after 1.5.0 installs itself.
 

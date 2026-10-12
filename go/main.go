@@ -183,8 +183,8 @@ func main() {
 	manager := update.NewManager(update.Config{
 		DataDir: dataDir,
 		Running: buildinfo.Version,
-		Owner:   "RoyalHouseOfGeorgia",
-		Repo:    "rhg_authenticator",
+		Owner:   ghapi.DefaultOwner,
+		Repo:    ghapi.DefaultRepo,
 		OnStatus: func(s update.Status) {
 			fyne.Do(func() { banner.showStatus(s) })
 		},

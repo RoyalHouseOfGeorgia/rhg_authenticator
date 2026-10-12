@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -51,18 +52,6 @@ func collectWidgets(objs []fyne.CanvasObject) bannerWidgets {
 	return b
 }
 
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func TestGithubURL(t *testing.T) {
 	tests := []struct {
 		name string
@@ -76,6 +65,7 @@ func TestGithubURL(t *testing.T) {
 		{"lookalike host", "https://github.com.evil.example/x", false},
 		{"subdomain", "https://api.github.com/x", false},
 		{"explicit port", "https://github.com:443/x", false},
+		{"userinfo", "https://evil@github.com/x", false},
 		{"javascript", "javascript:alert(1)", false},
 		{"malformed", "https://github.com/%zz", false},
 		{"empty", "", false},
@@ -124,7 +114,7 @@ func TestStatusObjects_Ready(t *testing.T) {
 		"Version 1.5.1 is ready to install.",
 		"It will also install the next time you close the app.",
 	}
-	if got := w.labelTexts(); !equalStrings(got, wantLabels) {
+	if got := w.labelTexts(); !slices.Equal(got, wantLabels) {
 		t.Errorf("labels = %q, want %q", got, wantLabels)
 	}
 	if !w.labels[0].TextStyle.Bold {
@@ -166,7 +156,7 @@ func TestStatusObjects_ManualOnly(t *testing.T) {
 	}, func() { t.Error("restart must not be wired in ManualOnly") })
 	w := collectWidgets(objs)
 
-	if got, want := w.labelTexts(), []string{"Version 1.5.1 is available —"}; !equalStrings(got, want) {
+	if got, want := w.labelTexts(), []string{"Version 1.5.1 is available —"}; !slices.Equal(got, want) {
 		t.Errorf("labels = %q, want %q", got, want)
 	}
 	if len(w.links) != 1 {
@@ -196,7 +186,7 @@ func TestStatusObjects_ManualOnlyMoveToApplications(t *testing.T) {
 		"Version 1.5.1 is available —",
 		"To get updates automatically, move RHG Authenticator into your Applications folder.",
 	}
-	if got := w.labelTexts(); !equalStrings(got, want) {
+	if got := w.labelTexts(); !slices.Equal(got, want) {
 		t.Errorf("labels = %q, want %q", got, want)
 	}
 	if len(w.links) != 1 || w.links[0].Text != "Download" {
@@ -226,7 +216,7 @@ func TestUpdatedObjects(t *testing.T) {
 	closed := 0
 	w := collectWidgets(updatedObjects("1.5.1", testReleaseURL, func() { closed++ }))
 
-	if got, want := w.labelTexts(), []string{"Updated to version 1.5.1."}; !equalStrings(got, want) {
+	if got, want := w.labelTexts(), []string{"Updated to version 1.5.1."}; !slices.Equal(got, want) {
 		t.Errorf("labels = %q, want %q", got, want)
 	}
 	if !w.labels[0].TextStyle.Bold {
@@ -255,7 +245,7 @@ func TestUpdatedObjects_InvalidURLOmitsLink(t *testing.T) {
 	test.NewTempApp(t)
 	for _, raw := range []string{"", "http://github.com/x", "https://evil.example/x", "::bad"} {
 		w := collectWidgets(updatedObjects("1.5.1", raw, func() {}))
-		if got, want := w.labelTexts(), []string{"Updated to version 1.5.1."}; !equalStrings(got, want) {
+		if got, want := w.labelTexts(), []string{"Updated to version 1.5.1."}; !slices.Equal(got, want) {
 			t.Errorf("url=%q labels = %q, want %q", raw, got, want)
 		}
 		if len(w.links) != 0 {
@@ -307,7 +297,7 @@ func TestUpdateBannerView_ShowStatusIsIdempotentAndReplaces(t *testing.T) {
 
 	v.showStatus(update.Status{State: update.StateManualOnly, Version: "1.5.2", ReleaseURL: testReleaseURL})
 	w = collectWidgets(v.status.Objects)
-	if got, want := w.labelTexts(), []string{"Version 1.5.2 is available —"}; !equalStrings(got, want) {
+	if got, want := w.labelTexts(), []string{"Version 1.5.2 is available —"}; !slices.Equal(got, want) {
 		t.Errorf("after ManualOnly labels = %q, want %q", got, want)
 	}
 	if len(w.buttons) != 0 {

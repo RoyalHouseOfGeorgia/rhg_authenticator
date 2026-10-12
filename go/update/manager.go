@@ -17,11 +17,9 @@ const checkInterval = 6 * time.Hour
 
 // Manual-only reasons that are not eligibility reasons (see eligible.go).
 const (
-	reasonNoAsset        = "no-asset"
-	reasonApplyFailed    = "apply-failed"
-	reasonDownloadFailed = "download-failed"
-	reasonStageFailed    = "stage-failed"
-	reasonRejected       = "rejected"
+	reasonNoAsset     = "no-asset"
+	reasonApplyFailed = "apply-failed" // rejected at stage or failed to apply
+	reasonRetrying    = "retrying"     // failed twice in a row; still retried
 )
 
 // State is what the UI should offer for updates.
@@ -78,10 +76,9 @@ type managerDeps struct {
 	cleanup     func(root, running string) (cleanupResult, error)
 	download    func(ctx context.Context, url, destDir, version string) (string, error)
 	stage       func(zipPath, root, version string, verify verifier) (stagedBundle, error)
-	verify      verifier
-	readyStaged func(sb stagedBundle, d applyDeps) (stagedBundle, error)
-	apply       func(root string, sb stagedBundle, currentBundle, running string, d applyDeps) error
-	applyDeps   applyDeps
+	verify      verifier // passed to stage
+	readyStaged func(sb stagedBundle) (stagedBundle, error)
+	apply       func(root string, sb stagedBundle, currentBundle, running string) error
 	relaunch    func(bundle string) error
 	// newTicker returns a channel that fires every d and a stop function.
 	newTicker func(d time.Duration) (<-chan time.Time, func())
@@ -89,17 +86,21 @@ type managerDeps struct {
 
 // defaultManagerDeps returns the production operations.
 func defaultManagerDeps() managerDeps {
+	ad := defaultApplyDeps() // the one place the pinned verifier is built
 	return managerDeps{
-		check:       Check,
-		eligible:    currentBundleEligible,
-		cleanup:     cleanup,
-		download:    download,
-		stage:       stage,
-		verify:      pinnedVerifier(PinnedRequirement),
-		readyStaged: readyStaged,
-		apply:       apply,
-		applyDeps:   defaultApplyDeps(),
-		relaunch:    relaunch,
+		check:    Check,
+		eligible: currentBundleEligible,
+		cleanup:  cleanup,
+		download: download,
+		stage:    stage,
+		verify:   ad.verify,
+		readyStaged: func(sb stagedBundle) (stagedBundle, error) {
+			return readyStaged(sb, ad)
+		},
+		apply: func(root string, sb stagedBundle, currentBundle, running string) error {
+			return apply(root, sb, currentBundle, running, ad)
+		},
+		relaunch: relaunch,
 		newTicker: func(d time.Duration) (<-chan time.Time, func()) {
 			t := time.NewTicker(d)
 			return t.C, t.Stop
@@ -122,13 +123,14 @@ type Manager struct {
 	eligibleOK bool
 	reason     string
 	eligBundle string          // the running bundle, when eligibleOK
-	kept       *stagedBundle   // staged bundle cleanup kept; consumed once
-	failed     map[string]bool // versions known to be apply-failed
+	kept       *stagedBundle   // staged bundle cleanup kept; settled by the first attempt
+	failed     map[string]bool // versions rejected at stage or apply-failed; never retried
+	lastFailed string          // version whose last download/stage failed temporarily
 
 	mu      sync.Mutex
 	status  Status
-	ready   stagedBundle // valid when status.State == StateReady
-	bundle  string       // the running bundle, valid when Ready
+	ready   stagedBundle // the staged update to apply; valid when status.State == StateReady
+	bundle  string       // copy of eligBundle for ApplyIfReady; valid when Ready
 	applied bool         // ApplyIfReady already ran
 }
 
@@ -150,6 +152,9 @@ func newManager(cfg Config, deps managerDeps) *Manager {
 // Run performs startup housekeeping and checks for updates at launch and on
 // every tick while no update is Ready. It blocks until ctx is done; the
 // caller runs it on its own goroutine (safego.Go).
+//
+// Once Ready, Run never touches the staging root again, so ApplyIfReady may
+// be called after cancelling ctx without waiting for Run to return.
 func (m *Manager) Run(ctx context.Context) {
 	m.startup()
 	if ctx.Err() != nil {
@@ -180,9 +185,12 @@ func (m *Manager) currentStatus() Status {
 }
 
 // ApplyIfReady installs the Ready update over the running bundle and, if
-// relaunch is set and the install succeeded, starts the new version. It does
-// nothing unless an update is Ready, and applies at most once. Call it on the
-// main goroutine after the UI has exited, as the last thing before exit.
+// relaunch is set, starts the app again — the new version, or the unchanged
+// old one if the install failed (the user asked for a restart; the old app
+// offers the update again, or as a Download if apply marked it failed). It
+// does nothing unless an update is Ready, and applies at most once. Call it
+// on the main goroutine after the UI has exited, as the last thing before
+// exit.
 func (m *Manager) ApplyIfReady(relaunch bool) {
 	m.mu.Lock()
 	if m.status.State != StateReady || m.applied {
@@ -194,11 +202,17 @@ func (m *Manager) ApplyIfReady(relaunch bool) {
 	m.mu.Unlock()
 
 	// apply writes its own apply-failed marker when the release is at fault.
-	if err := m.deps.apply(m.root, sb, bundle, m.cfg.Running, m.deps.applyDeps); err != nil {
-		m.logf("update: apply v%s failed: %s", sb.Version, sanitizeErr(err))
-		return
+	// On error apply leaves the current bundle untouched. The logged
+	// duration is the install (re-verify + swap), the bulk of the delay
+	// before a relaunch.
+	start := time.Now()
+	err := m.deps.apply(m.root, sb, bundle, m.cfg.Running)
+	took := time.Since(start).Round(time.Millisecond)
+	if err != nil {
+		m.logf("update: apply v%s failed after %s: %s", sb.Version, took, sanitizeErr(err))
+	} else {
+		m.logf("update: applied v%s in %s", sb.Version, took)
 	}
-	m.logf("update: applied v%s", sb.Version)
 	if relaunch {
 		if err := m.deps.relaunch(bundle); err != nil {
 			m.logf("update: relaunch: %s", sanitizeErr(err))
@@ -236,58 +250,78 @@ func (m *Manager) startup() {
 }
 
 // attempt runs one check and moves to Ready or ManualOnly as appropriate.
+// A download or local staging failure is retried on every tick; the first
+// one is only logged, a repeat also offers the release as a Download.
 func (m *Manager) attempt(ctx context.Context) {
 	res := m.deps.check(m.cfg.Owner, m.cfg.Repo, m.cfg.Running)
-	if !res.UpdateAvailable {
-		if res.LatestVersion != "" {
-			m.logf("update: up to date")
-			m.setStatus(Status{State: StateIdle})
-			return
-		}
-		m.logf("update: check failed")
-		// Offline: a staged bundle from an earlier run can still be offered.
+	if res.LatestVersion == "" {
+		m.logf("update: check failed or no eligible release")
+		// Offline, or no usable latest release: a staged bundle from an
+		// earlier run (re-verified against the pin) can still be offered.
 		if kept := m.takeKept(); kept != nil {
-			m.reuse(*kept, m.releasePage(kept.Version))
+			m.reuseStaged(*kept, m.releasePage(kept.Version))
 		}
 		return
 	}
 
-	ver, ok := normalizeVersion(res.LatestVersion)
-	if !ok {
-		m.logf("update: invalid release version")
+	var ver, reason string
+	if res.UpdateAvailable {
+		var ok bool
+		if ver, ok = normalizeVersion(res.LatestVersion); !ok {
+			m.logf("update: invalid release version")
+			return
+		}
+		switch {
+		case !m.eligibleOK:
+			reason = m.reason
+		case res.AssetURL == "":
+			reason = reasonNoAsset
+		case m.failed[ver] || isApplyFailed(m.root, ver):
+			reason = reasonApplyFailed
+		}
+	}
+
+	// The check reached GitHub: the kept staged bundle is usable only if it
+	// is the latest release and installable; otherwise never offer it.
+	kept := m.takeKept()
+	if kept != nil && (reason != "" || kept.Version != ver) {
+		m.logf("update: removing superseded staged %s", kept.Version)
+		m.removeStaged(*kept)
+		kept = nil
+	}
+
+	if kept != nil && m.reuseStaged(*kept, res.DownloadURL) {
 		return
 	}
 	switch {
-	case !m.eligibleOK:
-		m.manual(ver, res.DownloadURL, m.reason)
-		return
-	case res.AssetURL == "":
-		m.manual(ver, res.DownloadURL, reasonNoAsset)
-		return
-	case m.failed[ver] || isApplyFailed(m.root, ver):
-		m.manual(ver, res.DownloadURL, reasonApplyFailed)
-		return
+	case !res.UpdateAvailable:
+		m.logf("update: up to date")
+		m.setStatus(Status{State: StateIdle})
+	case reason != "":
+		m.setManualOnly(ver, res.DownloadURL, reason)
+	default:
+		m.downloadAndStage(ctx, ver, res)
 	}
+}
 
-	if kept := m.takeKept(); kept != nil {
-		if kept.Version == ver {
-			if m.reuse(*kept, res.DownloadURL) {
-				return
-			}
-		} else {
-			// A different release is now current; never install a stale one.
-			m.logf("update: removing superseded staged %s", kept.Version)
-			m.removeStaged(*kept)
+// downloadAndStage fetches and stages ver, moving to Ready on success. A
+// rejected release is marked apply-failed and offered as manual only; other
+// failures go through retryLater.
+func (m *Manager) downloadAndStage(ctx context.Context, ver string, res CheckResult) {
+	// stage requires a fresh staged dir; a leftover would fail every retry.
+	if dir, ok := stagedDirPath(m.root, ver); ok {
+		if err := os.RemoveAll(dir); err != nil {
+			m.logf("update: remove leftover staged %s: %s", ver, sanitizeErr(err))
+			m.retryLater(ver, res.DownloadURL)
+			return
 		}
 	}
-
 	zipPath, err := m.deps.download(ctx, res.AssetURL, m.root, ver)
 	if err != nil {
-		if ctx.Err() != nil {
-			return // shutting down; nothing to report
+		if ctx.Err() == nil {
+			m.logf("update: download v%s failed: %s", ver, sanitizeErr(err))
+			m.retryLater(ver, res.DownloadURL)
 		}
-		m.logf("update: download v%s failed: %s", ver, sanitizeErr(err))
-		m.manual(ver, res.DownloadURL, reasonDownloadFailed)
 		return
 	}
 	sb, err := m.deps.stage(zipPath, m.root, ver, m.deps.verify)
@@ -298,34 +332,46 @@ func (m *Manager) attempt(ctx context.Context) {
 	if err != nil {
 		m.logf("update: stage v%s failed: %s", ver, sanitizeErr(err))
 		if !errors.Is(err, errBundleRejected) {
-			m.manual(ver, res.DownloadURL, reasonStageFailed) // retried next tick
+			m.retryLater(ver, res.DownloadURL)
 			return
 		}
 		m.failed[ver] = true
 		if mErr := markApplyFailed(m.root, ver); mErr != nil {
 			m.logf("update: %s", sanitizeErr(mErr))
 		}
-		m.manual(ver, res.DownloadURL, reasonRejected)
+		m.setManualOnly(ver, res.DownloadURL, reasonApplyFailed)
 		return
 	}
 	m.setReady(sb, res.DownloadURL)
 }
 
-// takeKept returns the staged bundle cleanup kept, if the app is eligible,
-// and forgets it so it is considered only once.
-func (m *Manager) takeKept() *stagedBundle {
-	if !m.eligibleOK || m.kept == nil {
-		return nil
+// retryLater records a temporary failure for ver; the next tick retries. A
+// one-off failure shows nothing, but a repeat offers the release as a
+// Download so a persistent problem (blocked download host, unwritable
+// staging root) never hides the update.
+func (m *Manager) retryLater(ver, releaseURL string) {
+	if m.lastFailed == ver {
+		m.setManualOnly(ver, releaseURL, reasonRetrying)
 	}
+	m.lastFailed = ver
+}
+
+// takeKept returns the staged bundle cleanup kept, if the app is eligible,
+// and forgets it so it is considered only once. When the app is ineligible
+// the bundle is left on disk for a later launch.
+func (m *Manager) takeKept() *stagedBundle {
 	kept := m.kept
 	m.kept = nil
+	if !m.eligibleOK {
+		return nil
+	}
 	return kept
 }
 
-// reuse re-verifies a staged bundle and moves to Ready. On failure it logs
-// why, removes the staged dir, and returns false.
-func (m *Manager) reuse(sb stagedBundle, releaseURL string) bool {
-	ready, err := m.deps.readyStaged(sb, m.deps.applyDeps)
+// reuseStaged re-verifies a staged bundle and moves to Ready. On failure it
+// logs why, removes the staged dir, and returns false.
+func (m *Manager) reuseStaged(sb stagedBundle, releaseURL string) bool {
+	ready, err := m.deps.readyStaged(sb)
 	if err != nil {
 		m.logf("update: discarded staged %s: %s", sb.Version, sanitizeErr(err))
 		m.removeStaged(sb)
@@ -351,8 +397,8 @@ func (m *Manager) setReady(sb stagedBundle, releaseURL string) {
 	m.setStatus(Status{State: StateReady, Version: sb.Version, ReleaseURL: releaseURL})
 }
 
-// manual moves to ManualOnly for ver.
-func (m *Manager) manual(ver, releaseURL, reason string) {
+// setManualOnly moves to ManualOnly for ver.
+func (m *Manager) setManualOnly(ver, releaseURL, reason string) {
 	m.logf("update: manual only v%s (%s)", ver, reason)
 	m.setStatus(Status{
 		State:              StateManualOnly,

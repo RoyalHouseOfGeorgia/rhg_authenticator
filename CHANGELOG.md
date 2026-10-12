@@ -19,8 +19,8 @@ tags.
   "Updated to version …" with a **What's new** link. If the app isn't in
   Applications, or an update can't be installed, the banner offers a
   **Download** link as before. Because releases are now signed with the same
-  certificate every time, macOS no longer asks again for Desktop access after
-  an update. This is the last version that has to be installed by hand.
+  certificate every time, macOS should no longer ask again for Desktop access
+  after an update. This is the last version that has to be installed by hand.
 - **Restrictions column.** The Registry tab shows each key's `allowed_honors`
   restriction, "(none)" when the key is unrestricted, or "(invalid)" when the
   verification page would reject the value.
