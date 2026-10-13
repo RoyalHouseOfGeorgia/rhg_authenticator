@@ -10,6 +10,11 @@ tags.
 
 ## [Unreleased]
 
+### Added
+- **Weekly vulnerability scan.** `govulncheck` now also runs every Monday on
+  the macOS and Windows runners, so a newly published Go or module advisory is
+  caught between releases instead of when the next release is built.
+
 ## [v1.5.0] — 2026-10-12
 
 ### Added
