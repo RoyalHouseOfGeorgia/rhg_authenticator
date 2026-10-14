@@ -10,10 +10,17 @@ tags.
 
 ## [Unreleased]
 
+## [v1.5.1] — 2026-10-13
+
 ### Added
 - **Weekly vulnerability scan.** `govulncheck` now also runs every Monday on
   the macOS and Windows runners, so a newly published Go or module advisory is
   caught between releases instead of when the next release is built.
+
+### Fixed
+- **Save dialogs open on the Desktop on Windows when OneDrive backs up the
+  Desktop.** The save dialogs for QR codes, Export Issuance Log and Export
+  Error Log now open on the OneDrive Desktop.
 
 ## [v1.5.0] — 2026-10-12
 
@@ -340,7 +347,8 @@ verifying Royal honors.
 - SLSA build provenance attestations and `SHA256SUMS.txt` on all release
   binaries.
 
-[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.1...HEAD
+[v1.5.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.0...v1.5.1
 [v1.5.0]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.4...v1.5.0
 [v1.4]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3.1...v1.4
 [v1.3.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3...v1.3.1

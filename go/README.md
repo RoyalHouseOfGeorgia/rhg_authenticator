@@ -262,6 +262,7 @@ go/
 │   ├── audit_tab.go     # Registry audit (renders commit history from ghapi/commits)
 │   ├── bulk_flow.go     # Bulk sign orchestration (Fyne-free): load plan, PIN once, run
 │   ├── bulk_sign.go     # Bulk sign dialogs: file pick, confirm, progress, summary + export
+│   ├── desktop*.go      # Desktop folder as the save dialogs' start location (Windows: asks the shell, so OneDrive\Desktop works)
 │   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi; skips already-revoked/pending), Export Issuance Log, Remove Duplicates, Revocation unavailable status
 │   ├── errorlog_export.go # Help → Export Error Log… save flow; ShowErrorWithLogExport error dialog
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
