@@ -483,16 +483,3 @@ func hasRecords(data []byte) bool {
 	}
 	return len(records) > 0
 }
-
-// desktopDir returns the user's Desktop folder as a dialog start location.
-func desktopDir() (fyne.ListableURI, bool) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, false
-	}
-	desktop, err := storage.ListerForURI(storage.NewFileURI(filepath.Join(home, "Desktop")))
-	if err != nil {
-		return nil, false
-	}
-	return desktop, true
-}

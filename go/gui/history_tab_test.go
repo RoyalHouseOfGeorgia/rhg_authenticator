@@ -130,9 +130,9 @@ func TestOnIssuanceExportChosen(t *testing.T) {
 func TestOnIssuanceExportTapped(t *testing.T) {
 	test.NewTempApp(t)
 	dir := t.TempDir()
-	// Keep the save dialog's Desktop lookup off the real home directory.
+	// Keep the non-Windows Desktop lookup off the real home; on Windows the
+	// dialog lists the real Desktop, so never confirm a save.
 	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
 	write := func(name, content string) string {
 		p := filepath.Join(dir, name)
 		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
@@ -185,25 +185,6 @@ func TestHasRecords(t *testing.T) {
 		if got := hasRecords([]byte(in)); got != want {
 			t.Errorf("hasRecords(%q) = %v, want %v", in, got, want)
 		}
-	}
-}
-
-// TestDesktopDir: the Desktop folder is used when it exists and skipped when
-// it doesn't. t.Setenv makes this test non-parallel by design.
-func TestDesktopDir(t *testing.T) {
-	test.NewTempApp(t)
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	if _, ok := desktopDir(); ok {
-		t.Error("desktopDir() = true without a Desktop folder")
-	}
-	if err := os.Mkdir(filepath.Join(home, "Desktop"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := desktopDir(); !ok {
-		t.Error("desktopDir() = false with a Desktop folder")
 	}
 }
 

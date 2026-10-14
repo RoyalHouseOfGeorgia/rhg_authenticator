@@ -77,9 +77,9 @@ func TestOnErrorLogExportChosen(t *testing.T) {
 func TestOnErrorLogExportTapped(t *testing.T) {
 	test.NewTempApp(t)
 	dir := t.TempDir()
-	// Keep the save dialog's Desktop lookup off the real home directory.
+	// Keep the non-Windows Desktop lookup off the real home; on Windows the
+	// dialog lists the real Desktop, so never confirm a save.
 	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
 	logPath := filepath.Join(dir, "debug.log")
 	if err := os.WriteFile(logPath, []byte("startup\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestShowErrorWithLogExport(t *testing.T) {
 	test.NewTempApp(t)
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
+	// Fake Desktop for non-Windows; Windows uses the shell's Desktop.
 	if err := os.Mkdir(filepath.Join(dir, "Desktop"), 0o700); err != nil {
 		t.Fatal(err)
 	}
