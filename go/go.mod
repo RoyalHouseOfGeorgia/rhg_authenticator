@@ -8,7 +8,7 @@ require (
 	github.com/go-piv/piv-go/v2 v2.6.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // unmaintained (2020); TODO(2027): evaluate maintained alternative. Security audit 2026-03: no known CVEs, input is app-controlled.
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.43.0
 )
 
