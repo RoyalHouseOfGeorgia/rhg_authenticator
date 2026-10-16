@@ -10,6 +10,16 @@ tags.
 
 ## [Unreleased]
 
+### Changed
+- **Version in the status bar.** The bar at the bottom of the window now shows
+  the app version (e.g. "Version 1.5.1") instead of the registry's last-update
+  date, online and offline. The Audit tab still lists registry changes with
+  dates.
+- **Save dialogs reopen the last folder.** Save SVG, Save PNG, Export Issuance
+  Log, Export Error Log and Export Results CSV — and the Bulk Sign file picker —
+  now open in the folder you last used in a file dialog, and on the Desktop the
+  first time (or if that folder is gone).
+
 ## [v1.5.1] — 2026-10-13
 
 ### Added

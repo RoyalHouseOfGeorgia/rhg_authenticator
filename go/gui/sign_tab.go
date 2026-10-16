@@ -236,9 +236,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 					}, window)
 					saveDialog.SetFileName(defaultName)
 					saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".svg"}))
-					if desktop, ok := desktopDir(); ok {
-						saveDialog.SetLocation(desktop)
-					}
+					setDialogLocation(saveDialog)
 					saveDialog.Show()
 				})
 
@@ -267,9 +265,7 @@ func NewSignTab(config SignTabConfig, window fyne.Window) (*fyne.Container, func
 					}, window)
 					saveDialog.SetFileName(defaultName)
 					saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".png"}))
-					if desktop, ok := desktopDir(); ok {
-						saveDialog.SetLocation(desktop)
-					}
+					setDialogLocation(saveDialog)
 					saveDialog.Show()
 				})
 

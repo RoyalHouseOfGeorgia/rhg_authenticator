@@ -73,7 +73,7 @@ func parseGitHubURL(rawURL string) *url.URL {
 }
 
 // NewAuditTab creates the registry audit tab UI showing GitHub commit history.
-func NewAuditTab(window fyne.Window, lastUpdateCh chan<- string) *fyne.Container {
+func NewAuditTab(window fyne.Window) *fyne.Container {
 	var commits []ghapi.RegistryCommit
 	statusLabel := widget.NewLabel("")
 
@@ -109,7 +109,6 @@ func NewAuditTab(window fyne.Window, lastUpdateCh chan<- string) *fyne.Container
 	var fetching atomic.Bool
 	var lastETag string
 	var refreshBtn *widget.Button
-	sent := false
 
 	doFetch := func() {
 		if !fetching.CompareAndSwap(false, true) {
@@ -136,13 +135,6 @@ func NewAuditTab(window fyne.Window, lastUpdateCh chan<- string) *fyne.Container
 					lastETag = newETag
 					list.Refresh()
 					statusLabel.SetText(fmt.Sprintf("Loaded %d commits", len(commits)))
-					if !sent && len(commits) > 0 {
-						select {
-						case lastUpdateCh <- commits[0].Commit.Author.Date:
-						default: // channel full, skip
-						}
-						sent = true
-					}
 				} else {
 					statusLabel.SetText("No changes since last check")
 				}

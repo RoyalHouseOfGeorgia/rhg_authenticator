@@ -138,8 +138,7 @@ func main() {
 	// Keep this before ShowAndRun; do not switch fyne.Do to fyne.DoAndWait.
 	regTab.SetOnLoginChanged(refreshHistoryLogin)
 	refreshHistoryLogin()
-	lastUpdateCh := make(chan string, 1)
-	auditContent := gui.NewAuditTab(window, lastUpdateCh)
+	auditContent := gui.NewAuditTab(window)
 	yubiKeyContent := gui.NewYubiKeyTab(reg, regOnline, window)
 
 	signTab := container.NewTabItem("Sign", signContent)
@@ -150,7 +149,7 @@ func main() {
 
 	// 6. Set content.
 	tabs := container.NewAppTabs(signTab, historyTab, registryTab, auditTab, yubiKeyTab)
-	statusBar := gui.NewStatusBar(reg, regOnline, lastUpdateCh)
+	statusBar := gui.NewStatusBar(reg, regOnline, buildinfo.Version)
 	updateBanner := container.NewVBox()
 	windowContent := container.NewBorder(updateBanner, statusBar, nil, nil, tabs)
 	window.SetContent(windowContent)

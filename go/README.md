@@ -49,7 +49,7 @@ See [../CHANGELOG.md](../CHANGELOG.md) for release history.
 4. Enter your YubiKey PIN when prompted
    - Check "Remember PIN for this session" to cache the PIN (opt-in, mlock'd memory, auto-clears after 5 minutes)
 5. The QR code appears as a preview
-6. Click **Save SVG** (primary — vector for print) or **Save PNG** (2048px alternative). The save dialog opens on the Desktop; on a Mac, the first save may ask whether the app can access the Desktop — click **Allow**
+6. Click **Save SVG** (primary — vector for print) or **Save PNG** (2048px alternative). The save dialog opens in the folder you last used (the Desktop the first time); on a Mac, the first save may ask whether the app can access the Desktop — click **Allow**
 7. Copy the verification URL to clipboard via **Copy URL**
 
 If the same credential (identical recipient, honor, detail and date) is already in the issuance log, the app skips the PIN prompt, says **"Credential previously generated, no new record created."** and shows the original QR code — nothing new is logged. If the issuance log can't be read, signing is blocked until it can (see [Troubleshooting](#troubleshooting)).
@@ -106,7 +106,7 @@ Revoke needs a working GitHub session and **Write (collaborator) access** to the
 
 **Remove Duplicates…** finds entries in the issuance log for the same credential signed more than once, and removes all but the earliest valid entry after you confirm (a damaged entry before the first valid copy is left in place). A backup of the current log (`issuances.json.bak-<UTC timestamp>`, e.g. `issuances.json.bak-20261001T120000Z`) is saved next to it first. Removed entries were the same credential, so any QR code already printed from them still verifies.
 
-**Export Issuance Log…** saves a copy of the issuance log. The save dialog opens on the Desktop with a dated name (`rhg-issuances-YYYY-MM-DD.json`); after saving, a message shows exactly where the file went so it can be attached to an email. On a Mac, the first export may ask whether the app can access the Desktop — click **Allow**. If nothing has been signed yet, the button says so instead of opening the dialog.
+**Export Issuance Log…** saves a copy of the issuance log. The save dialog opens in the folder you last used (the Desktop the first time) with a dated name (`rhg-issuances-YYYY-MM-DD.json`); after saving, a message shows exactly where the file went so it can be attached to an email. On a Mac, the first export may ask whether the app can access the Desktop — click **Allow**. If nothing has been signed yet, the button says so instead of opening the dialog.
 
 ## YubiKey Setup
 
@@ -183,7 +183,7 @@ The app fetches the revocation list (`revocations.json`) alongside the registry 
 
 The app keeps an error log (`debug.log`) in every build. Entries older than 30 days are removed each time the app starts.
 
-**To send the log:** choose **Help → Export Error Log…** (or click **Export Error Log…** in the Revocation Failed, Remove Duplicates Failed or Submission Failed dialog). The save dialog opens on the Desktop with a dated name (`rhg-error-log-YYYY-MM-DD.log`), ready to attach to an email. The log contains app diagnostics — it may include your GitHub username and file paths, but never PINs or keys.
+**To send the log:** choose **Help → Export Error Log…** (or click **Export Error Log…** in the Revocation Failed, Remove Duplicates Failed or Submission Failed dialog). The save dialog opens in the folder you last used (the Desktop the first time) with a dated name (`rhg-error-log-YYYY-MM-DD.log`), ready to attach to an email. The log contains app diagnostics — it may include your GitHub username and file paths, but never PINs or keys.
 
 The file itself lives here:
 
@@ -206,7 +206,7 @@ The file itself lives here:
 | **Signing failed / Failed to read YubiKey** | Catch-all for unexpected errors | **Help → Export Error Log…** and send the file |
 | **Offline — Reconnect** (Registry tab) / Revoke stays disabled | GitHub couldn't be reached when the app started | Click **Offline — Reconnect** (or **Connect to GitHub** on the History tab). If it still can't connect, check your network and try again |
 | **Version … is available — Download** stays instead of **ready to install** (Mac) | The app isn't in **Applications** (or runs from the Downloads folder), or that update couldn't be downloaded or verified | Move the app into **Applications** and reopen it; otherwise click **Download** and install by hand. **Help → Export Error Log…** shows the reason in its `update:` lines |
-| **Could not save the SVG file / PNG file / issuance log / error log** | macOS: the app was denied access to the folder (usually the Desktop) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on **Desktop** |
+| **Could not save the SVG file / PNG file / issuance log / error log** | macOS: the app was denied access to the folder you saved to (Desktop, Documents or Downloads) | System Settings → Privacy & Security → Files and Folders → RHG Authenticator → turn on that folder |
 
 ### Verifying YubiKey readiness
 
@@ -262,13 +262,13 @@ go/
 │   ├── audit_tab.go     # Registry audit (renders commit history from ghapi/commits)
 │   ├── bulk_flow.go     # Bulk sign orchestration (Fyne-free): load plan, PIN once, run
 │   ├── bulk_sign.go     # Bulk sign dialogs: file pick, confirm, progress, summary + export
-│   ├── desktop*.go      # Desktop folder as the save dialogs' start location (Windows: asks the shell, so OneDrive\Desktop works)
+│   ├── desktop*.go      # File-dialog start location: last-used folder, else the Desktop (Windows: asks the shell, so OneDrive\Desktop works)
 │   ├── history_tab.go   # Issuance log browser, Revoke button (confirmation dialog, PR via ghapi; skips already-revoked/pending), Export Issuance Log, Remove Duplicates, Revocation unavailable status
 │   ├── errorlog_export.go # Help → Export Error Log… save flow; ShowErrorWithLogExport error dialog
 │   ├── pindialog.go     # PIN entry dialog (goroutine-safe)
 │   ├── sign_tab.go      # Credential form + QR display + Report Issue button (runs in the background; input errors get no button)
 │   ├── signflow.go      # Extracted signing workflow: pre-sign payload check (before the PIN), duplicate-issuance check (testable)
-│   ├── statusbar.go     # Bottom status bar (key stats, online status, last registry update via lastUpdateCh)
+│   ├── statusbar.go     # Bottom status bar (key stats, online status, app version)
 │   └── yubikey_tab.go   # YubiKey registry check (no PIN)
 ├── ghapi/               # GitHub API client + OAuth device flow
 │   ├── keyring.go       # Keyring interface (OS keychain + FakeKeyring for tests)

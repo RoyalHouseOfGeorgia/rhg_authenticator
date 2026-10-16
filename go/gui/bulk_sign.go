@@ -46,6 +46,7 @@ func startBulkSign(d bulkSignDeps) {
 		onBulkFileChosen(d, reader, err)
 	}, d.window)
 	openDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
+	setDialogLocation(openDialog)
 	openDialog.Show()
 }
 
@@ -169,6 +170,7 @@ func showBulkSummary(d bulkSignDeps, results []bulk.Result, stopErr error) {
 		}, d.window)
 		saveDialog.SetFileName(bulkResultsFilename(time.Now()))
 		saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
+		setDialogLocation(saveDialog)
 		saveDialog.Show()
 	})
 	items = append(items, exportButton, widget.NewLabel("Re-open the same file to regenerate results later."))

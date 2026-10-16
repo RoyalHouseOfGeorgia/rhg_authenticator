@@ -386,9 +386,7 @@ func onIssuanceExportTapped(logPath string, window fyne.Window) {
 	}, window)
 	saveDialog.SetFileName(time.Now().Format("rhg-issuances-2006-01-02.json"))
 	saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
-	if desktop, ok := desktopDir(); ok {
-		saveDialog.SetLocation(desktop)
-	}
+	setDialogLocation(saveDialog)
 	saveDialog.Show()
 }
 
@@ -465,7 +463,7 @@ func onIssuanceExportChosen(data []byte, window fyne.Window, writer fyne.URIWrit
 
 // showSaveError reports a failed save of what (e.g. "issuance log") and points
 // macOS users at the Files and Folders permission, the usual cause of a failed
-// save to the Desktop.
+// save to a protected folder (Desktop, Documents, Downloads).
 func showSaveError(window fyne.Window, what string) {
 	dialog.ShowError(errors.New("could not save the "+what+" — on a Mac, check System Settings → Privacy & Security → Files and Folders"), window)
 }
