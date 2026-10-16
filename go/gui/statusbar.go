@@ -2,6 +2,7 @@ package gui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -10,7 +11,6 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 )
 
 // registryStats holds computed statistics about a key registry.
@@ -48,14 +48,18 @@ func computeRegistryStats(reg core.Registry, today string) registryStats {
 	return stats
 }
 
-// NewStatusBar creates a status bar widget showing registry statistics.
-// online indicates whether the registry was fetched from the remote server.
-// lastUpdateCh receives the date string of the most recent registry commit
-// from the audit tab.
-func NewStatusBar(reg core.Registry, online bool, lastUpdateCh <-chan string) *fyne.Container {
+// NewStatusBar creates a status bar widget showing registry statistics and
+// the app version. online indicates whether the registry was fetched from the
+// remote server. version is the build version (e.g. "v1.5.1"), shown without
+// its "v" prefix; local builds pass "dev" and show "Version dev".
+func NewStatusBar(reg core.Registry, online bool, version string) *fyne.Container {
+	versionLabel := widget.NewLabel("Version " + strings.TrimPrefix(version, "v"))
+
 	if !online {
 		return container.NewHBox(
 			widget.NewLabel("No internet"),
+			layout.NewSpacer(),
+			versionLabel,
 		)
 	}
 
@@ -64,33 +68,12 @@ func NewStatusBar(reg core.Registry, online bool, lastUpdateCh <-chan string) *f
 
 	activeLabel := widget.NewLabel(fmt.Sprintf("Active keys: %d", stats.ActiveKeys))
 	recentLabel := widget.NewLabel(fmt.Sprintf("Expired (30d): %d", stats.RecentlyExpired))
-	updatedLabel := widget.NewLabel("Last update: loading...")
 
-	bar := container.NewHBox(
+	return container.NewHBox(
 		activeLabel,
 		layout.NewSpacer(),
 		recentLabel,
 		layout.NewSpacer(),
-		updatedLabel,
+		versionLabel,
 	)
-
-	safego.Go(func() {
-		select {
-		case date := <-lastUpdateCh:
-			t, err := time.Parse(time.RFC3339, date)
-			fyne.Do(func() {
-				if err != nil {
-					updatedLabel.SetText("Last update: unknown")
-					return
-				}
-				updatedLabel.SetText("Last update: " + t.UTC().Format("2006-Jan-02"))
-			})
-		case <-time.After(15 * time.Second):
-			fyne.Do(func() {
-				updatedLabel.SetText("Last update: unknown")
-			})
-		}
-	})
-
-	return bar
 }

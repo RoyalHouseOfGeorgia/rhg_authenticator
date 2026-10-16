@@ -16,9 +16,9 @@ import (
 )
 
 // OnErrorLogExportTapped reads the diagnostic log at logPath and offers a
-// save dialog (default: Desktop, rhg-error-log-<local date>.log). The log is
-// read before the dialog opens because Fyne truncates the destination before
-// the save callback runs.
+// save dialog (last-used folder, else Desktop; rhg-error-log-<local
+// date>.log). The log is read before the dialog opens because Fyne truncates
+// the destination before the save callback runs.
 func OnErrorLogExportTapped(logPath string, window fyne.Window) {
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -31,9 +31,7 @@ func OnErrorLogExportTapped(logPath string, window fyne.Window) {
 	}, window)
 	saveDialog.SetFileName(time.Now().Format("rhg-error-log-2006-01-02.log"))
 	saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".log"}))
-	if desktop, ok := desktopDir(); ok {
-		saveDialog.SetLocation(desktop)
-	}
+	setDialogLocation(saveDialog)
 	saveDialog.Show()
 }
 
