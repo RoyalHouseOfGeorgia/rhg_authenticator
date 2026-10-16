@@ -26,7 +26,7 @@
 | **Verification page** | TypeScript | **Complete** | Public GitHub Pages site for QR code verification |
 | **Python tools** | Python | **Complete** | `scripts/rebuild_urls.py` (rebuild verification URLs from existing signatures, no YubiKey), `scripts/rhg_qr.py` (QR image from a URL), `scripts/rhg_revocation_hash.py` (revocation hash for a URL) |
 
-1517 tests passing (1060 Go + 423 TypeScript + 34 Python).
+1521 tests passing (1064 Go + 423 TypeScript + 34 Python).
 
 ## Download & install
 
@@ -173,6 +173,7 @@ A genuine release has a `vX.Y.Z` tag (e.g. `v1.5.0`) and is published by **githu
 | [`zalando/go-keyring`](https://github.com/zalando/go-keyring) | OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) |
 | [`fyne.io/x/fyne`](https://github.com/fyne-io/fyne-x) | Fyne extension widgets (calendar date picker) |
 | `golang.org/x/text` | NFC Unicode normalization |
+| `golang.org/x/sys` | OS calls: Windows Desktop folder lookup (file dialogs), macOS atomic swap for in-app updates |
 | Go stdlib | `crypto/ed25519`, `crypto/sha256`, `encoding/json`, `encoding/base64` |
 
 ### TypeScript (verification library)
