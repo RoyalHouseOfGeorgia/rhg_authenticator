@@ -10,15 +10,19 @@ tags.
 
 ## [Unreleased]
 
+## [v1.5.2] — 2026-10-16
+
 ### Changed
 - **Version in the status bar.** The bar at the bottom of the window now shows
-  the app version (e.g. "Version 1.5.1") instead of the registry's last-update
+  the app version (e.g. "Version 1.5.2") instead of the registry's last-update
   date, online and offline. The Audit tab still lists registry changes with
   dates.
 - **Save dialogs reopen the last folder.** Save SVG, Save PNG, Export Issuance
   Log, Export Error Log and Export Results CSV — and the Bulk Sign file picker —
   now open in the folder you last used in a file dialog, and on the Desktop the
   first time (or if that folder is gone).
+- Dependency updates via Dependabot (Fyne 2.8.2, golang.org/x/sys 0.49,
+  golang.org/x/text 0.43; dev tooling: vitest 5.0.4, happy-dom 21).
 
 ## [v1.5.1] — 2026-10-13
 
@@ -357,7 +361,8 @@ verifying Royal honors.
 - SLSA build provenance attestations and `SHA256SUMS.txt` on all release
   binaries.
 
-[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.2...HEAD
+[v1.5.2]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.1...v1.5.2
 [v1.5.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.0...v1.5.1
 [v1.5.0]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.4...v1.5.0
 [v1.4]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.3.1...v1.4
