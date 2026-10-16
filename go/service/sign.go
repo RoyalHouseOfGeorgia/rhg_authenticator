@@ -1,4 +1,6 @@
-package gui
+// Package service holds the signing, bulk, PIN, YubiKey and registry logic
+// behind the RHG Authenticator user interface.
+package service
 
 import (
 	"errors"
@@ -14,6 +16,23 @@ import (
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/qr"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
+)
+
+// HonorTitles are the available credential honor designations.
+var HonorTitles = []string{
+	"Order of the Eagle of Georgia and the Seamless Tunic of Our Lord Jesus Christ",
+	"Order of the St. Queen Tamar of Georgia",
+	"Order of the Crown of Georgia",
+	"Medal of Merit of the Royal House of Georgia",
+	"Ennoblement",
+	"Appointment",
+	"Other",
+}
+
+// QR code output sizes.
+const (
+	qrPreviewPx = 512
+	QRSavePx    = 2048
 )
 
 // SignFlowPhase identifies a step in the signing flow for error classification.
@@ -152,7 +171,7 @@ func signAndLog(
 	return resp, nil
 }
 
-// executeSignFlow runs the signing workflow: check the issuance log for an
+// ExecuteSignFlow runs the signing workflow: check the issuance log for an
 // identical prior issuance, resolve PIN, open adapter, export key, sign, log,
 // generate QR, compute hash8.
 //
@@ -160,7 +179,7 @@ func signAndLog(
 // log append are all skipped; the response is rebuilt from the logged
 // signature and returned with Existing set. An unreadable log blocks signing
 // (ErrIssuanceLogUnreadable) since duplicates cannot be ruled out.
-func executeSignFlow(
+func ExecuteSignFlow(
 	req core.SignRequest,
 	logPath string,
 	openAdapter func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error),
@@ -196,7 +215,7 @@ func executeSignFlow(
 		pin, err := readPin()
 		if err != nil {
 			// ErrSigningCancelled / ErrPINEntryTimedOut / ErrPINCacheUnavailable
-			// are surfaced as-is; signFlowErrorMessage maps them via errors.Is.
+			// are surfaced as-is; SignFlowErrorMessage maps them via errors.Is.
 			return SignFlowResult{}, err
 		}
 
@@ -232,7 +251,7 @@ func executeSignFlow(
 	}, nil
 }
 
-// clearPINCacheOnAuthError clears the cached PIN when err is a PIV PIN
+// ClearPINCacheOnAuthError clears the cached PIN when err is a PIV PIN
 // authentication failure. MakePinReader caches the PIN at dialog submission,
 // before the YubiKey verifies it; on an authentication failure the cached
 // (wrong) PIN must be cleared so it is not silently replayed on retry — each
@@ -242,8 +261,36 @@ func executeSignFlow(
 // the Fyne closure. PinCache.Clear() is mutex-protected and callable off the UI
 // thread; it invalidates-and-zeroes without flipping the user's "remember"
 // preference.
-func clearPINCacheOnAuthError(err error, cache *yubikey.PinCache) {
+func ClearPINCacheOnAuthError(err error, cache *yubikey.PinCache) {
 	if err != nil && yubikey.IsPINAuthError(err) {
 		cache.Clear()
 	}
+}
+
+// ValidateSignForm checks that all required sign form fields are filled and valid.
+func ValidateSignForm(recipient, honor, detail, date string) error {
+	if strings.TrimSpace(recipient) == "" {
+		return fmt.Errorf("recipient is required")
+	}
+	if honor == "" {
+		return fmt.Errorf("honor title must be selected")
+	}
+	if strings.TrimSpace(detail) == "" {
+		return fmt.Errorf("detail is required")
+	}
+	if !core.IsValidDate(date) {
+		return fmt.Errorf("date must be in YYYY-MM-DD format and be a valid calendar date")
+	}
+	return nil
+}
+
+// BuildFilename constructs a default filename for saving QR code output.
+// Format: rhg-credential-<date>-<hash8>-<suffix>.<ext>
+// where suffix is "min3cm" for SVG and "2048px" for PNG.
+func BuildFilename(date, hash8, ext string) string {
+	suffix := "min3cm"
+	if ext == "png" {
+		suffix = "2048px"
+	}
+	return fmt.Sprintf("rhg-credential-%s-%s-%s.%s", date, hash8, suffix, ext)
 }

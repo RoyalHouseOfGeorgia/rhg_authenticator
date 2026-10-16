@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -18,8 +17,13 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/go-piv/piv-go/v2/piv"
+
 	"github.com/royalhouseofgeorgia/rhg-authenticator/bulk"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
+	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
@@ -131,113 +135,113 @@ func (h *bulkUIHarness) lastBusy(t *testing.T) bool {
 	return h.busy[len(h.busy)-1]
 }
 
-func TestBulkSummaryLine(t *testing.T) {
-	tests := []struct {
-		name string
-		c    bulk.Counts
-		want string
-	}{
-		{"zero", bulk.Counts{}, "Processed 0 rows: 0 successful (0 newly signed, 0 already issued), 0 invalid, 0 failed/not attempted."},
-		{
-			"mixed",
-			bulk.Counts{Total: 10, Signed: 3, AlreadyIssued: 2, Invalid: 1, Failed: 1, NotAttempted: 3},
-			"Processed 10 rows: 5 successful (3 newly signed, 2 already issued), 1 invalid, 4 failed/not attempted.",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := bulkSummaryLine(tt.c); got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
-		})
-	}
+// mockSignAdapter mirrors core/sign_test.go's mockAdapter.
+// Intentionally duplicated to keep test packages independent.
+type mockSignAdapter struct {
+	secretKey ed25519.PrivateKey
 }
 
-func TestBulkConfirmText(t *testing.T) {
-	toSign := func(name string) bulk.Result {
-		return bulk.Result{Req: core.SignRequest{Recipient: name}, Status: bulk.StatusToSign}
-	}
-	invalid := func(line int, msg string) bulk.Result {
-		r := bulk.Result{Status: bulk.StatusInvalid, Err: msg}
-		r.Line = line
-		return r
-	}
-	issued := bulk.Result{Req: core.SignRequest{Recipient: "Old"}, Status: bulk.StatusAlreadyIssued}
-
-	tests := []struct {
-		name        string
-		results     []bulk.Result
-		wantCounts  string
-		wantPreview []string
-		wantInvalid []string
-	}{
-		{"empty", nil, "0 rows: 0 to sign, 0 already issued, 0 invalid", nil, nil},
-		{
-			"mixed",
-			[]bulk.Result{toSign("Alice"), issued, invalid(4, "date: bad"), toSign("Bob")},
-			"4 rows: 2 to sign, 1 already issued, 1 invalid",
-			[]string{"Alice", "Bob"},
-			[]string{"line 4: date: bad"},
-		},
-		{
-			"preview capped at five",
-			[]bulk.Result{toSign("A"), toSign("B"), toSign("C"), toSign("D"), toSign("E"), toSign("F"), invalid(8, "x"), invalid(9, "y")},
-			"8 rows: 6 to sign, 0 already issued, 2 invalid",
-			[]string{"A", "B", "C", "D", "E"},
-			[]string{"line 8: x", "line 9: y"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			counts, preview, inv := bulkConfirmText(tt.results)
-			if counts != tt.wantCounts {
-				t.Errorf("counts = %q, want %q", counts, tt.wantCounts)
-			}
-			if strings.Join(preview, "|") != strings.Join(tt.wantPreview, "|") {
-				t.Errorf("preview = %v, want %v", preview, tt.wantPreview)
-			}
-			if strings.Join(inv, "|") != strings.Join(tt.wantInvalid, "|") {
-				t.Errorf("invalid = %v, want %v", inv, tt.wantInvalid)
-			}
-		})
-	}
+func (m *mockSignAdapter) ExportPublicKey() ([32]byte, error) {
+	var key [32]byte
+	copy(key[:], m.secretKey.Public().(ed25519.PublicKey))
+	return key, nil
 }
 
-func TestBulkResultsFilename(t *testing.T) {
-	tests := []struct {
-		name string
-		t    time.Time
-		want string
-	}{
-		{"utc", time.Date(2026, 9, 23, 7, 5, 9, 0, time.UTC), "rhg-bulk-results-2026-09-23-070509.csv"},
-		{"converted to utc", time.Date(2026, 1, 1, 1, 30, 0, 0, time.FixedZone("UTC+4", 4*3600)), "rhg-bulk-results-2025-12-31-213000.csv"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := bulkResultsFilename(tt.t); got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
-		})
-	}
+func (m *mockSignAdapter) SignBytes(data []byte) ([]byte, error) {
+	return ed25519.Sign(m.secretKey, data), nil
 }
 
-func TestSaveBulkResults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "results.csv")
-	results := []bulk.Result{{Req: core.SignRequest{Recipient: "Alice", Honor: "Other", Detail: "D", Date: "2026-03-14"}, Status: bulk.StatusSigned, URL: "https://example/v"}}
-	if err := saveBulkResults(path, results); err != nil {
-		t.Fatalf("saveBulkResults: %v", err)
-	}
-	got, err := os.ReadFile(path)
+// authErrSignAdapter has a valid ExportPublicKey but fails SignBytes with a
+// PIV PIN authentication error, as a wrong PIN would.
+type authErrSignAdapter struct {
+	secretKey ed25519.PrivateKey
+}
+
+func (a *authErrSignAdapter) ExportPublicKey() ([32]byte, error) {
+	var key [32]byte
+	copy(key[:], a.secretKey.Public().(ed25519.PublicKey))
+	return key, nil
+}
+
+func (a *authErrSignAdapter) SignBytes(data []byte) ([]byte, error) {
+	return nil, piv.AuthErr{Retries: 2}
+}
+
+// nopCloser wraps io.NopCloser for adapter closers.
+type nopCloser struct{}
+
+func (nopCloser) Close() error { return nil }
+
+// bulkHarness bundles a temp audit log, debug logger, and a call-counting
+// openAdapter fake backed by an in-test ed25519 key.
+type bulkHarness struct {
+	logPath   string
+	logger    *debuglog.Logger
+	priv      ed25519.PrivateKey
+	opens     int
+	newSigner func(ed25519.PrivateKey) core.SigningAdapter
+}
+
+func newBulkHarness(t *testing.T) *bulkHarness {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("GenerateKey: %v", err)
 	}
-	if !strings.Contains(string(got), "Alice,Other,D,2026-03-14,https://example/v,signed,") {
-		t.Errorf("unexpected CSV:\n%s", got)
-	}
-	if err := saveBulkResults(filepath.Join(t.TempDir(), "missing", "r.csv"), results); err == nil {
-		t.Error("expected error for unwritable path")
+	dir := t.TempDir()
+	return &bulkHarness{
+		logPath: filepath.Join(dir, "issuances.json"),
+		logger:  debuglog.New(filepath.Join(dir, "debug.log")),
+		priv:    priv,
+		newSigner: func(k ed25519.PrivateKey) core.SigningAdapter {
+			return &mockSignAdapter{secretKey: k}
+		},
 	}
 }
+
+func (h *bulkHarness) openAdapter(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+	h.opens++
+	return h.newSigner(h.priv), nopCloser{}, nil
+}
+
+func (h *bulkHarness) plan(t *testing.T, csvText string) []bulk.Result {
+	t.Helper()
+	results, err := service.LoadBulkPlan(strings.NewReader(csvText), h.logPath)
+	if err != nil {
+		t.Fatalf("LoadBulkPlan: %v", err)
+	}
+	return results
+}
+
+func (h *bulkHarness) logCount(t *testing.T) int {
+	t.Helper()
+	records, err := issuancelog.ReadLog(h.logPath)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	return len(records)
+}
+
+func statuses(results []bulk.Result) []string {
+	out := make([]string, len(results))
+	for i, r := range results {
+		out[i] = r.Status
+	}
+	return out
+}
+
+func assertStatuses(t *testing.T, results []bulk.Result, want ...string) {
+	t.Helper()
+	got := statuses(results)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("statuses = %v, want %v", got, want)
+	}
+}
+
+const threeRowCSV = "name,honor,detail,date\n" +
+	"Alice,Other,Service,2026-03-14\n" +
+	"Bob,Appointment,Advisor,2026-03-14\n" +
+	"Dave,Other,Help,2026-03-14\n"
 
 // TestBulkSign_ConfirmCancelClearsBusy: the confirm dialog lists counts,
 // preview names and invalid lines; Cancel re-enables the tab without

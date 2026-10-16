@@ -1,4 +1,4 @@
-package gui
+package service
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
-// --- formatKeyResult tests ---
+// --- FormatKeyResult tests ---
 
 func TestFormatKeyResult_Found(t *testing.T) {
 	to := "2027-12-31"
@@ -24,7 +24,7 @@ func TestFormatKeyResult_Found(t *testing.T) {
 		Fingerprint: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
 		Entry:       entry,
 	}
-	status, details := formatKeyResult(result)
+	status, details := FormatKeyResult(result)
 	if status != "Key found in registry" {
 		t.Errorf("status = %q, want %q", status, "Key found in registry")
 	}
@@ -53,7 +53,7 @@ func TestFormatKeyResult_NotFound(t *testing.T) {
 		Found:       false,
 		Fingerprint: "deadbeef" + strings.Repeat("00", 28),
 	}
-	status, details := formatKeyResult(result)
+	status, details := FormatKeyResult(result)
 	if status != "Key NOT found in registry" {
 		t.Errorf("status = %q, want %q", status, "Key NOT found in registry")
 	}
@@ -67,7 +67,7 @@ func TestFormatKeyResult_NotFound(t *testing.T) {
 
 func TestFormatKeyResult_Error_PCSC(t *testing.T) {
 	result := KeyCheckResult{Error: fmt.Errorf("yubikey: pcsc daemon not running")}
-	status, details := formatKeyResult(result)
+	status, details := FormatKeyResult(result)
 	if !strings.Contains(status, "Smart card service") {
 		t.Errorf("status should mention smart card service, got: %q", status)
 	}
@@ -78,7 +78,7 @@ func TestFormatKeyResult_Error_PCSC(t *testing.T) {
 
 func TestFormatKeyResult_Error_NoYubiKey(t *testing.T) {
 	result := KeyCheckResult{Error: fmt.Errorf("yubikey: no YubiKey detected")}
-	status, details := formatKeyResult(result)
+	status, details := FormatKeyResult(result)
 	if !strings.Contains(status, "plug in") {
 		t.Errorf("status should mention 'plug in', got: %q", status)
 	}
@@ -91,7 +91,7 @@ func TestFormatKeyResult_Error_Transient(t *testing.T) {
 	// A card reset must surface the canonical reset message, even though
 	// "verify pin" appears in the wrapped error chain.
 	result := KeyCheckResult{Error: errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid")}
-	status, details := formatKeyResult(result)
+	status, details := FormatKeyResult(result)
 	if status != core.MsgYubiKeyReset {
 		t.Errorf("status = %q, want %q", status, core.MsgYubiKeyReset)
 	}
@@ -112,7 +112,7 @@ func TestFormatKeyResult_NoExpiry(t *testing.T) {
 		Fingerprint: strings.Repeat("aa", 32),
 		Entry:       entry,
 	}
-	status, details := formatKeyResult(result)
+	status, details := FormatKeyResult(result)
 	if status != "Key found in registry" {
 		t.Errorf("status = %q, want %q", status, "Key found in registry")
 	}
@@ -140,7 +140,7 @@ func TestFormatKeyResult_WithNote(t *testing.T) {
 		Fingerprint: strings.Repeat("bb", 32),
 		Entry:       entry,
 	}
-	_, details := formatKeyResult(result)
+	_, details := FormatKeyResult(result)
 	foundNote := false
 	for _, d := range details {
 		if strings.HasPrefix(d, "Note: ") {
@@ -168,7 +168,7 @@ func TestFormatKeyResult_EmptyNote(t *testing.T) {
 		Fingerprint: strings.Repeat("cc", 32),
 		Entry:       entry,
 	}
-	_, details := formatKeyResult(result)
+	_, details := FormatKeyResult(result)
 	for _, d := range details {
 		if strings.HasPrefix(d, "Note: ") {
 			t.Errorf("whitespace-only note should be omitted, but found: %q", d)

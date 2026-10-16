@@ -1,11 +1,9 @@
 package gui
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -18,12 +16,9 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/bulk"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
-
-// bulkPreviewNames is how many to_sign recipient names the confirm dialog
-// shows, so the operator can spot a mis-encoded file before signing.
-const bulkPreviewNames = 5
 
 // bulkSignDeps holds what the bulk sign UI flow needs from the Sign tab.
 type bulkSignDeps struct {
@@ -58,7 +53,7 @@ func onBulkFileChosen(d bulkSignDeps, reader fyne.URIReadCloser, err error) {
 		return
 	}
 	d.launchGo(func() {
-		results, loadErr := loadBulkPlan(reader, d.logPath)
+		results, loadErr := service.LoadBulkPlan(reader, d.logPath)
 		_ = reader.Close()
 		if loadErr != nil {
 			fyne.Do(func() {
@@ -79,7 +74,7 @@ func confirmBulkSign(d bulkSignDeps, results []bulk.Result) {
 		return
 	}
 
-	counts, preview, invalid := bulkConfirmText(results)
+	counts, preview, invalid := service.BulkConfirmText(results)
 	items := []fyne.CanvasObject{
 		widget.NewLabel(counts),
 		widget.NewLabel("First names to be signed:"),
@@ -136,8 +131,8 @@ func runBulkSignWorker(ctx context.Context, cancel context.CancelFunc, d bulkSig
 		})
 	}
 
-	err := runBulkFlow(ctx, results, d.logPath, d.openAdapter, MakePinReader(d.window, d.pinCache), onConnecting, onProgress, d.logger)
-	clearPINCacheOnAuthError(err, d.pinCache)
+	err := service.RunBulkFlow(ctx, results, d.logPath, d.openAdapter, MakePinReader(d.window, d.pinCache), onConnecting, onProgress, d.logger)
+	service.ClearPINCacheOnAuthError(err, d.pinCache)
 	cancel()
 
 	fyne.Do(func() {
@@ -152,15 +147,15 @@ func runBulkSignWorker(ctx context.Context, cancel context.CancelFunc, d bulkSig
 // it re-enables the Sign tab. UI thread only.
 func showBulkSummary(d bulkSignDeps, results []bulk.Result, stopErr error) {
 	items := []fyne.CanvasObject{}
-	summary := widget.NewLabel(bulkSummaryLine(bulk.Summarize(results)))
+	summary := widget.NewLabel(service.BulkSummaryLine(bulk.Summarize(results)))
 	summary.Wrapping = fyne.TextWrapWord
 	items = append(items, summary)
-	if msg := bulkStopMessage(stopErr, d.logger); msg != "" {
+	if msg := service.BulkStopMessage(stopErr, d.logger); msg != "" {
 		stop := widget.NewLabel(msg)
 		stop.Wrapping = fyne.TextWrapWord
 		items = append(items, stop)
 	}
-	if _, _, invalid := bulkConfirmText(results); len(invalid) > 0 {
+	if _, _, invalid := service.BulkConfirmText(results); len(invalid) > 0 {
 		items = append(items, invalidRowsView("Invalid rows (skipped):", invalid)...)
 	}
 
@@ -168,7 +163,7 @@ func showBulkSummary(d bulkSignDeps, results []bulk.Result, stopErr error) {
 		saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 			onBulkExportChosen(d, results, writer, err)
 		}, d.window)
-		saveDialog.SetFileName(bulkResultsFilename(time.Now()))
+		saveDialog.SetFileName(service.BulkResultsFilename(time.Now()))
 		saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
 		setDialogLocation(saveDialog)
 		saveDialog.Show()
@@ -201,48 +196,8 @@ func onBulkExportChosen(d bulkSignDeps, results []bulk.Result, writer fyne.URIWr
 		return
 	}
 	defer writer.Close()
-	if saveErr := saveBulkResults(writer.URI().Path(), results); saveErr != nil {
+	if saveErr := service.SaveBulkResults(writer.URI().Path(), results); saveErr != nil {
 		d.logger.Log("bulk results save failed: " + core.SanitizeForLog(saveErr.Error()))
 		dialog.ShowError(fmt.Errorf("failed to save results file"), d.window)
 	}
-}
-
-// saveBulkResults renders results as CSV and writes them to path.
-func saveBulkResults(path string, results []bulk.Result) error {
-	var buf bytes.Buffer
-	if err := bulk.WriteResultCSV(&buf, results); err != nil {
-		return err
-	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
-}
-
-// bulkSummaryLine formats the per-status tally shown after a batch.
-func bulkSummaryLine(c bulk.Counts) string {
-	return fmt.Sprintf("Processed %d rows: %d successful (%d newly signed, %d already issued), %d invalid, %d failed/not attempted.",
-		c.Total, c.Successful(), c.Signed, c.AlreadyIssued, c.Invalid, c.Failed+c.NotAttempted)
-}
-
-// bulkConfirmText returns the confirm dialog's counts line, up to
-// bulkPreviewNames to_sign recipient names, and one "line N: <error>" entry
-// per invalid row.
-func bulkConfirmText(results []bulk.Result) (counts string, preview []string, invalid []string) {
-	c := bulk.Summarize(results)
-	counts = fmt.Sprintf("%d rows: %d to sign, %d already issued, %d invalid", c.Total, c.ToSign, c.AlreadyIssued, c.Invalid)
-	for _, r := range results {
-		switch r.Status {
-		case bulk.StatusToSign:
-			if len(preview) < bulkPreviewNames {
-				preview = append(preview, r.Req.Recipient)
-			}
-		case bulk.StatusInvalid:
-			invalid = append(invalid, fmt.Sprintf("line %d: %s", r.Line, r.Err))
-		}
-	}
-	return counts, preview, invalid
-}
-
-// bulkResultsFilename returns the default export name for a results CSV,
-// timestamped in UTC.
-func bulkResultsFilename(t time.Time) string {
-	return t.UTC().Format("rhg-bulk-results-2006-01-02-150405.csv")
 }
