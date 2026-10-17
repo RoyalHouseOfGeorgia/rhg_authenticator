@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
 // newTestRegistryTab creates a minimal RegistryTab with a test window for
@@ -313,7 +314,7 @@ func TestHandleSubmitError_RegistryChanged(t *testing.T) {
 	rt.state.loggedIn = true
 	rt.state.githubToken = ghapi.Token{AccessToken: "gho_valid"}
 
-	rt.handleSubmitError(fmt.Errorf("submit: %w", errRegistryChanged))
+	rt.handleSubmitError(fmt.Errorf("submit: %w", service.ErrRegistryChanged))
 
 	// The specific dialog (not the generic "Submission Failed") must be shown.
 	top := rt.window.Canvas().Overlays().Top()
@@ -324,7 +325,7 @@ func TestHandleSubmitError_RegistryChanged(t *testing.T) {
 		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
 	}
 	if !rt.state.loggedIn || rt.state.githubToken.AccessToken != "gho_valid" {
-		t.Error("errRegistryChanged must not clear login state")
+		t.Error("ErrRegistryChanged must not clear login state")
 	}
 }
 

@@ -1,4 +1,4 @@
-package regmgr
+package service
 
 import (
 	"context"
@@ -296,9 +296,9 @@ func TestSubmitRegistry_UpstreamUnchanged_CreatesPR(t *testing.T) {
 	}
 
 	f, client := newSubmitFake(t, upstream, http.StatusOK)
-	pr, err := submitRegistry(context.Background(), client, base, content, "Registry update")
+	pr, err := SubmitRegistry(context.Background(), client, base, content, "Registry update")
 	if err != nil {
-		t.Fatalf("submitRegistry: %v", err)
+		t.Fatalf("SubmitRegistry: %v", err)
 	}
 	if pr.Number != 7 {
 		t.Errorf("PR number = %d, want 7", pr.Number)
@@ -329,9 +329,9 @@ func TestSubmitRegistry_UpstreamChanged_Refuses(t *testing.T) {
 	}
 
 	f, client := newSubmitFake(t, upstream, http.StatusOK)
-	_, err = submitRegistry(context.Background(), client, base, base, "Registry update")
-	if !errors.Is(err, errRegistryChanged) {
-		t.Fatalf("err = %v, want errRegistryChanged", err)
+	_, err = SubmitRegistry(context.Background(), client, base, base, "Registry update")
+	if !errors.Is(err, ErrRegistryChanged) {
+		t.Fatalf("err = %v, want ErrRegistryChanged", err)
 	}
 	upstreamOnly(t, f)
 }
@@ -344,9 +344,9 @@ func TestSubmitRegistry_EmptyBase_Refuses(t *testing.T) {
 	}
 
 	f, client := newSubmitFake(t, upstream, http.StatusOK)
-	_, err = submitRegistry(context.Background(), client, nil, upstream, "Registry update")
-	if !errors.Is(err, errRegistryChanged) {
-		t.Fatalf("err = %v, want errRegistryChanged", err)
+	_, err = SubmitRegistry(context.Background(), client, nil, upstream, "Registry update")
+	if !errors.Is(err, ErrRegistryChanged) {
+		t.Fatalf("err = %v, want ErrRegistryChanged", err)
 	}
 	upstreamOnly(t, f)
 }
@@ -369,12 +369,12 @@ func TestSubmitRegistry_UpstreamErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f, client := newSubmitFake(t, tc.upstream, tc.status)
-			_, err := submitRegistry(context.Background(), client, base, base, "Registry update")
+			_, err := SubmitRegistry(context.Background(), client, base, base, "Registry update")
 			if err == nil || !strings.Contains(err.Error(), tc.wantMsg) {
 				t.Fatalf("err = %v, want containing %q", err, tc.wantMsg)
 			}
-			if errors.Is(err, errRegistryChanged) {
-				t.Error("upstream failure must not be reported as errRegistryChanged")
+			if errors.Is(err, ErrRegistryChanged) {
+				t.Error("upstream failure must not be reported as ErrRegistryChanged")
 			}
 			upstreamOnly(t, f)
 		})
@@ -390,9 +390,9 @@ func TestFetchRegistry_LoggedInReadsMainViaAPI(t *testing.T) {
 	}
 	f, client := newSubmitFake(t, up, http.StatusOK)
 
-	got, err := fetchRegistry(client)
+	got, err := FetchRegistry(client)
 	if err != nil {
-		t.Fatalf("fetchRegistry: %v", err)
+		t.Fatalf("FetchRegistry: %v", err)
 	}
 	if len(got.Keys) != 1 || got.Keys[0].Authority != "Key X" {
 		t.Errorf("got %+v, want the upstream registry", got.Keys)

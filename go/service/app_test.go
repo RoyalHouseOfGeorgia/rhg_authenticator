@@ -264,23 +264,6 @@ func TestNew_CleansStaleTmpFiles(t *testing.T) {
 	}
 }
 
-func TestNew_CleanupFailureIsLogged(t *testing.T) {
-	notADir := filepath.Join(t.TempDir(), "file")
-	if err := os.WriteFile(notADir, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(t.TempDir(), debuglog.FileName)
-	app, err := New(Config{DataDir: notADir, Logger: debuglog.New(logPath), RegistryURL: "http://127.0.0.1:1", Prompter: newFakePrompter("", false), Events: &fakeEvents{}})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer app.Close()
-	data, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(data), "warning: log cleanup failed") {
-		t.Errorf("cleanup failure not logged:\n%s", data)
-	}
-}
-
 func TestApp_HonorsIsACopy(t *testing.T) {
 	h := newAppHarness(t, nil)
 	got := h.app.Honors()

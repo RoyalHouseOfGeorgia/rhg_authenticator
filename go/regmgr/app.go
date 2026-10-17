@@ -1,15 +1,12 @@
 package regmgr
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/url"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -23,8 +20,8 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
 // appState holds the mutable state for the registry manager UI.
@@ -38,16 +35,12 @@ type appState struct {
 	loggedIn    bool
 	offline     bool
 	githubUser  string
-	// baseBytes is the MarshalRegistry output of the registry as loaded by
+	// baseBytes is the service.MarshalRegistry output of the registry as loaded by
 	// Fetch (from main via the API when logged in, else the Pages copy, which
 	// lags main for 10–15 min after a merge); nil = not loaded. Submit refuses
 	// unless main still matches it.
 	baseBytes []byte
 }
-
-// errRegistryChanged is returned by submitRegistry when upstream's registry no
-// longer matches the snapshot the local edits were based on (or none was loaded).
-var errRegistryChanged = errors.New("registry on GitHub does not match the loaded snapshot")
 
 // restoreSessionFunc is the session-restore implementation; a package-level
 // var so tests can stub the network/keyring round trip.
@@ -58,11 +51,6 @@ var tableColumns = []string{"#", "Authority", "From", "To", "Restrictions", "Not
 
 // tableColumnWidths defines the minimum widths for each table column.
 var tableColumnWidths = []float32{40, 200, 100, 100, 150, 200, 450}
-
-// canSave returns whether the registry has entries that can be saved.
-func canSave(reg core.Registry) bool {
-	return len(reg.Keys) > 0
-}
 
 // RegistryTab holds the registry manager UI and its state.
 type RegistryTab struct {
@@ -115,10 +103,10 @@ func (rt *RegistryTab) Fetch() {
 	// API attempt and its timeout and goes straight to the Pages copy).
 	client := rt.GitHubClient()
 	safego.Go(func() {
-		reg, err := fetchRegistry(client)
+		reg, err := service.FetchRegistry(client)
 		var base []byte
 		if err == nil {
-			base, err = MarshalRegistry(reg)
+			base, err = service.MarshalRegistry(reg)
 		}
 		fyne.Do(func() {
 			if err != nil {
@@ -138,35 +126,6 @@ func (rt *RegistryTab) Fetch() {
 			rt.statusLabel.SetText("Loaded from registry server")
 		})
 	})
-}
-
-// fetchRegistry loads the registry from main via the GitHub API when a client
-// is available, so the submit check compares like with like and isn't tripped
-// by the Pages deploy lag after a merge. Logged out (or if the API read fails)
-// it falls back to the published Pages copy.
-func fetchRegistry(client *ghapi.Client) (core.Registry, error) {
-	if client != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		up, err := client.FetchUpstreamFile(ctx, ghapi.RegistryFilePath)
-		if err == nil {
-			return core.ValidateRegistry(up)
-		}
-		log.Printf("warning: registry fetch from GitHub failed, using site copy: %s", core.SanitizeForLog(err.Error()))
-	}
-	return registry.FetchRegistry(registry.DefaultRegistryURL)
-}
-
-// resolveLoginState determines the login display state from validation results.
-// Pure function — no side effects, no ghapi dependency in the body.
-func resolveLoginState(isUnauthorized bool, username string, hasError bool) (loggedIn, offline bool, statusText string) {
-	if isUnauthorized {
-		return false, false, "Not logged in"
-	}
-	if hasError {
-		return true, true, "GitHub unreachable"
-	}
-	return true, false, "Logged in as @" + username
 }
 
 // updateLoginUI updates the login button text to reflect current auth state.
@@ -205,10 +164,10 @@ func (rt *RegistryTab) handlePollError(ctx context.Context, err error) {
 	rt.statusLabel.SetText("")
 }
 
-// completeLogin saves the token, updates UI state via resolveLoginState,
+// completeLogin saves the token, updates UI state via service.ResolveLoginState,
 // and cancels the login context. Must be called on the Fyne main thread.
 func (rt *RegistryTab) completeLogin(tok ghapi.Token, username string, valErr error, cancel context.CancelFunc) {
-	loggedIn, offline, statusText := resolveLoginState(
+	loggedIn, offline, statusText := service.ResolveLoginState(
 		ghapi.IsUnauthorized(valErr), username, valErr != nil,
 	)
 	if loggedIn {
@@ -415,7 +374,7 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 		rt.HandleUnauthorized()
 		return
 	}
-	if errors.Is(err, errRegistryChanged) {
+	if errors.Is(err, service.ErrRegistryChanged) {
 		log.Printf("warning: registry submit refused: %s", core.SanitizeForLog(err.Error()))
 		dialog.ShowInformation("Registry Changed",
 			"The registry on GitHub doesn't match the copy you loaded (it changed, or nothing was loaded). Click Fetch from Server, re-apply your edits, and submit again.", rt.window)
@@ -428,22 +387,13 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 	rt.statusLabel.SetText("")
 }
 
-// isSafeGitHubURL checks whether a URL points to GitHub over HTTPS and is safe to open.
-func isSafeGitHubURL(rawURL string) (*url.URL, bool) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, false
-	}
-	return u, u.Scheme == "https" && ghapi.IsGitHubHost(u.Host)
-}
-
 // handleSubmitSuccess parses the PR URL and shows a success dialog.
 // Must be called on the Fyne main thread.
 func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
 	rt.state.dirty = false
 	rt.statusLabel.SetText(fmt.Sprintf("PR #%d created", pr.Number))
 
-	prURL, ok := isSafeGitHubURL(pr.HTMLURL)
+	prURL, ok := service.IsSafeGitHubURL(pr.HTMLURL)
 	if ok {
 		dialog.ShowConfirm("Pull Request Created",
 			fmt.Sprintf("PR #%d has been created.\n\nOpen in browser?", pr.Number),
@@ -458,32 +408,9 @@ func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
 	}
 }
 
-// submitRegistry refuses to open a PR if upstream's registry no longer matches
-// the snapshot the edits were based on (base), so a stale fetch can't silently
-// undo another change. Both sides go through MarshalRegistry, so whitespace and
-// line endings don't matter.
-func submitRegistry(ctx context.Context, client *ghapi.Client, base, content []byte, title string) (ghapi.PRResult, error) {
-	up, err := client.FetchUpstreamFile(ctx, ghapi.RegistryFilePath)
-	if err != nil {
-		return ghapi.PRResult{}, fmt.Errorf("fetching upstream registry: %w", err)
-	}
-	reg, err := core.ValidateRegistry(up)
-	if err != nil {
-		return ghapi.PRResult{}, fmt.Errorf("validating upstream registry: %w", err)
-	}
-	upBytes, err := MarshalRegistry(reg)
-	if err != nil {
-		return ghapi.PRResult{}, fmt.Errorf("re-marshaling upstream registry: %w", err)
-	}
-	if len(base) == 0 || !bytes.Equal(upBytes, base) {
-		return ghapi.PRResult{}, errRegistryChanged
-	}
-	return client.CreateRegistryPR(ctx, content, title)
-}
-
 // submitForReview marshals the registry and creates a GitHub pull request.
 func (rt *RegistryTab) submitForReview() {
-	if !canSave(rt.state.registry) {
+	if !service.CanSave(rt.state.registry) {
 		return
 	}
 	if !rt.state.loggedIn || rt.state.offline {
@@ -497,7 +424,7 @@ func (rt *RegistryTab) submitForReview() {
 	// Marshal inside fyne.Do to avoid sharing the registry slice/pointer fields
 	// with the background goroutine. []byte is immutable once created.
 	fyne.Do(func() {
-		content, err := MarshalRegistry(rt.state.registry)
+		content, err := service.MarshalRegistry(rt.state.registry)
 		if err != nil {
 			rt.submitting.Store(false)
 			dialog.ShowError(fmt.Errorf("marshal failed: %w", err), rt.window)
@@ -515,7 +442,7 @@ func (rt *RegistryTab) submitForReview() {
 			defer submitCancel()
 
 			client := ghapi.NewClient(token)
-			pr, err := submitRegistry(submitCtx, client, base, content, "Registry update")
+			pr, err := service.SubmitRegistry(submitCtx, client, base, content, "Registry update")
 			if err != nil {
 				fyne.Do(func() { rt.handleSubmitError(err) })
 				return
@@ -524,72 +451,6 @@ func (rt *RegistryTab) submitForReview() {
 			fyne.Do(func() { rt.handleSubmitSuccess(pr) })
 		})
 	})
-}
-
-// restrictionsText renders a key's allowed_honors using the same rules as
-// the verify page (src/registry.ts): "(none)" when unrestricted (absent,
-// null, [] or all blank), "(invalid)" when the verify page would reject it,
-// otherwise the non-blank honors joined by ", ".
-func restrictionsText(entry core.KeyEntry) string {
-	raw, ok := entry.Extra["allowed_honors"]
-	if !ok {
-		return "(none)"
-	}
-	var items []any
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return "(invalid)"
-	}
-	kept := make([]string, 0, len(items))
-	for _, item := range items {
-		h, isString := item.(string)
-		if !isString {
-			return "(invalid)"
-		}
-		if core.StripControlChars(h) != h {
-			return "(invalid)"
-		}
-		trimmed := core.TrimJS(h)
-		if trimmed == "" {
-			continue
-		}
-		if h != trimmed {
-			return "(invalid)"
-		}
-		kept = append(kept, h)
-	}
-	if len(kept) == 0 {
-		return "(none)"
-	}
-	return strings.Join(kept, ", ")
-}
-
-// entryCellText returns the display text for a registry table cell.
-// entryIdx is the 0-based index into registry.Keys.
-func entryCellText(entry core.KeyEntry, col, entryIdx int, fpCache map[int]string) string {
-	switch col {
-	case 0:
-		return fmt.Sprintf("%d", entryIdx+1)
-	case 1:
-		return entry.Authority
-	case 2:
-		return core.FormatDateDisplay(entry.From)
-	case 3:
-		if entry.To != nil {
-			return core.FormatDateDisplay(*entry.To)
-		}
-		return "(none)"
-	case 4:
-		return restrictionsText(entry)
-	case 5:
-		return entry.Note
-	case 6:
-		if fp, ok := fpCache[entryIdx]; ok {
-			return fp
-		}
-		return "(invalid key)"
-	default:
-		return ""
-	}
 }
 
 // NewRegistryTab creates the registry manager UI as a tab.
@@ -636,7 +497,7 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 			}
 			label.TextStyle = fyne.TextStyle{}
 			entry := state.registry.Keys[id.Row-1]
-			label.SetText(entryCellText(entry, id.Col, id.Row-1, fingerprintCache))
+			label.SetText(service.EntryCellText(entry, id.Col, id.Row-1, fingerprintCache))
 		},
 	)
 
@@ -654,7 +515,7 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 		state.selected = id.Row - 1 // convert to 0-based index into Keys
 		if id.Row > 0 && id.Row-1 < len(state.registry.Keys) {
 			entry := state.registry.Keys[id.Row-1]
-			cellText := entryCellText(entry, id.Col, id.Row-1, fingerprintCache)
+			cellText := service.EntryCellText(entry, id.Col, id.Row-1, fingerprintCache)
 			if cellText != "" {
 				statusLabel.SetText(cellText)
 			}

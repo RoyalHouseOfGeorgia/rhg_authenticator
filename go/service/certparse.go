@@ -1,4 +1,4 @@
-package regmgr
+package service
 
 import (
 	"crypto/ed25519"
