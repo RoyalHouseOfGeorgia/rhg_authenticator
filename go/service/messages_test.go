@@ -22,17 +22,17 @@ func resetErr() error {
 	return errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid")
 }
 
-// --- ValidateSignForm tests ---
+// --- validateSignForm tests ---
 
 func TestValidateSignForm_AllValid(t *testing.T) {
-	err := ValidateSignForm("John Doe", HonorTitles[0], "For service", "2026-03-14")
+	err := validateSignForm("John Doe", honorTitles[0], "For service", "2026-03-14")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateSignForm_EmptyRecipient(t *testing.T) {
-	err := ValidateSignForm("", HonorTitles[0], "Detail", "2026-03-14")
+	err := validateSignForm("", honorTitles[0], "Detail", "2026-03-14")
 	if err == nil {
 		t.Fatal("expected error for empty recipient")
 	}
@@ -42,14 +42,14 @@ func TestValidateSignForm_EmptyRecipient(t *testing.T) {
 }
 
 func TestValidateSignForm_WhitespaceOnlyRecipient(t *testing.T) {
-	err := ValidateSignForm("   ", HonorTitles[0], "Detail", "2026-03-14")
+	err := validateSignForm("   ", honorTitles[0], "Detail", "2026-03-14")
 	if err == nil {
 		t.Fatal("expected error for whitespace-only recipient")
 	}
 }
 
 func TestValidateSignForm_NoHonorSelected(t *testing.T) {
-	err := ValidateSignForm("John Doe", "", "Detail", "2026-03-14")
+	err := validateSignForm("John Doe", "", "Detail", "2026-03-14")
 	if err == nil {
 		t.Fatal("expected error for empty honor")
 	}
@@ -59,7 +59,7 @@ func TestValidateSignForm_NoHonorSelected(t *testing.T) {
 }
 
 func TestValidateSignForm_EmptyDetail(t *testing.T) {
-	err := ValidateSignForm("John Doe", HonorTitles[0], "", "2026-03-14")
+	err := validateSignForm("John Doe", honorTitles[0], "", "2026-03-14")
 	if err == nil {
 		t.Fatal("expected error for empty detail")
 	}
@@ -69,14 +69,14 @@ func TestValidateSignForm_EmptyDetail(t *testing.T) {
 }
 
 func TestValidateSignForm_WhitespaceOnlyDetail(t *testing.T) {
-	err := ValidateSignForm("John Doe", HonorTitles[0], "  \t ", "2026-03-14")
+	err := validateSignForm("John Doe", honorTitles[0], "  \t ", "2026-03-14")
 	if err == nil {
 		t.Fatal("expected error for whitespace-only detail")
 	}
 }
 
 func TestValidateSignForm_InvalidDate_BadFormat(t *testing.T) {
-	err := ValidateSignForm("John Doe", HonorTitles[0], "Detail", "not-a-date")
+	err := validateSignForm("John Doe", honorTitles[0], "Detail", "not-a-date")
 	if err == nil {
 		t.Fatal("expected error for invalid date")
 	}
@@ -86,21 +86,21 @@ func TestValidateSignForm_InvalidDate_BadFormat(t *testing.T) {
 }
 
 func TestValidateSignForm_InvalidDate_Feb30(t *testing.T) {
-	err := ValidateSignForm("John Doe", HonorTitles[0], "Detail", "2026-02-30")
+	err := validateSignForm("John Doe", honorTitles[0], "Detail", "2026-02-30")
 	if err == nil {
 		t.Fatal("expected error for Feb 30")
 	}
 }
 
 func TestValidateSignForm_InvalidDate_Empty(t *testing.T) {
-	err := ValidateSignForm("John Doe", HonorTitles[0], "Detail", "")
+	err := validateSignForm("John Doe", honorTitles[0], "Detail", "")
 	if err == nil {
 		t.Fatal("expected error for empty date")
 	}
 }
 
 func TestValidateSignForm_ValidLeapYear(t *testing.T) {
-	err := ValidateSignForm("John Doe", HonorTitles[0], "Detail", "2024-02-29")
+	err := validateSignForm("John Doe", honorTitles[0], "Detail", "2024-02-29")
 	if err != nil {
 		t.Fatalf("unexpected error for valid leap year date: %v", err)
 	}
@@ -133,25 +133,25 @@ func TestBuildFilename_OtherExt(t *testing.T) {
 	}
 }
 
-// --- HonorTitles constant tests ---
+// --- honorTitles constant tests ---
 
 func TestHonorTitles_Count(t *testing.T) {
-	if len(HonorTitles) != 7 {
-		t.Errorf("HonorTitles count = %d, want 7", len(HonorTitles))
+	if len(honorTitles) != 7 {
+		t.Errorf("honorTitles count = %d, want 7", len(honorTitles))
 	}
 }
 
 func TestHonorTitles_NotEmpty(t *testing.T) {
-	for i, title := range HonorTitles {
+	for i, title := range honorTitles {
 		if strings.TrimSpace(title) == "" {
-			t.Errorf("HonorTitles[%d] is empty", i)
+			t.Errorf("honorTitles[%d] is empty", i)
 		}
 	}
 }
 
 func TestHonorTitles_NoDuplicates(t *testing.T) {
 	seen := make(map[string]bool)
-	for _, title := range HonorTitles {
+	for _, title := range honorTitles {
 		if seen[title] {
 			t.Errorf("duplicate honor title: %q", title)
 		}
@@ -161,27 +161,27 @@ func TestHonorTitles_NoDuplicates(t *testing.T) {
 
 func TestHonorTitles_Contains_Eagle(t *testing.T) {
 	found := false
-	for _, title := range HonorTitles {
+	for _, title := range honorTitles {
 		if strings.Contains(title, "Eagle") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("HonorTitles should contain the Eagle order")
+		t.Error("honorTitles should contain the Eagle order")
 	}
 }
 
 func TestHonorTitles_Contains_Ennoblement(t *testing.T) {
 	found := false
-	for _, title := range HonorTitles {
+	for _, title := range honorTitles {
 		if title == "Ennoblement" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("HonorTitles should contain Ennoblement")
+		t.Error("honorTitles should contain Ennoblement")
 	}
 }
 
@@ -264,54 +264,36 @@ func TestSanitizeError_Transient(t *testing.T) {
 
 // --- friendlyYubiKeyError tests ---
 
-func TestFriendlyYubiKeyError_Nil(t *testing.T) {
-	got := friendlyYubiKeyError(nil, nil)
-	if got != "Unknown YubiKey error" {
-		t.Errorf("got %q, want %q", got, "Unknown YubiKey error")
-	}
-}
-
 func TestFriendlyYubiKeyError_YubiKeyError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("no YubiKey detected"), nil)
+	got := friendlyYubiKeyError(fmt.Errorf("no YubiKey detected"))
 	if !strings.Contains(got, "not detected") {
 		t.Errorf("expected 'not detected' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_CardError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("smart card not found"), nil)
+	got := friendlyYubiKeyError(fmt.Errorf("smart card not found"))
 	if !strings.Contains(got, "not detected") {
 		t.Errorf("expected 'not detected' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_PCSCError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("pcsc daemon not running"), nil)
+	got := friendlyYubiKeyError(fmt.Errorf("pcsc daemon not running"))
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected 'Smart card service' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_SCARDError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("scard: service not available"), nil)
+	got := friendlyYubiKeyError(fmt.Errorf("scard: service not available"))
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected 'Smart card service' message, got: %q", got)
 	}
 }
 
-func TestFriendlyYubiKeyError_Transient(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := friendlyYubiKeyError(resetErr(), logger)
-	if got != core.MsgYubiKeyReset {
-		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
-	}
-}
-
 func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := friendlyYubiKeyError(fmt.Errorf("unexpected failure"), logger)
+	got := friendlyYubiKeyError(fmt.Errorf("unexpected failure"))
 	if !strings.Contains(got, "Failed to connect") {
 		t.Errorf("expected 'Failed to connect' message, got: %q", got)
 	}
@@ -320,62 +302,26 @@ func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 	}
 }
 
-func TestFriendlyYubiKeyError_LogsActualError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logPath := filepath.Join(tmpDir, "debug.log")
-	logger := debuglog.New(logPath)
-
-	friendlyYubiKeyError(fmt.Errorf("unexpected failure"), logger)
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("debug log file not created: %v", err)
-	}
-	content := string(data)
-	// The debug log must contain the actual error for diagnosis.
-	if !strings.Contains(content, "yubikey: unexpected failure") {
-		t.Errorf("debug log should contain actual error, got: %q", content)
-	}
-}
-
-func TestFriendlyYubiKeyError_LogsHardwareError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logPath := filepath.Join(tmpDir, "debug.log")
-	logger := debuglog.New(logPath)
-
-	friendlyYubiKeyError(fmt.Errorf("failed to open YubiKey: no YubiKey found among 0 smart card(s)"), logger)
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("debug log file not created: %v", err)
-	}
-	content := string(data)
-	// Classified hardware errors must also be logged for diagnosis.
-	if !strings.Contains(content, "no YubiKey found") {
-		t.Errorf("debug log should contain actual error, got: %q", content)
-	}
-}
-
-// --- SignFlowErrorMessage tests ---
+// --- signFlowErrorMessage tests ---
 
 func TestSignFlowErrorMessage_ExportPublicKey(t *testing.T) {
-	err := &SignFlowError{Phase: PhaseExportKey, Err: fmt.Errorf("hardware failure")}
-	got := SignFlowErrorMessage(err, nil)
+	err := &signFlowError{Phase: phaseExportKey, Err: fmt.Errorf("hardware failure")}
+	got := signFlowErrorMessage(err, nil)
 	if !strings.Contains(got, "Failed to read YubiKey") {
 		t.Errorf("expected YubiKey read failure message, got: %q", got)
 	}
 }
 
 func TestSignFlowErrorMessage_QRGeneration(t *testing.T) {
-	err := &SignFlowError{Phase: PhaseQR, Err: fmt.Errorf("encode failed")}
-	got := SignFlowErrorMessage(err, nil)
+	err := &signFlowError{Phase: phaseQR, Err: fmt.Errorf("encode failed")}
+	got := signFlowErrorMessage(err, nil)
 	if !strings.Contains(got, "QR generation failed") {
 		t.Errorf("expected QR failure message, got: %q", got)
 	}
 }
 
 func TestSignFlowErrorMessage_YubiKeyAdapter(t *testing.T) {
-	got := SignFlowErrorMessage(fmt.Errorf("pcsc daemon not running"), nil)
+	got := signFlowErrorMessage(fmt.Errorf("pcsc daemon not running"), nil)
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected smart card service message, got: %q", got)
 	}
@@ -384,8 +330,8 @@ func TestSignFlowErrorMessage_YubiKeyAdapter(t *testing.T) {
 func TestSignFlowErrorMessage_SignError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	sfe := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("hardware fault")}
-	got := SignFlowErrorMessage(sfe, logger)
+	sfe := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("hardware fault")}
+	got := signFlowErrorMessage(sfe, logger)
 	if !strings.Contains(got, "Signing failed") {
 		t.Errorf("expected 'Signing failed' message, got: %q", got)
 	}
@@ -402,8 +348,8 @@ func TestSignFlowErrorMessage_SignError(t *testing.T) {
 func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	sfe := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("some error")}
-	SignFlowErrorMessage(sfe, logger)
+	sfe := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("some error")}
+	signFlowErrorMessage(sfe, logger)
 	data, err := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
 	if err != nil {
 		t.Fatalf("debug log not created: %v", err)
@@ -418,17 +364,17 @@ func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 func TestSignFlowErrorMessage_Cancelled(t *testing.T) {
 	// After the prompt-before-open reorder, cancellation is returned bare from
 	// readPin — piv-go no longer %v-wraps it — and is matched via errors.Is,
-	// which also traverses any %w wrap. The old %v-wrapped-in-SignFlowError
+	// which also traverses any %w wrap. The old %v-wrapped-in-signFlowError
 	// chain can no longer be produced.
-	wrapped := fmt.Errorf("outer: %w", ErrSigningCancelled)
-	got := SignFlowErrorMessage(wrapped, nil)
+	wrapped := fmt.Errorf("outer: %w", errSigningCancelled)
+	got := signFlowErrorMessage(wrapped, nil)
 	if got != "" {
 		t.Errorf("expected empty string for cancellation, got: %q", got)
 	}
 }
 
 func TestSignFlowErrorMessage_CancelledRaw(t *testing.T) {
-	got := SignFlowErrorMessage(ErrSigningCancelled, nil)
+	got := signFlowErrorMessage(errSigningCancelled, nil)
 	if got != "" {
 		t.Errorf("expected empty string for cancellation, got: %q", got)
 	}
@@ -437,7 +383,7 @@ func TestSignFlowErrorMessage_CancelledRaw(t *testing.T) {
 func TestSignFlowErrorMessage_Timeout(t *testing.T) {
 	// The timeout sentinel must yield a timeout message, NOT a hardware message
 	// (the literal "PIN entry timed out" matches the \bpin\b classifier).
-	got := SignFlowErrorMessage(ErrPINEntryTimedOut, nil)
+	got := signFlowErrorMessage(errPINEntryTimedOut, nil)
 	if !strings.Contains(got, "timed out") {
 		t.Errorf("expected timeout message, got: %q", got)
 	}
@@ -446,8 +392,8 @@ func TestSignFlowErrorMessage_Timeout(t *testing.T) {
 func TestSignFlowErrorMessage_MlockFailure(t *testing.T) {
 	// The %w-wrapped mlock sentinel must yield the restart message, not a
 	// misclassified hardware PIN error.
-	err := fmt.Errorf("%w: mlock failed", ErrPINCacheUnavailable)
-	got := SignFlowErrorMessage(err, nil)
+	err := fmt.Errorf("%w: mlock failed", errPINCacheUnavailable)
+	got := signFlowErrorMessage(err, nil)
 	if !strings.Contains(got, "secure the PIN") {
 		t.Errorf("expected mlock/restart message, got: %q", got)
 	}
@@ -455,8 +401,8 @@ func TestSignFlowErrorMessage_MlockFailure(t *testing.T) {
 
 func TestSignFlowErrorMessage_IssuanceLogUnreadable(t *testing.T) {
 	// The wrapped parse error must not be classified as a hardware fault.
-	err := fmt.Errorf("%w: %w", ErrIssuanceLogUnreadable, fmt.Errorf("parsing log file: unexpected end of JSON input"))
-	got := SignFlowErrorMessage(err, nil)
+	err := fmt.Errorf("%w: %w", errIssuanceLogUnreadable, fmt.Errorf("parsing log file: unexpected end of JSON input"))
+	got := signFlowErrorMessage(err, nil)
 	want := "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable."
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -466,8 +412,8 @@ func TestSignFlowErrorMessage_IssuanceLogUnreadable(t *testing.T) {
 func TestSignFlowErrorMessage_WrongPINWithRetries(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	err := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2})}
-	got := SignFlowErrorMessage(err, logger)
+	err := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2})}
+	got := signFlowErrorMessage(err, logger)
 	if !strings.Contains(got, "2 attempt") {
 		t.Errorf("expected remaining-attempts count in message, got: %q", got)
 	}
@@ -478,8 +424,8 @@ func TestSignFlowErrorMessage_WrongPINBlocked(t *testing.T) {
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	// Retries == 0 must NOT claim "blocked" outright — it means blocked OR count
 	// unavailable.
-	err := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 0})}
-	got := SignFlowErrorMessage(err, logger)
+	err := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 0})}
+	got := signFlowErrorMessage(err, logger)
 	if !strings.Contains(got, "locked") || strings.Contains(got, "attempt(s) left") {
 		t.Errorf("expected ambiguous locked message without a positive count, got: %q", got)
 	}
@@ -491,7 +437,7 @@ func TestSignFlowErrorMessage_TransientWinsOverPINRetries(t *testing.T) {
 	// "verify pin".
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := SignFlowErrorMessage(resetErr(), logger)
+	got := signFlowErrorMessage(resetErr(), logger)
 	if got != core.MsgYubiKeyReset {
 		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
 	}
@@ -500,7 +446,7 @@ func TestSignFlowErrorMessage_TransientWinsOverPINRetries(t *testing.T) {
 func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := SignFlowErrorMessage(fmt.Errorf("something unexpected"), logger)
+	got := signFlowErrorMessage(fmt.Errorf("something unexpected"), logger)
 	if !strings.Contains(got, "Signing failed") {
 		t.Errorf("expected signing failed message, got: %q", got)
 	}
@@ -511,19 +457,19 @@ func TestSignFlowErrorMessage_Transient_WrappedInSignFlowError(t *testing.T) {
 	// not the generic "Signing failed" message.
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	sfe := &SignFlowError{Phase: PhaseSign, Err: resetErr()}
-	got := SignFlowErrorMessage(sfe, logger)
+	sfe := &signFlowError{Phase: phaseSign, Err: resetErr()}
+	got := signFlowErrorMessage(sfe, logger)
 	if got != core.MsgYubiKeyReset {
 		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
 	}
 }
 
 func TestSignFlowErrorMessage_Transient_RawAdapterOpen(t *testing.T) {
-	// The raw adapter-open path (not wrapped in SignFlowError) must also route
+	// The raw adapter-open path (not wrapped in signFlowError) must also route
 	// a reset to the canonical message.
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := SignFlowErrorMessage(resetErr(), logger)
+	got := signFlowErrorMessage(resetErr(), logger)
 	if got != core.MsgYubiKeyReset {
 		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
 	}
@@ -532,7 +478,7 @@ func TestSignFlowErrorMessage_Transient_RawAdapterOpen(t *testing.T) {
 func TestSignFlowErrorMessage_CertificateError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := SignFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: object not found"), logger)
+	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: object not found"), logger)
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
 	}
@@ -543,7 +489,7 @@ func TestSignFlowErrorMessage_CertificateWithSmartCardInError(t *testing.T) {
 	// This must NOT be misclassified as "YubiKey not detected".
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := SignFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: smart card error: data object not found"), logger)
+	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: smart card error: data object not found"), logger)
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
 	}
@@ -552,7 +498,7 @@ func TestSignFlowErrorMessage_CertificateWithSmartCardInError(t *testing.T) {
 func TestSignFlowErrorMessage_NotEd25519Error(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := SignFlowErrorMessage(fmt.Errorf("certificate does not contain an Ed25519 public key"), logger)
+	got := signFlowErrorMessage(fmt.Errorf("certificate does not contain an Ed25519 public key"), logger)
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
 	}
@@ -562,12 +508,12 @@ func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	pathErr := &os.PathError{Op: "open", Path: "/nonexistent/dir/log.json.tmp", Err: errors.New("no such file or directory")}
-	err := &SignFlowError{Phase: PhaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, pathErr)}
+	err := &signFlowError{Phase: phaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, pathErr)}
 
-	got := SignFlowErrorMessage(err, logger)
+	got := signFlowErrorMessage(err, logger)
 	want := "Credential signed but NOT recorded in the audit log — check disk space/permissions."
 	if got != want {
-		t.Errorf("SignFlowErrorMessage = %q, want %q", got, want)
+		t.Errorf("signFlowErrorMessage = %q, want %q", got, want)
 	}
 	data, readErr := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
 	if readErr != nil {
@@ -583,15 +529,15 @@ func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
 func TestSignFlowErrorMessage_DetailsPointToExportErrorLog(t *testing.T) {
 	const want = "Use Help → Export Error Log… for details."
 	cases := map[string]error{
-		"export key":   &SignFlowError{Phase: PhaseExportKey, Err: fmt.Errorf("x")},
-		"qr":           &SignFlowError{Phase: PhaseQR, Err: fmt.Errorf("x")},
-		"sign":         &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("x")},
-		"other phase":  &SignFlowError{Phase: SignFlowPhase("bogus"), Err: fmt.Errorf("x")},
+		"export key":   &signFlowError{Phase: phaseExportKey, Err: fmt.Errorf("x")},
+		"qr":           &signFlowError{Phase: phaseQR, Err: fmt.Errorf("x")},
+		"sign":         &signFlowError{Phase: phaseSign, Err: fmt.Errorf("x")},
+		"other phase":  &signFlowError{Phase: signFlowPhase("bogus"), Err: fmt.Errorf("x")},
 		"unclassified": fmt.Errorf("something odd happened"),
 	}
 	for name, err := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := SignFlowErrorMessage(err, nil)
+			got := signFlowErrorMessage(err, nil)
 			if !strings.HasSuffix(got, want) {
 				t.Errorf("got %q, want suffix %q", got, want)
 			}

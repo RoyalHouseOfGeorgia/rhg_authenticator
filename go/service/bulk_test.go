@@ -82,14 +82,14 @@ func (h *bulkHarness) run(t *testing.T, ctx context.Context, results []bulk.Resu
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
-	return RunBulkFlow(ctx, results, h.logPath, h.openAdapter, h.readPin, nil, onProgress, h.logger)
+	return runBulkFlow(ctx, results, h.logPath, h.openAdapter, h.readPin, nil, onProgress, h.logger)
 }
 
 func (h *bulkHarness) plan(t *testing.T, csvText string) []bulk.Result {
 	t.Helper()
-	results, err := LoadBulkPlan(strings.NewReader(csvText), h.logPath)
+	results, err := loadBulkPlan(strings.NewReader(csvText), h.logPath)
 	if err != nil {
-		t.Fatalf("LoadBulkPlan: %v", err)
+		t.Fatalf("loadBulkPlan: %v", err)
 	}
 	return results
 }
@@ -198,9 +198,9 @@ func TestBulkFlow_SingleSignInterop(t *testing.T) {
 		Detail:    "Café service",
 		Date:      "2026-03-14",
 	}
-	single, err := ExecuteSignFlow(req, h.logPath, h.openAdapter, h.readPin, nil, h.logger)
+	single, err := executeSignFlow(req, h.logPath, h.openAdapter, h.readPin, nil, h.logger)
 	if err != nil {
-		t.Fatalf("ExecuteSignFlow: %v", err)
+		t.Fatalf("executeSignFlow: %v", err)
 	}
 
 	// Same credential, whitespace-padded, recipient/detail in NFD form.
@@ -218,7 +218,7 @@ func TestBulkFlow_ReadPinCalledOncePerBatch(t *testing.T) {
 	connecting := 0
 	var progress []int
 	results := h.plan(t, threeRowCSV)
-	err := RunBulkFlow(context.Background(), results, h.logPath, h.openAdapter, h.readPin,
+	err := runBulkFlow(context.Background(), results, h.logPath, h.openAdapter, h.readPin,
 		func() { connecting++ },
 		func(done, total int, name string) {
 			if total != 3 {
@@ -228,7 +228,7 @@ func TestBulkFlow_ReadPinCalledOncePerBatch(t *testing.T) {
 		},
 		h.logger)
 	if err != nil {
-		t.Fatalf("RunBulkFlow: %v", err)
+		t.Fatalf("runBulkFlow: %v", err)
 	}
 	if h.pinReads != 1 {
 		t.Errorf("readPin called %d times, want 1", h.pinReads)
@@ -265,14 +265,14 @@ func TestBulkFlow_WrongPINStopsAndClearsCache(t *testing.T) {
 	}
 
 	cache := seedEnabledCache(t)
-	ClearPINCacheOnAuthError(err, cache)
+	clearPINCacheOnAuthError(err, cache)
 	if _, ok := cache.Get(); ok {
 		t.Error("expected PIN cache cleared after bulk auth error")
 	}
 }
 
 func TestLoadBulkPlan_UnreadableLogRefuses(t *testing.T) {
-	results, err := LoadBulkPlan(strings.NewReader(threeRowCSV), t.TempDir())
+	results, err := loadBulkPlan(strings.NewReader(threeRowCSV), t.TempDir())
 	if err == nil {
 		t.Fatal("expected error for a directory log path")
 	}
@@ -294,7 +294,7 @@ func TestLoadBulkPlan_InputErrorsPropagate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			results, err := LoadBulkPlan(strings.NewReader(tc.input), logPath)
+			results, err := loadBulkPlan(strings.NewReader(tc.input), logPath)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v, want containing %q", err, tc.want)
 			}
@@ -322,8 +322,8 @@ func TestBulkFlow_LogAppendFailureStopsBatch(t *testing.T) {
 		t.Errorf("row 0 Err = %q", results[0].Err)
 	}
 	assertCountsInvariant(t, results)
-	if msg := BulkStopMessage(err, h.logger); !strings.HasPrefix(msg, "Batch stopped: Credential signed but NOT recorded") {
-		t.Errorf("BulkStopMessage = %q", msg)
+	if msg := bulkStopMessage(err, h.logger); !strings.HasPrefix(msg, "Batch stopped: Credential signed but NOT recorded") {
+		t.Errorf("bulkStopMessage = %q", msg)
 	}
 }
 
@@ -344,7 +344,7 @@ func TestBulkFlow_EmptyLogPathRefuses(t *testing.T) {
 }
 
 func TestBulkFlow_ReadPinErrorSignsNothing(t *testing.T) {
-	for _, pinErr := range []error{ErrSigningCancelled, ErrPINEntryTimedOut} {
+	for _, pinErr := range []error{errSigningCancelled, errPINEntryTimedOut} {
 		t.Run(pinErr.Error(), func(t *testing.T) {
 			h := newBulkHarness(t)
 			h.pinErr = pinErr
@@ -385,8 +385,8 @@ func TestBulkFlow_CancelDuringProgress(t *testing.T) {
 	}
 	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusSigned, bulk.StatusNotAttempted)
 	assertCountsInvariant(t, results)
-	if msg := BulkStopMessage(err, h.logger); msg != "Cancelled." {
-		t.Errorf("BulkStopMessage = %q, want Cancelled.", msg)
+	if msg := bulkStopMessage(err, h.logger); msg != "Cancelled." {
+		t.Errorf("bulkStopMessage = %q, want Cancelled.", msg)
 	}
 	if n := h.logCount(t); n != 2 {
 		t.Errorf("log records = %d, want 2", n)
@@ -395,16 +395,16 @@ func TestBulkFlow_CancelDuringProgress(t *testing.T) {
 
 func TestBulkStopMessage(t *testing.T) {
 	logger := debuglog.New(filepath.Join(t.TempDir(), "debug.log"))
-	if got := BulkStopMessage(nil, logger); got != "" {
+	if got := bulkStopMessage(nil, logger); got != "" {
 		t.Errorf("nil: got %q, want empty", got)
 	}
-	if got := BulkStopMessage(context.Canceled, logger); got != "Cancelled." {
+	if got := bulkStopMessage(context.Canceled, logger); got != "Cancelled." {
 		t.Errorf("context.Canceled: got %q", got)
 	}
-	if got := BulkStopMessage(ErrSigningCancelled, logger); got != "Cancelled." {
-		t.Errorf("ErrSigningCancelled: got %q", got)
+	if got := bulkStopMessage(errSigningCancelled, logger); got != "Cancelled." {
+		t.Errorf("errSigningCancelled: got %q", got)
 	}
-	if got := BulkStopMessage(errors.New("something odd"), logger); !strings.HasPrefix(got, "Batch stopped: ") {
+	if got := bulkStopMessage(errors.New("something odd"), logger); !strings.HasPrefix(got, "Batch stopped: ") {
 		t.Errorf("generic: got %q, want 'Batch stopped: ' prefix", got)
 	}
 }
@@ -424,7 +424,7 @@ func TestBulkSummaryLine(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := BulkSummaryLine(tt.c); got != tt.want {
+			if got := bulkSummaryLine(tt.c); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
@@ -467,7 +467,7 @@ func TestBulkConfirmText(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			counts, preview, inv := BulkConfirmText(tt.results)
+			counts, preview, inv := bulkConfirmText(tt.results)
 			if counts != tt.wantCounts {
 				t.Errorf("counts = %q, want %q", counts, tt.wantCounts)
 			}
@@ -502,8 +502,8 @@ func TestBulkResultsFilename(t *testing.T) {
 func TestSaveBulkResults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "results.csv")
 	results := []bulk.Result{{Req: core.SignRequest{Recipient: "Alice", Honor: "Other", Detail: "D", Date: "2026-03-14"}, Status: bulk.StatusSigned, URL: "https://example/v"}}
-	if err := SaveBulkResults(path, results); err != nil {
-		t.Fatalf("SaveBulkResults: %v", err)
+	if err := saveBulkResults(path, results); err != nil {
+		t.Fatalf("saveBulkResults: %v", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -512,7 +512,7 @@ func TestSaveBulkResults(t *testing.T) {
 	if !strings.Contains(string(got), "Alice,Other,D,2026-03-14,https://example/v,signed,") {
 		t.Errorf("unexpected CSV:\n%s", got)
 	}
-	if err := SaveBulkResults(filepath.Join(t.TempDir(), "missing", "r.csv"), results); err == nil {
+	if err := saveBulkResults(filepath.Join(t.TempDir(), "missing", "r.csv"), results); err == nil {
 		t.Error("expected error for unwritable path")
 	}
 }

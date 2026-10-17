@@ -1,8 +1,8 @@
 package gui
 
 import (
+	"context"
 	"sync/atomic"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -10,7 +10,6 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
 // applyPINByteCap wires an OnChanged handler that caps the entry to
@@ -24,62 +23,61 @@ func applyPINByteCap(entry *widget.Entry) {
 	}
 }
 
-// MakePinReader returns a function compatible with YubiKeyAdapter's readPin
-// callback. It checks the PinCache first, and if no cached PIN is available,
-// shows a modal PIN dialog on the Fyne UI thread and blocks until the user
-// responds. This is safe to call from a non-UI goroutine.
-func MakePinReader(window fyne.Window, cache *yubikey.PinCache) func() (string, error) {
-	return makePinReaderWithTimeout(window, cache, service.DefaultPINEntryTimeout)
+// pinResult is a PIN dialog submission. An empty pin means Cancel.
+type pinResult struct {
+	pin      string
+	remember bool
 }
 
-// makePinReaderWithTimeout is MakePinReader with an injectable timeout for tests.
-func makePinReaderWithTimeout(window fyne.Window, cache *yubikey.PinCache, timeout time.Duration) func() (string, error) {
-	return func() (string, error) {
-		// Check cache first.
-		if pin, ok := cache.Get(); ok {
-			return pin, nil
-		}
+// fynePrompter shows the PIN dialog on window.
+type fynePrompter struct{ window fyne.Window }
 
-		resultCh := make(chan string, 1)
-		// settled guards the confirm callback against a late submit after the
-		// timeout has already fired (and vice versa).
-		var settled atomic.Bool
-		var dlg dialog.Dialog
+// NewPrompter returns a service.Prompter that shows a modal PIN dialog on
+// window. RequestPIN blocks and must not be called on the UI thread.
+func NewPrompter(window fyne.Window) service.Prompter {
+	return &fynePrompter{window: window}
+}
 
+// RequestPIN shows the PIN dialog and waits for a submission or ctx.Done(),
+// in which case the dialog is hidden.
+func (p *fynePrompter) RequestPIN(ctx context.Context, rememberDefault bool) (string, bool, error) {
+	resultCh := make(chan pinResult, 1)
+	// settled guards the confirm callback against a late submit after ctx is
+	// done (and vice versa): dialog.Hide() re-runs the callback, which would
+	// otherwise block the UI thread on the full channel.
+	var settled atomic.Bool
+	var dlg dialog.Dialog
+
+	fyne.Do(func() {
+		dlg = showPinDialog(p.window, rememberDefault, resultCh, &settled)
+	})
+
+	select {
+	case r := <-resultCh:
+		return r.pin, r.remember, nil
+	case <-ctx.Done():
+		settled.Store(true)
+		// dlg is written and read only inside fyne.Do closures (one UI
+		// thread, FIFO) — the assignment above is enqueued before this Hide,
+		// so no data race despite the two goroutines.
 		fyne.Do(func() {
-			dlg = showPinDialog(window, cache, resultCh, &settled)
+			if dlg != nil {
+				dlg.Hide()
+			}
 		})
-
-		timer := time.NewTimer(timeout)
-		defer timer.Stop()
-
-		select {
-		case pin := <-resultCh:
-			return service.ProcessPINResult(pin, cache)
-		case <-timer.C:
-			settled.Store(true)
-			// dlg is written and read only inside fyne.Do closures (one UI
-			// thread, FIFO) — the assignment above is enqueued before this Hide,
-			// so no data race despite the two goroutines.
-			fyne.Do(func() {
-				if dlg != nil {
-					dlg.Hide()
-				}
-			})
-			return "", service.ErrPINEntryTimedOut
-		}
+		return "", false, ctx.Err()
 	}
 }
 
 // showPinDialog displays a modal PIN entry dialog and returns its handle so the
-// caller can Hide() it on timeout. Must be called on the UI thread.
-func showPinDialog(window fyne.Window, cache *yubikey.PinCache, resultCh chan<- string, settled *atomic.Bool) dialog.Dialog {
+// caller can Hide() it. Must be called on the UI thread.
+func showPinDialog(window fyne.Window, rememberDefault bool, resultCh chan<- pinResult, settled *atomic.Bool) dialog.Dialog {
 	pinEntry := widget.NewPasswordEntry()
 	pinEntry.SetPlaceHolder("YubiKey PIN")
 	applyPINByteCap(pinEntry)
 
 	rememberCheck := widget.NewCheck("Remember PIN for this session", nil)
-	rememberCheck.SetChecked(cache.Enabled())
+	rememberCheck.SetChecked(rememberDefault)
 
 	content := container.NewVBox(
 		widget.NewLabel("Enter your YubiKey PIN to sign:"),
@@ -89,25 +87,24 @@ func showPinDialog(window fyne.Window, cache *yubikey.PinCache, resultCh chan<- 
 	)
 
 	d := dialog.NewCustomConfirm("YubiKey PIN", "OK", "Cancel", content,
-		pinConfirmHandler(settled, cache, resultCh, pinEntry, rememberCheck), window)
+		pinConfirmHandler(settled, resultCh, pinEntry, rememberCheck), window)
 	d.Show()
 	return d
 }
 
 // pinConfirmHandler builds the confirm callback for the PIN dialog. Extracted so
 // the settled-gate is unit-testable without driving the Fyne dialog. The
-// settled.Swap(true) guard ensures a late submit (after the reader already timed
-// out) is ignored: it neither flips the remember preference nor sends a PIN.
-func pinConfirmHandler(settled *atomic.Bool, cache *yubikey.PinCache, resultCh chan<- string, entry *widget.Entry, remember *widget.Check) func(bool) {
+// settled.Swap(true) guard ensures a late submit (after RequestPIN already
+// returned) is ignored.
+func pinConfirmHandler(settled *atomic.Bool, resultCh chan<- pinResult, entry *widget.Entry, remember *widget.Check) func(bool) {
 	return func(confirmed bool) {
 		if settled.Swap(true) {
 			return
 		}
 		if !confirmed {
-			resultCh <- ""
+			resultCh <- pinResult{}
 			return
 		}
-		cache.SetEnabled(remember.Checked)
-		resultCh <- entry.Text
+		resultCh <- pinResult{pin: entry.Text, remember: remember.Checked}
 	}
 }

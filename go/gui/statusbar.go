@@ -3,25 +3,23 @@ package gui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
 // NewStatusBar creates a status bar widget showing registry statistics and
-// the app version. online indicates whether the registry was fetched from the
-// remote server. version is the build version (e.g. "v1.5.1"), shown without
-// its "v" prefix; local builds pass "dev" and show "Version dev".
-func NewStatusBar(reg core.Registry, online bool, version string) *fyne.Container {
-	versionLabel := widget.NewLabel("Version " + strings.TrimPrefix(version, "v"))
+// the app version. info.Online indicates whether the registry was fetched from
+// the remote server. info.Version is the build version (e.g. "v1.5.1"), shown
+// without its "v" prefix; local builds show "Version dev".
+func NewStatusBar(info service.Info) *fyne.Container {
+	versionLabel := widget.NewLabel("Version " + strings.TrimPrefix(info.Version, "v"))
 
-	if !online {
+	if !info.Online {
 		return container.NewHBox(
 			widget.NewLabel("No internet"),
 			layout.NewSpacer(),
@@ -29,11 +27,8 @@ func NewStatusBar(reg core.Registry, online bool, version string) *fyne.Containe
 		)
 	}
 
-	today := time.Now().UTC().Format("2006-01-02")
-	stats := service.ComputeRegistryStats(reg, today)
-
-	activeLabel := widget.NewLabel(fmt.Sprintf("Active keys: %d", stats.ActiveKeys))
-	recentLabel := widget.NewLabel(fmt.Sprintf("Expired (30d): %d", stats.RecentlyExpired))
+	activeLabel := widget.NewLabel(fmt.Sprintf("Active keys: %d", info.ActiveKeys))
+	recentLabel := widget.NewLabel(fmt.Sprintf("Expired (30d): %d", info.RecentlyExpired))
 
 	return container.NewHBox(
 		activeLabel,

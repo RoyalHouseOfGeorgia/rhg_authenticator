@@ -34,20 +34,11 @@ func sanitizeError(prefix string, err error) string {
 	}
 }
 
-// friendlyYubiKeyError returns a user-friendly error message for YubiKey
-// connection failures.
-func friendlyYubiKeyError(err error, logger *debuglog.Logger) string {
-	if err == nil {
-		return "Unknown YubiKey error"
-	}
-	// Always log the actual error for diagnosis.
-	logger.Log("yubikey: " + core.SanitizeForLog(err.Error()))
+// friendlyYubiKeyError returns a user-friendly message for a classified
+// YubiKey connection failure. signFlowErrorMessage, its only caller, has
+// already logged err and handled transient card resets.
+func friendlyYubiKeyError(err error) string {
 	switch core.ClassifyHardwareError(err) {
-	// SignFlowErrorMessage handles transient card resets upstream and returns before
-	// calling this helper, so this case is unreachable via that path. It is kept so the
-	// helper's error→message mapping stays complete for any direct or future caller.
-	case core.HwErrTransient:
-		return core.MsgYubiKeyReset
 	case core.HwErrSmartcard:
 		return "Smart card service not available. On macOS this is built-in; on Windows check the Smart Card service is running."
 	case core.HwErrHardware:
@@ -63,22 +54,22 @@ func isOperatorInputError(err error) bool {
 	return errors.Is(err, core.ErrTooLongForQR) || errors.Is(err, core.ErrInvalidCredential)
 }
 
-// OfferIssueReport reports whether a sign-flow error warrants a "Report Issue"
+// offerIssueReport reports whether a sign-flow error warrants a "Report Issue"
 // button. Cancellations, benign PIN-entry timeouts, and operator input errors
 // are not bugs.
-func OfferIssueReport(err error) bool {
-	return !errors.Is(err, ErrSigningCancelled) &&
-		!errors.Is(err, ErrPINEntryTimedOut) &&
+func offerIssueReport(err error) bool {
+	return !errors.Is(err, errSigningCancelled) &&
+		!errors.Is(err, errPINEntryTimedOut) &&
 		!isOperatorInputError(err)
 }
 
-// SignIssueBody builds the GitHub issue body for a sign-flow error. It carries
-// the user-facing msg plus only fixed enum strings (the *SignFlowError phase
+// signIssueBody builds the GitHub issue body for a sign-flow error. It carries
+// the user-facing msg plus only fixed enum strings (the *signFlowError phase
 // and the core.ClassifyHardwareError category) — never err.Error(), which can
 // contain local file paths and smart-card reader names.
-func SignIssueBody(err error, msg string) string {
+func signIssueBody(err error, msg string) string {
 	detail := msg
-	var sfe *SignFlowError
+	var sfe *signFlowError
 	if errors.As(err, &sfe) {
 		detail += " (phase: " + string(sfe.Phase) + ")"
 	}
@@ -97,9 +88,9 @@ func capitalize(s string) string {
 	return string(unicode.ToUpper(r)) + s[size:]
 }
 
-// SignFlowErrorMessage maps an error from ExecuteSignFlow to a user-friendly
+// signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
 // status message.
-func SignFlowErrorMessage(err error, logger *debuglog.Logger) string {
+func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	// Operator input errors from BuildPayload come first so their reason text
 	// is never misread by the hardware classifier below. The core error text
 	// is the message (shared with Bulk Sign), capitalized for the status line.
@@ -111,24 +102,24 @@ func SignFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	if errors.As(err, &invalid) {
 		return capitalize(core.SanitizeForError(invalid.Error())) + "."
 	}
-	// PIN-flow sentinels are returned bare from readPin (ExecuteSignFlow resolves
+	// PIN-flow sentinels are returned bare from readPin (executeSignFlow resolves
 	// the PIN before openAdapter, so piv-go never %v-wraps them), matched via
 	// errors.Is. These MUST be checked before ClassifyHardwareError, whose \bpin\b
 	// regex would otherwise misclassify the timeout/mlock messages as HwErrPIN.
-	// This depends on the prompt-before-open ordering in ExecuteSignFlow —
+	// This depends on the prompt-before-open ordering in executeSignFlow —
 	// reintroducing a lazy PINPrompt would break the errors.Is match.
-	if errors.Is(err, ErrSigningCancelled) {
+	if errors.Is(err, errSigningCancelled) {
 		return ""
 	}
-	if errors.Is(err, ErrPINEntryTimedOut) {
+	if errors.Is(err, errPINEntryTimedOut) {
 		return "PIN entry timed out. Click Sign to try again."
 	}
-	if errors.Is(err, ErrPINCacheUnavailable) {
+	if errors.Is(err, errPINCacheUnavailable) {
 		return "Could not secure the PIN in memory. Please restart the app."
 	}
 	// Checked before ClassifyHardwareError for the same reason as ErrNotLogged:
 	// the wrapped read/parse error text must not be misread as a hardware fault.
-	if errors.Is(err, ErrIssuanceLogUnreadable) {
+	if errors.Is(err, errIssuanceLogUnreadable) {
 		return "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable."
 	}
 	// Checked before ClassifyHardwareError, whose regex could misread the
@@ -155,14 +146,14 @@ func SignFlowErrorMessage(err error, logger *debuglog.Logger) string {
 		}
 		return "Incorrect PIN, or the YubiKey PIV applet is locked. No remaining-attempt count was reported — verify with your YubiKey tool before retrying."
 	}
-	var sfe *SignFlowError
+	var sfe *signFlowError
 	if errors.As(err, &sfe) {
 		switch sfe.Phase {
-		case PhaseExportKey:
+		case phaseExportKey:
 			return "Failed to read YubiKey. Use Help → Export Error Log… for details."
-		case PhaseQR:
+		case phaseQR:
 			return "QR generation failed. Use Help → Export Error Log… for details."
-		case PhaseSign:
+		case phaseSign:
 			logger.Log(core.SanitizeForLog(sfe.Error()))
 			return "Signing failed. Use Help → Export Error Log… for details."
 		default:
@@ -170,7 +161,7 @@ func SignFlowErrorMessage(err error, logger *debuglog.Logger) string {
 			return "Unexpected error. Use Help → Export Error Log… for details."
 		}
 	}
-	// Adapter open failures arrive here (not wrapped in SignFlowError).
+	// Adapter open failures arrive here (not wrapped in signFlowError).
 	// Check certificate/slot errors first — the YubiKey WAS detected but
 	// the slot is empty or has the wrong key type. These errors may also
 	// contain "smart card" from piv-go, which would misclassify as
@@ -181,7 +172,7 @@ func SignFlowErrorMessage(err error, logger *debuglog.Logger) string {
 		return "No signing certificate found on YubiKey (PIV slot 9c). Generate an Ed25519 key first."
 	}
 	if cat != "" {
-		return friendlyYubiKeyError(err, logger)
+		return friendlyYubiKeyError(err)
 	}
 	return "Signing failed. Use Help → Export Error Log… for details."
 }

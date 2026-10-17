@@ -19,11 +19,11 @@ import (
 // shows, so the operator can spot a mis-encoded file before signing.
 const bulkPreviewNames = 5
 
-// LoadBulkPlan reads and parses the operator's CSV from r and classifies each
+// loadBulkPlan reads and parses the operator's CSV from r and classifies each
 // row against the audit log at logPath. Input and parse errors are returned
 // as-is (their messages are user-facing). An unreadable audit log is fatal:
 // without it, already-issued credentials cannot be detected.
-func LoadBulkPlan(r io.Reader, logPath string) ([]bulk.Result, error) {
+func loadBulkPlan(r io.Reader, logPath string) ([]bulk.Result, error) {
 	data, err := bulk.ReadInput(r)
 	if err != nil {
 		return nil, err
@@ -40,15 +40,15 @@ func LoadBulkPlan(r io.Reader, logPath string) ([]bulk.Result, error) {
 	for _, rec := range records {
 		issued[rec.PayloadSHA256] = rec.SignatureB64URL
 	}
-	return bulk.Plan(rows, HonorTitles, issued), nil
+	return bulk.Plan(rows, honorTitles, issued), nil
 }
 
-// RunBulkFlow signs every to_sign row in results, updating them in place.
+// runBulkFlow signs every to_sign row in results, updating them in place.
 //
 // The PIN is resolved once per batch, before any card access. Each row still
 // opens a fresh adapter (see signAndLog), so no exclusive PCSC transaction is
 // held across rows. Every early return marks leftover rows not_attempted.
-func RunBulkFlow(
+func runBulkFlow(
 	ctx context.Context,
 	results []bulk.Result,
 	logPath string,
@@ -77,25 +77,25 @@ func RunBulkFlow(
 		func(req core.SignRequest) (core.SignResponse, error) {
 			return signAndLog(req, logPath, openAdapter, pin, logger)
 		},
-		func(e error) string { return SignFlowErrorMessage(e, logger) },
+		func(e error) string { return signFlowErrorMessage(e, logger) },
 		onProgress,
 	)
 }
 
-// BulkStopMessage returns the user-facing reason a batch stopped early, or ""
+// bulkStopMessage returns the user-facing reason a batch stopped early, or ""
 // when it completed.
-func BulkStopMessage(err error, logger *debuglog.Logger) string {
+func bulkStopMessage(err error, logger *debuglog.Logger) string {
 	if err == nil {
 		return ""
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, ErrSigningCancelled) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, errSigningCancelled) {
 		return "Cancelled."
 	}
-	return "Batch stopped: " + SignFlowErrorMessage(err, logger)
+	return "Batch stopped: " + signFlowErrorMessage(err, logger)
 }
 
-// SaveBulkResults renders results as CSV and writes them to path.
-func SaveBulkResults(path string, results []bulk.Result) error {
+// saveBulkResults renders results as CSV and writes them to path.
+func saveBulkResults(path string, results []bulk.Result) error {
 	var buf bytes.Buffer
 	if err := bulk.WriteResultCSV(&buf, results); err != nil {
 		return err
@@ -103,16 +103,16 @@ func SaveBulkResults(path string, results []bulk.Result) error {
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
-// BulkSummaryLine formats the per-status tally shown after a batch.
-func BulkSummaryLine(c bulk.Counts) string {
+// bulkSummaryLine formats the per-status tally shown after a batch.
+func bulkSummaryLine(c bulk.Counts) string {
 	return fmt.Sprintf("Processed %d rows: %d successful (%d newly signed, %d already issued), %d invalid, %d failed/not attempted.",
 		c.Total, c.Successful(), c.Signed, c.AlreadyIssued, c.Invalid, c.Failed+c.NotAttempted)
 }
 
-// BulkConfirmText returns the confirm dialog's counts line, up to
+// bulkConfirmText returns the confirm dialog's counts line, up to
 // bulkPreviewNames to_sign recipient names, and one "line N: <error>" entry
 // per invalid row.
-func BulkConfirmText(results []bulk.Result) (counts string, preview []string, invalid []string) {
+func bulkConfirmText(results []bulk.Result) (counts string, preview []string, invalid []string) {
 	c := bulk.Summarize(results)
 	counts = fmt.Sprintf("%d rows: %d to sign, %d already issued, %d invalid", c.Total, c.ToSign, c.AlreadyIssued, c.Invalid)
 	for _, r := range results {

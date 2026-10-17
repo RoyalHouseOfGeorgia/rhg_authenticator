@@ -3,7 +3,7 @@ package gui
 import (
 	"context"
 	"fmt"
-	"io"
+	stdlog "log"
 	"strings"
 	"time"
 
@@ -13,22 +13,17 @@ import (
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/bulk"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
 // bulkSignDeps holds what the bulk sign UI flow needs from the Sign tab.
 type bulkSignDeps struct {
-	window      fyne.Window
-	logPath     string
-	launchGo    func(func())
-	openAdapter func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error)
-	pinCache    *yubikey.PinCache
-	logger      *debuglog.Logger
-	setBusy     func(bool) // UI thread only
+	window   fyne.Window
+	app      *service.App
+	events   *Events
+	launchGo func(func())
+	setBusy  func(bool) // UI thread only
 }
 
 // startBulkSign runs the bulk sign flow: pick a CSV, confirm, sign, summarize.
@@ -52,9 +47,10 @@ func onBulkFileChosen(d bulkSignDeps, reader fyne.URIReadCloser, err error) {
 		d.setBusy(false)
 		return
 	}
+	path := reader.URI().Path()
+	_ = reader.Close()
 	d.launchGo(func() {
-		results, loadErr := service.LoadBulkPlan(reader, d.logPath)
-		_ = reader.Close()
+		plan, loadErr := d.app.LoadBulk(path)
 		if loadErr != nil {
 			fyne.Do(func() {
 				dialog.ShowError(loadErr, d.window)
@@ -62,28 +58,28 @@ func onBulkFileChosen(d bulkSignDeps, reader fyne.URIReadCloser, err error) {
 			})
 			return
 		}
-		fyne.Do(func() { confirmBulkSign(d, results) })
+		fyne.Do(func() { confirmBulkSign(d, plan) })
 	})
 }
 
 // confirmBulkSign shows what is about to be signed and, on confirmation,
-// launches the signing worker. UI thread only.
-func confirmBulkSign(d bulkSignDeps, results []bulk.Result) {
-	if bulk.Summarize(results).ToSign == 0 {
-		showBulkSummary(d, results, nil)
+// launches the signing worker. With nothing to sign it goes straight to the
+// worker, which returns the summary without a PIN prompt. UI thread only.
+func confirmBulkSign(d bulkSignDeps, plan service.BulkPlan) {
+	if plan.ToSign == 0 {
+		d.launchGo(func() { runBulkSignWorker(d, plan) })
 		return
 	}
 
-	counts, preview, invalid := service.BulkConfirmText(results)
 	items := []fyne.CanvasObject{
-		widget.NewLabel(counts),
+		widget.NewLabel(plan.CountsLine),
 		widget.NewLabel("First names to be signed:"),
 	}
-	for _, name := range preview {
+	for _, name := range plan.PreviewNames {
 		items = append(items, widget.NewLabel("  "+name))
 	}
-	if len(invalid) > 0 {
-		items = append(items, invalidRowsView("Invalid rows (will be skipped):", invalid)...)
+	if len(plan.InvalidLines) > 0 {
+		items = append(items, invalidRowsView("Invalid rows (will be skipped):", plan.InvalidLines)...)
 	}
 
 	dialog.NewCustomConfirm("Bulk Sign", "Sign", "Cancel", container.NewVBox(items...), func(ok bool) {
@@ -91,77 +87,84 @@ func confirmBulkSign(d bulkSignDeps, results []bulk.Result) {
 			d.setBusy(false)
 			return
 		}
-		ctx, cancel := context.WithCancel(context.Background())
-		d.launchGo(func() { runBulkSignWorker(ctx, cancel, d, results) })
+		d.launchGo(func() { runBulkSignWorker(d, plan) })
 	}, d.window).Show()
 }
 
 // runBulkSignWorker signs the batch on the worker goroutine and then shows
-// the summary. The progress dialog is only ever touched inside fyne.Do.
-func runBulkSignWorker(ctx context.Context, cancel context.CancelFunc, d bulkSignDeps, results []bulk.Result) {
+// the summary. The progress dialog is only ever touched on the UI thread
+// (event handlers run inside fyne.Do).
+func runBulkSignWorker(d bulkSignDeps, plan service.BulkPlan) {
 	var (
 		progress    dialog.Dialog
 		progressBar *widget.ProgressBar
 		statusLabel *widget.Label
+		stopping    bool
 	)
 
-	onConnecting := func() {
-		fyne.Do(func() {
-			progressBar = widget.NewProgressBar()
-			statusLabel = widget.NewLabel("Connecting to YubiKey...")
-			statusLabel.Wrapping = fyne.TextWrapWord
-			var cancelButton *widget.Button
-			cancelButton = widget.NewButton("Cancel", func() {
-				cancel()
-				cancelButton.Disable()
-				statusLabel.SetText("Stopping after current row…")
-			})
-			content := container.NewVBox(progressBar, statusLabel, cancelButton)
-			progress = dialog.NewCustomWithoutButtons("Bulk Sign", content, d.window)
-			progress.Show()
+	d.events.On(service.EventBulkConnecting, func(any) {
+		progressBar = widget.NewProgressBar()
+		statusLabel = widget.NewLabel("Connecting to YubiKey...")
+		statusLabel.Wrapping = fyne.TextWrapWord
+		var cancelButton *widget.Button
+		cancelButton = widget.NewButton("Cancel", func() {
+			d.app.CancelBulk()
+			stopping = true
+			cancelButton.Disable()
+			statusLabel.SetText("Stopping after current row…")
 		})
-	}
+		content := container.NewVBox(progressBar, statusLabel, cancelButton)
+		progress = dialog.NewCustomWithoutButtons("Bulk Sign", content, d.window)
+		progress.Show()
+	})
 
-	onProgress := func(done, total int, name string) {
-		fyne.Do(func() {
-			progressBar.SetValue(float64(done) / float64(total))
-			if ctx.Err() == nil {
-				statusLabel.SetText(fmt.Sprintf("Signing %d of %d: %s — touch your YubiKey if it is blinking", done+1, total, name))
-			}
-		})
-	}
+	// The service emits EventBulkConnecting before any EventBulkProgress and
+	// fyne.Do runs handlers in order, so progressBar and statusLabel are set.
+	d.events.On(service.EventBulkProgress, func(payload any) {
+		p, ok := payload.(service.BulkProgress)
+		if !ok {
+			return
+		}
+		progressBar.SetValue(float64(p.Done) / float64(p.Total))
+		if !stopping {
+			statusLabel.SetText(fmt.Sprintf("Signing %d of %d: %s — touch your YubiKey if it is blinking", p.Done+1, p.Total, p.Name))
+		}
+	})
 
-	err := service.RunBulkFlow(ctx, results, d.logPath, d.openAdapter, MakePinReader(d.window, d.pinCache), onConnecting, onProgress, d.logger)
-	service.ClearPINCacheOnAuthError(err, d.pinCache)
-	cancel()
+	outcome, err := d.app.RunBulk(context.Background())
 
 	fyne.Do(func() {
 		if progress != nil {
 			progress.Hide()
 		}
-		showBulkSummary(d, results, err)
+		if err != nil {
+			dialog.ShowError(err, d.window)
+			d.setBusy(false)
+			return
+		}
+		showBulkSummary(d, plan, outcome)
 	})
 }
 
 // showBulkSummary shows the batch outcome with a results-CSV export. Closing
 // it re-enables the Sign tab. UI thread only.
-func showBulkSummary(d bulkSignDeps, results []bulk.Result, stopErr error) {
+func showBulkSummary(d bulkSignDeps, plan service.BulkPlan, outcome service.BulkOutcome) {
 	items := []fyne.CanvasObject{}
-	summary := widget.NewLabel(service.BulkSummaryLine(bulk.Summarize(results)))
+	summary := widget.NewLabel(outcome.SummaryLine)
 	summary.Wrapping = fyne.TextWrapWord
 	items = append(items, summary)
-	if msg := service.BulkStopMessage(stopErr, d.logger); msg != "" {
-		stop := widget.NewLabel(msg)
+	if outcome.StopMessage != "" {
+		stop := widget.NewLabel(outcome.StopMessage)
 		stop.Wrapping = fyne.TextWrapWord
 		items = append(items, stop)
 	}
-	if _, _, invalid := service.BulkConfirmText(results); len(invalid) > 0 {
-		items = append(items, invalidRowsView("Invalid rows (skipped):", invalid)...)
+	if len(plan.InvalidLines) > 0 {
+		items = append(items, invalidRowsView("Invalid rows (skipped):", plan.InvalidLines)...)
 	}
 
 	exportButton := widget.NewButton("Export Results CSV…", func() {
 		saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
-			onBulkExportChosen(d, results, writer, err)
+			onBulkExportChosen(d, writer, err)
 		}, d.window)
 		saveDialog.SetFileName(service.BulkResultsFilename(time.Now()))
 		saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
@@ -185,19 +188,23 @@ func invalidRowsView(heading string, invalid []string) []fyne.CanvasObject {
 	return []fyne.CanvasObject{widget.NewLabel(heading), scroll}
 }
 
-// onBulkExportChosen is the results-CSV save callback. UI thread only.
-func onBulkExportChosen(d bulkSignDeps, results []bulk.Result, writer fyne.URIWriteCloser, err error) {
+// onBulkExportChosen is the results-CSV save callback: it writes the CSV on
+// the worker. UI thread only.
+func onBulkExportChosen(d bulkSignDeps, writer fyne.URIWriteCloser, err error) {
 	if err != nil {
-		d.logger.Log("bulk results save failed: " + core.SanitizeForLog(err.Error()))
+		stdlog.Printf("bulk results save failed: %s", core.SanitizeForLog(err.Error()))
 		dialog.ShowError(fmt.Errorf("failed to save results file"), d.window)
 		return
 	}
 	if writer == nil {
 		return
 	}
-	defer writer.Close()
-	if saveErr := service.SaveBulkResults(writer.URI().Path(), results); saveErr != nil {
-		d.logger.Log("bulk results save failed: " + core.SanitizeForLog(saveErr.Error()))
-		dialog.ShowError(fmt.Errorf("failed to save results file"), d.window)
-	}
+	path := writer.URI().Path()
+	_ = writer.Close()
+	d.launchGo(func() {
+		// ExportBulkResults logs its own write failures.
+		if saveErr := d.app.ExportBulkResults(path); saveErr != nil {
+			fyne.Do(func() { dialog.ShowError(fmt.Errorf("failed to save results file"), d.window) })
+		}
+	})
 }

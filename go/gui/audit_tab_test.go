@@ -80,46 +80,6 @@ func TestFormatCommitSummary_EmptyFields(t *testing.T) {
 	}
 }
 
-// --- parseGitHubURL tests ---
-
-func TestParseGitHubURL_Valid(t *testing.T) {
-	if parseGitHubURL("https://github.com/owner/repo/commit/abc123") == nil {
-		t.Error("expected non-nil for valid GitHub URL")
-	}
-}
-
-func TestParseGitHubURL_HTTP(t *testing.T) {
-	if parseGitHubURL("http://github.com/owner/repo/commit/abc123") != nil {
-		t.Error("expected nil for HTTP scheme")
-	}
-}
-
-func TestParseGitHubURL_NonGitHub(t *testing.T) {
-	if parseGitHubURL("https://gitlab.com/owner/repo/commit/abc123") != nil {
-		t.Error("expected nil for non-GitHub host")
-	}
-}
-
-func TestParseGitHubURL_Malformed(t *testing.T) {
-	if parseGitHubURL("://not-a-url") != nil {
-		t.Error("expected nil for malformed URL")
-	}
-}
-
-// --- parseGitHubURL additional edge cases ---
-
-func TestParseGitHubURL_EmptyString(t *testing.T) {
-	if parseGitHubURL("") != nil {
-		t.Error("expected nil for empty string")
-	}
-}
-
-func TestParseGitHubURL_WithCredentials(t *testing.T) {
-	if parseGitHubURL("https://user:pass@github.com/owner/repo") != nil {
-		t.Error("expected nil for URL with embedded credentials")
-	}
-}
-
 // --- atomic.Bool guard pattern tests ---
 // These verify the CompareAndSwap guard used in doFetch is race-free.
 

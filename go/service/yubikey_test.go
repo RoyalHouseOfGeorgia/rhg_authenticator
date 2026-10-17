@@ -9,7 +9,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
-// --- FormatKeyResult tests ---
+// --- formatKeyResult tests ---
 
 func TestFormatKeyResult_Found(t *testing.T) {
 	to := "2027-12-31"
@@ -19,12 +19,12 @@ func TestFormatKeyResult_Found(t *testing.T) {
 		To:        &to,
 		Note:      "",
 	}
-	result := KeyCheckResult{
+	result := keyCheckResult{
 		Found:       true,
 		Fingerprint: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
 		Entry:       entry,
 	}
-	status, details := FormatKeyResult(result)
+	status, details := formatKeyResult(result)
 	if status != "Key found in registry" {
 		t.Errorf("status = %q, want %q", status, "Key found in registry")
 	}
@@ -49,11 +49,11 @@ func TestFormatKeyResult_Found(t *testing.T) {
 }
 
 func TestFormatKeyResult_NotFound(t *testing.T) {
-	result := KeyCheckResult{
+	result := keyCheckResult{
 		Found:       false,
 		Fingerprint: "deadbeef" + strings.Repeat("00", 28),
 	}
-	status, details := FormatKeyResult(result)
+	status, details := formatKeyResult(result)
 	if status != "Key NOT found in registry" {
 		t.Errorf("status = %q, want %q", status, "Key NOT found in registry")
 	}
@@ -66,8 +66,8 @@ func TestFormatKeyResult_NotFound(t *testing.T) {
 }
 
 func TestFormatKeyResult_Error_PCSC(t *testing.T) {
-	result := KeyCheckResult{Error: fmt.Errorf("yubikey: pcsc daemon not running")}
-	status, details := FormatKeyResult(result)
+	result := keyCheckResult{Error: fmt.Errorf("yubikey: pcsc daemon not running")}
+	status, details := formatKeyResult(result)
 	if !strings.Contains(status, "Smart card service") {
 		t.Errorf("status should mention smart card service, got: %q", status)
 	}
@@ -77,8 +77,8 @@ func TestFormatKeyResult_Error_PCSC(t *testing.T) {
 }
 
 func TestFormatKeyResult_Error_NoYubiKey(t *testing.T) {
-	result := KeyCheckResult{Error: fmt.Errorf("yubikey: no YubiKey detected")}
-	status, details := FormatKeyResult(result)
+	result := keyCheckResult{Error: fmt.Errorf("yubikey: no YubiKey detected")}
+	status, details := formatKeyResult(result)
 	if !strings.Contains(status, "plug in") {
 		t.Errorf("status should mention 'plug in', got: %q", status)
 	}
@@ -90,8 +90,8 @@ func TestFormatKeyResult_Error_NoYubiKey(t *testing.T) {
 func TestFormatKeyResult_Error_Transient(t *testing.T) {
 	// A card reset must surface the canonical reset message, even though
 	// "verify pin" appears in the wrapped error chain.
-	result := KeyCheckResult{Error: errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid")}
-	status, details := FormatKeyResult(result)
+	result := keyCheckResult{Error: errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid")}
+	status, details := formatKeyResult(result)
 	if status != core.MsgYubiKeyReset {
 		t.Errorf("status = %q, want %q", status, core.MsgYubiKeyReset)
 	}
@@ -107,12 +107,12 @@ func TestFormatKeyResult_NoExpiry(t *testing.T) {
 		To:        nil,
 		Note:      "",
 	}
-	result := KeyCheckResult{
+	result := keyCheckResult{
 		Found:       true,
 		Fingerprint: strings.Repeat("aa", 32),
 		Entry:       entry,
 	}
-	status, details := FormatKeyResult(result)
+	status, details := formatKeyResult(result)
 	if status != "Key found in registry" {
 		t.Errorf("status = %q, want %q", status, "Key found in registry")
 	}
@@ -135,12 +135,12 @@ func TestFormatKeyResult_WithNote(t *testing.T) {
 		To:        &to,
 		Note:      "Backup key for ceremonies",
 	}
-	result := KeyCheckResult{
+	result := keyCheckResult{
 		Found:       true,
 		Fingerprint: strings.Repeat("bb", 32),
 		Entry:       entry,
 	}
-	_, details := FormatKeyResult(result)
+	_, details := formatKeyResult(result)
 	foundNote := false
 	for _, d := range details {
 		if strings.HasPrefix(d, "Note: ") {
@@ -163,12 +163,12 @@ func TestFormatKeyResult_EmptyNote(t *testing.T) {
 		To:        &to,
 		Note:      "   ",
 	}
-	result := KeyCheckResult{
+	result := keyCheckResult{
 		Found:       true,
 		Fingerprint: strings.Repeat("cc", 32),
 		Entry:       entry,
 	}
-	_, details := FormatKeyResult(result)
+	_, details := formatKeyResult(result)
 	for _, d := range details {
 		if strings.HasPrefix(d, "Note: ") {
 			t.Errorf("whitespace-only note should be omitted, but found: %q", d)

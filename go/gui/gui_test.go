@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
 // --- filterRecords tests ---
@@ -168,7 +167,7 @@ func TestFormatRecordSummary_LongHonor(t *testing.T) {
 	rec := log.IssuanceRecord{
 		Date:      "2026-03-14",
 		Recipient: "John Doe",
-		Honor:     service.HonorTitles[0], // Very long title
+		Honor:     "Order of the Eagle of Georgia and the Seamless Tunic of Our Lord Jesus Christ", // Very long title
 	}
 	got := formatRecordSummary(rec)
 	if !strings.Contains(got, "...") {

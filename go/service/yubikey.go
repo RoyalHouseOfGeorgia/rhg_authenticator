@@ -4,34 +4,35 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
-// KeyCheckResult holds the result of a YubiKey registry check.
-type KeyCheckResult struct {
+// keyCheckResult holds the result of a YubiKey registry check.
+type keyCheckResult struct {
 	Found       bool
 	Fingerprint string         // SHA-256 hex of raw 32-byte public key
 	Entry       *core.KeyEntry // non-nil if Found
 	Error       error          // non-nil if check failed
 }
 
-// CheckYubiKey opens a YubiKey adapter, reads the public key, computes its
-// fingerprint, and searches the registry for a matching entry.
-func CheckYubiKey(reg core.Registry) KeyCheckResult {
-	adapter, err := yubikey.NewYubiKeyAdapter(func() (string, error) { return "", nil })
+// checkYubiKey opens a YubiKey adapter with open, reads the public key,
+// computes its fingerprint, and searches the registry for a matching entry.
+// No PIN is needed: reading the slot-9c public key does not log in.
+func checkYubiKey(reg core.Registry, open func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error)) keyCheckResult {
+	adapter, closer, err := open(func() (string, error) { return "", nil })
 	if err != nil {
-		return KeyCheckResult{Error: fmt.Errorf("yubikey: %w", err)}
+		return keyCheckResult{Error: fmt.Errorf("yubikey: %w", err)}
 	}
-	defer adapter.Close()
+	defer closer.Close()
 
 	pubKey, err := adapter.ExportPublicKey()
 	if err != nil {
-		return KeyCheckResult{Error: fmt.Errorf("yubikey: %w", err)}
+		return keyCheckResult{Error: fmt.Errorf("yubikey: %w", err)}
 	}
 
 	hash := sha256.Sum256(pubKey[:])
@@ -40,16 +41,16 @@ func CheckYubiKey(reg core.Registry) KeyCheckResult {
 	today := time.Now().UTC().Format("2006-01-02")
 	entry := registry.FindMatchingEntryAt(reg, pubKey, today)
 
-	return KeyCheckResult{
+	return keyCheckResult{
 		Found:       entry != nil,
 		Fingerprint: fp,
 		Entry:       entry,
 	}
 }
 
-// FormatKeyResult converts a KeyCheckResult into a user-friendly status string
+// formatKeyResult converts a keyCheckResult into a user-friendly status string
 // and detail lines for display.
-func FormatKeyResult(result KeyCheckResult) (status string, details []string) {
+func formatKeyResult(result keyCheckResult) (status string, details []string) {
 	if result.Error != nil {
 		switch core.ClassifyHardwareError(result.Error) {
 		case core.HwErrTransient:

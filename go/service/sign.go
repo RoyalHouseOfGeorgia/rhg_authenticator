@@ -18,8 +18,8 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
-// HonorTitles are the available credential honor designations.
-var HonorTitles = []string{
+// honorTitles are the available credential honor designations.
+var honorTitles = []string{
 	"Order of the Eagle of Georgia and the Seamless Tunic of Our Lord Jesus Christ",
 	"Order of the St. Queen Tamar of Georgia",
 	"Order of the Crown of Georgia",
@@ -32,37 +32,37 @@ var HonorTitles = []string{
 // QR code output sizes.
 const (
 	qrPreviewPx = 512
-	QRSavePx    = 2048
+	qrSavePx    = 2048
 )
 
-// SignFlowPhase identifies a step in the signing flow for error classification.
-type SignFlowPhase string
+// signFlowPhase identifies a step in the signing flow for error classification.
+type signFlowPhase string
 
 const (
-	PhaseExportKey SignFlowPhase = "export_key"
-	PhaseSign      SignFlowPhase = "sign"
-	PhaseQR        SignFlowPhase = "qr"
-	PhaseLog       SignFlowPhase = "log"
+	phaseExportKey signFlowPhase = "export_key"
+	phaseSign      signFlowPhase = "sign"
+	phaseQR        signFlowPhase = "qr"
+	phaseLog       signFlowPhase = "log"
 )
 
-// SignFlowError wraps an error with the phase it occurred in.
-type SignFlowError struct {
-	Phase SignFlowPhase
+// signFlowError wraps an error with the phase it occurred in.
+type signFlowError struct {
+	Phase signFlowPhase
 	Err   error
 }
 
-func (e *SignFlowError) Error() string { return string(e.Phase) + ": " + e.Err.Error() }
-func (e *SignFlowError) Unwrap() error { return e.Err }
+func (e *signFlowError) Error() string { return string(e.Phase) + ": " + e.Err.Error() }
+func (e *signFlowError) Unwrap() error { return e.Err }
 
-// ErrIssuanceLogUnreadable indicates the issuance log could not be read or
+// errIssuanceLogUnreadable indicates the issuance log could not be read or
 // parsed, so the duplicate check cannot run. Signing is refused rather than
 // risking a duplicate record.
-var ErrIssuanceLogUnreadable = errors.New("issuance log unreadable")
+var errIssuanceLogUnreadable = errors.New("issuance log unreadable")
 
-// SignFlowResult holds the output of a successful signing operation.
+// signFlowResult holds the output of a successful signing operation.
 // Existing is true when the response was rebuilt from a previously logged
 // issuance instead of a fresh signature.
-type SignFlowResult struct {
+type signFlowResult struct {
 	Response   core.SignResponse
 	PNGPreview []byte
 	Hash8      string
@@ -76,7 +76,7 @@ type SignFlowResult struct {
 // re-verified against the registry; a malformed one is skipped as if absent.
 //
 // An empty logPath never matches. Log read failures wrap
-// ErrIssuanceLogUnreadable.
+// errIssuanceLogUnreadable.
 func findExistingIssuance(payload []byte, logPath string) (core.SignResponse, bool, error) {
 	if logPath == "" {
 		return core.SignResponse{}, false, nil
@@ -86,7 +86,7 @@ func findExistingIssuance(payload []byte, logPath string) (core.SignResponse, bo
 
 	records, err := issuancelog.ReadLog(logPath)
 	if err != nil {
-		return core.SignResponse{}, false, fmt.Errorf("%w: %w", ErrIssuanceLogUnreadable, err)
+		return core.SignResponse{}, false, fmt.Errorf("%w: %w", errIssuanceLogUnreadable, err)
 	}
 
 	for _, rec := range records {
@@ -115,9 +115,9 @@ func findExistingIssuance(payload []byte, logPath string) (core.SignResponse, bo
 // when logPath is empty).
 //
 // Adapter-open failures are returned unwrapped; export-key and sign failures
-// are wrapped in a *SignFlowError with PhaseExportKey / PhaseSign. If the
+// are wrapped in a *signFlowError with phaseExportKey / phaseSign. If the
 // record append fails, the successful SignResponse is returned TOGETHER WITH a
-// *SignFlowError{Phase: PhaseLog} wrapping core.ErrNotLogged and the underlying
+// *signFlowError{Phase: phaseLog} wrapping core.ErrNotLogged and the underlying
 // append error — callers decide whether an unlogged signature is fatal.
 func signAndLog(
 	req core.SignRequest,
@@ -140,13 +140,13 @@ func signAndLog(
 	pubKey, err := adapter.ExportPublicKey()
 	if err != nil {
 		logger.Log(sanitizeError("ExportPublicKey", err))
-		return core.SignResponse{}, &SignFlowError{Phase: PhaseExportKey, Err: err}
+		return core.SignResponse{}, &signFlowError{Phase: phaseExportKey, Err: err}
 	}
 
 	resp, err := core.HandleSign(req, adapter, pubKey)
 	if err != nil {
 		logger.Log(sanitizeError("HandleSign", err))
-		return core.SignResponse{}, &SignFlowError{Phase: PhaseSign, Err: err}
+		return core.SignResponse{}, &signFlowError{Phase: phaseSign, Err: err}
 	}
 
 	// Build issuance record from request + response fields.
@@ -164,29 +164,29 @@ func signAndLog(
 	if logPath != "" {
 		if logErr := issuancelog.AppendRecord(logPath, record); logErr != nil {
 			logger.Log("log append failed: " + core.SanitizeForLog(logErr.Error()))
-			return resp, &SignFlowError{Phase: PhaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, logErr)}
+			return resp, &signFlowError{Phase: phaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, logErr)}
 		}
 	}
 
 	return resp, nil
 }
 
-// ExecuteSignFlow runs the signing workflow: check the issuance log for an
+// executeSignFlow runs the signing workflow: check the issuance log for an
 // identical prior issuance, resolve PIN, open adapter, export key, sign, log,
 // generate QR, compute hash8.
 //
 // If the request was already issued, the PIN prompt, card access, signing and
 // log append are all skipped; the response is rebuilt from the logged
 // signature and returned with Existing set. An unreadable log blocks signing
-// (ErrIssuanceLogUnreadable) since duplicates cannot be ruled out.
-func ExecuteSignFlow(
+// (errIssuanceLogUnreadable) since duplicates cannot be ruled out.
+func executeSignFlow(
 	req core.SignRequest,
 	logPath string,
 	openAdapter func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error),
 	readPin func() (string, error),
 	onConnecting func(),
 	logger *debuglog.Logger,
-) (SignFlowResult, error) {
+) (signFlowResult, error) {
 	// 0. Before any PIN prompt or card access: build the payload, which
 	//    refuses an invalid or too-long-for-QR request (*core.InvalidCredentialError,
 	//    *core.TooLongForQRError), then check the issuance log. A logged
@@ -195,12 +195,12 @@ func ExecuteSignFlow(
 	payload, err := core.BuildPayload(req)
 	if err != nil {
 		logger.Log("pre-sign check: " + core.SanitizeForLog(err.Error()))
-		return SignFlowResult{}, err
+		return signFlowResult{}, err
 	}
 	resp, existing, err := findExistingIssuance(payload, logPath)
 	if err != nil {
 		logger.Log("pre-sign check: " + core.SanitizeForLog(err.Error()))
-		return SignFlowResult{}, err
+		return signFlowResult{}, err
 	}
 
 	if !existing {
@@ -214,9 +214,9 @@ func ExecuteSignFlow(
 		//    cert-read + login + sign.
 		pin, err := readPin()
 		if err != nil {
-			// ErrSigningCancelled / ErrPINEntryTimedOut / ErrPINCacheUnavailable
-			// are surfaced as-is; SignFlowErrorMessage maps them via errors.Is.
-			return SignFlowResult{}, err
+			// errSigningCancelled / errPINEntryTimedOut / errPINCacheUnavailable
+			// are surfaced as-is; signFlowErrorMessage maps them via errors.Is.
+			return signFlowResult{}, err
 		}
 
 		if onConnecting != nil {
@@ -227,7 +227,7 @@ func ExecuteSignFlow(
 		//    and append the issuance record.
 		resp, err = signAndLog(req, logPath, openAdapter, pin, logger)
 		if err != nil && !errors.Is(err, core.ErrNotLogged) {
-			return SignFlowResult{}, err
+			return signFlowResult{}, err
 		}
 		// A log-append failure is non-fatal for single-sign: the credential is
 		// already signed and signAndLog has recorded the failure in the debug log.
@@ -237,13 +237,13 @@ func ExecuteSignFlow(
 	pngData, err := qr.GeneratePNG(resp.URL, qrPreviewPx)
 	if err != nil {
 		logger.Log(sanitizeError("QR", err))
-		return SignFlowResult{}, &SignFlowError{Phase: PhaseQR, Err: err}
+		return signFlowResult{}, &signFlowError{Phase: phaseQR, Err: err}
 	}
 
 	// 4. First 8 hex chars of the SHA-256 hash, used as a short identifier in filenames.
 	hash8 := resp.PayloadSHA256[:8]
 
-	return SignFlowResult{
+	return signFlowResult{
 		Response:   resp,
 		PNGPreview: pngData,
 		Hash8:      hash8,
@@ -251,24 +251,24 @@ func ExecuteSignFlow(
 	}, nil
 }
 
-// ClearPINCacheOnAuthError clears the cached PIN when err is a PIV PIN
-// authentication failure. MakePinReader caches the PIN at dialog submission,
+// clearPINCacheOnAuthError clears the cached PIN when err is a PIV PIN
+// authentication failure. App.readPIN caches the PIN at dialog submission,
 // before the YubiKey verifies it; on an authentication failure the cached
 // (wrong) PIN must be cleared so it is not silently replayed on retry — each
 // replay decrements the PIV retry counter and can lock the applet.
 //
-// This lives at package level so the behavior is unit-testable without driving
-// the Fyne closure. PinCache.Clear() is mutex-protected and callable off the UI
+// This lives at package level so the behavior is unit-testable on its own.
+// PinCache.Clear() is mutex-protected and callable off the UI
 // thread; it invalidates-and-zeroes without flipping the user's "remember"
 // preference.
-func ClearPINCacheOnAuthError(err error, cache *yubikey.PinCache) {
+func clearPINCacheOnAuthError(err error, cache *yubikey.PinCache) {
 	if err != nil && yubikey.IsPINAuthError(err) {
 		cache.Clear()
 	}
 }
 
-// ValidateSignForm checks that all required sign form fields are filled and valid.
-func ValidateSignForm(recipient, honor, detail, date string) error {
+// validateSignForm checks that all required sign form fields are filled and valid.
+func validateSignForm(recipient, honor, detail, date string) error {
 	if strings.TrimSpace(recipient) == "" {
 		return fmt.Errorf("recipient is required")
 	}

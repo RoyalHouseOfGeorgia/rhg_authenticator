@@ -51,30 +51,14 @@ func TestTruncatePINToBytes_Idempotent(t *testing.T) {
 	}
 }
 
-// TestProcessPINResult verifies the cancel/cap/cache semantics of the pure helper
-// extracted from MakePinReader's post-dialog processing.
+// TestProcessPINResult verifies the cap/cache semantics of the pure helper
+// used by App.readPIN after the prompt returns.
 func TestProcessPINResult(t *testing.T) {
-	t.Run("empty means cancelled, cache untouched", func(t *testing.T) {
-		cache := yubikey.NewPinCache()
-		cache.SetEnabled(true)
-
-		pin, err := ProcessPINResult("", cache)
-		if err != ErrSigningCancelled {
-			t.Errorf("err = %v, want ErrSigningCancelled", err)
-		}
-		if pin != "" {
-			t.Errorf("pin = %q, want %q", pin, "")
-		}
-		if _, ok := cache.Get(); ok {
-			t.Error("cache should be untouched on cancel")
-		}
-	})
-
 	t.Run("enabled caps ascii before caching", func(t *testing.T) {
 		cache := yubikey.NewPinCache()
 		cache.SetEnabled(true)
 
-		pin, err := ProcessPINResult("123456789", cache)
+		pin, err := processPINResult("123456789", cache)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -91,7 +75,7 @@ func TestProcessPINResult(t *testing.T) {
 		cache := yubikey.NewPinCache()
 		cache.SetEnabled(true)
 
-		pin, err := ProcessPINResult("café1234", cache)
+		pin, err := processPINResult("café1234", cache)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -108,7 +92,7 @@ func TestProcessPINResult(t *testing.T) {
 		cache := yubikey.NewPinCache()
 		cache.SetEnabled(false)
 
-		pin, err := ProcessPINResult("123456789", cache)
+		pin, err := processPINResult("123456789", cache)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -124,7 +108,7 @@ func TestProcessPINResult(t *testing.T) {
 		cache := yubikey.NewPinCache()
 		cache.SetEnabled(true)
 
-		pin, err := ProcessPINResult("123456", cache)
+		pin, err := processPINResult("123456", cache)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

@@ -5,13 +5,12 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
 // NewYubiKeyTab creates the YubiKey registry check tab UI.
-func NewYubiKeyTab(reg core.Registry, online bool, window fyne.Window) *fyne.Container {
+func NewYubiKeyTab(app *service.App) *fyne.Container {
 	statusLabel := widget.NewLabel("")
 	statusLabel.Wrapping = fyne.TextWrapWord
 
@@ -24,19 +23,22 @@ func NewYubiKeyTab(reg core.Registry, online bool, window fyne.Window) *fyne.Con
 		statusLabel.SetText("Checking...")
 		checkBtn.Disable()
 		safego.Go(func() {
-			result := service.CheckYubiKey(reg)
+			result, err := app.CheckYubiKey()
 			fyne.Do(func() {
 				checkBtn.Enable()
-				status, details := service.FormatKeyResult(result)
-				statusLabel.SetText(status)
-				for _, line := range details {
+				if err != nil {
+					statusLabel.SetText(err.Error())
+					return
+				}
+				statusLabel.SetText(result.Status)
+				for _, line := range result.Details {
 					resultArea.Add(widget.NewLabel(line))
 				}
 			})
 		})
 	}
 
-	if !online {
+	if !app.Info().Online {
 		checkBtn.Disable()
 		statusLabel.SetText("Registry unavailable — connect to internet to check key")
 	}

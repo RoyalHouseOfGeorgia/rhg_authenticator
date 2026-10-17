@@ -53,7 +53,7 @@ func TestExecuteSignFlow_InputErrorsRefusedBeforePIN(t *testing.T) {
 					return nil, nil, errors.New("must not be called")
 				}
 
-				_, err := ExecuteSignFlow(tc.req, logPath, openAdapter, readPin, nil, logger)
+				_, err := executeSignFlow(tc.req, logPath, openAdapter, readPin, nil, logger)
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err = %v, want errors.Is %v", err, tc.wantErr)
 				}
@@ -78,11 +78,11 @@ func TestSignFlowErrorMessage_TooLongForQR(t *testing.T) {
 	}
 	for _, tc := range cases {
 		err := error(&core.TooLongForQRError{OverBytes: tc.over})
-		if got := SignFlowErrorMessage(err, nil); got != tc.want {
+		if got := signFlowErrorMessage(err, nil); got != tc.want {
 			t.Errorf("bare OverBytes=%d: got %q, want %q", tc.over, got, tc.want)
 		}
-		wrapped := &SignFlowError{Phase: PhaseSign, Err: err}
-		if got := SignFlowErrorMessage(wrapped, nil); got != tc.want {
+		wrapped := &signFlowError{Phase: phaseSign, Err: err}
+		if got := signFlowErrorMessage(wrapped, nil); got != tc.want {
 			t.Errorf("wrapped OverBytes=%d: got %q, want %q", tc.over, got, tc.want)
 		}
 	}
@@ -93,7 +93,7 @@ func TestSignFlowErrorMessage_TooLongForQR(t *testing.T) {
 // Sign does (the core message), capitalized with a full stop.
 func TestSignFlowErrorMessage_TooLongFromBuildPayload(t *testing.T) {
 	_, err := core.BuildPayload(inputReq(strings.Repeat("x", 600)))
-	got := SignFlowErrorMessage(err, nil)
+	got := signFlowErrorMessage(err, nil)
 	if !strings.HasSuffix(got, " — shorten the detail or recipient.") || strings.Contains(got, "..") {
 		t.Errorf("unexpected message: %q", got)
 	}
@@ -110,11 +110,11 @@ func TestSignFlowErrorMessage_InvalidCredential(t *testing.T) {
 	want := "Invalid credential data: detail exceeds maximum length of 2000."
 	cases := map[string]error{
 		"bare":    bare,
-		"wrapped": &SignFlowError{Phase: PhaseSign, Err: bare},
-		"double":  fmt.Errorf("outer: %w", &SignFlowError{Phase: PhaseSign, Err: bare}),
+		"wrapped": &signFlowError{Phase: phaseSign, Err: bare},
+		"double":  fmt.Errorf("outer: %w", &signFlowError{Phase: phaseSign, Err: bare}),
 	}
 	for name, err := range cases {
-		if got := SignFlowErrorMessage(err, nil); got != want {
+		if got := signFlowErrorMessage(err, nil); got != want {
 			t.Errorf("%s: got %q, want %q", name, got, want)
 		}
 	}
@@ -124,7 +124,7 @@ func TestSignFlowErrorMessage_InvalidCredential(t *testing.T) {
 // characters in the reason are stripped from the status text.
 func TestSignFlowErrorMessage_InvalidCredentialSanitized(t *testing.T) {
 	err := &core.InvalidCredentialError{Reason: errors.New("bad\x07 field\x1b")}
-	if got, want := SignFlowErrorMessage(err, nil), "Invalid credential data: bad field."; got != want {
+	if got, want := signFlowErrorMessage(err, nil), "Invalid credential data: bad field."; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
@@ -144,8 +144,8 @@ func TestIsOperatorInputError(t *testing.T) {
 	}{
 		"too long":        {&core.TooLongForQRError{OverBytes: 1}, true},
 		"invalid":         {&core.InvalidCredentialError{Reason: errors.New("x")}, true},
-		"wrapped invalid": {&SignFlowError{Phase: PhaseSign, Err: &core.InvalidCredentialError{Reason: errors.New("x")}}, true},
-		"cancelled":       {ErrSigningCancelled, false},
+		"wrapped invalid": {&signFlowError{Phase: phaseSign, Err: &core.InvalidCredentialError{Reason: errors.New("x")}}, true},
+		"cancelled":       {errSigningCancelled, false},
 		"generic":         {errors.New("boom"), false},
 	}
 	for name, tc := range cases {
@@ -156,9 +156,9 @@ func TestIsOperatorInputError(t *testing.T) {
 }
 
 func TestSignIssueBody_OmitsRawError(t *testing.T) {
-	err := &SignFlowError{Phase: PhaseQR, Err: errors.New("open /home/alice/secret/issuance.log: denied")}
+	err := &signFlowError{Phase: phaseQR, Err: errors.New("open /home/alice/secret/issuance.log: denied")}
 	msg := "QR generation failed. Use Help → Export Error Log… for details."
-	body := SignIssueBody(err, msg)
+	body := signIssueBody(err, msg)
 	if strings.Contains(body, "/home/alice/secret") {
 		t.Errorf("body leaks raw error text: %q", body)
 	}
@@ -174,7 +174,7 @@ func TestSignIssueBody_OmitsRawError(t *testing.T) {
 }
 
 func TestSignIssueBody_PlainErrorHasNoPhase(t *testing.T) {
-	body := SignIssueBody(errors.New("/home/alice/secret broke"), "Unexpected error.")
+	body := signIssueBody(errors.New("/home/alice/secret broke"), "Unexpected error.")
 	if strings.Contains(body, "phase:") {
 		t.Errorf("plain error should not carry a phase: %q", body)
 	}
@@ -191,7 +191,7 @@ func TestSignIssueBody_HardwareCategory(t *testing.T) {
 	if core.ClassifyHardwareError(err) == "" {
 		t.Fatal("setup: error should classify as hardware")
 	}
-	body := SignIssueBody(err, "Smart card service is not running.")
+	body := signIssueBody(err, "Smart card service is not running.")
 	if !strings.Contains(body, "(hardware: "+core.HwErrSmartcard+")") {
 		t.Errorf("body missing hardware category: %q", body)
 	}
@@ -201,8 +201,8 @@ func TestSignIssueBody_HardwareCategory(t *testing.T) {
 }
 
 func TestSignIssueBody_PhaseAndHardware(t *testing.T) {
-	err := &SignFlowError{Phase: PhaseExportKey, Err: errors.New("pcsc daemon not running")}
-	body := SignIssueBody(err, "Failed to read YubiKey.")
+	err := &signFlowError{Phase: phaseExportKey, Err: errors.New("pcsc daemon not running")}
+	body := signIssueBody(err, "Failed to read YubiKey.")
 	if !strings.Contains(body, "Failed to read YubiKey. (phase: export_key) (hardware: smartcard)") {
 		t.Errorf("unexpected body: %q", body)
 	}
@@ -215,17 +215,17 @@ func TestOfferIssueReport(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"cancelled", ErrSigningCancelled, false},
-		{"timed out", ErrPINEntryTimedOut, false},
+		{"cancelled", errSigningCancelled, false},
+		{"timed out", errPINEntryTimedOut, false},
 		{"too long", &core.TooLongForQRError{OverBytes: 5}, false},
-		{"too long wrapped", &SignFlowError{Phase: PhaseSign, Err: &core.TooLongForQRError{OverBytes: 5}}, false},
+		{"too long wrapped", &signFlowError{Phase: phaseSign, Err: &core.TooLongForQRError{OverBytes: 5}}, false},
 		{"invalid credential", invalid, false},
 		{"generic", errors.New("something broke"), true},
-		{"sign phase", &SignFlowError{Phase: PhaseSign, Err: errors.New("hardware fault")}, true},
+		{"sign phase", &signFlowError{Phase: phaseSign, Err: errors.New("hardware fault")}, true},
 	}
 	for _, tc := range cases {
-		if got := OfferIssueReport(tc.err); got != tc.want {
-			t.Errorf("%s: OfferIssueReport = %v, want %v", tc.name, got, tc.want)
+		if got := offerIssueReport(tc.err); got != tc.want {
+			t.Errorf("%s: offerIssueReport = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

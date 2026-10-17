@@ -2,7 +2,6 @@ package gui
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -59,19 +58,6 @@ func truncateRunes(s string, maxLen int) string {
 	return string(runes[:maxLen]) + "..."
 }
 
-// parseGitHubURL validates and parses a URL as HTTPS github.com without
-// embedded credentials. Returns nil if invalid.
-func parseGitHubURL(rawURL string) *url.URL {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return nil
-	}
-	if u.Scheme != "https" || u.Host != "github.com" || u.User != nil {
-		return nil
-	}
-	return u
-}
-
 // NewAuditTab creates the registry audit tab UI showing GitHub commit history.
 func NewAuditTab(window fyne.Window) *fyne.Container {
 	var commits []ghapi.RegistryCommit
@@ -100,7 +86,7 @@ func NewAuditTab(window fyne.Window) *fyne.Container {
 		if id < 0 || id >= len(commits) {
 			return
 		}
-		if parsed := parseGitHubURL(commits[id].HTMLURL); parsed != nil {
+		if parsed := ghapi.ParseGitHubURL(commits[id].HTMLURL); parsed != nil {
 			fyne.CurrentApp().OpenURL(parsed)
 		}
 		list.UnselectAll()

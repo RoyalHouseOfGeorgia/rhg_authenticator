@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -13,24 +14,22 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
 // TestShowPinDialog_Renders gives showPinDialog's rendering path positive
 // coverage: after it runs, a modal overlay is present on the canvas. Paired with
-// TestMakePinReader_Timeout (which covers close-on-timeout), this proves the
-// full show→hide lifecycle — neither test alone can.
+// TestPrompter_Timeout (which covers close-on-timeout), this proves the full
+// show→hide lifecycle — neither test alone can.
 func TestShowPinDialog_Renders(t *testing.T) {
 	test.NewApp()
 	w := test.NewWindow(nil)
 	defer w.Close()
 
-	cache := yubikey.NewPinCache()
-	resultCh := make(chan string, 1)
+	resultCh := make(chan pinResult, 1)
 	var settled atomic.Bool
 
 	var dlg dialog.Dialog
-	fyne.Do(func() { dlg = showPinDialog(w, cache, resultCh, &settled) })
+	fyne.Do(func() { dlg = showPinDialog(w, true, resultCh, &settled) })
 	if dlg == nil {
 		t.Fatal("showPinDialog returned nil dialog")
 	}
@@ -39,24 +38,22 @@ func TestShowPinDialog_Renders(t *testing.T) {
 	}
 }
 
-// TestMakePinReader_Timeout covers the timeout path: when the dialog is left
-// unanswered, the reader returns service.ErrPINEntryTimedOut and leaves no lingering
-// overlay (dlg.Hide ran). It does NOT prove the dialog was rendered — that is
-// TestShowPinDialog_Renders' job. readPin runs synchronously on the test
-// goroutine; Fyne's test driver runs fyne.Do inline, so Hide completes before
-// the call returns (a goroutine reading Overlays() concurrently would data-race
-// the overlay stack under -race).
-func TestMakePinReader_Timeout(t *testing.T) {
+// TestPrompter_Timeout covers the ctx-done path: when the dialog is left
+// unanswered past the ctx deadline, RequestPIN returns and leaves no lingering
+// overlay (dlg.Hide ran). RequestPIN runs synchronously on the test goroutine;
+// Fyne's test driver runs fyne.Do inline, so Hide completes before the call
+// returns (a goroutine reading Overlays() concurrently would data-race the
+// overlay stack under -race).
+func TestPrompter_Timeout(t *testing.T) {
 	test.NewApp()
 	w := test.NewWindow(nil)
 	defer w.Close()
 
-	cache := yubikey.NewPinCache() // disabled → no cache hit → dialog is shown
-	readPin := makePinReaderWithTimeout(w, cache, 10*time.Millisecond)
-
-	pin, err := readPin()
-	if !errors.Is(err, service.ErrPINEntryTimedOut) {
-		t.Fatalf("expected ErrPINEntryTimedOut, got pin=%q err=%v", pin, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	pin, remember, err := NewPrompter(w).RequestPIN(ctx, false)
+	if !errors.Is(err, context.DeadlineExceeded) || pin != "" || remember {
+		t.Fatalf("RequestPIN = %q, %v, %v; want ctx deadline error", pin, remember, err)
 	}
 	if top := w.Canvas().Overlays().Top(); top != nil {
 		t.Errorf("expected dialog closed on timeout, overlay still present: %T", top)
@@ -64,169 +61,64 @@ func TestMakePinReader_Timeout(t *testing.T) {
 }
 
 // TestPinConfirmHandler_Confirm: a normal confirm sends the entered PIN and
-// applies the remember preference.
+// the remember choice.
 func TestPinConfirmHandler_Confirm(t *testing.T) {
-	cache := yubikey.NewPinCache()
-	resultCh := make(chan string, 1)
+	resultCh := make(chan pinResult, 1)
 	entry := widget.NewEntry()
 	entry.SetText("1234")
 	remember := widget.NewCheck("", nil)
 	remember.SetChecked(true)
 	var settled atomic.Bool
 
-	pinConfirmHandler(&settled, cache, resultCh, entry, remember)(true)
+	pinConfirmHandler(&settled, resultCh, entry, remember)(true)
 
 	select {
 	case got := <-resultCh:
-		if got != "1234" {
-			t.Errorf("got %q, want 1234", got)
+		if got != (pinResult{pin: "1234", remember: true}) {
+			t.Errorf("got %+v, want {1234 true}", got)
 		}
 	default:
 		t.Fatal("expected PIN on resultCh")
 	}
-	if !cache.Enabled() {
-		t.Error("expected cache enabled after remember-checked confirm")
-	}
 }
 
-// TestPinConfirmHandler_Cancel: a dismiss sends the empty-string cancel signal.
+// TestPinConfirmHandler_Cancel: a dismiss sends the empty-PIN cancel signal.
 func TestPinConfirmHandler_Cancel(t *testing.T) {
-	cache := yubikey.NewPinCache()
-	resultCh := make(chan string, 1)
+	resultCh := make(chan pinResult, 1)
 	entry := widget.NewEntry()
+	entry.SetText("1234")
 	remember := widget.NewCheck("", nil)
 	var settled atomic.Bool
 
-	pinConfirmHandler(&settled, cache, resultCh, entry, remember)(false)
+	pinConfirmHandler(&settled, resultCh, entry, remember)(false)
 
 	select {
 	case got := <-resultCh:
-		if got != "" {
-			t.Errorf("got %q, want empty (cancel)", got)
+		if got.pin != "" {
+			t.Errorf("got pin %q, want empty (cancel)", got.pin)
 		}
 	default:
-		t.Fatal("expected empty string on resultCh for cancel")
+		t.Fatal("expected a cancel on resultCh")
 	}
 }
 
-// TestPinConfirmHandler_LateSubmitIgnored: a confirm after the timeout already
-// settled must neither send a PIN nor flip the remember preference.
+// TestPinConfirmHandler_LateSubmitIgnored: a confirm after RequestPIN already
+// settled must not send anything.
 func TestPinConfirmHandler_LateSubmitIgnored(t *testing.T) {
-	cache := yubikey.NewPinCache()
-	resultCh := make(chan string, 1)
+	resultCh := make(chan pinResult, 1)
 	entry := widget.NewEntry()
 	entry.SetText("1234")
 	remember := widget.NewCheck("", nil)
 	remember.SetChecked(true)
 	var settled atomic.Bool
-	settled.Store(true) // timeout already fired
+	settled.Store(true) // ctx already done
 
-	pinConfirmHandler(&settled, cache, resultCh, entry, remember)(true)
+	pinConfirmHandler(&settled, resultCh, entry, remember)(true)
 
 	select {
 	case got := <-resultCh:
-		t.Fatalf("expected no send after timeout, got %q", got)
+		t.Fatalf("expected no send after settle, got %+v", got)
 	default:
-	}
-	if cache.Enabled() {
-		t.Error("SetEnabled must not run for a late (post-timeout) confirm")
-	}
-}
-
-// TestMakePinReader_CacheHit verifies that when the PinCache has a valid entry,
-// the readPin closure returns the cached PIN immediately without showing a dialog.
-func TestMakePinReader_CacheHit(t *testing.T) {
-	cache := yubikey.NewPinCache()
-	cache.SetEnabled(true)
-	if err := cache.Set("123456"); err != nil {
-		t.Fatalf("cache.Set failed: %v", err)
-	}
-
-	// window is nil — the closure must not touch Fyne for a cache hit.
-	readPin := MakePinReader(nil, cache)
-
-	pin, err := readPin()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pin != "123456" {
-		t.Errorf("pin = %q, want %q", pin, "123456")
-	}
-}
-
-// TestMakePinReader_CacheHit_ReturnsExactValue verifies the cached PIN is
-// returned verbatim (no trimming, encoding, etc.).
-func TestMakePinReader_CacheHit_ReturnsExactValue(t *testing.T) {
-	cache := yubikey.NewPinCache()
-	cache.SetEnabled(true)
-	if err := cache.Set("  spaces  "); err != nil {
-		t.Fatalf("cache.Set failed: %v", err)
-	}
-
-	readPin := MakePinReader(nil, cache)
-
-	pin, err := readPin()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pin != "  spaces  " {
-		t.Errorf("pin = %q, want %q", pin, "  spaces  ")
-	}
-}
-
-// TestMakePinReader_CacheDisabled_NoHit verifies that when caching is disabled,
-// the cache is not consulted (Get returns false).
-func TestMakePinReader_CacheDisabled_NoHit(t *testing.T) {
-	cache := yubikey.NewPinCache()
-	// Enabled + Set, then disable → Get should return false.
-	cache.SetEnabled(true)
-	if err := cache.Set("123456"); err != nil {
-		t.Fatalf("cache.Set failed: %v", err)
-	}
-	cache.SetEnabled(false)
-
-	// Verify the cache reports no hit.
-	if _, ok := cache.Get(); ok {
-		t.Fatal("expected cache miss when disabled")
-	}
-}
-
-// TestMakePinReader_CacheHit_MultipleCalls verifies the closure can be called
-// multiple times and continues to return the cached PIN.
-func TestMakePinReader_CacheHit_MultipleCalls(t *testing.T) {
-	cache := yubikey.NewPinCache()
-	cache.SetEnabled(true)
-	if err := cache.Set("654321"); err != nil {
-		t.Fatalf("cache.Set failed: %v", err)
-	}
-
-	readPin := MakePinReader(nil, cache)
-
-	for i := 0; i < 3; i++ {
-		pin, err := readPin()
-		if err != nil {
-			t.Fatalf("call %d: unexpected error: %v", i, err)
-		}
-		if pin != "654321" {
-			t.Errorf("call %d: pin = %q, want %q", i, pin, "654321")
-		}
-	}
-}
-
-// TestMakePinReader_CacheCleared_NoHit verifies that after clearing the cache,
-// the closure no longer returns a cached PIN.
-func TestMakePinReader_CacheCleared_NoHit(t *testing.T) {
-	cache := yubikey.NewPinCache()
-	cache.SetEnabled(true)
-	if err := cache.Set("123456"); err != nil {
-		t.Fatalf("cache.Set failed: %v", err)
-	}
-
-	// Clear the cache — subsequent Get should miss.
-	cache.Clear()
-
-	if _, ok := cache.Get(); ok {
-		t.Fatal("expected cache miss after Clear")
 	}
 }
 
