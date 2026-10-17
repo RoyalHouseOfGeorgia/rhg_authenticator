@@ -2,57 +2,18 @@ package service
 
 import "testing"
 
-// --- ResolveLoginState tests ---
-
-func TestResolveLoginState_Online(t *testing.T) {
-	loggedIn, offline, text := ResolveLoginState(false, "myuser", false)
-	if !loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if offline {
-		t.Error("offline = true, want false")
-	}
-	if text != "Logged in as @myuser" {
-		t.Errorf("statusText = %q, want %q", text, "Logged in as @myuser")
-	}
-}
-
-func TestResolveLoginState_Unauthorized(t *testing.T) {
-	loggedIn, offline, text := ResolveLoginState(true, "", true)
-	if loggedIn {
-		t.Error("loggedIn = true, want false")
-	}
-	if offline {
-		t.Error("offline = true, want false")
-	}
-	if text != "Not logged in" {
-		t.Errorf("statusText = %q, want %q", text, "Not logged in")
-	}
-}
-
-func TestResolveLoginState_Offline(t *testing.T) {
-	loggedIn, offline, text := ResolveLoginState(false, "", true)
-	if !loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if !offline {
-		t.Error("offline = false, want true")
-	}
-	if text != "GitHub unreachable" {
-		t.Errorf("statusText = %q, want %q", text, "GitHub unreachable")
-	}
-}
-
-func TestResolveLoginState_EmptyUsername(t *testing.T) {
-	// No error but empty username — still logged in, just no name to display.
-	loggedIn, offline, text := ResolveLoginState(false, "", false)
-	if !loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if offline {
-		t.Error("offline = true, want false")
-	}
-	if text != "Logged in as @" {
-		t.Errorf("statusText = %q, want %q", text, "Logged in as @")
+func TestAuthState_StatusText(t *testing.T) {
+	for _, tc := range []struct {
+		st   AuthState
+		want string
+	}{
+		{AuthState{LoggedIn: true, User: "myuser"}, "Logged in as @myuser"},
+		{AuthState{}, "Not logged in"},
+		{AuthState{LoggedIn: true, Offline: true}, "GitHub unreachable"},
+		{AuthState{LoggedIn: true}, "Logged in as @"},
+	} {
+		if got := tc.st.StatusText(); got != tc.want {
+			t.Errorf("%+v.StatusText() = %q, want %q", tc.st, got, tc.want)
+		}
 	}
 }

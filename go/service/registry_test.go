@@ -7,28 +7,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
-func TestCanSave_EmptyRegistry(t *testing.T) {
-	reg := core.Registry{Keys: nil}
-	if CanSave(reg) {
-		t.Error("CanSave should return false for empty registry")
-	}
-}
-
-func TestCanSave_EmptySlice(t *testing.T) {
-	reg := core.Registry{Keys: []core.KeyEntry{}}
-	if CanSave(reg) {
-		t.Error("CanSave should return false for zero-length Keys slice")
-	}
-}
-
-func TestCanSave_NonEmpty(t *testing.T) {
-	reg := core.Registry{Keys: []core.KeyEntry{{Authority: "A"}}}
-	if !CanSave(reg) {
-		t.Error("CanSave should return true for non-empty registry")
-	}
-}
-
-// --- EntryCellText tests ---
+// --- entryCellText tests ---
 
 func TestEntryCellText_Column0_RowNumber(t *testing.T) {
 	entry := core.KeyEntry{
@@ -39,12 +18,12 @@ func TestEntryCellText_Column0_RowNumber(t *testing.T) {
 		PublicKey: "dGVzdA==",
 		Note:      "test note",
 	}
-	got := EntryCellText(entry, 0, 0, nil)
+	got := entryCellText(entry, 0, 0, "")
 	if got != "1" {
 		t.Errorf("col 0: got %q, want %q", got, "1")
 	}
 	// Also verify with a different index.
-	got = EntryCellText(entry, 0, 4, nil)
+	got = entryCellText(entry, 0, 4, "")
 	if got != "5" {
 		t.Errorf("col 0 idx 4: got %q, want %q", got, "5")
 	}
@@ -56,7 +35,7 @@ func TestEntryCellText_Column1_Authority(t *testing.T) {
 		From:      "2026-01-15",
 		Note:      "test note",
 	}
-	got := EntryCellText(entry, 1, 0, nil)
+	got := entryCellText(entry, 1, 0, "")
 	if got != "Test Auth" {
 		t.Errorf("col 1: got %q, want %q", got, "Test Auth")
 	}
@@ -68,7 +47,7 @@ func TestEntryCellText_Column2_From(t *testing.T) {
 		From:      "2026-01-15",
 		Note:      "test note",
 	}
-	got := EntryCellText(entry, 2, 0, nil)
+	got := entryCellText(entry, 2, 0, "")
 	want := core.FormatDateDisplay("2026-01-15")
 	if got != want {
 		t.Errorf("col 2: got %q, want %q", got, want)
@@ -82,7 +61,7 @@ func TestEntryCellText_Column3_ToNil(t *testing.T) {
 		To:        nil,
 		Note:      "test note",
 	}
-	got := EntryCellText(entry, 3, 0, nil)
+	got := entryCellText(entry, 3, 0, "")
 	if got != "(none)" {
 		t.Errorf("col 3 nil To: got %q, want %q", got, "(none)")
 	}
@@ -96,7 +75,7 @@ func TestEntryCellText_Column3_ToNonNil(t *testing.T) {
 		To:        &toDate,
 		Note:      "test note",
 	}
-	got := EntryCellText(entry, 3, 0, nil)
+	got := entryCellText(entry, 3, 0, "")
 	want := core.FormatDateDisplay("2027-06-30")
 	if got != want {
 		t.Errorf("col 3 non-nil To: got %q, want %q", got, want)
@@ -109,7 +88,7 @@ func TestEntryCellText_Column4_Restrictions(t *testing.T) {
 		From:      "2026-01-15",
 		Extra:     map[string]json.RawMessage{"allowed_honors": json.RawMessage(`["Appointment"]`)},
 	}
-	got := EntryCellText(entry, 4, 0, nil)
+	got := entryCellText(entry, 4, 0, "")
 	if got != "Appointment" {
 		t.Errorf("col 4: got %q, want %q", got, "Appointment")
 	}
@@ -121,47 +100,33 @@ func TestEntryCellText_Column5_Note(t *testing.T) {
 		From:      "2026-01-15",
 		Note:      "test note",
 	}
-	got := EntryCellText(entry, 5, 0, nil)
+	got := entryCellText(entry, 5, 0, "")
 	if got != "test note" {
 		t.Errorf("col 5: got %q, want %q", got, "test note")
 	}
 }
 
-func TestEntryCellText_Column6_CacheHit(t *testing.T) {
+func TestEntryCellText_Column6_Fingerprint(t *testing.T) {
 	entry := core.KeyEntry{
 		Authority: "Test Auth",
 		From:      "2026-01-15",
 		Note:      "test note",
 	}
-	cache := map[int]string{0: "SHA256:abc123"}
-	got := EntryCellText(entry, 6, 0, cache)
+	got := entryCellText(entry, 6, 0, "SHA256:abc123")
 	if got != "SHA256:abc123" {
-		t.Errorf("col 6 cache hit: got %q, want %q", got, "SHA256:abc123")
+		t.Errorf("col 6: got %q, want %q", got, "SHA256:abc123")
 	}
 }
 
-func TestEntryCellText_Column6_CacheMiss(t *testing.T) {
+func TestEntryCellText_Column6_InvalidKey(t *testing.T) {
 	entry := core.KeyEntry{
 		Authority: "Test Auth",
 		From:      "2026-01-15",
 		Note:      "test note",
 	}
-	cache := map[int]string{99: "SHA256:other"}
-	got := EntryCellText(entry, 6, 0, cache)
+	got := entryCellText(entry, 6, 0, "")
 	if got != "(invalid key)" {
-		t.Errorf("col 6 cache miss: got %q, want %q", got, "(invalid key)")
-	}
-}
-
-func TestEntryCellText_Column6_NilCache(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	got := EntryCellText(entry, 6, 0, nil)
-	if got != "(invalid key)" {
-		t.Errorf("col 6 nil cache: got %q, want %q", got, "(invalid key)")
+		t.Errorf("col 6 invalid key: got %q, want %q", got, "(invalid key)")
 	}
 }
 

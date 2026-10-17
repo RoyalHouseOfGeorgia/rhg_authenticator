@@ -2,461 +2,77 @@ package regmgr
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
-// newTestRegistryTab creates a minimal RegistryTab with a test window for
-// helper method unit tests. It does not initialise the full UI — only the
-// fields that the extracted helpers depend on.
-func newTestRegistryTab(t *testing.T) *RegistryTab {
+type nopPrompter struct{}
+
+func (nopPrompter) RequestPIN(context.Context, bool) (string, bool, error) { return "", false, nil }
+
+// registryServer serves a one-entry registry.
+func registryServer(t *testing.T) string {
 	t.Helper()
-	app := test.NewApp()
-	t.Cleanup(func() { app.Quit() })
-	w := app.NewWindow("test")
-	btn := widget.NewButton("Login to GitHub", nil)
-	return &RegistryTab{
-		state:       &appState{selected: -1},
-		statusLabel: widget.NewLabel(""),
-		loginBtn:    btn,
-		window:      w,
-		configDir:   t.TempDir(),
-		kr:          ghapi.NewFakeKeyring(),
-	}
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	body := `{"keys":[{"authority":"Auth A","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"` + key + `","note":"n","allowed_honors":["Other"]}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
-// ---------------------------------------------------------------------------
-// handleDeviceCodeError
-// ---------------------------------------------------------------------------
+// newTestRegistryTab builds a RegistryTab on a real service.App (fake keyring,
+// no saved session) after Start's restore and fetch from registryURL have
+// finished. Login is stubbed: each call sends on the returned channel.
+func newTestRegistryTab(t *testing.T, registryURL string) (*RegistryTab, chan struct{}) {
+	t.Helper()
+	a := test.NewTempApp(t)
+	a.Settings().SetTheme(theme.DefaultTheme()) // the test theme has no bold monospace font
+	w := a.NewWindow("test")
+	t.Cleanup(w.Close)
 
-func TestHandleDeviceCodeError_ActiveContext(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.statusLabel.SetText("Requesting device code...")
-
-	// Use cancelled context to avoid dialog.ShowError race with test goroutine.
-	// Status label clearing is the testable behavior; dialog is a UI side effect.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	rt.handleDeviceCodeError(ctx, errors.New("network timeout"))
-
-	if rt.statusLabel.Text != "" {
-		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
+	events := gui.NewEvents()
+	started := make(chan struct{})
+	var once sync.Once
+	events.On(service.EventRegistryChanged, func(any) { once.Do(func() { close(started) }) })
+	svc, err := service.New(service.Config{
+		DataDir:     t.TempDir(),
+		RegistryURL: registryURL,
+		Keyring:     ghapi.NewFakeKeyring(),
+		Prompter:    nopPrompter{},
+		Events:      events,
+	})
+	if err != nil {
+		t.Fatalf("service.New: %v", err)
 	}
-}
-
-func TestHandleDeviceCodeError_CancelledContext(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.statusLabel.SetText("Requesting device code...")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel before calling the handler
-
-	rt.handleDeviceCodeError(ctx, errors.New("context cancelled"))
-
-	// Status should still be cleared even with cancelled context.
-	if rt.statusLabel.Text != "" {
-		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// handlePollError
-// ---------------------------------------------------------------------------
-
-func TestHandlePollError_ActiveContext(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.statusLabel.SetText("Waiting for GitHub authorization...")
-
-	// Use cancelled context to avoid dialog.ShowError race with test goroutine.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	rt.handlePollError(ctx, errors.New("expired_token"))
-
-	if rt.statusLabel.Text != "" {
-		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
-	}
-}
-
-func TestHandlePollError_CancelledContext(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.statusLabel.SetText("Waiting for GitHub authorization...")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	rt.handlePollError(ctx, errors.New("context cancelled"))
-
-	if rt.statusLabel.Text != "" {
-		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// completeLogin
-// ---------------------------------------------------------------------------
-
-func TestCompleteLogin_SuccessfulOnline(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	tok := ghapi.Token{AccessToken: "gho_test123", TokenType: "bearer", Scope: "public_repo"}
-	cancelled := false
-	cancel := func() { cancelled = true }
-
-	rt.completeLogin(tok, "octocat", nil, cancel)
-
-	if !rt.state.loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if rt.state.offline {
-		t.Error("offline = true, want false")
-	}
-	if rt.state.githubUser != "octocat" {
-		t.Errorf("githubUser = %q, want %q", rt.state.githubUser, "octocat")
-	}
-	if rt.state.githubToken.AccessToken != "gho_test123" {
-		t.Errorf("githubToken.AccessToken = %q, want %q", rt.state.githubToken.AccessToken, "gho_test123")
-	}
-	if rt.statusLabel.Text != "Logged in as @octocat" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "Logged in as @octocat")
-	}
-	if rt.loginBtn.Text != "@octocat \u25BE" {
-		t.Errorf("loginBtn.Text = %q, want %q", rt.loginBtn.Text, "@octocat \u25BE")
-	}
-	if !cancelled {
-		t.Error("cancel was not called")
-	}
-}
-
-func TestCompleteLogin_Offline(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	tok := ghapi.Token{AccessToken: "gho_test456", TokenType: "bearer", Scope: "public_repo"}
-	cancelled := false
-	cancel := func() { cancelled = true }
-	netErr := errors.New("dial tcp: connection refused")
-
-	rt.completeLogin(tok, "", netErr, cancel)
-
-	if !rt.state.loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if !rt.state.offline {
-		t.Error("offline = false, want true")
-	}
-	if rt.state.githubToken.AccessToken != "gho_test456" {
-		t.Errorf("githubToken.AccessToken = %q, want %q", rt.state.githubToken.AccessToken, "gho_test456")
-	}
-	if rt.statusLabel.Text != "GitHub unreachable" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "GitHub unreachable")
-	}
-	if rt.loginBtn.Text != "Offline — Reconnect" {
-		t.Errorf("loginBtn.Text = %q, want %q", rt.loginBtn.Text, "Offline — Reconnect")
-	}
-	if !cancelled {
-		t.Error("cancel was not called")
-	}
-}
-
-func TestCompleteLogin_Unauthorized(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	tok := ghapi.Token{AccessToken: "gho_revoked", TokenType: "bearer"}
-	cancelled := false
-	cancel := func() { cancelled = true }
-	authErr := &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}
-
-	rt.completeLogin(tok, "", authErr, cancel)
-
-	if rt.state.loggedIn {
-		t.Error("loggedIn = true, want false")
-	}
-	if rt.state.offline {
-		t.Error("offline = true, want false")
-	}
-	if rt.state.githubToken.AccessToken != "" {
-		t.Errorf("githubToken should be zero value, got AccessToken = %q", rt.state.githubToken.AccessToken)
-	}
-	if rt.statusLabel.Text != "Not logged in" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "Not logged in")
-	}
-	if rt.loginBtn.Text != "Login to GitHub" {
-		t.Errorf("loginBtn.Text = %q, want %q", rt.loginBtn.Text, "Login to GitHub")
-	}
-	if !cancelled {
-		t.Error("cancel was not called")
-	}
-}
-
-func TestCompleteLogin_EmptyUsername(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	tok := ghapi.Token{AccessToken: "gho_noname", TokenType: "bearer"}
-	cancelled := false
-	cancel := func() { cancelled = true }
-
-	rt.completeLogin(tok, "", nil, cancel)
-
-	if !rt.state.loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if rt.state.offline {
-		t.Error("offline = true, want false")
-	}
-	if rt.statusLabel.Text != "Logged in as @" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "Logged in as @")
-	}
-	if !cancelled {
-		t.Error("cancel was not called")
-	}
-}
-
-func TestCompleteLogin_DoesNotStoreTokenWhenUnauthorized(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	// Pre-set a token to verify it gets cleared.
-	rt.state.githubToken = ghapi.Token{AccessToken: "old_token"}
-	rt.state.loggedIn = true
-	authErr := &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}
-	cancel := func() {}
-
-	rt.completeLogin(ghapi.Token{AccessToken: "new_token"}, "", authErr, cancel)
-
-	if rt.state.githubToken.AccessToken != "" {
-		t.Errorf("token should be cleared on 401, got %q", rt.state.githubToken.AccessToken)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// handleSubmitError
-// ---------------------------------------------------------------------------
-
-func TestHandleSubmitError_Unauthorized(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.state.loggedIn = true
-	rt.state.githubToken = ghapi.Token{AccessToken: "gho_expired"}
-	rt.state.githubUser = "octocat"
-	// Prevent startLogin() from spawning a goroutine (races with test).
-	rt.loggingIn.Store(true)
-
-	authErr := &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}
-
-	rt.handleSubmitError(authErr)
-
-	if rt.state.loggedIn {
-		t.Error("loggedIn should be false after 401")
-	}
-	if rt.state.githubToken.AccessToken != "" {
-		t.Error("githubToken should be cleared after 401")
-	}
-	if rt.state.githubUser != "" {
-		t.Error("githubUser should be cleared after 401")
-	}
-	if rt.loginBtn.Text != "Login to GitHub" {
-		t.Errorf("loginBtn.Text = %q, want %q", rt.loginBtn.Text, "Login to GitHub")
-	}
-}
-
-func TestHandleSubmitError_RateLimited(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.statusLabel.SetText("Creating pull request...")
-
-	rateLimitErr := &ghapi.APIError{StatusCode: 429, Message: "rate limit"}
-
-	rt.handleSubmitError(rateLimitErr)
-
-	// Should clear status on non-auth errors.
-	if rt.statusLabel.Text != "" {
-		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
-	}
-	// State should be unchanged — still logged in if it was before.
-}
-
-func TestHandleSubmitError_Forbidden(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.statusLabel.SetText("Creating pull request...")
-	rt.state.loggedIn = true
-
-	forbiddenErr := &ghapi.APIError{StatusCode: 403, Message: "forbidden"}
-
-	rt.handleSubmitError(forbiddenErr)
-
-	if rt.statusLabel.Text != "" {
-		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
-	}
-	// Should NOT clear auth state for 403.
-	if !rt.state.loggedIn {
-		t.Error("loggedIn should remain true for 403")
-	}
-}
-
-func TestHandleSubmitError_GenericError(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.statusLabel.SetText("Creating pull request...")
-
-	genericErr := errors.New("network timeout")
-
-	rt.handleSubmitError(genericErr)
-
-	if rt.statusLabel.Text != "" {
-		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
-	}
-}
-
-func TestHandleSubmitError_RegistryChanged(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.statusLabel.SetText("Creating pull request...")
-	rt.state.loggedIn = true
-	rt.state.githubToken = ghapi.Token{AccessToken: "gho_valid"}
-
-	rt.handleSubmitError(fmt.Errorf("submit: %w", service.ErrRegistryChanged))
-
-	// The specific dialog (not the generic "Submission Failed") must be shown.
-	top := rt.window.Canvas().Overlays().Top()
-	if top == nil || !overlayHasText(top, "Registry Changed") {
-		t.Error(`want the "Registry Changed" dialog, not the generic error`)
-	}
-	if rt.statusLabel.Text != "" {
-		t.Errorf("statusLabel = %q, want empty string", rt.statusLabel.Text)
-	}
-	if !rt.state.loggedIn || rt.state.githubToken.AccessToken != "gho_valid" {
-		t.Error("ErrRegistryChanged must not clear login state")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// handleSubmitSuccess
-// ---------------------------------------------------------------------------
-
-func TestHandleSubmitSuccess_ValidHTTPSURL(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.state.dirty = true
-
-	pr := ghapi.PRResult{
-		Number:  42,
-		HTMLURL: "https://github.com/owner/repo/pull/42",
+	t.Cleanup(svc.Close)
+	svc.Start()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("startup fetch did not finish")
 	}
 
-	rt.handleSubmitSuccess(pr)
-
-	if rt.state.dirty {
-		t.Error("dirty should be false after successful submit")
-	}
-	if rt.statusLabel.Text != "PR #42 created" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "PR #42 created")
-	}
-}
-
-func TestHandleSubmitSuccess_InvalidURL(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.state.dirty = true
-
-	pr := ghapi.PRResult{
-		Number:  99,
-		HTMLURL: "http://insecure.example.com/pull/99", // not HTTPS
-	}
-
-	rt.handleSubmitSuccess(pr)
-
-	if rt.state.dirty {
-		t.Error("dirty should be false after successful submit")
-	}
-	if rt.statusLabel.Text != "PR #99 created" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "PR #99 created")
-	}
-}
-
-func TestHandleSubmitSuccess_EmptyURL(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.state.dirty = true
-
-	pr := ghapi.PRResult{
-		Number:  7,
-		HTMLURL: "",
-	}
-
-	rt.handleSubmitSuccess(pr)
-
-	if rt.state.dirty {
-		t.Error("dirty should be false after successful submit")
-	}
-	if rt.statusLabel.Text != "PR #7 created" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "PR #7 created")
-	}
-}
-
-func TestHandleSubmitSuccess_MalformedURL(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.state.dirty = true
-
-	pr := ghapi.PRResult{
-		Number:  5,
-		HTMLURL: "://bad-url",
-	}
-
-	rt.handleSubmitSuccess(pr)
-
-	if rt.state.dirty {
-		t.Error("dirty should be false after successful submit")
-	}
-	if rt.statusLabel.Text != "PR #5 created" {
-		t.Errorf("statusLabel = %q, want %q", rt.statusLabel.Text, "PR #5 created")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Integration: verify helpers don't panic with zero-value state
-// ---------------------------------------------------------------------------
-
-func TestHandleDeviceCodeError_NilContextError(t *testing.T) {
-	// Ensure handleDeviceCodeError doesn't panic with various error types.
-	// Use cancelled context to avoid dialog.ShowError race.
-	rt := newTestRegistryTab(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	rt.handleDeviceCodeError(ctx, errors.New("simple error"))
-	rt.handleDeviceCodeError(ctx, &ghapi.APIError{StatusCode: 500, Message: "server error"})
-}
-
-func TestHandlePollError_VariousErrors(t *testing.T) {
-	// Use cancelled context to avoid dialog.ShowError race.
-	rt := newTestRegistryTab(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	rt.handlePollError(ctx, errors.New("expired_token"))
-	rt.handlePollError(ctx, errors.New("access_denied"))
-}
-
-func TestHandleSubmitError_WrappedUnauthorized(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	rt.state.loggedIn = true
-	rt.state.githubToken = ghapi.Token{AccessToken: "gho_test"}
-	rt.state.githubUser = "user"
-	// Prevent startLogin() from spawning a goroutine (races with test).
-	rt.loggingIn.Store(true)
-
-	// Wrap the 401 error — IsUnauthorized uses errors.As, so wrapping should still match.
-	inner := &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}
-	wrappedErr := fmt.Errorf("submit failed: %w", inner)
-
-	rt.handleSubmitError(wrappedErr)
-
-	if rt.state.loggedIn {
-		t.Error("loggedIn should be false after wrapped 401")
-	}
-	if rt.state.githubToken.AccessToken != "" {
-		t.Error("githubToken should be cleared after wrapped 401")
-	}
-	if rt.state.githubUser != "" {
-		t.Error("githubUser should be cleared after wrapped 401")
-	}
+	rt := NewRegistryTab(svc, events, w)
+	logins := make(chan struct{}, 10)
+	rt.login = func() { logins <- struct{}{} }
+	return rt, logins
 }
 
 // overlayHasText reports whether any label or text in o's object tree reads want.
@@ -474,4 +90,26 @@ func overlayHasText(o fyne.CanvasObject, want string) bool {
 		}
 	}
 	return false
+}
+
+// topOverlay returns the window's top overlay, failing if there is none.
+func topOverlay(t *testing.T, rt *RegistryTab) fyne.CanvasObject {
+	t.Helper()
+	top := rt.window.Canvas().Overlays().Top()
+	if top == nil {
+		t.Fatal("no dialog shown")
+	}
+	return top
+}
+
+// findButton returns the button labelled text in o's object tree.
+func findButton(t *testing.T, o fyne.CanvasObject, text string) *widget.Button {
+	t.Helper()
+	for _, obj := range test.LaidOutObjects(o) {
+		if b, ok := obj.(*widget.Button); ok && b.Text == text {
+			return b
+		}
+	}
+	t.Fatalf("button %q not found", text)
+	return nil
 }

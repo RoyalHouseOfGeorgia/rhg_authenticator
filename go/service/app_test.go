@@ -89,6 +89,30 @@ func (e *fakeEvents) snapshot() ([]string, []any) {
 	return append([]string(nil), e.names...), append([]any(nil), e.payloads...)
 }
 
+// waitFor waits until name has been emitted.
+func (e *fakeEvents) waitFor(t *testing.T, name string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		names, _ := e.snapshot()
+		for _, n := range names {
+			if n == name {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s not emitted; got %v", name, names)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (e *fakeEvents) reset() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.names, e.payloads = nil, nil
+}
+
 func testKeyB64(seed byte) string {
 	key := make([]byte, 32)
 	for i := range key {

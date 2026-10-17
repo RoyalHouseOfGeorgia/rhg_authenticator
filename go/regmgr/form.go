@@ -1,7 +1,7 @@
 package regmgr
 
 import (
-	"os"
+	"errors"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -12,8 +12,8 @@ import (
 	xwidget "fyne.io/x/fyne/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
 // datePickerRow holds widgets for a date input with calendar button.
@@ -58,8 +58,20 @@ func newExpirySection(window fyne.Window, initialTo string, hasExpiry bool) (dat
 	return dp, noExpiryCheck
 }
 
-// showAddDialog shows a dialog for adding a new key entry.
-func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
+// entryForm collects the entry dialog inputs.
+func entryForm(authority *widget.Entry, from, to datePickerRow, noExpiry *widget.Check, note *widget.Entry) service.EntryForm {
+	return service.EntryForm{
+		Authority: authority.Text,
+		From:      from.entry.Text,
+		To:        to.entry.Text,
+		Note:      note.Text,
+		NoExpiry:  noExpiry.Checked,
+	}
+}
+
+// showAddDialog shows a dialog for adding a new key entry; onAdded runs after
+// svc accepted it.
+func showAddDialog(window fyne.Window, svc *service.App, onAdded func()) {
 	authorityEntry := widget.NewEntry()
 	authorityEntry.SetPlaceHolder("Authority name")
 
@@ -84,17 +96,9 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 			}
 			defer reader.Close()
 
-			data, err := os.ReadFile(reader.URI().Path())
+			key, err := svc.ImportCertificate(reader.URI().Path())
 			if err != nil {
-				errorLabel.SetText("Failed to read file: " + core.StripControlChars(err.Error()))
-				keyLabel.SetText("No key imported")
-				importedKey = ""
-				return
-			}
-
-			key, err := service.ExtractEd25519Key(data)
-			if err != nil {
-				errorLabel.SetText(core.StripControlChars(err.Error()))
+				errorLabel.SetText(err.Error())
 				keyLabel.SetText("No key imported")
 				importedKey = ""
 				return
@@ -109,16 +113,23 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	})
 
 	importYubiKeyBtn := widget.NewButton("Import from YubiKey", func() {
-		key, err := yubikey.ReadPublicKey()
-		if err != nil {
-			keyLabel.SetText(service.ImportKeyErrorMessage(err))
-			importedKey = ""
-			errorLabel.SetText("")
-			return
-		}
-		importedKey = key
-		keyLabel.SetText(key)
-		errorLabel.SetText("")
+		safego.Go(func() {
+			key, err := svc.ImportFromYubiKey()
+			fyne.Do(func() {
+				if errors.Is(err, service.ErrBusy) {
+					return // a running import or card operation; leave its result alone
+				}
+				if err != nil {
+					keyLabel.SetText(err.Error())
+					importedKey = ""
+					errorLabel.SetText("")
+					return
+				}
+				importedKey = key
+				keyLabel.SetText(key)
+				errorLabel.SetText("")
+			})
+		})
 	})
 
 	noteEntry := widget.NewMultiLineEntry()
@@ -146,20 +157,12 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	d := dialog.NewCustomWithoutButtons("Add Entry", formContent, window)
 
 	confirmBtn := widget.NewButton("Add", func() {
-		if err := service.ValidateEntryForm(authorityEntry.Text, fromDP.entry.Text, importedKey, noExpiryCheck.Checked, toDP.entry.Text); err != nil {
+		if err := svc.AddEntry(entryForm(authorityEntry, fromDP, toDP, noExpiryCheck, noteEntry), importedKey); err != nil {
 			errorLabel.SetText(err.Error())
 			return
 		}
-
-		var to *string
-		if !noExpiryCheck.Checked && toDP.entry.Text != "" {
-			t := toDP.entry.Text
-			to = &t
-		}
-
-		entry := service.BuildEntry(authorityEntry.Text, fromDP.entry.Text, to, importedKey, noteEntry.Text)
 		d.Hide()
-		onAdd(entry)
+		onAdded()
 	})
 	confirmBtn.Importance = widget.HighImportance
 
@@ -169,8 +172,9 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	d.Show()
 }
 
-// showEditDialog shows a dialog for editing an existing key entry.
-func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.KeyEntry)) {
+// showEditDialog shows a dialog for editing entry, the registry entry at
+// index; onSaved runs after svc accepted the change.
+func showEditDialog(window fyne.Window, svc *service.App, index int, entry core.KeyEntry, onSaved func()) {
 	authorityEntry := widget.NewEntry()
 	authorityEntry.SetText(entry.Authority)
 
@@ -214,21 +218,12 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 	d := dialog.NewCustomWithoutButtons("Edit Entry", formContent, window)
 
 	confirmBtn := widget.NewButton("Save", func() {
-		if err := service.ValidateEntryForm(authorityEntry.Text, fromDP.entry.Text, entry.PublicKey, noExpiryCheck.Checked, toDP.entry.Text); err != nil {
+		if err := svc.UpdateEntry(index, entry.PublicKey, entryForm(authorityEntry, fromDP, toDP, noExpiryCheck, noteEntry)); err != nil {
 			errorLabel.SetText(err.Error())
 			return
 		}
-
-		var to *string
-		if !noExpiryCheck.Checked && toDP.entry.Text != "" {
-			t := toDP.entry.Text
-			to = &t
-		}
-
-		updated := service.BuildEntry(authorityEntry.Text, fromDP.entry.Text, to, entry.PublicKey, noteEntry.Text)
-		updated.Extra = entry.Extra
 		d.Hide()
-		onSave(updated)
+		onSaved()
 	})
 	confirmBtn.Importance = widget.HighImportance
 

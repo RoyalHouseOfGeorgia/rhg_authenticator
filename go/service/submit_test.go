@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,150 +28,6 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	req.URL.Scheme = "http"
 	req.URL.Host = strings.TrimPrefix(t.targetURL, "http://")
 	return t.base.RoundTrip(req)
-}
-
-// TestSubmitForReview_Integration validates the MarshalRegistry → CreateRegistryPR pipeline
-// using an httptest server that mocks the full same-repo PR flow.
-func TestSubmitForReview_Integration(t *testing.T) {
-	// 1. Build a valid registry with one entry using a real Ed25519 key.
-	_, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatalf("generating Ed25519 key: %v", err)
-	}
-	pubKeyBytes := priv.Public().(ed25519.PublicKey)
-	pubKeyB64 := base64.StdEncoding.EncodeToString(pubKeyBytes)
-
-	to := "2027-12-31"
-	reg := core.Registry{Keys: []core.KeyEntry{{
-		Authority: "Test Authority",
-		Algorithm: "Ed25519",
-		PublicKey: pubKeyB64,
-		From:      "2026-01-01",
-		To:        &to,
-		Note:      "integration test key",
-	}}}
-
-	// 2. Marshal via MarshalRegistry.
-	content, err := MarshalRegistry(reg)
-	if err != nil {
-		t.Fatalf("MarshalRegistry: %v", err)
-	}
-	if len(content) == 0 {
-		t.Fatal("MarshalRegistry returned empty content")
-	}
-
-	// 3. Set up httptest server mocking the same-repo PR flow endpoints.
-	owner := ghapi.DefaultOwner
-	repo := ghapi.DefaultRepo
-	repoPath := fmt.Sprintf("/repos/%s/%s", owner, repo)
-
-	var putBody []byte
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		method := r.Method
-
-		switch {
-		// GET /repos/{owner}/{repo} → 200 with push permission
-		case method == http.MethodGet && path == repoPath:
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"full_name":"%s/%s","permissions":{"push":true}}`, owner, repo)
-
-		// GET /repos/{owner}/{repo}/git/refs/heads/main → 200 with SHA
-		case method == http.MethodGet && path == repoPath+"/git/refs/heads/main":
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"object":{"sha":"abc123deadbeef"}}`)
-
-		// POST /repos/{owner}/{repo}/git/refs → 201 (branch created)
-		case method == http.MethodPost && path == repoPath+"/git/refs":
-			w.WriteHeader(http.StatusCreated)
-			fmt.Fprintf(w, `{"ref":"refs/heads/registry-update-branch"}`)
-
-		// GET /repos/{owner}/{repo}/contents/{path}?ref={branch} → 200 with file SHA
-		case method == http.MethodGet && strings.HasPrefix(path, repoPath+"/contents/"):
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"sha":"existingfilesha456"}`)
-
-		// PUT /repos/{owner}/{repo}/contents/{path} → 200 (file updated)
-		case method == http.MethodPut && strings.HasPrefix(path, repoPath+"/contents/"):
-			body, readErr := io.ReadAll(r.Body)
-			if readErr != nil {
-				http.Error(w, "failed to read body", http.StatusInternalServerError)
-				return
-			}
-			putBody = body
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"content":{"sha":"newfilesha789"}}`)
-
-		// POST /repos/{owner}/{repo}/pulls → 201 with PR number + URL
-		case method == http.MethodPost && path == fmt.Sprintf("/repos/%s/%s/pulls", owner, repo):
-			w.WriteHeader(http.StatusCreated)
-			fmt.Fprintf(w, `{"number":42,"html_url":"https://github.com/%s/%s/pull/42"}`, owner, repo)
-
-		default:
-			t.Errorf("unexpected request: %s %s", method, path)
-			http.Error(w, "not found", http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-
-	// 4. Create client pointed at test server.
-	client := ghapi.NewClient("test-token")
-	client.HTTPClient = srv.Client()
-	client.HTTPClient.Transport = &rewriteTransport{
-		base:      srv.Client().Transport,
-		targetURL: srv.URL,
-	}
-
-	// 5. Call CreateRegistryPR.
-	pr, err := client.CreateRegistryPR(context.Background(), content, "Test PR")
-	if err != nil {
-		t.Fatalf("CreateRegistryPR: %v", err)
-	}
-
-	// 6. Assert PR result.
-	if pr.Number != 42 {
-		t.Errorf("PR number = %d, want 42", pr.Number)
-	}
-	expectedURL := fmt.Sprintf("https://github.com/%s/%s/pull/42", owner, repo)
-	if pr.HTMLURL != expectedURL {
-		t.Errorf("PR URL = %q, want %q", pr.HTMLURL, expectedURL)
-	}
-
-	// 7. Assert PUT body: decode JSON, extract "content" field, base64-decode it,
-	// and compare to the MarshalRegistry output.
-	if len(putBody) == 0 {
-		t.Fatal("PUT body was not captured")
-	}
-
-	var putPayload struct {
-		Message string `json:"message"`
-		Content string `json:"content"`
-		Branch  string `json:"branch"`
-		SHA     string `json:"sha"`
-	}
-	if err := json.Unmarshal(putBody, &putPayload); err != nil {
-		t.Fatalf("unmarshaling PUT body: %v", err)
-	}
-
-	if putPayload.SHA != "existingfilesha456" {
-		t.Errorf("PUT sha = %q, want %q", putPayload.SHA, "existingfilesha456")
-	}
-	if putPayload.Branch == "" {
-		t.Error("PUT branch is empty")
-	}
-	if putPayload.Message == "" {
-		t.Error("PUT message is empty")
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(putPayload.Content)
-	if err != nil {
-		t.Fatalf("decoding PUT content from base64: %v", err)
-	}
-
-	if string(decoded) != string(content) {
-		t.Errorf("PUT content mismatch:\ngot:  %s\nwant: %s", string(decoded), string(content))
-	}
 }
 
 // testKeyEntry returns a valid registry entry backed by a fresh Ed25519 key.
@@ -272,12 +127,12 @@ func upstreamOnly(t *testing.T, f *submitFake) {
 	}
 }
 
-func TestSubmitRegistry_UpstreamUnchanged_CreatesPR(t *testing.T) {
+func TestSubmitIfUnchanged_UpstreamUnchanged_CreatesPR(t *testing.T) {
 	to := "2027-12-31"
 	reg := core.Registry{Keys: []core.KeyEntry{testKeyEntry(t, "Key X", &to), testKeyEntry(t, "Key Y", nil)}}
-	base, err := MarshalRegistry(reg)
+	base, err := marshalRegistry(reg)
 	if err != nil {
-		t.Fatalf("MarshalRegistry: %v", err)
+		t.Fatalf("marshalRegistry: %v", err)
 	}
 	// Upstream is the same registry in compact form with CRLF line endings:
 	// formatting differences must not count as a change.
@@ -290,15 +145,15 @@ func TestSubmitRegistry_UpstreamUnchanged_CreatesPR(t *testing.T) {
 	edited := reg
 	edited.Keys = append([]core.KeyEntry(nil), reg.Keys...)
 	edited.Keys[1].Note = "edited"
-	content, err := MarshalRegistry(edited)
+	content, err := marshalRegistry(edited)
 	if err != nil {
-		t.Fatalf("MarshalRegistry: %v", err)
+		t.Fatalf("marshalRegistry: %v", err)
 	}
 
 	f, client := newSubmitFake(t, upstream, http.StatusOK)
-	pr, err := SubmitRegistry(context.Background(), client, base, content, "Registry update")
+	pr, err := submitIfUnchanged(context.Background(), client, base, content, "Registry update")
 	if err != nil {
-		t.Fatalf("SubmitRegistry: %v", err)
+		t.Fatalf("submitIfUnchanged: %v", err)
 	}
 	if pr.Number != 7 {
 		t.Errorf("PR number = %d, want 7", pr.Number)
@@ -312,50 +167,50 @@ func TestSubmitRegistry_UpstreamUnchanged_CreatesPR(t *testing.T) {
 	}
 }
 
-func TestSubmitRegistry_UpstreamChanged_Refuses(t *testing.T) {
+func TestSubmitIfUnchanged_UpstreamChanged_Refuses(t *testing.T) {
 	reg := core.Registry{Keys: []core.KeyEntry{testKeyEntry(t, "Key X", nil), testKeyEntry(t, "Key Y", nil)}}
-	base, err := MarshalRegistry(reg)
+	base, err := marshalRegistry(reg)
 	if err != nil {
-		t.Fatalf("MarshalRegistry: %v", err)
+		t.Fatalf("marshalRegistry: %v", err)
 	}
 	// Another PR merged since the fetch and revoked key X.
 	revoked := "2026-09-30"
 	merged := reg
 	merged.Keys = append([]core.KeyEntry(nil), reg.Keys...)
 	merged.Keys[0].To = &revoked
-	upstream, err := MarshalRegistry(merged)
+	upstream, err := marshalRegistry(merged)
 	if err != nil {
-		t.Fatalf("MarshalRegistry: %v", err)
+		t.Fatalf("marshalRegistry: %v", err)
 	}
 
 	f, client := newSubmitFake(t, upstream, http.StatusOK)
-	_, err = SubmitRegistry(context.Background(), client, base, base, "Registry update")
+	_, err = submitIfUnchanged(context.Background(), client, base, base, "Registry update")
 	if !errors.Is(err, ErrRegistryChanged) {
 		t.Fatalf("err = %v, want ErrRegistryChanged", err)
 	}
 	upstreamOnly(t, f)
 }
 
-func TestSubmitRegistry_EmptyBase_Refuses(t *testing.T) {
+func TestSubmitIfUnchanged_EmptyBase_Refuses(t *testing.T) {
 	reg := core.Registry{Keys: []core.KeyEntry{testKeyEntry(t, "Key X", nil)}}
-	upstream, err := MarshalRegistry(reg)
+	upstream, err := marshalRegistry(reg)
 	if err != nil {
-		t.Fatalf("MarshalRegistry: %v", err)
+		t.Fatalf("marshalRegistry: %v", err)
 	}
 
 	f, client := newSubmitFake(t, upstream, http.StatusOK)
-	_, err = SubmitRegistry(context.Background(), client, nil, upstream, "Registry update")
+	_, err = submitIfUnchanged(context.Background(), client, nil, upstream, "Registry update")
 	if !errors.Is(err, ErrRegistryChanged) {
 		t.Fatalf("err = %v, want ErrRegistryChanged", err)
 	}
 	upstreamOnly(t, f)
 }
 
-func TestSubmitRegistry_UpstreamErrors(t *testing.T) {
+func TestSubmitIfUnchanged_UpstreamErrors(t *testing.T) {
 	reg := core.Registry{Keys: []core.KeyEntry{testKeyEntry(t, "Key X", nil)}}
-	base, err := MarshalRegistry(reg)
+	base, err := marshalRegistry(reg)
 	if err != nil {
-		t.Fatalf("MarshalRegistry: %v", err)
+		t.Fatalf("marshalRegistry: %v", err)
 	}
 	tests := []struct {
 		name     string
@@ -369,7 +224,7 @@ func TestSubmitRegistry_UpstreamErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f, client := newSubmitFake(t, tc.upstream, tc.status)
-			_, err := SubmitRegistry(context.Background(), client, base, base, "Registry update")
+			_, err := submitIfUnchanged(context.Background(), client, base, base, "Registry update")
 			if err == nil || !strings.Contains(err.Error(), tc.wantMsg) {
 				t.Fatalf("err = %v, want containing %q", err, tc.wantMsg)
 			}
@@ -378,26 +233,5 @@ func TestSubmitRegistry_UpstreamErrors(t *testing.T) {
 			}
 			upstreamOnly(t, f)
 		})
-	}
-}
-
-func TestFetchRegistry_LoggedInReadsMainViaAPI(t *testing.T) {
-	to := "2027-12-31"
-	reg := core.Registry{Keys: []core.KeyEntry{testKeyEntry(t, "Key X", &to)}}
-	up, err := MarshalRegistry(reg)
-	if err != nil {
-		t.Fatalf("MarshalRegistry: %v", err)
-	}
-	f, client := newSubmitFake(t, up, http.StatusOK)
-
-	got, err := FetchRegistry(client)
-	if err != nil {
-		t.Fatalf("FetchRegistry: %v", err)
-	}
-	if len(got.Keys) != 1 || got.Keys[0].Authority != "Key X" {
-		t.Errorf("got %+v, want the upstream registry", got.Keys)
-	}
-	if len(f.hits) != 1 || !strings.Contains(f.hits[0], "/contents/"+ghapi.RegistryFilePath) {
-		t.Errorf("hits = %v, want one upstream contents GET", f.hits)
 	}
 }

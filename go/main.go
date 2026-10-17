@@ -122,11 +122,10 @@ func main() {
 
 	// 4. Build tabs.
 	signContent := gui.NewSignTab(svc, events, window)
-	regTab := regmgr.NewRegistryTab(window, dataDir)
-	historyContent, refreshHistoryLogin := gui.NewHistoryTab(svc.LogPath(), registry.DefaultRevocationURL, regTab.GitHubClient, regTab.StartLoginOrReconnect, regTab.HandleUnauthorized, window)
+	regTab := regmgr.NewRegistryTab(svc, events, window)
+	historyContent, refreshHistoryLogin := gui.NewHistoryTab(svc.LogPath(), registry.DefaultRevocationURL, svc.GitHubClient, regTab.StartLoginOrReconnect, regTab.HandleUnauthorized, window)
 	// Push login-state changes (from either tab) into the History tab, then sync
-	// once now to reflect the current state. The observer nil-guard makes this
-	// correct regardless of whether the async session restore has completed.
+	// once now to reflect the current state.
 	// Safety of this synchronous call: fyne.Do bodies (e.g. the fetchRevocations
 	// goroutine's UI mutations) do not run until ShowAndRun starts the driver
 	// loop, so this runs strictly before them on the main goroutine — no race.
@@ -135,6 +134,9 @@ func main() {
 	refreshHistoryLogin()
 	auditContent := gui.NewAuditTab(window)
 	yubiKeyContent := gui.NewYubiKeyTab(svc)
+	// Every tab now listens for events: restore the GitHub session and load the
+	// registry for editing.
+	svc.Start()
 
 	signTab := container.NewTabItem("Sign", signContent)
 	historyTab := container.NewTabItem("History", historyContent)
@@ -152,14 +154,14 @@ func main() {
 
 	// 6. Close intercept for unsaved registry changes + PIN cache cleanup.
 	window.SetCloseIntercept(buildCloseHandler(
-		regTab.IsDirty,
+		svc.Dirty,
 		svc.Close,
 		a.Quit,
 		window,
 	))
 
-	// 7. The registry tab fetches itself once the async login restore finishes,
-	// so a logged-in session loads from main via the API (see regmgr.Fetch).
+	// 7. The service loads the edited registry once the async login restore
+	// finishes, so a logged-in session loads from main via the API.
 
 	// 8. Auto-update. "Restart now" reuses the close handler, so unsubmitted
 	// registry changes get the same confirm and Cancel never sets relaunch.
@@ -167,7 +169,7 @@ func main() {
 	// written (button tap) and read (after ShowAndRun) on one goroutine.
 	var relaunch bool
 	restart := buildCloseHandler(
-		regTab.IsDirty,
+		svc.Dirty,
 		svc.Close,
 		markRelaunchAndQuit(&relaunch, a.Quit),
 		window,

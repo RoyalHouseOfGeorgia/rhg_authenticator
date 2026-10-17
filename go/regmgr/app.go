@@ -4,11 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"path/filepath"
-	"sync/atomic"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -16,7 +13,6 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
@@ -24,244 +20,123 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
-// appState holds the mutable state for the registry manager UI.
-// All fields are mutated exclusively inside fyne.Do() callbacks (main goroutine).
-// atomic.Bool fields on RegistryTab are belt-and-suspenders guards.
-type appState struct {
-	registry    core.Registry
-	dirty       bool
-	selected    int // selected table row, -1 = none
-	githubToken ghapi.Token
-	loggedIn    bool
-	offline     bool
-	githubUser  string
-	// baseBytes is the service.MarshalRegistry output of the registry as loaded by
-	// Fetch (from main via the API when logged in, else the Pages copy, which
-	// lags main for 10–15 min after a merge); nil = not loaded. Submit refuses
-	// unless main still matches it.
-	baseBytes []byte
-}
-
-// restoreSessionFunc is the session-restore implementation; a package-level
-// var so tests can stub the network/keyring round trip.
-var restoreSessionFunc = ghapi.RestoreSession
-
-// tableColumns defines the column headers for the registry table.
-var tableColumns = []string{"#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"}
-
-// tableColumnWidths defines the minimum widths for each table column.
+// tableColumnWidths defines the minimum widths for each column of
+// service.RegistryColumns.
 var tableColumnWidths = []float32{40, 200, 100, 100, 150, 200, 450}
 
-// RegistryTab holds the registry manager UI and its state.
+// RegistryTab is the registry manager UI on top of service.App. Its methods
+// run on the Fyne main thread.
 type RegistryTab struct {
-	Content      fyne.CanvasObject
-	state        *appState
-	table        *widget.Table
-	statusLabel  *widget.Label
-	loginBtn     *widget.Button
-	window       fyne.Window
-	rebuildCache func()
-	configDir    string
-	kr           ghapi.Keyring
-	submitting   atomic.Bool
-	loggingIn    atomic.Bool
-	// onLoginChanged, if set, is invoked on the Fyne main thread whenever login
-	// state changes (login, logout, session restore, 401 expiry). Lets other
+	Content     fyne.CanvasObject
+	svc         *service.App
+	snap        service.RegistrySnapshot
+	selected    int // selected table row, -1 = none
+	table       *widget.Table
+	statusLabel *widget.Label
+	loginBtn    *widget.Button
+	window      fyne.Window
+	loginDialog *dialog.CustomDialog
+	// login starts the device login flow; a field so tests can stub it.
+	login func()
+	// onLoginChanged, if set, is invoked whenever login state changes, so other
 	// tabs (History) react to auth changes without polling. nil in tests.
 	onLoginChanged func()
-	// onRestored runs once after the startup session restore is applied (on the
-	// main thread); NewRegistryTab sets it to Fetch. nil in tests.
-	onRestored func()
 }
 
 // SetOnLoginChanged registers a callback fired on the Fyne main thread whenever
-// login state changes. Must be set before ShowAndRun (all reads happen on the
-// main thread inside updateLoginUI).
+// login state changes. Must be set before ShowAndRun.
 func (rt *RegistryTab) SetOnLoginChanged(fn func()) {
 	rt.onLoginChanged = fn
 }
 
-// IsDirty returns whether the registry has unsubmitted changes.
-func (rt *RegistryTab) IsDirty() bool {
-	return rt.state.dirty
-}
-
-// GitHubClient returns a configured ghapi.Client if logged in and online,
-// or nil. Must be called on the Fyne main thread (reads rt.state).
-func (rt *RegistryTab) GitHubClient() *ghapi.Client {
-	if !rt.state.loggedIn || rt.state.offline || rt.state.githubToken.AccessToken == "" {
-		return nil
-	}
-	return ghapi.NewClient(rt.state.githubToken.AccessToken)
-}
-
-// Fetch fetches the registry from the remote server asynchronously.
-// Must be called on the Fyne main thread (updates UI widgets before spawning goroutine).
+// Fetch re-fetches the registry in the background; success arrives as
+// EventRegistryChanged.
 func (rt *RegistryTab) Fetch() {
 	rt.statusLabel.SetText("Fetching...")
-	// Read on the main thread. nil when logged out or offline (offline skips the
-	// API attempt and its timeout and goes straight to the Pages copy).
-	client := rt.GitHubClient()
 	safego.Go(func() {
-		reg, err := service.FetchRegistry(client)
-		var base []byte
-		if err == nil {
-			base, err = service.MarshalRegistry(reg)
+		if err := rt.svc.FetchRegistry(context.Background()); err != nil {
+			fyne.Do(func() { rt.statusLabel.SetText("Failed to load registry") })
 		}
-		fyne.Do(func() {
-			if err != nil {
-				log.Printf("error: registry fetch failed: %s", core.SanitizeForLog(err.Error()))
-				rt.statusLabel.SetText("Failed to load registry")
-				return
-			}
-			rt.state.registry = reg
-			rt.state.baseBytes = base
-			rt.state.dirty = false
-			rt.state.selected = -1
-			rt.table.UnselectAll()
-			if rt.rebuildCache != nil { // nil during tests without full init
-				rt.rebuildCache()
-			}
-			rt.table.Refresh()
-			rt.statusLabel.SetText("Loaded from registry server")
-		})
 	})
 }
 
-// updateLoginUI updates the login button text to reflect current auth state.
-// Must be called from the Fyne main thread (inside fyne.Do or during construction).
-func (rt *RegistryTab) updateLoginUI() {
-	if !rt.state.loggedIn {
+// refreshTable re-reads the edited registry and redraws the table.
+func (rt *RegistryTab) refreshTable() {
+	rt.snap = rt.svc.Registry()
+	rt.table.Refresh()
+}
+
+// registryChanged applies a fetched registry (EventRegistryChanged).
+func (rt *RegistryTab) registryChanged() {
+	rt.selected = -1
+	rt.table.UnselectAll()
+	rt.refreshTable()
+	if rt.snap.Loaded {
+		rt.statusLabel.SetText("Loaded from registry server")
+	} else {
+		rt.statusLabel.SetText("Failed to load registry")
+	}
+}
+
+// updateLoginUI sets the login button text for st and notifies observers
+// (e.g. History tab). Every login-state change arrives here via EventAuthChanged.
+func (rt *RegistryTab) updateLoginUI(st service.AuthState) {
+	if !st.LoggedIn {
 		rt.loginBtn.SetText("Login to GitHub")
-	} else if rt.state.offline {
+	} else if st.Offline {
 		rt.loginBtn.SetText("Offline — Reconnect")
 	} else {
-		rt.loginBtn.SetText("@" + rt.state.githubUser + " \u25BE")
+		rt.loginBtn.SetText("@" + st.User + " ▾")
 	}
-	// Notify observers (e.g. History tab) of the login-state change. This is the
-	// single choke point: every state mutation (completeLogin, logout, restore,
-	// 401 expiry) calls updateLoginUI.
 	if rt.onLoginChanged != nil {
 		rt.onLoginChanged()
 	}
 }
 
-// handleDeviceCodeError shows an error dialog when RequestDeviceCode fails
-// and clears the status label. Must be called on the Fyne main thread.
-func (rt *RegistryTab) handleDeviceCodeError(ctx context.Context, err error) {
-	if ctx.Err() == nil {
-		dialog.ShowError(fmt.Errorf("device code request failed: %w", err), rt.window)
-	}
-	rt.statusLabel.SetText("")
-}
-
-// handlePollError shows an error dialog when PollForToken fails
-// and clears the status label. Must be called on the Fyne main thread.
-func (rt *RegistryTab) handlePollError(ctx context.Context, err error) {
-	if ctx.Err() == nil {
-		dialog.ShowError(fmt.Errorf("login failed: %w", err), rt.window)
-	}
-	rt.statusLabel.SetText("")
-}
-
-// completeLogin saves the token, updates UI state via service.ResolveLoginState,
-// and cancels the login context. Must be called on the Fyne main thread.
-func (rt *RegistryTab) completeLogin(tok ghapi.Token, username string, valErr error, cancel context.CancelFunc) {
-	loggedIn, offline, statusText := service.ResolveLoginState(
-		ghapi.IsUnauthorized(valErr), username, valErr != nil,
-	)
-	if loggedIn {
-		rt.state.githubToken = tok
-	} else {
-		rt.state.githubToken = ghapi.Token{}
-	}
-	rt.state.loggedIn = loggedIn
-	rt.state.offline = offline
-	rt.state.githubUser = username
-	rt.statusLabel.SetText(statusText)
-	rt.updateLoginUI()
-	cancel()
-}
-
-// startLogin initiates the GitHub device authorization flow.
-// The loggingIn atomic is belt-and-suspenders over Fyne UI thread serialization.
-// Primary serialization is the Fyne main thread; the atomic is a safety net
-// for the submitForReview → startLogin re-entry path.
+// startLogin runs the GitHub device authorization flow in the background.
 func (rt *RegistryTab) startLogin() {
-	if !rt.loggingIn.CompareAndSwap(false, true) {
-		rt.statusLabel.SetText("Login already in progress")
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-
 	rt.statusLabel.SetText("Requesting device code...")
-
 	safego.Go(func() {
-		defer rt.loggingIn.Store(false)
-		dcr, err := ghapi.RequestDeviceCode(ctx)
-		if err != nil {
-			fyne.Do(func() {
-				rt.handleDeviceCodeError(ctx, err)
-				cancel()
-			})
-			return
-		}
-
-		fyne.Do(func() {
-			rt.statusLabel.SetText("Waiting for GitHub authorization...")
-			rt.showLoginDialog(ctx, cancel, dcr)
-		})
-
-		// PollForToken always sleeps one full interval (minimum 5 seconds) before its
-		// first network call, which is ample time for fyne.Do to render the dialog above.
-		tok, pollErr := ghapi.PollForToken(ctx, dcr.DeviceCode, dcr.Interval, dcr.ExpiresIn)
-		if pollErr != nil {
-			fyne.Do(func() {
-				rt.handlePollError(ctx, pollErr)
-				cancel()
-			})
-			return
-		}
-
-		// Validate token to get username before persisting.
-		valCtx, valCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer valCancel()
-		username, valErr := ghapi.ValidateToken(valCtx, tok)
-		if valErr != nil {
-			log.Printf("warning: token validation failed: %s", core.SanitizeForLog(valErr.Error()))
-		}
-
-		// Save token only if validation didn't return 401 (unauthorized).
-		if !ghapi.IsUnauthorized(valErr) {
-			if saveErr := ghapi.SaveToken(rt.kr, rt.configDir, tok); saveErr != nil {
-				log.Printf("warning: failed to save token: %s", core.SanitizeForLog(saveErr.Error()))
-			}
-		}
-
-		fyne.Do(func() { rt.completeLogin(tok, username, valErr, cancel) })
+		st, err := rt.svc.Login(context.Background())
+		fyne.Do(func() { rt.loginDone(st, err) })
 	})
 }
 
-// showLoginDialog displays the device code dialog for user interaction.
-func (rt *RegistryTab) showLoginDialog(ctx context.Context, cancel context.CancelFunc, dcr ghapi.DeviceCodeResponse) {
-	codeLabel := widget.NewLabel(dcr.UserCode)
+// loginDone shows the outcome of a Login.
+func (rt *RegistryTab) loginDone(st service.AuthState, err error) {
+	if errors.Is(err, service.ErrBusy) {
+		rt.statusLabel.SetText("Login already in progress")
+		return
+	}
+	rt.hideLoginDialog()
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			dialog.ShowError(err, rt.window)
+		}
+		rt.statusLabel.SetText("")
+		return
+	}
+	rt.statusLabel.SetText(st.StatusText())
+}
+
+// showLoginDialog displays the device code (EventAuthDeviceCode); Cancel
+// stops the login.
+func (rt *RegistryTab) showLoginDialog(dc service.DeviceCode) {
+	rt.statusLabel.SetText("Waiting for GitHub authorization...")
+	codeLabel := widget.NewLabel(dc.UserCode)
 	codeLabel.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
 	codeLabel.Alignment = fyne.TextAlignCenter
 
 	copyBtn := widget.NewButton("Copy Code", func() {
-		fyne.CurrentApp().Clipboard().SetContent(dcr.UserCode)
+		fyne.CurrentApp().Clipboard().SetContent(dc.UserCode)
 	})
-
-	parsedURL, urlErr := url.Parse(dcr.VerificationURI)
 	openBtn := widget.NewButton("Open GitHub", func() {
-		if parsedURL != nil {
-			_ = fyne.CurrentApp().OpenURL(parsedURL)
+		if u, err := url.Parse(dc.VerificationURI); err == nil {
+			_ = fyne.CurrentApp().OpenURL(u)
 		}
 	})
-	if urlErr != nil || parsedURL == nil || parsedURL.Scheme != "https" || parsedURL.Host != "github.com" {
-		openBtn.Disable()
-		log.Printf("warning: invalid verification URI: %s", dcr.VerificationURI)
+	if dc.VerificationURI == "" {
+		openBtn.Disable() // the code can still be copied and entered by hand
 	}
 
 	content := container.NewVBox(
@@ -272,125 +147,85 @@ func (rt *RegistryTab) showLoginDialog(ctx context.Context, cancel context.Cance
 
 	d := dialog.NewCustom("GitHub Login", "Cancel", content, rt.window)
 	d.SetOnClosed(func() {
-		cancel()
+		if rt.loginDialog == d {
+			rt.loginDialog = nil
+			rt.svc.CancelLogin()
+		}
 	})
+	rt.loginDialog = d
 	d.Show()
-
-	// Dismiss dialog automatically when polling completes.
-	safego.Go(func() {
-		<-ctx.Done()
-		fyne.Do(func() {
-			d.Hide()
-		})
-	})
 }
 
-// HandleUnauthorized reacts to a GitHub 401: it clears the stored token,
-// resets all login state (a 401 means logged out, not offline), updates the
-// UI, and restarts the device login flow.
-// Must be called on the Fyne main thread.
-func (rt *RegistryTab) HandleUnauthorized() {
-	if err := ghapi.ClearToken(rt.kr, rt.configDir); err != nil {
-		log.Printf("warning: clearing expired token failed: %s", core.SanitizeForLog(err.Error()))
+// hideLoginDialog dismisses the device code dialog without cancelling.
+func (rt *RegistryTab) hideLoginDialog() {
+	if d := rt.loginDialog; d != nil {
+		rt.loginDialog = nil
+		d.Hide()
 	}
-	rt.state.loggedIn = false
-	rt.state.offline = false
-	rt.state.githubToken = ghapi.Token{}
-	rt.state.githubUser = ""
-	rt.updateLoginUI()
-	rt.startLogin()
+}
+
+// HandleUnauthorized reacts to a GitHub 401: it logs out (clearing the stored
+// token) and restarts the device login flow.
+func (rt *RegistryTab) HandleUnauthorized() {
+	rt.svc.Logout()
+	rt.login()
 }
 
 // StartLoginOrReconnect is the single entry point for "log in" buttons.
 // When a stored session exists but GitHub was unreachable, it retries the
 // session restore instead of starting a new device flow; otherwise it starts
-// the device authorization flow. Must be called on the Fyne main thread.
+// the device authorization flow.
 func (rt *RegistryTab) StartLoginOrReconnect() {
-	if rt.state.loggedIn && rt.state.offline {
-		if !rt.loggingIn.CompareAndSwap(false, true) {
-			return
-		}
-		rt.statusLabel.SetText("Reconnecting to GitHub...")
-		rt.restoreSession(true)
+	if st := rt.svc.AuthState(); !st.LoggedIn || !st.Offline {
+		rt.login()
 		return
 	}
-	rt.startLogin()
-}
-
-// restoreSession asynchronously restores the persisted GitHub session and
-// applies the result on the Fyne main thread.
-//
-// interactive=false is the silent startup restore. interactive=true is a
-// user-initiated reconnect: the caller must already hold rt.loggingIn, which
-// is released inside the fyne.Do callback (after state is applied) so a
-// second tap cannot race the unapplied result. An interactive restore that
-// ends logged out (401, expired token, load failure) falls through to the
-// device login flow.
-func (rt *RegistryTab) restoreSession(interactive bool) {
+	rt.statusLabel.SetText("Reconnecting to GitHub...")
 	safego.Go(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		tok, username, loggedIn, offline, err := restoreSessionFunc(ctx, rt.kr, rt.configDir)
-		if err != nil {
-			log.Printf("warning: token restore failed: %s", core.SanitizeForLog(err.Error()))
-		}
-		fyne.Do(func() {
-			rt.state.githubToken = tok
-			rt.state.loggedIn = loggedIn
-			rt.state.offline = offline
-			rt.state.githubUser = username
-			rt.updateLoginUI()
-			if !interactive {
-				if rt.onRestored != nil {
-					rt.onRestored() // startup: load the registry now that login state is known
-				}
-				return
-			}
-			rt.statusLabel.SetText("")
-			if offline {
-				dialog.ShowInformation("GitHub Unreachable",
-					"Still can't reach GitHub. Check your connection and try again.", rt.window)
-			} else if loggedIn {
-				// Confirm success; a Submit that triggered the reconnect did not
-				// run, and a blank status would hide that anything happened.
-				rt.statusLabel.SetText("Reconnected as @" + username + ".")
-			}
-			rt.loggingIn.Store(false)
-			if !loggedIn {
-				// startLogin re-acquires loggingIn itself, so it must follow the release.
-				rt.startLogin()
-			}
-		})
+		st, err := rt.svc.Reconnect(context.Background())
+		fyne.Do(func() { rt.reconnected(st, err) })
 	})
 }
 
-// handleSubmitError handles PR creation errors — shows a dialog and, if the
-// token is unauthorized, clears it and restarts login.
-// Must be called on the Fyne main thread.
+// reconnected shows the outcome of a Reconnect; one that ends logged out
+// (401, expired token, load failure) falls through to the device login flow.
+func (rt *RegistryTab) reconnected(st service.AuthState, err error) {
+	if err != nil { // ErrBusy: a login is already running
+		return
+	}
+	rt.statusLabel.SetText("")
+	if st.Offline {
+		dialog.ShowInformation("GitHub Unreachable",
+			"Still can't reach GitHub. Check your connection and try again.", rt.window)
+	} else if st.LoggedIn {
+		// Confirm success; a Submit that triggered the reconnect did not
+		// run, and a blank status would hide that anything happened.
+		rt.statusLabel.SetText("Reconnected as @" + st.User + ".")
+	} else {
+		rt.login()
+	}
+}
+
+// handleSubmitError shows the dialog for a SubmitRegistry error and, if the
+// session expired (SubmitRegistry has already logged out), restarts login.
 func (rt *RegistryTab) handleSubmitError(err error) {
-	if ghapi.IsUnauthorized(err) {
-		dialog.ShowInformation("Session Expired",
-			"Your GitHub session expired. Log in again, then submit again.", rt.window)
-		rt.HandleUnauthorized()
+	title, msg := service.SubmitErrorMessage(err)
+	switch {
+	case ghapi.IsUnauthorized(err):
+		dialog.ShowInformation(title, msg, rt.window)
+		rt.login()
 		return
+	case errors.Is(err, service.ErrRegistryChanged):
+		dialog.ShowInformation(title, msg, rt.window)
+	default:
+		debugLog := filepath.Join(filepath.Dir(rt.svc.LogPath()), debuglog.FileName)
+		gui.ShowErrorWithLogExport(title, msg, debugLog, rt.window)
 	}
-	if errors.Is(err, service.ErrRegistryChanged) {
-		log.Printf("warning: registry submit refused: %s", core.SanitizeForLog(err.Error()))
-		dialog.ShowInformation("Registry Changed",
-			"The registry on GitHub doesn't match the copy you loaded (it changed, or nothing was loaded). Click Fetch from Server, re-apply your edits, and submit again.", rt.window)
-		rt.statusLabel.SetText("")
-		return
-	}
-	log.Printf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
-	// rt.configDir is the app data dir (main passes dataDir), where debug.log lives.
-	gui.ShowErrorWithLogExport("Submission Failed", ghapi.UserMessage(err), filepath.Join(rt.configDir, debuglog.FileName), rt.window)
 	rt.statusLabel.SetText("")
 }
 
-// handleSubmitSuccess parses the PR URL and shows a success dialog.
-// Must be called on the Fyne main thread.
+// handleSubmitSuccess shows the created pull request.
 func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
-	rt.state.dirty = false
 	rt.statusLabel.SetText(fmt.Sprintf("PR #%d created", pr.Number))
 
 	prURL, ok := service.IsSafeGitHubURL(pr.HTMLURL)
@@ -408,75 +243,45 @@ func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
 	}
 }
 
-// submitForReview marshals the registry and creates a GitHub pull request.
+// submitForReview opens a GitHub pull request with the edited registry,
+// logging in (or reconnecting) first if there is no usable session.
 func (rt *RegistryTab) submitForReview() {
-	if !service.CanSave(rt.state.registry) {
+	if len(rt.snap.Entries) == 0 {
 		return
 	}
-	if !rt.state.loggedIn || rt.state.offline {
-		rt.StartLoginOrReconnect()
-		return
-	}
-	if !rt.submitting.CompareAndSwap(false, true) {
-		return // already submitting
-	}
-
-	// Marshal inside fyne.Do to avoid sharing the registry slice/pointer fields
-	// with the background goroutine. []byte is immutable once created.
-	fyne.Do(func() {
-		content, err := service.MarshalRegistry(rt.state.registry)
-		if err != nil {
-			rt.submitting.Store(false)
-			dialog.ShowError(fmt.Errorf("marshal failed: %w", err), rt.window)
-			return
-		}
-		token := rt.state.githubToken.AccessToken
-		base := rt.state.baseBytes
-
-		rt.statusLabel.SetText("Creating pull request...")
-
-		safego.Go(func() {
-			defer rt.submitting.Store(false)
-
-			submitCtx, submitCancel := context.WithTimeout(context.Background(), 3*time.Minute)
-			defer submitCancel()
-
-			client := ghapi.NewClient(token)
-			pr, err := service.SubmitRegistry(submitCtx, client, base, content, "Registry update")
-			if err != nil {
-				fyne.Do(func() { rt.handleSubmitError(err) })
-				return
+	rt.statusLabel.SetText("Creating pull request...")
+	safego.Go(func() {
+		pr, err := rt.svc.SubmitRegistry(context.Background())
+		fyne.Do(func() {
+			switch {
+			case errors.Is(err, service.ErrNotLoggedIn):
+				rt.StartLoginOrReconnect()
+			case errors.Is(err, service.ErrBusy):
+				rt.statusLabel.SetText("Submit already in progress")
+			case err != nil:
+				rt.handleSubmitError(err)
+			default:
+				rt.handleSubmitSuccess(pr)
 			}
-
-			fyne.Do(func() { rt.handleSubmitSuccess(pr) })
 		})
 	})
 }
 
-// NewRegistryTab creates the registry manager UI as a tab.
-// The caller owns the window — this does not set close intercepts or change the window title.
-func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
-	state := &appState{
-		selected: -1,
+// NewRegistryTab creates the registry manager UI as a tab on top of svc,
+// whose events arrive through events. The caller owns the window — this does
+// not set close intercepts or change the window title.
+func NewRegistryTab(svc *service.App, events *gui.Events, window fyne.Window) *RegistryTab {
+	rt := &RegistryTab{
+		svc:         svc,
+		selected:    -1,
+		statusLabel: widget.NewLabel(""),
+		window:      window,
 	}
+	rt.login = rt.startLogin
 
-	statusLabel := widget.NewLabel("")
-	fingerprintCache := make(map[int]string)
-
-	// rebuildFingerprintCache populates the fingerprint cache from registry keys.
-	rebuildFingerprintCache := func() {
-		fingerprintCache = make(map[int]string, len(state.registry.Keys))
-		for i, key := range state.registry.Keys {
-			if fp, err := core.KeyFingerprint(key); err == nil {
-				fingerprintCache[i] = fp
-			}
-		}
-	}
-
-	// Build the table.
-	table := widget.NewTable(
+	rt.table = widget.NewTable(
 		func() (int, int) {
-			return len(state.registry.Keys) + 1, len(tableColumns) // +1 for header row
+			return len(rt.snap.Rows) + 1, len(service.RegistryColumns) // +1 for header row
 		},
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("placeholder")
@@ -491,83 +296,51 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 			label.Truncation = fyne.TextTruncateEllipsis
 			if id.Row == 0 {
 				// Header row.
-				label.SetText(tableColumns[id.Col])
+				label.SetText(service.RegistryColumns[id.Col])
 				label.TextStyle = fyne.TextStyle{Bold: true}
 				return
 			}
 			label.TextStyle = fyne.TextStyle{}
-			entry := state.registry.Keys[id.Row-1]
-			label.SetText(service.EntryCellText(entry, id.Col, id.Row-1, fingerprintCache))
+			label.SetText(rt.snap.Rows[id.Row-1][id.Col])
 		},
 	)
-
-	// Set column widths.
 	for i, w := range tableColumnWidths {
-		table.SetColumnWidth(i, w)
+		rt.table.SetColumnWidth(i, w)
 	}
-
-	table.OnSelected = func(id widget.TableCellID) {
+	rt.table.OnSelected = func(id widget.TableCellID) {
 		if id.Row == 0 {
 			// Header row — ignore.
-			table.UnselectAll()
+			rt.table.UnselectAll()
 			return
 		}
-		state.selected = id.Row - 1 // convert to 0-based index into Keys
-		if id.Row > 0 && id.Row-1 < len(state.registry.Keys) {
-			entry := state.registry.Keys[id.Row-1]
-			cellText := service.EntryCellText(entry, id.Col, id.Row-1, fingerprintCache)
-			if cellText != "" {
-				statusLabel.SetText(cellText)
+		rt.selected = id.Row - 1 // 0-based index into the entries
+		if rt.selected < len(rt.snap.Rows) {
+			if cellText := rt.snap.Rows[rt.selected][id.Col]; cellText != "" {
+				rt.statusLabel.SetText(cellText)
 			}
 		}
 	}
 
-	// Helper to refresh UI after state changes.
-	refreshUI := func() {
-		rebuildFingerprintCache()
-		table.Refresh()
-	}
-
-	kr := ghapi.NewOSKeyring()
-
-	rt := &RegistryTab{
-		state:        state,
-		table:        table,
-		statusLabel:  statusLabel,
-		window:       window,
-		rebuildCache: rebuildFingerprintCache,
-		configDir:    configDir,
-		kr:           kr,
-	}
-
 	// Login button — text changes based on auth state.
-	loginBtn := widget.NewButton("Login to GitHub", func() {
-		if rt.state.loggedIn && rt.state.offline {
+	rt.loginBtn = widget.NewButton("Login to GitHub", func() {
+		if st := svc.AuthState(); !st.LoggedIn || st.Offline {
 			rt.StartLoginOrReconnect()
-		} else if rt.state.loggedIn {
-			dialog.ShowConfirm("Log Out",
-				"Log out of GitHub? You'll need to re-authorize to submit future updates.",
-				func(ok bool) {
-					if !ok {
-						return
-					}
-					_ = ghapi.ClearToken(rt.kr, rt.configDir)
-					rt.state.loggedIn = false
-					rt.state.offline = false
-					rt.state.githubToken = ghapi.Token{}
-					rt.state.githubUser = ""
-					rt.updateLoginUI()
-					rt.statusLabel.SetText("Logged out")
-				}, window)
-		} else {
-			rt.startLogin()
+			return
 		}
+		dialog.ShowConfirm("Log Out",
+			"Log out of GitHub? You'll need to re-authorize to submit future updates.",
+			func(ok bool) {
+				if !ok {
+					return
+				}
+				svc.Logout()
+				rt.statusLabel.SetText("Logged out")
+			}, window)
 	})
-	rt.loginBtn = loginBtn
 
 	// Toolbar buttons.
 	fetchBtn := widget.NewButton("Fetch from Server", func() {
-		if state.dirty {
+		if svc.Dirty() {
 			dialog.ShowConfirm("Discard Local Edits?",
 				"This will re-fetch the live registry from the server, discarding your local edits. Continue?",
 				func(ok bool) {
@@ -581,36 +354,26 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 		rt.Fetch()
 	})
 
-	submitBtn := widget.NewButton("Submit for Review", func() {
-		rt.submitForReview()
-	})
+	submitBtn := widget.NewButton("Submit for Review", rt.submitForReview)
 
 	toolbar := container.NewHBox(
 		fetchBtn, submitBtn,
 		layout.NewSpacer(),
-		loginBtn,
-		statusLabel,
+		rt.loginBtn,
+		rt.statusLabel,
 	)
 
 	// Action bar buttons.
 	addBtn := widget.NewButton("Add Entry", func() {
-		showAddDialog(window, func(entry core.KeyEntry) {
-			state.registry.Keys = append(state.registry.Keys, entry)
-			state.dirty = true
-			refreshUI()
-		})
+		showAddDialog(window, svc, rt.refreshTable)
 	})
 
 	editBtn := widget.NewButton("Edit Entry", func() {
-		if state.selected < 0 || state.selected >= len(state.registry.Keys) {
+		if rt.selected < 0 || rt.selected >= len(rt.snap.Entries) {
 			dialog.ShowInformation("Edit Entry", "No entry selected", window)
 			return
 		}
-		showEditDialog(window, state.registry.Keys[state.selected], func(updated core.KeyEntry) {
-			state.registry.Keys[state.selected] = updated
-			state.dirty = true
-			refreshUI()
-		})
+		showEditDialog(window, svc, rt.selected, rt.snap.Entries[rt.selected], rt.refreshTable)
 	})
 
 	// No Remove button — the registry is a system of record.
@@ -618,18 +381,21 @@ func NewRegistryTab(window fyne.Window, configDir string) *RegistryTab {
 
 	actionBar := container.NewHBox(addBtn, editBtn)
 
-	rt.Content = container.NewBorder(toolbar, actionBar, nil, nil, table)
+	rt.Content = container.NewBorder(toolbar, actionBar, nil, nil, rt.table)
 
-	// Async token restore.
-	// Fetch once login state is known (so a logged-in session loads main via the
-	// API), but never clobber edits made while the restore was running.
-	rt.onRestored = func() {
-		if !rt.state.dirty {
-			rt.Fetch()
-		}
+	// Register first, then read state, so a change that fired before
+	// registration is not missed. svc.Start loads the registry once the
+	// session restore is known.
+	events.On(service.EventAuthChanged, func(any) { rt.updateLoginUI(svc.AuthState()) })
+	events.On(service.EventAuthDeviceCode, func(p any) { rt.showLoginDialog(p.(service.DeviceCode)) })
+	events.On(service.EventRegistryChanged, func(any) { rt.registryChanged() })
+	rt.updateLoginUI(svc.AuthState())
+	rt.refreshTable()
+	if rt.snap.Loaded {
+		rt.statusLabel.SetText("Loaded from registry server")
+	} else {
+		rt.statusLabel.SetText("Fetching...")
 	}
-	statusLabel.SetText("Fetching...")
-	rt.restoreSession(false)
 
 	return rt
 }

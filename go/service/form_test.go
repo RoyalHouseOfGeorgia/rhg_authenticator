@@ -9,7 +9,7 @@ import (
 )
 
 func TestBuildEntry_Basic(t *testing.T) {
-	entry := BuildEntry("Test Authority", "2026-01-01", nil, "dGVzdGtleQ==", "a note")
+	entry := buildEntry("Test Authority", "2026-01-01", nil, "dGVzdGtleQ==", "a note")
 	if entry.Authority != "Test Authority" {
 		t.Errorf("Authority = %q, want %q", entry.Authority, "Test Authority")
 	}
@@ -31,7 +31,7 @@ func TestBuildEntry_Basic(t *testing.T) {
 }
 
 func TestBuildEntry_NoExpiry(t *testing.T) {
-	entry := BuildEntry("Auth", "2026-01-01", nil, "key123", "")
+	entry := buildEntry("Auth", "2026-01-01", nil, "key123", "")
 	if entry.To != nil {
 		t.Errorf("To should be nil for no-expiry, got %v", entry.To)
 	}
@@ -39,7 +39,7 @@ func TestBuildEntry_NoExpiry(t *testing.T) {
 
 func TestBuildEntry_WithExpiry(t *testing.T) {
 	to := "2027-12-31"
-	entry := BuildEntry("Auth", "2026-01-01", &to, "key123", "")
+	entry := buildEntry("Auth", "2026-01-01", &to, "key123", "")
 	if entry.To == nil {
 		t.Fatal("To should not be nil when expiry is set")
 	}
@@ -50,7 +50,7 @@ func TestBuildEntry_WithExpiry(t *testing.T) {
 
 func TestBuildEntry_PreservesKey(t *testing.T) {
 	originalKey := "MCowBQYDK2VwAyEAoriginalkey="
-	entry := BuildEntry("Auth", "2026-01-01", nil, originalKey, "")
+	entry := buildEntry("Auth", "2026-01-01", nil, originalKey, "")
 	if entry.PublicKey != originalKey {
 		t.Errorf("PublicKey = %q, want %q", entry.PublicKey, originalKey)
 	}
@@ -66,29 +66,29 @@ func TestBuildEntry_NormalizesAuthority(t *testing.T) {
 		t.Skip("test input is already NFC, cannot test normalization")
 	}
 
-	entry := BuildEntry(nfd, "2026-01-01", nil, "key", "")
+	entry := buildEntry(nfd, "2026-01-01", nil, "key", "")
 	if entry.Authority != nfc {
 		t.Errorf("Authority = %q, want NFC-normalized %q", entry.Authority, nfc)
 	}
 }
 
 func TestBuildEntry_TrimsAuthority(t *testing.T) {
-	entry := BuildEntry("  Spaced Authority  ", "2026-01-01", nil, "key", "")
+	entry := buildEntry("  Spaced Authority  ", "2026-01-01", nil, "key", "")
 	if entry.Authority != "Spaced Authority" {
 		t.Errorf("Authority = %q, want trimmed %q", entry.Authority, "Spaced Authority")
 	}
 }
 
 func TestBuildEntry_AlgorithmAlwaysEd25519(t *testing.T) {
-	// BuildEntry should always set Algorithm to "Ed25519" regardless of input.
-	entry := BuildEntry("Auth", "2026-01-01", nil, "key", "note")
+	// buildEntry should always set Algorithm to "Ed25519" regardless of input.
+	entry := buildEntry("Auth", "2026-01-01", nil, "key", "note")
 	if entry.Algorithm != "Ed25519" {
 		t.Errorf("Algorithm = %q, want %q", entry.Algorithm, "Ed25519")
 	}
 }
 
 func TestBuildEntry_EmptyNote(t *testing.T) {
-	entry := BuildEntry("Auth", "2026-01-01", nil, "key", "")
+	entry := buildEntry("Auth", "2026-01-01", nil, "key", "")
 	if entry.Note != "" {
 		t.Errorf("Note = %q, want empty string", entry.Note)
 	}
@@ -99,7 +99,7 @@ func TestBuildEntry_TrimsAndNormalizesAuthority(t *testing.T) {
 	nfd := "  caf\u0065\u0301  "
 	nfc := "caf\u00e9"
 
-	entry := BuildEntry(nfd, "2026-01-01", nil, "key", "")
+	entry := buildEntry(nfd, "2026-01-01", nil, "key", "")
 	if entry.Authority != nfc {
 		t.Errorf("Authority = %q, want trimmed+NFC %q", entry.Authority, nfc)
 	}
@@ -107,63 +107,63 @@ func TestBuildEntry_TrimsAndNormalizesAuthority(t *testing.T) {
 
 func TestBuildEntry_PreservesNote(t *testing.T) {
 	note := "Multi\nline\nnote with special chars: é"
-	entry := BuildEntry("Auth", "2026-01-01", nil, "key", note)
+	entry := buildEntry("Auth", "2026-01-01", nil, "key", note)
 	if entry.Note != note {
 		t.Errorf("Note = %q, want %q", entry.Note, note)
 	}
 }
 
 func TestBuildEntry_PreservesFromDate(t *testing.T) {
-	entry := BuildEntry("Auth", "2099-12-31", nil, "key", "")
+	entry := buildEntry("Auth", "2099-12-31", nil, "key", "")
 	if entry.From != "2099-12-31" {
 		t.Errorf("From = %q, want %q", entry.From, "2099-12-31")
 	}
 }
 
 func TestValidateEntryForm_Valid(t *testing.T) {
-	err := ValidateEntryForm("Auth", "2026-01-01", "key", true, "")
+	err := validateEntryForm("Auth", "2026-01-01", "key", true, "")
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateEntryForm_EmptyAuthority(t *testing.T) {
-	err := ValidateEntryForm("", "2026-01-01", "key", true, "")
+	err := validateEntryForm("", "2026-01-01", "key", true, "")
 	if err == nil {
 		t.Fatal("expected error for empty authority")
 	}
 }
 
 func TestValidateEntryForm_WhitespaceAuthority(t *testing.T) {
-	err := ValidateEntryForm("   ", "2026-01-01", "key", true, "")
+	err := validateEntryForm("   ", "2026-01-01", "key", true, "")
 	if err == nil {
 		t.Fatal("expected error for whitespace authority")
 	}
 }
 
 func TestValidateEntryForm_EmptyFrom(t *testing.T) {
-	err := ValidateEntryForm("Auth", "", "key", true, "")
+	err := validateEntryForm("Auth", "", "key", true, "")
 	if err == nil {
 		t.Fatal("expected error for empty from date")
 	}
 }
 
 func TestValidateEntryForm_InvalidFromDate(t *testing.T) {
-	err := ValidateEntryForm("Auth", "not-a-date", "key", true, "")
+	err := validateEntryForm("Auth", "not-a-date", "key", true, "")
 	if err == nil {
 		t.Fatal("expected error for invalid from date")
 	}
 }
 
 func TestValidateEntryForm_InvalidToDate(t *testing.T) {
-	err := ValidateEntryForm("Auth", "2026-01-01", "key", false, "not-a-date")
+	err := validateEntryForm("Auth", "2026-01-01", "key", false, "not-a-date")
 	if err == nil {
 		t.Fatal("expected error for invalid to date")
 	}
 }
 
 func TestValidateEntryForm_ValidToDate(t *testing.T) {
-	err := ValidateEntryForm("Auth", "2026-01-01", "key", false, "2027-12-31")
+	err := validateEntryForm("Auth", "2026-01-01", "key", false, "2027-12-31")
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -171,14 +171,14 @@ func TestValidateEntryForm_ValidToDate(t *testing.T) {
 
 func TestValidateEntryForm_NoExpirySkipsToValidation(t *testing.T) {
 	// When noExpiry is true, to date is ignored.
-	err := ValidateEntryForm("Auth", "2026-01-01", "key", true, "garbage")
+	err := validateEntryForm("Auth", "2026-01-01", "key", true, "garbage")
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateEntryForm_ToRequiredWhenNoExpiryUnchecked(t *testing.T) {
-	err := ValidateEntryForm("Auth", "2026-01-01", "key", false, "")
+	err := validateEntryForm("Auth", "2026-01-01", "key", false, "")
 	if err == nil {
 		t.Fatal("expected error when noExpiry=false and to is empty")
 	}
@@ -190,27 +190,27 @@ func TestValidateEntryForm_ToRequiredWhenNoExpiryUnchecked(t *testing.T) {
 func TestValidateEntryForm_ToBeforeFromAccepted(t *testing.T) {
 	// from is informational: revoking a key registered with a future From
 	// sets To to today, which is before From.
-	if err := ValidateEntryForm("Auth", "2026-06-01", "key", false, "2025-01-01"); err != nil {
+	if err := validateEntryForm("Auth", "2026-06-01", "key", false, "2025-01-01"); err != nil {
 		t.Errorf("unexpected error when to < from: %v", err)
 	}
 }
 
 func TestValidateEntryForm_ToEqualsFrom(t *testing.T) {
-	err := ValidateEntryForm("Auth", "2026-01-01", "key", false, "2026-01-01")
+	err := validateEntryForm("Auth", "2026-01-01", "key", false, "2026-01-01")
 	if err != nil {
 		t.Errorf("unexpected error when to == from: %v", err)
 	}
 }
 
 func TestValidateEntryForm_NoExpiryBypassesToCheck(t *testing.T) {
-	err := ValidateEntryForm("Auth", "2026-01-01", "key", true, "")
+	err := validateEntryForm("Auth", "2026-01-01", "key", true, "")
 	if err != nil {
 		t.Errorf("unexpected error when noExpiry=true and to is empty: %v", err)
 	}
 }
 
 func TestValidateEntryForm_EmptyKey(t *testing.T) {
-	err := ValidateEntryForm("Auth", "2026-01-01", "", true, "")
+	err := validateEntryForm("Auth", "2026-01-01", "", true, "")
 	if err == nil {
 		t.Fatal("expected error for empty key")
 	}
@@ -240,8 +240,8 @@ func TestImportKeyErrorMessage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ImportKeyErrorMessage(tt.err); got != tt.want {
-				t.Errorf("ImportKeyErrorMessage(%v) = %q, want %q", tt.err, got, tt.want)
+			if got := importKeyErrorMessage(tt.err); got != tt.want {
+				t.Errorf("importKeyErrorMessage(%v) = %q, want %q", tt.err, got, tt.want)
 			}
 		})
 	}
