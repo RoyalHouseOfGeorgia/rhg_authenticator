@@ -17,14 +17,13 @@ import (
 	"fyne.io/fyne/v2/theme"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/regmgr"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/update"
 )
 
@@ -104,76 +103,76 @@ func main() {
 	}
 	logger.Log(startMsg)
 
-	// 3. Log path and cleanup.
-	logPath := filepath.Join(dataDir, "issuances.json")
-	if err := log.CleanStaleTmpFiles(logPath); err != nil {
-		logger.Logf("warning: log cleanup failed: %s", core.SanitizeForLog(err.Error()))
-	}
-
-	// 4. Fetch registry (remote only — no cache or embedded fallback).
-	reg, err := registry.FetchRegistry(registry.DefaultRegistryURL)
-	regOnline := err == nil
-	if !regOnline {
-		logger.Logf("warning: registry fetch failed: %s", core.SanitizeForLog(err.Error()))
-		reg = core.Registry{}
-	}
-	logger.Logf("registry fetch: online=%v", regOnline)
-
-	// 5. Build tabs.
+	// 3. Signing service: cleans stale log temp files and fetches the registry
+	// (remote only — no cache or embedded fallback).
+	events := gui.NewEvents()
 	kr := ghapi.NewOSKeyring()
-	signContent, signCleanup := gui.NewSignTab(gui.SignTabConfig{
-		LogPath: logPath,
-		DataDir: dataDir,
-		Keyring: kr,
-		Logger:  logger,
-	}, window)
-	regTab := regmgr.NewRegistryTab(window, dataDir)
-	historyContent, refreshHistoryLogin := gui.NewHistoryTab(logPath, registry.DefaultRevocationURL, regTab.GitHubClient, regTab.StartLoginOrReconnect, regTab.HandleUnauthorized, window)
-	// Push login-state changes (from either tab) into the History tab, then sync
-	// once now to reflect the current state. The observer nil-guard makes this
-	// correct regardless of whether the async session restore has completed.
-	// Safety of this synchronous call: fyne.Do bodies (e.g. the fetchRevocations
-	// goroutine's UI mutations) do not run until ShowAndRun starts the driver
-	// loop, so this runs strictly before them on the main goroutine — no race.
-	// Keep this before ShowAndRun; do not switch fyne.Do to fyne.DoAndWait.
-	regTab.SetOnLoginChanged(refreshHistoryLogin)
-	refreshHistoryLogin()
-	auditContent := gui.NewAuditTab(window)
-	yubiKeyContent := gui.NewYubiKeyTab(reg, regOnline, window)
+	svc, err := service.New(service.Config{
+		DataDir:       dataDir,
+		Logger:        logger,
+		RegistryURL:   registry.DefaultRegistryURL,
+		RevocationURL: registry.DefaultRevocationURL,
+		Keyring:       kr,
+		Prompter:      gui.NewPrompter(window),
+		Events:        events,
+	})
+	if err != nil {
+		fatalDialog(window, fmt.Sprintf("Cannot start signing service: %v", err))
+		return
+	}
+
+	// 4. Build tabs.
+	signContent := gui.NewSignTab(svc, events, window)
+	regTab := regmgr.NewRegistryTab(svc, events, window)
+	historyTab := gui.NewHistoryTab(svc, events, regTab.StartLogin, window)
+	auditTab := gui.NewAuditTab(svc)
+	yubiKeyContent := gui.NewYubiKeyTab(svc)
+	// One handler pushes login-state changes into both tabs; register it
+	// first, then sync once, so a change in between is not missed.
+	events.On(service.EventAuthChanged, func(any) {
+		regTab.UpdateLoginUI(svc.AuthState())
+		historyTab.RefreshLoginState()
+	})
+	regTab.UpdateLoginUI(svc.AuthState())
+	historyTab.RefreshLoginState()
+	auditTab.Refresh()
+	// Every tab now listens for events: restore the GitHub session, load the
+	// registry for editing and load the history.
+	svc.Start()
 
 	signTab := container.NewTabItem("Sign", signContent)
-	historyTab := container.NewTabItem("History", historyContent)
+	historyItem := container.NewTabItem("History", historyTab.Content)
 	registryTab := container.NewTabItem("Registry", regTab.Content)
-	auditTab := container.NewTabItem("Audit", auditContent)
+	auditItem := container.NewTabItem("Audit", auditTab.Content)
 	yubiKeyTab := container.NewTabItem("YubiKey", yubiKeyContent)
 
-	// 6. Set content.
-	tabs := container.NewAppTabs(signTab, historyTab, registryTab, auditTab, yubiKeyTab)
-	statusBar := gui.NewStatusBar(reg, regOnline, buildinfo.Version)
+	// 5. Set content.
+	tabs := container.NewAppTabs(signTab, historyItem, registryTab, auditItem, yubiKeyTab)
+	statusBar := gui.NewStatusBar(svc.Info())
 	updateBanner := container.NewVBox()
 	windowContent := container.NewBorder(updateBanner, statusBar, nil, nil, tabs)
 	window.SetContent(windowContent)
-	window.SetMainMenu(buildMainMenu(func() { gui.OnErrorLogExportTapped(logger.Path(), window) }))
+	window.SetMainMenu(buildMainMenu(func() { gui.OnErrorLogExportTapped(svc.ErrorLogExport, window) }))
 
-	// 7. Close intercept for unsaved registry changes + PIN cache cleanup.
+	// 6. Close intercept for unsaved registry changes + PIN cache cleanup.
 	window.SetCloseIntercept(buildCloseHandler(
-		regTab.IsDirty,
-		signCleanup,
+		svc.Dirty,
+		svc.Close,
 		a.Quit,
 		window,
 	))
 
-	// 8. The registry tab fetches itself once the async login restore finishes,
-	// so a logged-in session loads from main via the API (see regmgr.Fetch).
+	// 7. The service loads the edited registry once the async login restore
+	// finishes, so a logged-in session loads from main via the API.
 
-	// 9. Auto-update. "Restart now" reuses the close handler, so unsubmitted
+	// 8. Auto-update. "Restart now" reuses the close handler, so unsubmitted
 	// registry changes get the same confirm and Cancel never sets relaunch.
 	// Fyne 2.8 runs widget callbacks on the main goroutine, so relaunch is
 	// written (button tap) and read (after ShowAndRun) on one goroutine.
 	var relaunch bool
 	restart := buildCloseHandler(
-		regTab.IsDirty,
-		signCleanup,
+		svc.Dirty,
+		svc.Close,
 		markRelaunchAndQuit(&relaunch, a.Quit),
 		window,
 	)
@@ -203,7 +202,7 @@ func main() {
 }
 
 // fatalDialog shows an error dialog and exits after the user dismisses it.
-// It runs before the data directory (and so the error log) exists, so the
+// It can run before the data directory (and so the error log) exists, so the
 // user is asked to report the error manually.
 func fatalDialog(window fyne.Window, message string) {
 	d := dialog.NewError(fmt.Errorf("%s\n\nPlease report this error at https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/issues", message), window)

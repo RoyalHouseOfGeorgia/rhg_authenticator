@@ -1,16 +1,23 @@
-package gui
+package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/bulk"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
+
+// bulkPreviewNames is how many to_sign recipient names the confirm dialog
+// shows, so the operator can spot a mis-encoded file before signing.
+const bulkPreviewNames = 5
 
 // loadBulkPlan reads and parses the operator's CSV from r and classifies each
 // row against the audit log at logPath. Input and parse errors are returned
@@ -81,8 +88,48 @@ func bulkStopMessage(err error, logger *debuglog.Logger) string {
 	if err == nil {
 		return ""
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, ErrSigningCancelled) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, errSigningCancelled) {
 		return "Cancelled."
 	}
 	return "Batch stopped: " + signFlowErrorMessage(err, logger)
+}
+
+// saveBulkResults renders results as CSV and writes them to path.
+func saveBulkResults(path string, results []bulk.Result) error {
+	var buf bytes.Buffer
+	if err := bulk.WriteResultCSV(&buf, results); err != nil {
+		return err
+	}
+	return os.WriteFile(path, buf.Bytes(), 0o644)
+}
+
+// bulkSummaryLine formats the per-status tally shown after a batch.
+func bulkSummaryLine(c bulk.Counts) string {
+	return fmt.Sprintf("Processed %d rows: %d successful (%d newly signed, %d already issued), %d invalid, %d failed/not attempted.",
+		c.Total, c.Successful(), c.Signed, c.AlreadyIssued, c.Invalid, c.Failed+c.NotAttempted)
+}
+
+// bulkConfirmText returns the confirm dialog's counts line, up to
+// bulkPreviewNames to_sign recipient names, and one "line N: <error>" entry
+// per invalid row.
+func bulkConfirmText(results []bulk.Result) (counts string, preview []string, invalid []string) {
+	c := bulk.Summarize(results)
+	counts = fmt.Sprintf("%d rows: %d to sign, %d already issued, %d invalid", c.Total, c.ToSign, c.AlreadyIssued, c.Invalid)
+	for _, r := range results {
+		switch r.Status {
+		case bulk.StatusToSign:
+			if len(preview) < bulkPreviewNames {
+				preview = append(preview, r.Req.Recipient)
+			}
+		case bulk.StatusInvalid:
+			invalid = append(invalid, fmt.Sprintf("line %d: %s", r.Line, r.Err))
+		}
+	}
+	return counts, preview, invalid
+}
+
+// BulkResultsFilename returns the default export name for a results CSV,
+// timestamped in UTC.
+func BulkResultsFilename(t time.Time) string {
+	return t.UTC().Format("rhg-bulk-results-2006-01-02-150405.csv")
 }

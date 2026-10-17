@@ -1,4 +1,4 @@
-package regmgr
+package service
 
 import (
 	"crypto/ed25519"
@@ -8,9 +8,9 @@ import (
 	"fmt"
 )
 
-// ExtractEd25519Key reads certificate data (.crt/.pem) and returns
+// extractEd25519Key reads certificate data (.crt/.pem) and returns
 // the raw 32-byte Ed25519 public key as base64.
-func ExtractEd25519Key(certData []byte) (string, error) {
+func extractEd25519Key(certData []byte) (string, error) {
 	var derBytes []byte
 
 	// pem.Decode returns nil block if the data is not PEM-encoded.

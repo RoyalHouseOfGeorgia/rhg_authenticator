@@ -72,33 +72,28 @@ func TestOnErrorLogExportChosen(t *testing.T) {
 	}
 }
 
-// TestOnErrorLogExportTapped: an unreadable or missing log shows an error
-// (never a save dialog); a readable log opens the save dialog.
+// TestOnErrorLogExportTapped: a failed read shows its error (never a save
+// dialog); a read log opens the save dialog.
 func TestOnErrorLogExportTapped(t *testing.T) {
 	test.NewTempApp(t)
-	dir := t.TempDir()
 	// Keep the non-Windows Desktop lookup off the real home; on Windows the
 	// dialog lists the real Desktop, so never confirm a save.
-	t.Setenv("HOME", dir)
-	logPath := filepath.Join(dir, "debug.log")
-	if err := os.WriteFile(logPath, []byte("startup\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("HOME", t.TempDir())
 
 	tests := []struct {
 		name           string
-		logPath        string
+		data           []byte
+		err            error
 		wantSaveDialog bool
 	}{
-		{"missing log", filepath.Join(dir, "absent.log"), false},
-		{"unreadable", dir, false}, // a directory can't be read as a file
-		{"readable log", logPath, true},
+		{"read fails", nil, errors.New("could not read the error log"), false},
+		{"readable log", []byte("startup\n"), nil, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			w := test.NewWindow(nil)
 			defer w.Close()
-			OnErrorLogExportTapped(tc.logPath, w)
+			OnErrorLogExportTapped(func() ([]byte, error) { return tc.data, tc.err }, w)
 			top := topOverlay(t, w)
 			hasSave := findButton(t, top, "Save") != nil
 			if hasSave != tc.wantSaveDialog {
@@ -114,6 +109,34 @@ func TestOnErrorLogExportTapped(t *testing.T) {
 	}
 }
 
+// TestOnErrorLogExportTapped_Service reads through App.ErrorLogExport: the
+// service's debug log opens the save dialog, and an unreadable one shows the
+// service's error.
+func TestOnErrorLogExportTapped_Service(t *testing.T) {
+	test.NewTempApp(t)
+	t.Setenv("HOME", t.TempDir())
+
+	t.Run("readable", func(t *testing.T) {
+		w := test.NewWindow(nil)
+		defer w.Close()
+		svc := newTestApp(t, NewEvents(), &cancelPrompter{}) // New logs, creating the file
+		OnErrorLogExportTapped(svc.ErrorLogExport, w)
+		if findButton(t, topOverlay(t, w), "Save") == nil {
+			t.Fatal("save dialog not shown")
+		}
+	})
+	t.Run("unreadable", func(t *testing.T) {
+		w := test.NewWindow(nil)
+		defer w.Close()
+		svc := newTestAppWithLogPath(t, t.TempDir()) // a directory can't be read as a file
+		OnErrorLogExportTapped(svc.ErrorLogExport, w)
+		texts := strings.Join(labelTexts(t, topOverlay(t, w)), "\n")
+		if !strings.Contains(strings.ToLower(texts), "could not read the error log") {
+			t.Errorf("error dialog missing read failure:\n%s", texts)
+		}
+	})
+}
+
 // TestShowErrorWithLogExport: the dialog shows the message with both buttons;
 // OK dismisses without exporting, and Export opens the save dialog (started on
 // the Desktop) whose Cancel leaves nothing behind.
@@ -125,15 +148,12 @@ func TestShowErrorWithLogExport(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "Desktop"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	logPath := filepath.Join(dir, "debug.log")
-	if err := os.WriteFile(logPath, []byte("startup\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	export := func() ([]byte, error) { return []byte("startup\n"), nil }
 
 	t.Run("OK dismisses without export", func(t *testing.T) {
 		w := test.NewWindow(nil)
 		defer w.Close()
-		ShowErrorWithLogExport("Signing Failed", "The YubiKey was removed.", logPath, w)
+		ShowErrorWithLogExport("Signing Failed", "The YubiKey was removed.", export, w)
 		texts := strings.Join(labelTexts(t, topOverlay(t, w)), "\n")
 		if !strings.Contains(texts, "The YubiKey was removed.") {
 			t.Errorf("dialog missing message:\n%s", texts)
@@ -150,7 +170,7 @@ func TestShowErrorWithLogExport(t *testing.T) {
 	t.Run("Export opens save dialog, Cancel closes it", func(t *testing.T) {
 		w := test.NewWindow(nil)
 		defer w.Close()
-		ShowErrorWithLogExport("Signing Failed", "The YubiKey was removed.", logPath, w)
+		ShowErrorWithLogExport("Signing Failed", "The YubiKey was removed.", export, w)
 		tapOverlayButton(t, w, "Export Error Log…")
 		if findButton(t, topOverlay(t, w), "Save") == nil {
 			t.Fatal("save dialog not shown after export")

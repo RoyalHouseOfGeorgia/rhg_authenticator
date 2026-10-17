@@ -1,4 +1,4 @@
-package regmgr
+package service
 
 import (
 	"crypto/rand"
@@ -14,7 +14,7 @@ func TestExtractEd25519Key_ValidPEM(t *testing.T) {
 		t.Fatalf("failed to read test fixture: %v", err)
 	}
 
-	key, err := ExtractEd25519Key(certData)
+	key, err := extractEd25519Key(certData)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestExtractEd25519Key_RSACert(t *testing.T) {
 		t.Fatalf("failed to read test fixture: %v", err)
 	}
 
-	_, err = ExtractEd25519Key(certData)
+	_, err = extractEd25519Key(certData)
 	if err == nil {
 		t.Fatal("expected error for RSA cert, got nil")
 	}
@@ -44,7 +44,7 @@ func TestExtractEd25519Key_RandomBytes(t *testing.T) {
 		t.Fatalf("failed to generate random bytes: %v", err)
 	}
 
-	_, err := ExtractEd25519Key(garbage)
+	_, err := extractEd25519Key(garbage)
 	if err == nil {
 		t.Fatal("expected error for random bytes, got nil")
 	}
@@ -59,7 +59,7 @@ func TestExtractEd25519Key_CorruptedPEM(t *testing.T) {
 		Bytes: []byte("this is not a valid DER certificate"),
 	})
 
-	_, err := ExtractEd25519Key(corrupted)
+	_, err := extractEd25519Key(corrupted)
 	if err == nil {
 		t.Fatal("expected error for corrupted PEM, got nil")
 	}
@@ -69,7 +69,7 @@ func TestExtractEd25519Key_CorruptedPEM(t *testing.T) {
 }
 
 func TestExtractEd25519Key_EmptyInput(t *testing.T) {
-	_, err := ExtractEd25519Key([]byte{})
+	_, err := extractEd25519Key([]byte{})
 	if err == nil {
 		t.Fatal("expected error for empty input, got nil")
 	}
@@ -90,7 +90,7 @@ func TestExtractEd25519Key_ValidDER(t *testing.T) {
 		t.Fatal("failed to decode PEM block from test fixture")
 	}
 
-	key, err := ExtractEd25519Key(block.Bytes)
+	key, err := extractEd25519Key(block.Bytes)
 	if err != nil {
 		t.Fatalf("unexpected error with DER input: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestExtractEd25519Key_ValidDER(t *testing.T) {
 	}
 
 	// Verify DER and PEM paths produce identical keys.
-	keyFromPEM, _ := ExtractEd25519Key(certPEM)
+	keyFromPEM, _ := extractEd25519Key(certPEM)
 	if key != keyFromPEM {
 		t.Errorf("DER and PEM paths returned different keys: %s vs %s", key, keyFromPEM)
 	}
@@ -111,7 +111,7 @@ func TestExtractEd25519Key_RawKeyLength(t *testing.T) {
 		t.Fatalf("failed to read test fixture: %v", err)
 	}
 
-	key, err := ExtractEd25519Key(certData)
+	key, err := extractEd25519Key(certData)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -1,13 +1,15 @@
-package gui
+package service
 
 import (
 	"context"
 	"crypto/ed25519"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-piv/piv-go/v2/piv"
 
@@ -243,7 +245,7 @@ func TestBulkFlow_ReadPinCalledOncePerBatch(t *testing.T) {
 	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusSigned, bulk.StatusSigned)
 }
 
-func TestBulkFlow_WrongPINStopsAndClearsCache(t *testing.T) {
+func TestBulkFlow_WrongPINStops(t *testing.T) {
 	h := newBulkHarness(t)
 	h.newSigner = func(k ed25519.PrivateKey) core.SigningAdapter { return &authErrSignAdapter{secretKey: k} }
 	results := h.plan(t, threeRowCSV)
@@ -260,12 +262,6 @@ func TestBulkFlow_WrongPINStopsAndClearsCache(t *testing.T) {
 	assertCountsInvariant(t, results)
 	if h.opens != 1 {
 		t.Errorf("openAdapter called %d times, want 1", h.opens)
-	}
-
-	cache := seedEnabledCache(t)
-	clearPINCacheOnAuthError(err, cache)
-	if _, ok := cache.Get(); ok {
-		t.Error("expected PIN cache cleared after bulk auth error")
 	}
 }
 
@@ -342,7 +338,7 @@ func TestBulkFlow_EmptyLogPathRefuses(t *testing.T) {
 }
 
 func TestBulkFlow_ReadPinErrorSignsNothing(t *testing.T) {
-	for _, pinErr := range []error{ErrSigningCancelled, ErrPINEntryTimedOut} {
+	for _, pinErr := range []error{errSigningCancelled, errPINEntryTimedOut} {
 		t.Run(pinErr.Error(), func(t *testing.T) {
 			h := newBulkHarness(t)
 			h.pinErr = pinErr
@@ -399,10 +395,118 @@ func TestBulkStopMessage(t *testing.T) {
 	if got := bulkStopMessage(context.Canceled, logger); got != "Cancelled." {
 		t.Errorf("context.Canceled: got %q", got)
 	}
-	if got := bulkStopMessage(ErrSigningCancelled, logger); got != "Cancelled." {
-		t.Errorf("ErrSigningCancelled: got %q", got)
+	if got := bulkStopMessage(errSigningCancelled, logger); got != "Cancelled." {
+		t.Errorf("errSigningCancelled: got %q", got)
 	}
 	if got := bulkStopMessage(errors.New("something odd"), logger); !strings.HasPrefix(got, "Batch stopped: ") {
 		t.Errorf("generic: got %q, want 'Batch stopped: ' prefix", got)
+	}
+}
+
+func TestBulkSummaryLine(t *testing.T) {
+	tests := []struct {
+		name string
+		c    bulk.Counts
+		want string
+	}{
+		{"zero", bulk.Counts{}, "Processed 0 rows: 0 successful (0 newly signed, 0 already issued), 0 invalid, 0 failed/not attempted."},
+		{
+			"mixed",
+			bulk.Counts{Total: 10, Signed: 3, AlreadyIssued: 2, Invalid: 1, Failed: 1, NotAttempted: 3},
+			"Processed 10 rows: 5 successful (3 newly signed, 2 already issued), 1 invalid, 4 failed/not attempted.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bulkSummaryLine(tt.c); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBulkConfirmText(t *testing.T) {
+	toSign := func(name string) bulk.Result {
+		return bulk.Result{Req: core.SignRequest{Recipient: name}, Status: bulk.StatusToSign}
+	}
+	invalid := func(line int, msg string) bulk.Result {
+		r := bulk.Result{Status: bulk.StatusInvalid, Err: msg}
+		r.Line = line
+		return r
+	}
+	issued := bulk.Result{Req: core.SignRequest{Recipient: "Old"}, Status: bulk.StatusAlreadyIssued}
+
+	tests := []struct {
+		name        string
+		results     []bulk.Result
+		wantCounts  string
+		wantPreview []string
+		wantInvalid []string
+	}{
+		{"empty", nil, "0 rows: 0 to sign, 0 already issued, 0 invalid", nil, nil},
+		{
+			"mixed",
+			[]bulk.Result{toSign("Alice"), issued, invalid(4, "date: bad"), toSign("Bob")},
+			"4 rows: 2 to sign, 1 already issued, 1 invalid",
+			[]string{"Alice", "Bob"},
+			[]string{"line 4: date: bad"},
+		},
+		{
+			"preview capped at five",
+			[]bulk.Result{toSign("A"), toSign("B"), toSign("C"), toSign("D"), toSign("E"), toSign("F"), invalid(8, "x"), invalid(9, "y")},
+			"8 rows: 6 to sign, 0 already issued, 2 invalid",
+			[]string{"A", "B", "C", "D", "E"},
+			[]string{"line 8: x", "line 9: y"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			counts, preview, inv := bulkConfirmText(tt.results)
+			if counts != tt.wantCounts {
+				t.Errorf("counts = %q, want %q", counts, tt.wantCounts)
+			}
+			if strings.Join(preview, "|") != strings.Join(tt.wantPreview, "|") {
+				t.Errorf("preview = %v, want %v", preview, tt.wantPreview)
+			}
+			if strings.Join(inv, "|") != strings.Join(tt.wantInvalid, "|") {
+				t.Errorf("invalid = %v, want %v", inv, tt.wantInvalid)
+			}
+		})
+	}
+}
+
+func TestBulkResultsFilename(t *testing.T) {
+	tests := []struct {
+		name string
+		t    time.Time
+		want string
+	}{
+		{"utc", time.Date(2026, 9, 23, 7, 5, 9, 0, time.UTC), "rhg-bulk-results-2026-09-23-070509.csv"},
+		{"converted to utc", time.Date(2026, 1, 1, 1, 30, 0, 0, time.FixedZone("UTC+4", 4*3600)), "rhg-bulk-results-2025-12-31-213000.csv"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := BulkResultsFilename(tt.t); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSaveBulkResults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "results.csv")
+	results := []bulk.Result{{Req: core.SignRequest{Recipient: "Alice", Honor: "Other", Detail: "D", Date: "2026-03-14"}, Status: bulk.StatusSigned, URL: "https://example/v"}}
+	if err := saveBulkResults(path, results); err != nil {
+		t.Fatalf("saveBulkResults: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "Alice,Other,D,2026-03-14,https://example/v,signed,") {
+		t.Errorf("unexpected CSV:\n%s", got)
+	}
+	if err := saveBulkResults(filepath.Join(t.TempDir(), "missing", "r.csv"), results); err == nil {
+		t.Error("expected error for unwritable path")
 	}
 }

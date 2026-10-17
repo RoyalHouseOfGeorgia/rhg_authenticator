@@ -1,4 +1,4 @@
-package regmgr
+package service
 
 import (
 	"errors"

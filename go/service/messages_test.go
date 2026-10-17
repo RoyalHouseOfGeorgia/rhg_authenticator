@@ -1,4 +1,4 @@
-package gui
+package service
 
 import (
 	"errors"
@@ -12,7 +12,6 @@ import (
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
 // resetErr is the real wrapped error chain seen when a PC/SC card reset
@@ -107,222 +106,30 @@ func TestValidateSignForm_ValidLeapYear(t *testing.T) {
 	}
 }
 
-// --- buildFilename tests ---
+// --- BuildFilename tests ---
 
 func TestBuildFilename_SVG(t *testing.T) {
-	got := buildFilename("2026-03-14", "abcd1234", "svg")
+	got := BuildFilename("2026-03-14", "abcd1234", "svg")
 	want := "rhg-credential-2026-03-14-abcd1234-min3cm.svg"
 	if got != want {
-		t.Errorf("buildFilename SVG = %q, want %q", got, want)
+		t.Errorf("BuildFilename SVG = %q, want %q", got, want)
 	}
 }
 
 func TestBuildFilename_PNG(t *testing.T) {
-	got := buildFilename("2026-03-14", "abcd1234", "png")
+	got := BuildFilename("2026-03-14", "abcd1234", "png")
 	want := "rhg-credential-2026-03-14-abcd1234-2048px.png"
 	if got != want {
-		t.Errorf("buildFilename PNG = %q, want %q", got, want)
+		t.Errorf("BuildFilename PNG = %q, want %q", got, want)
 	}
 }
 
 func TestBuildFilename_OtherExt(t *testing.T) {
 	// Non-png extensions should use "min3cm" suffix.
-	got := buildFilename("2026-01-01", "deadbeef", "pdf")
+	got := BuildFilename("2026-01-01", "deadbeef", "pdf")
 	want := "rhg-credential-2026-01-01-deadbeef-min3cm.pdf"
 	if got != want {
-		t.Errorf("buildFilename other = %q, want %q", got, want)
-	}
-}
-
-// --- filterRecords tests ---
-
-func TestFilterRecords_EmptyQuery(t *testing.T) {
-	records := []log.IssuanceRecord{
-		{Recipient: "Alice", Date: "2026-01-01"},
-		{Recipient: "Bob", Date: "2026-02-01"},
-		{Recipient: "Charlie", Date: "2026-03-01"},
-	}
-	result := filterRecords(records, "")
-	if len(result) != 3 {
-		t.Fatalf("expected 3 records, got %d", len(result))
-	}
-	// Should be in reverse order (newest first).
-	if result[0].Recipient != "Charlie" {
-		t.Errorf("first record = %q, want Charlie", result[0].Recipient)
-	}
-	if result[2].Recipient != "Alice" {
-		t.Errorf("last record = %q, want Alice", result[2].Recipient)
-	}
-}
-
-func TestFilterRecords_CaseInsensitive(t *testing.T) {
-	records := []log.IssuanceRecord{
-		{Recipient: "Alice Smith"},
-		{Recipient: "Bob Jones"},
-		{Recipient: "ALICE Johnson"},
-	}
-	result := filterRecords(records, "alice")
-	if len(result) != 2 {
-		t.Fatalf("expected 2 records, got %d", len(result))
-	}
-}
-
-func TestFilterRecords_SubstringMatch(t *testing.T) {
-	records := []log.IssuanceRecord{
-		{Recipient: "Alexander the Great"},
-		{Recipient: "Alexandra Smith"},
-		{Recipient: "Bob Jones"},
-	}
-	result := filterRecords(records, "alex")
-	if len(result) != 2 {
-		t.Fatalf("expected 2 records, got %d", len(result))
-	}
-}
-
-func TestFilterRecords_NoMatch(t *testing.T) {
-	records := []log.IssuanceRecord{
-		{Recipient: "Alice"},
-		{Recipient: "Bob"},
-	}
-	result := filterRecords(records, "Charlie")
-	if len(result) != 0 {
-		t.Fatalf("expected 0 records, got %d", len(result))
-	}
-}
-
-func TestFilterRecords_WhitespaceQuery(t *testing.T) {
-	records := []log.IssuanceRecord{
-		{Recipient: "Alice"},
-	}
-	// Whitespace-only query should match all.
-	result := filterRecords(records, "   ")
-	if len(result) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(result))
-	}
-}
-
-func TestFilterRecords_EmptySlice(t *testing.T) {
-	result := filterRecords(nil, "")
-	if len(result) != 0 {
-		t.Fatalf("expected 0 records, got %d", len(result))
-	}
-}
-
-func TestFilterRecords_ReverseOrder(t *testing.T) {
-	records := []log.IssuanceRecord{
-		{Recipient: "First", Date: "2026-01-01"},
-		{Recipient: "Second", Date: "2026-06-01"},
-		{Recipient: "Third", Date: "2026-12-01"},
-	}
-	result := filterRecords(records, "")
-	if result[0].Recipient != "Third" || result[1].Recipient != "Second" || result[2].Recipient != "First" {
-		t.Errorf("records not in reverse order: %v", result)
-	}
-}
-
-// --- truncateRunes tests ---
-
-func TestTruncateRunes_Short(t *testing.T) {
-	got := truncateRunes("Short", 50)
-	if got != "Short" {
-		t.Errorf("truncateRunes = %q, want %q", got, "Short")
-	}
-}
-
-func TestTruncateRunes_ExactLength(t *testing.T) {
-	s := strings.Repeat("a", 50)
-	got := truncateRunes(s, 50)
-	if got != s {
-		t.Errorf("truncateRunes exact = %q, want %q", got, s)
-	}
-}
-
-func TestTruncateRunes_Long(t *testing.T) {
-	s := strings.Repeat("a", 60)
-	got := truncateRunes(s, 50)
-	want := strings.Repeat("a", 50) + "..."
-	if got != want {
-		t.Errorf("truncateRunes long = %q, want %q", got, want)
-	}
-}
-
-func TestTruncateRunes_Unicode(t *testing.T) {
-	// Georgian characters are multi-byte but each is one rune.
-	s := strings.Repeat("\u10D0", 55) // 55 Georgian "a" runes
-	got := truncateRunes(s, 50)
-	wantPrefix := strings.Repeat("\u10D0", 50) + "..."
-	if got != wantPrefix {
-		t.Errorf("truncateRunes unicode length mismatch")
-	}
-}
-
-func TestTruncateRunes_Empty(t *testing.T) {
-	got := truncateRunes("", 50)
-	if got != "" {
-		t.Errorf("truncateRunes empty = %q, want empty", got)
-	}
-}
-
-func TestTruncateRunes_ZeroMax(t *testing.T) {
-	got := truncateRunes("anything", 0)
-	if got != "" {
-		t.Errorf("truncateRunes zero max = %q, want empty", got)
-	}
-}
-
-// --- formatRecordSummary tests ---
-
-func TestFormatRecordSummary(t *testing.T) {
-	rec := log.IssuanceRecord{
-		Date:      "2026-03-14",
-		Recipient: "John Doe",
-		Honor:     "Order of the Crown of Georgia",
-	}
-	got := formatRecordSummary(rec)
-	if !strings.Contains(got, "2026-Mar-14") {
-		t.Error("summary should contain formatted date")
-	}
-	if !strings.Contains(got, "John Doe") {
-		t.Error("summary should contain recipient")
-	}
-	if !strings.Contains(got, "Order of the Crown") {
-		t.Error("summary should contain honor")
-	}
-}
-
-func TestFormatRecordSummary_LongHonor(t *testing.T) {
-	rec := log.IssuanceRecord{
-		Date:      "2026-03-14",
-		Recipient: "John Doe",
-		Honor:     honorTitles[0], // Very long title
-	}
-	got := formatRecordSummary(rec)
-	if !strings.Contains(got, "...") {
-		t.Error("long honor should be truncated with ellipsis")
-	}
-}
-
-// --- formatRecordDetail tests ---
-
-func TestFormatRecordDetail(t *testing.T) {
-	rec := log.IssuanceRecord{
-		Timestamp:       "2026-03-14T10:30:00Z",
-		Recipient:       "John Doe",
-		Honor:           "Test Honor",
-		Detail:          "Test Detail",
-		Date:            "2026-03-14",
-		PayloadSHA256:   "abcdef1234567890",
-		SignatureB64URL: "dummysig",
-	}
-	got := formatRecordDetail(rec)
-
-	for _, field := range []string{
-		rec.Timestamp, rec.Recipient, rec.Honor, rec.Detail,
-		rec.Date, rec.PayloadSHA256, rec.SignatureB64URL,
-	} {
-		if !strings.Contains(got, field) {
-			t.Errorf("detail should contain %q", field)
-		}
+		t.Errorf("BuildFilename other = %q, want %q", got, want)
 	}
 }
 
@@ -375,14 +182,6 @@ func TestHonorTitles_Contains_Ennoblement(t *testing.T) {
 	}
 	if !found {
 		t.Error("honorTitles should contain Ennoblement")
-	}
-}
-
-// --- maxHonorDisplay constant test ---
-
-func TestMaxHonorDisplay(t *testing.T) {
-	if maxHonorDisplay != 50 {
-		t.Errorf("maxHonorDisplay = %d, want 50", maxHonorDisplay)
 	}
 }
 
@@ -465,54 +264,36 @@ func TestSanitizeError_Transient(t *testing.T) {
 
 // --- friendlyYubiKeyError tests ---
 
-func TestFriendlyYubiKeyError_Nil(t *testing.T) {
-	got := friendlyYubiKeyError(nil, nil)
-	if got != "Unknown YubiKey error" {
-		t.Errorf("got %q, want %q", got, "Unknown YubiKey error")
-	}
-}
-
 func TestFriendlyYubiKeyError_YubiKeyError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("no YubiKey detected"), nil)
+	got := friendlyYubiKeyError(fmt.Errorf("no YubiKey detected"))
 	if !strings.Contains(got, "not detected") {
 		t.Errorf("expected 'not detected' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_CardError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("smart card not found"), nil)
+	got := friendlyYubiKeyError(fmt.Errorf("smart card not found"))
 	if !strings.Contains(got, "not detected") {
 		t.Errorf("expected 'not detected' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_PCSCError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("pcsc daemon not running"), nil)
+	got := friendlyYubiKeyError(fmt.Errorf("pcsc daemon not running"))
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected 'Smart card service' message, got: %q", got)
 	}
 }
 
 func TestFriendlyYubiKeyError_SCARDError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("scard: service not available"), nil)
+	got := friendlyYubiKeyError(fmt.Errorf("scard: service not available"))
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected 'Smart card service' message, got: %q", got)
 	}
 }
 
-func TestFriendlyYubiKeyError_Transient(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := friendlyYubiKeyError(resetErr(), logger)
-	if got != core.MsgYubiKeyReset {
-		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
-	}
-}
-
 func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := friendlyYubiKeyError(fmt.Errorf("unexpected failure"), logger)
+	got := friendlyYubiKeyError(fmt.Errorf("unexpected failure"))
 	if !strings.Contains(got, "Failed to connect") {
 		t.Errorf("expected 'Failed to connect' message, got: %q", got)
 	}
@@ -521,46 +302,10 @@ func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 	}
 }
 
-func TestFriendlyYubiKeyError_LogsActualError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logPath := filepath.Join(tmpDir, "debug.log")
-	logger := debuglog.New(logPath)
-
-	friendlyYubiKeyError(fmt.Errorf("unexpected failure"), logger)
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("debug log file not created: %v", err)
-	}
-	content := string(data)
-	// The debug log must contain the actual error for diagnosis.
-	if !strings.Contains(content, "yubikey: unexpected failure") {
-		t.Errorf("debug log should contain actual error, got: %q", content)
-	}
-}
-
-func TestFriendlyYubiKeyError_LogsHardwareError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logPath := filepath.Join(tmpDir, "debug.log")
-	logger := debuglog.New(logPath)
-
-	friendlyYubiKeyError(fmt.Errorf("failed to open YubiKey: no YubiKey found among 0 smart card(s)"), logger)
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("debug log file not created: %v", err)
-	}
-	content := string(data)
-	// Classified hardware errors must also be logged for diagnosis.
-	if !strings.Contains(content, "no YubiKey found") {
-		t.Errorf("debug log should contain actual error, got: %q", content)
-	}
-}
-
 // --- signFlowErrorMessage tests ---
 
 func TestSignFlowErrorMessage_ExportPublicKey(t *testing.T) {
-	err := &SignFlowError{Phase: PhaseExportKey, Err: fmt.Errorf("hardware failure")}
+	err := &signFlowError{Phase: phaseExportKey, Err: fmt.Errorf("hardware failure")}
 	got := signFlowErrorMessage(err, nil)
 	if !strings.Contains(got, "Failed to read YubiKey") {
 		t.Errorf("expected YubiKey read failure message, got: %q", got)
@@ -568,7 +313,7 @@ func TestSignFlowErrorMessage_ExportPublicKey(t *testing.T) {
 }
 
 func TestSignFlowErrorMessage_QRGeneration(t *testing.T) {
-	err := &SignFlowError{Phase: PhaseQR, Err: fmt.Errorf("encode failed")}
+	err := &signFlowError{Phase: phaseQR, Err: fmt.Errorf("encode failed")}
 	got := signFlowErrorMessage(err, nil)
 	if !strings.Contains(got, "QR generation failed") {
 		t.Errorf("expected QR failure message, got: %q", got)
@@ -585,7 +330,7 @@ func TestSignFlowErrorMessage_YubiKeyAdapter(t *testing.T) {
 func TestSignFlowErrorMessage_SignError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	sfe := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("hardware fault")}
+	sfe := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("hardware fault")}
 	got := signFlowErrorMessage(sfe, logger)
 	if !strings.Contains(got, "Signing failed") {
 		t.Errorf("expected 'Signing failed' message, got: %q", got)
@@ -603,7 +348,7 @@ func TestSignFlowErrorMessage_SignError(t *testing.T) {
 func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	sfe := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("some error")}
+	sfe := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("some error")}
 	signFlowErrorMessage(sfe, logger)
 	data, err := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
 	if err != nil {
@@ -619,9 +364,9 @@ func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 func TestSignFlowErrorMessage_Cancelled(t *testing.T) {
 	// After the prompt-before-open reorder, cancellation is returned bare from
 	// readPin — piv-go no longer %v-wraps it — and is matched via errors.Is,
-	// which also traverses any %w wrap. The old %v-wrapped-in-SignFlowError
+	// which also traverses any %w wrap. The old %v-wrapped-in-signFlowError
 	// chain can no longer be produced.
-	wrapped := fmt.Errorf("outer: %w", ErrSigningCancelled)
+	wrapped := fmt.Errorf("outer: %w", errSigningCancelled)
 	got := signFlowErrorMessage(wrapped, nil)
 	if got != "" {
 		t.Errorf("expected empty string for cancellation, got: %q", got)
@@ -629,7 +374,7 @@ func TestSignFlowErrorMessage_Cancelled(t *testing.T) {
 }
 
 func TestSignFlowErrorMessage_CancelledRaw(t *testing.T) {
-	got := signFlowErrorMessage(ErrSigningCancelled, nil)
+	got := signFlowErrorMessage(errSigningCancelled, nil)
 	if got != "" {
 		t.Errorf("expected empty string for cancellation, got: %q", got)
 	}
@@ -638,7 +383,7 @@ func TestSignFlowErrorMessage_CancelledRaw(t *testing.T) {
 func TestSignFlowErrorMessage_Timeout(t *testing.T) {
 	// The timeout sentinel must yield a timeout message, NOT a hardware message
 	// (the literal "PIN entry timed out" matches the \bpin\b classifier).
-	got := signFlowErrorMessage(ErrPINEntryTimedOut, nil)
+	got := signFlowErrorMessage(errPINEntryTimedOut, nil)
 	if !strings.Contains(got, "timed out") {
 		t.Errorf("expected timeout message, got: %q", got)
 	}
@@ -647,7 +392,7 @@ func TestSignFlowErrorMessage_Timeout(t *testing.T) {
 func TestSignFlowErrorMessage_MlockFailure(t *testing.T) {
 	// The %w-wrapped mlock sentinel must yield the restart message, not a
 	// misclassified hardware PIN error.
-	err := fmt.Errorf("%w: mlock failed", ErrPINCacheUnavailable)
+	err := fmt.Errorf("%w: mlock failed", errPINCacheUnavailable)
 	got := signFlowErrorMessage(err, nil)
 	if !strings.Contains(got, "secure the PIN") {
 		t.Errorf("expected mlock/restart message, got: %q", got)
@@ -656,7 +401,7 @@ func TestSignFlowErrorMessage_MlockFailure(t *testing.T) {
 
 func TestSignFlowErrorMessage_IssuanceLogUnreadable(t *testing.T) {
 	// The wrapped parse error must not be classified as a hardware fault.
-	err := fmt.Errorf("%w: %w", ErrIssuanceLogUnreadable, fmt.Errorf("parsing log file: unexpected end of JSON input"))
+	err := fmt.Errorf("%w: %w", errIssuanceLogUnreadable, fmt.Errorf("parsing log file: unexpected end of JSON input"))
 	got := signFlowErrorMessage(err, nil)
 	want := "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable."
 	if got != want {
@@ -667,7 +412,7 @@ func TestSignFlowErrorMessage_IssuanceLogUnreadable(t *testing.T) {
 func TestSignFlowErrorMessage_WrongPINWithRetries(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	err := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2})}
+	err := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2})}
 	got := signFlowErrorMessage(err, logger)
 	if !strings.Contains(got, "2 attempt") {
 		t.Errorf("expected remaining-attempts count in message, got: %q", got)
@@ -679,7 +424,7 @@ func TestSignFlowErrorMessage_WrongPINBlocked(t *testing.T) {
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	// Retries == 0 must NOT claim "blocked" outright — it means blocked OR count
 	// unavailable.
-	err := &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 0})}
+	err := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 0})}
 	got := signFlowErrorMessage(err, logger)
 	if !strings.Contains(got, "locked") || strings.Contains(got, "attempt(s) left") {
 		t.Errorf("expected ambiguous locked message without a positive count, got: %q", got)
@@ -712,7 +457,7 @@ func TestSignFlowErrorMessage_Transient_WrappedInSignFlowError(t *testing.T) {
 	// not the generic "Signing failed" message.
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	sfe := &SignFlowError{Phase: PhaseSign, Err: resetErr()}
+	sfe := &signFlowError{Phase: phaseSign, Err: resetErr()}
 	got := signFlowErrorMessage(sfe, logger)
 	if got != core.MsgYubiKeyReset {
 		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
@@ -720,7 +465,7 @@ func TestSignFlowErrorMessage_Transient_WrappedInSignFlowError(t *testing.T) {
 }
 
 func TestSignFlowErrorMessage_Transient_RawAdapterOpen(t *testing.T) {
-	// The raw adapter-open path (not wrapped in SignFlowError) must also route
+	// The raw adapter-open path (not wrapped in signFlowError) must also route
 	// a reset to the canonical message.
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
@@ -759,119 +504,11 @@ func TestSignFlowErrorMessage_NotEd25519Error(t *testing.T) {
 	}
 }
 
-// --- formatRecordSummaryWithRevocation tests ---
-
-func TestFormatRecordSummaryWithRevocation_NotRevoked(t *testing.T) {
-	rec := log.IssuanceRecord{
-		Date:          "2026-03-14",
-		Recipient:     "John Doe",
-		Honor:         "Order of the Crown of Georgia",
-		PayloadSHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-	}
-	revokedHashes := map[string]bool{
-		"0000000000000000000000000000000000000000000000000000000000000000": true,
-	}
-	got := formatRecordSummaryWithRevocation(rec, revokedHashes)
-	if strings.HasPrefix(got, "[REVOKED]") {
-		t.Errorf("non-revoked record should not have [REVOKED] prefix, got: %q", got)
-	}
-	// Should match plain formatRecordSummary output.
-	want := formatRecordSummary(rec)
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestFormatRecordSummaryWithRevocation_Revoked(t *testing.T) {
-	hash := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-	rec := log.IssuanceRecord{
-		Date:          "2026-03-14",
-		Recipient:     "John Doe",
-		Honor:         "Order of the Crown of Georgia",
-		PayloadSHA256: hash,
-	}
-	revokedHashes := map[string]bool{
-		hash: true,
-	}
-	got := formatRecordSummaryWithRevocation(rec, revokedHashes)
-	if !strings.HasPrefix(got, "[REVOKED] ") {
-		t.Errorf("revoked record should have [REVOKED] prefix, got: %q", got)
-	}
-	// The rest should be the normal summary.
-	withoutPrefix := strings.TrimPrefix(got, "[REVOKED] ")
-	want := formatRecordSummary(rec)
-	if withoutPrefix != want {
-		t.Errorf("after removing prefix: got %q, want %q", withoutPrefix, want)
-	}
-}
-
-func TestFormatRecordSummaryWithRevocation_CaseInsensitive(t *testing.T) {
-	rec := log.IssuanceRecord{
-		Date:          "2026-03-14",
-		Recipient:     "Jane Doe",
-		Honor:         "Test Honor",
-		PayloadSHA256: "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
-	}
-	revokedHashes := map[string]bool{
-		"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789": true,
-	}
-	got := formatRecordSummaryWithRevocation(rec, revokedHashes)
-	if !strings.HasPrefix(got, "[REVOKED] ") {
-		t.Errorf("case-insensitive match should still mark as revoked, got: %q", got)
-	}
-}
-
-func TestFormatRecordSummaryWithRevocation_NilMap(t *testing.T) {
-	rec := log.IssuanceRecord{
-		Date:          "2026-03-14",
-		Recipient:     "John Doe",
-		Honor:         "Test Honor",
-		PayloadSHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-	}
-	got := formatRecordSummaryWithRevocation(rec, nil)
-	if strings.HasPrefix(got, "[REVOKED]") {
-		t.Errorf("nil map should not produce [REVOKED] prefix, got: %q", got)
-	}
-	want := formatRecordSummary(rec)
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestFormatRecordSummaryWithRevocation_EmptyMap(t *testing.T) {
-	rec := log.IssuanceRecord{
-		Date:          "2026-03-14",
-		Recipient:     "John Doe",
-		Honor:         "Test Honor",
-		PayloadSHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-	}
-	got := formatRecordSummaryWithRevocation(rec, map[string]bool{})
-	if strings.HasPrefix(got, "[REVOKED]") {
-		t.Errorf("empty map should not produce [REVOKED] prefix, got: %q", got)
-	}
-}
-
-func TestFormatRecordSummaryWithRevocation_EmptyHash(t *testing.T) {
-	rec := log.IssuanceRecord{
-		Date:          "2026-03-14",
-		Recipient:     "John Doe",
-		Honor:         "Test Honor",
-		PayloadSHA256: "",
-	}
-	revokedHashes := map[string]bool{
-		"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789": true,
-	}
-	got := formatRecordSummaryWithRevocation(rec, revokedHashes)
-	if strings.HasPrefix(got, "[REVOKED]") {
-		t.Errorf("empty hash should not match revoked set, got: %q", got)
-	}
-}
-
 func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	pathErr := &os.PathError{Op: "open", Path: "/nonexistent/dir/log.json.tmp", Err: errors.New("no such file or directory")}
-	err := &SignFlowError{Phase: PhaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, pathErr)}
+	err := &signFlowError{Phase: phaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, pathErr)}
 
 	got := signFlowErrorMessage(err, logger)
 	want := "Credential signed but NOT recorded in the audit log — check disk space/permissions."
@@ -892,10 +529,10 @@ func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
 func TestSignFlowErrorMessage_DetailsPointToExportErrorLog(t *testing.T) {
 	const want = "Use Help → Export Error Log… for details."
 	cases := map[string]error{
-		"export key":   &SignFlowError{Phase: PhaseExportKey, Err: fmt.Errorf("x")},
-		"qr":           &SignFlowError{Phase: PhaseQR, Err: fmt.Errorf("x")},
-		"sign":         &SignFlowError{Phase: PhaseSign, Err: fmt.Errorf("x")},
-		"other phase":  &SignFlowError{Phase: SignFlowPhase("bogus"), Err: fmt.Errorf("x")},
+		"export key":   &signFlowError{Phase: phaseExportKey, Err: fmt.Errorf("x")},
+		"qr":           &signFlowError{Phase: phaseQR, Err: fmt.Errorf("x")},
+		"sign":         &signFlowError{Phase: phaseSign, Err: fmt.Errorf("x")},
+		"other phase":  &signFlowError{Phase: signFlowPhase("bogus"), Err: fmt.Errorf("x")},
 		"unclassified": fmt.Errorf("something odd happened"),
 	}
 	for name, err := range cases {

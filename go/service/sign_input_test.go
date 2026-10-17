@@ -1,4 +1,4 @@
-package gui
+package service
 
 import (
 	"errors"
@@ -81,7 +81,7 @@ func TestSignFlowErrorMessage_TooLongForQR(t *testing.T) {
 		if got := signFlowErrorMessage(err, nil); got != tc.want {
 			t.Errorf("bare OverBytes=%d: got %q, want %q", tc.over, got, tc.want)
 		}
-		wrapped := &SignFlowError{Phase: PhaseSign, Err: err}
+		wrapped := &signFlowError{Phase: phaseSign, Err: err}
 		if got := signFlowErrorMessage(wrapped, nil); got != tc.want {
 			t.Errorf("wrapped OverBytes=%d: got %q, want %q", tc.over, got, tc.want)
 		}
@@ -110,8 +110,8 @@ func TestSignFlowErrorMessage_InvalidCredential(t *testing.T) {
 	want := "Invalid credential data: detail exceeds maximum length of 2000."
 	cases := map[string]error{
 		"bare":    bare,
-		"wrapped": &SignFlowError{Phase: PhaseSign, Err: bare},
-		"double":  fmt.Errorf("outer: %w", &SignFlowError{Phase: PhaseSign, Err: bare}),
+		"wrapped": &signFlowError{Phase: phaseSign, Err: bare},
+		"double":  fmt.Errorf("outer: %w", &signFlowError{Phase: phaseSign, Err: bare}),
 	}
 	for name, err := range cases {
 		if got := signFlowErrorMessage(err, nil); got != want {
@@ -144,8 +144,8 @@ func TestIsOperatorInputError(t *testing.T) {
 	}{
 		"too long":        {&core.TooLongForQRError{OverBytes: 1}, true},
 		"invalid":         {&core.InvalidCredentialError{Reason: errors.New("x")}, true},
-		"wrapped invalid": {&SignFlowError{Phase: PhaseSign, Err: &core.InvalidCredentialError{Reason: errors.New("x")}}, true},
-		"cancelled":       {ErrSigningCancelled, false},
+		"wrapped invalid": {&signFlowError{Phase: phaseSign, Err: &core.InvalidCredentialError{Reason: errors.New("x")}}, true},
+		"cancelled":       {errSigningCancelled, false},
 		"generic":         {errors.New("boom"), false},
 	}
 	for name, tc := range cases {
@@ -156,7 +156,7 @@ func TestIsOperatorInputError(t *testing.T) {
 }
 
 func TestSignIssueBody_OmitsRawError(t *testing.T) {
-	err := &SignFlowError{Phase: PhaseQR, Err: errors.New("open /home/alice/secret/issuance.log: denied")}
+	err := &signFlowError{Phase: phaseQR, Err: errors.New("open /home/alice/secret/issuance.log: denied")}
 	msg := "QR generation failed. Use Help → Export Error Log… for details."
 	body := signIssueBody(err, msg)
 	if strings.Contains(body, "/home/alice/secret") {
@@ -201,7 +201,7 @@ func TestSignIssueBody_HardwareCategory(t *testing.T) {
 }
 
 func TestSignIssueBody_PhaseAndHardware(t *testing.T) {
-	err := &SignFlowError{Phase: PhaseExportKey, Err: errors.New("pcsc daemon not running")}
+	err := &signFlowError{Phase: phaseExportKey, Err: errors.New("pcsc daemon not running")}
 	body := signIssueBody(err, "Failed to read YubiKey.")
 	if !strings.Contains(body, "Failed to read YubiKey. (phase: export_key) (hardware: smartcard)") {
 		t.Errorf("unexpected body: %q", body)
@@ -215,13 +215,13 @@ func TestOfferIssueReport(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"cancelled", ErrSigningCancelled, false},
-		{"timed out", ErrPINEntryTimedOut, false},
+		{"cancelled", errSigningCancelled, false},
+		{"timed out", errPINEntryTimedOut, false},
 		{"too long", &core.TooLongForQRError{OverBytes: 5}, false},
-		{"too long wrapped", &SignFlowError{Phase: PhaseSign, Err: &core.TooLongForQRError{OverBytes: 5}}, false},
+		{"too long wrapped", &signFlowError{Phase: phaseSign, Err: &core.TooLongForQRError{OverBytes: 5}}, false},
 		{"invalid credential", invalid, false},
 		{"generic", errors.New("something broke"), true},
-		{"sign phase", &SignFlowError{Phase: PhaseSign, Err: errors.New("hardware fault")}, true},
+		{"sign phase", &signFlowError{Phase: phaseSign, Err: errors.New("hardware fault")}, true},
 	}
 	for _, tc := range cases {
 		if got := offerIssueReport(tc.err); got != tc.want {

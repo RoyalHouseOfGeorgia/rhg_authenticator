@@ -1,4 +1,4 @@
-package gui
+package service
 
 import (
 	"crypto/ed25519"
@@ -161,9 +161,9 @@ func TestExecuteSignFlow_PINSentinelsSurviveAndClassify(t *testing.T) {
 		base        error  // sentinel that errors.Is must still match afterwards
 		wantMsgPart string // substring of signFlowErrorMessage output ("" = exactly "")
 	}{
-		{"cancelled", ErrSigningCancelled, ErrSigningCancelled, ""},
-		{"timed out", ErrPINEntryTimedOut, ErrPINEntryTimedOut, "timed out"},
-		{"cache unavailable", fmt.Errorf("%w: mlock failed", ErrPINCacheUnavailable), ErrPINCacheUnavailable, "secure the PIN"},
+		{"cancelled", errSigningCancelled, errSigningCancelled, ""},
+		{"timed out", errPINEntryTimedOut, errPINEntryTimedOut, "timed out"},
+		{"cache unavailable", fmt.Errorf("%w: mlock failed", errPINCacheUnavailable), errPINCacheUnavailable, "secure the PIN"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -267,12 +267,12 @@ func TestExecuteSignFlow_ExportKeyError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from ExportPublicKey")
 	}
-	var sfe *SignFlowError
+	var sfe *signFlowError
 	if !errors.As(err, &sfe) {
-		t.Fatalf("expected *SignFlowError, got %T", err)
+		t.Fatalf("expected *signFlowError, got %T", err)
 	}
-	if sfe.Phase != PhaseExportKey {
-		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseExportKey)
+	if sfe.Phase != phaseExportKey {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, phaseExportKey)
 	}
 }
 
@@ -298,12 +298,12 @@ func TestExecuteSignFlow_SignError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from SignBytes")
 	}
-	var sfe *SignFlowError
+	var sfe *signFlowError
 	if !errors.As(err, &sfe) {
-		t.Fatalf("expected *SignFlowError, got %T", err)
+		t.Fatalf("expected *signFlowError, got %T", err)
 	}
-	if sfe.Phase != PhaseSign {
-		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseSign)
+	if sfe.Phase != phaseSign {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, phaseSign)
 	}
 }
 
@@ -492,8 +492,8 @@ func seedEnabledCache(t *testing.T) *yubikey.PinCache {
 func TestClearPINCacheOnAuthError_SignFlowErrorClears(t *testing.T) {
 	cache := seedEnabledCache(t)
 
-	err := &SignFlowError{
-		Phase: PhaseSign,
+	err := &signFlowError{
+		Phase: phaseSign,
 		Err:   fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2}),
 	}
 	clearPINCacheOnAuthError(err, cache)
@@ -524,7 +524,7 @@ func TestClearPINCacheOnAuthError_NilAndAuthOnEmptyCache(t *testing.T) {
 	}
 
 	// Auth error against an empty cache: clearLocked nil-guards, so no panic.
-	authErr := &SignFlowError{Phase: PhaseSign, Err: piv.AuthErr{}}
+	authErr := &signFlowError{Phase: phaseSign, Err: piv.AuthErr{}}
 	clearPINCacheOnAuthError(authErr, cache)
 	if _, ok := cache.Get(); ok {
 		t.Error("disabled cache should never report a PIN")
@@ -534,7 +534,7 @@ func TestClearPINCacheOnAuthError_NilAndAuthOnEmptyCache(t *testing.T) {
 func TestClearPINCacheOnAuthError_BareAuthErrClears(t *testing.T) {
 	cache := seedEnabledCache(t)
 
-	// Bare, unwrapped piv.AuthErr — no SignFlowError, no %w chain.
+	// Bare, unwrapped piv.AuthErr — no signFlowError, no %w chain.
 	clearPINCacheOnAuthError(piv.AuthErr{}, cache)
 
 	if _, ok := cache.Get(); ok {
@@ -545,14 +545,14 @@ func TestClearPINCacheOnAuthError_BareAuthErrClears(t *testing.T) {
 // TestClearPINCacheOnAuthError_RealisticVerifyPinChain pins the lockout-prevention
 // invariant against the exact error shape piv-go produces: a card VERIFY failure
 // wrapped "verify pin: %w", re-wrapped by the adapter/HandleSign, then boxed in a
-// SignFlowError. If a future piv-go bump changes its %w wrap to %v, errors.As
+// signFlowError. If a future piv-go bump changes its %w wrap to %v, errors.As
 // breaks and this fails in CI — before a wrong PIN can be silently replayed into
 // the PIV retry counter (a signing-key lockout DoS).
 func TestClearPINCacheOnAuthError_RealisticVerifyPinChain(t *testing.T) {
 	cache := seedEnabledCache(t)
 
-	err := &SignFlowError{
-		Phase: PhaseSign,
+	err := &signFlowError{
+		Phase: phaseSign,
 		Err: fmt.Errorf("signing failed: %w",
 			fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})),
 	}
@@ -565,7 +565,7 @@ func TestClearPINCacheOnAuthError_RealisticVerifyPinChain(t *testing.T) {
 
 func TestSignFlowError_Unwrap(t *testing.T) {
 	inner := fmt.Errorf("hardware fault")
-	sfe := &SignFlowError{Phase: PhaseSign, Err: inner}
+	sfe := &signFlowError{Phase: phaseSign, Err: inner}
 	if errors.Unwrap(sfe) != inner {
 		t.Errorf("Unwrap returned %v, want %v", errors.Unwrap(sfe), inner)
 	}
@@ -573,19 +573,19 @@ func TestSignFlowError_Unwrap(t *testing.T) {
 
 func TestSignFlowError_Phase(t *testing.T) {
 	inner := fmt.Errorf("timeout")
-	sfe := &SignFlowError{Phase: PhaseExportKey, Err: inner}
+	sfe := &signFlowError{Phase: phaseExportKey, Err: inner}
 
-	var extracted *SignFlowError
+	var extracted *signFlowError
 	if !errors.As(sfe, &extracted) {
 		t.Fatal("errors.As failed")
 	}
-	if extracted.Phase != PhaseExportKey {
-		t.Errorf("Phase = %q, want %q", extracted.Phase, PhaseExportKey)
+	if extracted.Phase != phaseExportKey {
+		t.Errorf("Phase = %q, want %q", extracted.Phase, phaseExportKey)
 	}
 }
 
 func TestSignFlowError_ErrorString(t *testing.T) {
-	sfe := &SignFlowError{Phase: PhaseQR, Err: fmt.Errorf("encode failed")}
+	sfe := &signFlowError{Phase: phaseQR, Err: fmt.Errorf("encode failed")}
 	want := "qr: encode failed"
 	if got := sfe.Error(); got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
@@ -709,12 +709,12 @@ func TestSignAndLog_LogAppendFailureReturnsResponseAndPhaseLog(t *testing.T) {
 	if !errors.Is(err, core.ErrNotLogged) {
 		t.Fatalf("errors.Is(err, ErrNotLogged) = false; err = %v", err)
 	}
-	var sfe *SignFlowError
+	var sfe *signFlowError
 	if !errors.As(err, &sfe) {
-		t.Fatalf("expected *SignFlowError, got %T", err)
+		t.Fatalf("expected *signFlowError, got %T", err)
 	}
-	if sfe.Phase != PhaseLog {
-		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseLog)
+	if sfe.Phase != phaseLog {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, phaseLog)
 	}
 	var pathErr *fs.PathError
 	if !errors.As(err, &pathErr) {
@@ -743,12 +743,12 @@ func TestSignAndLog_ExportKeyError(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "issuances.json")
 
 	resp, err := signAndLog(validSignRequest(), logPath, openAdapter, "123456", logger)
-	var sfe *SignFlowError
+	var sfe *signFlowError
 	if !errors.As(err, &sfe) {
-		t.Fatalf("expected *SignFlowError, got %T (%v)", err, err)
+		t.Fatalf("expected *signFlowError, got %T (%v)", err, err)
 	}
-	if sfe.Phase != PhaseExportKey {
-		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseExportKey)
+	if sfe.Phase != phaseExportKey {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, phaseExportKey)
 	}
 	if resp.URL != "" {
 		t.Errorf("expected zero response, got %+v", resp)
@@ -772,12 +772,12 @@ func TestSignAndLog_SignError(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "issuances.json")
 
 	resp, err := signAndLog(validSignRequest(), logPath, openAdapter, "123456", logger)
-	var sfe *SignFlowError
+	var sfe *signFlowError
 	if !errors.As(err, &sfe) {
-		t.Fatalf("expected *SignFlowError, got %T (%v)", err, err)
+		t.Fatalf("expected *signFlowError, got %T (%v)", err, err)
 	}
-	if sfe.Phase != PhaseSign {
-		t.Errorf("Phase = %q, want %q", sfe.Phase, PhaseSign)
+	if sfe.Phase != phaseSign {
+		t.Errorf("Phase = %q, want %q", sfe.Phase, phaseSign)
 	}
 	if resp.URL != "" {
 		t.Errorf("expected zero response, got %+v", resp)
@@ -803,9 +803,9 @@ func TestSignAndLog_OpenError(t *testing.T) {
 	if err != openErr {
 		t.Errorf("expected the unwrapped open error, got %v", err)
 	}
-	var sfe *SignFlowError
+	var sfe *signFlowError
 	if errors.As(err, &sfe) {
-		t.Errorf("open error must not be wrapped in SignFlowError, got phase %q", sfe.Phase)
+		t.Errorf("open error must not be wrapped in signFlowError, got phase %q", sfe.Phase)
 	}
 	if _, statErr := os.Stat(logPath); !os.IsNotExist(statErr) {
 		t.Errorf("log file should not exist after open failure, stat: %v", statErr)
@@ -820,7 +820,7 @@ func TestSignAndLog_OpenError(t *testing.T) {
 }
 
 // TestExecuteSignFlow_LogPathMissingDirIsNonFatal pins that executeSignFlow
-// swallows signAndLog's PhaseLog error: single-sign still returns a full
+// swallows signAndLog's phaseLog error: single-sign still returns a full
 // result (including the QR PNG) when the audit-log append fails.
 func TestExecuteSignFlow_LogPathMissingDirIsNonFatal(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
@@ -954,8 +954,8 @@ func TestExecuteSignFlow_UnreadableLogBlocksSigning(t *testing.T) {
 
 	readPin, openAdapter, pinCalls, openCalls := countingStubs(priv)
 	_, err := executeSignFlow(validSignRequest(), logPath, openAdapter, readPin, nil, logger)
-	if !errors.Is(err, ErrIssuanceLogUnreadable) {
-		t.Fatalf("err = %v, want ErrIssuanceLogUnreadable", err)
+	if !errors.Is(err, errIssuanceLogUnreadable) {
+		t.Fatalf("err = %v, want errIssuanceLogUnreadable", err)
 	}
 	if *pinCalls != 0 || *openCalls != 0 {
 		t.Errorf("readPin/openAdapter calls = %d/%d, want 0/0", *pinCalls, *openCalls)

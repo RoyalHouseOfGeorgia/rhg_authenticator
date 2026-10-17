@@ -1,4 +1,4 @@
-package regmgr
+package service
 
 import (
 	"bytes"
@@ -22,12 +22,12 @@ func validRegistry() core.Registry {
 	}
 }
 
-// --- MarshalRegistry tests ---
+// --- marshalRegistry tests ---
 
 func TestMarshalRegistry_ValidOutput(t *testing.T) {
 	reg := validRegistry()
 
-	data, err := MarshalRegistry(reg)
+	data, err := marshalRegistry(reg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -51,9 +51,9 @@ func TestMarshalRegistry_ValidOutput(t *testing.T) {
 func TestMarshalRegistry_RoundTrip(t *testing.T) {
 	reg := validRegistry()
 
-	data, err := MarshalRegistry(reg)
+	data, err := marshalRegistry(reg)
 	if err != nil {
-		t.Fatalf("MarshalRegistry: %v", err)
+		t.Fatalf("marshalRegistry: %v", err)
 	}
 
 	got, err := core.ValidateRegistry(data)
@@ -82,9 +82,9 @@ func TestMarshalRegistry_RoundTrip(t *testing.T) {
 			`quo"te`:         json.RawMessage(`{"a":1}`),
 		}
 
-		data, err := MarshalRegistry(reg)
+		data, err := marshalRegistry(reg)
 		if err != nil {
-			t.Fatalf("MarshalRegistry: %v", err)
+			t.Fatalf("marshalRegistry: %v", err)
 		}
 		got, err := core.ValidateRegistry(data)
 		if err != nil {
@@ -116,9 +116,9 @@ func TestMarshalRegistry_RoundTrip(t *testing.T) {
 			t.Errorf(`Extra[quo"te] = %v`, quoted)
 		}
 
-		again, err := MarshalRegistry(got)
+		again, err := marshalRegistry(got)
 		if err != nil {
-			t.Fatalf("second MarshalRegistry: %v", err)
+			t.Fatalf("second marshalRegistry: %v", err)
 		}
 		if !bytes.Equal(again, data) {
 			t.Errorf("round-trip not idempotent:\nfirst:\n%s\nsecond:\n%s", data, again)
@@ -129,7 +129,7 @@ func TestMarshalRegistry_RoundTrip(t *testing.T) {
 func TestMarshalRegistry_EmptyKeys(t *testing.T) {
 	reg := core.Registry{Keys: []core.KeyEntry{}}
 
-	_, err := MarshalRegistry(reg)
+	_, err := marshalRegistry(reg)
 	if err == nil {
 		t.Fatal("expected error for empty keys")
 	}
@@ -141,12 +141,12 @@ func TestMarshalRegistry_EmptyKeys(t *testing.T) {
 func TestMarshalRegistry_Deterministic(t *testing.T) {
 	reg := validRegistry()
 
-	data1, err := MarshalRegistry(reg)
+	data1, err := marshalRegistry(reg)
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
 
-	data2, err := MarshalRegistry(reg)
+	data2, err := marshalRegistry(reg)
 	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}

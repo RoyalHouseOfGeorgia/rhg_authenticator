@@ -1,98 +1,29 @@
 package gui
 
 import (
-	"bytes"
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
-	"fyne.io/fyne/v2/widget"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/bulk"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
-// findButton walks obj (containers and widget renderers) and returns the
-// first button labelled text, or nil.
-func findButton(t *testing.T, obj fyne.CanvasObject, text string) *widget.Button {
-	t.Helper()
-	switch o := obj.(type) {
-	case *widget.Button:
-		if o.Text == text {
-			return o
-		}
-		return nil
-	case *fyne.Container:
-		for _, child := range o.Objects {
-			if b := findButton(t, child, text); b != nil {
-				return b
-			}
-		}
-		return nil
-	case fyne.Widget:
-		for _, child := range test.TempWidgetRenderer(t, o).Objects() {
-			if b := findButton(t, child, text); b != nil {
-				return b
-			}
-		}
-	}
-	return nil
-}
-
-// labelTexts collects the text of every label under obj.
-func labelTexts(t *testing.T, obj fyne.CanvasObject) []string {
-	var out []string
-	switch o := obj.(type) {
-	case *widget.Label:
-		return []string{o.Text}
-	case *fyne.Container:
-		for _, child := range o.Objects {
-			out = append(out, labelTexts(t, child)...)
-		}
-	case fyne.Widget:
-		for _, child := range test.TempWidgetRenderer(t, o).Objects() {
-			out = append(out, labelTexts(t, child)...)
-		}
-	}
-	return out
-}
-
-func topOverlay(t *testing.T, w fyne.Window) fyne.CanvasObject {
-	t.Helper()
-	top := w.Canvas().Overlays().Top()
-	if top == nil {
-		t.Fatal("expected a dialog overlay, got none")
-	}
-	return top
-}
-
-func tapOverlayButton(t *testing.T, w fyne.Window, text string) {
-	t.Helper()
-	b := findButton(t, topOverlay(t, w), text)
-	if b == nil {
-		t.Fatalf("no %q button in top overlay", text)
-	}
-	test.Tap(b)
-}
-
-// bulkUIHarness wires bulkSignDeps to a test window, a synchronous launcher,
-// the bulkHarness fakes, and a cached PIN (so no PIN dialog is shown).
+// bulkUIHarness wires bulkSignDeps to a test window, a synchronous launcher
+// and a service.App whose PIN prompt always cancels, so no card is touched.
 type bulkUIHarness struct {
-	*bulkHarness
 	w        fyne.Window
 	busy     []bool
 	launches int
+	prompter *cancelPrompter
 	deps     bulkSignDeps
 }
 
@@ -103,22 +34,14 @@ func newBulkUIHarness(t *testing.T) *bulkUIHarness {
 	w.Resize(fyne.NewSize(800, 600))
 	t.Cleanup(w.Close)
 
-	cache := yubikey.NewPinCache()
-	t.Cleanup(cache.Close)
-	cache.SetEnabled(true)
-	if err := cache.Set("123456"); err != nil {
-		t.Fatalf("seeding PIN cache: %v", err)
-	}
-
-	h := &bulkUIHarness{bulkHarness: newBulkHarness(t), w: w}
+	h := &bulkUIHarness{w: w, prompter: &cancelPrompter{}}
+	events := NewEvents()
 	h.deps = bulkSignDeps{
-		window:      w,
-		logPath:     h.logPath,
-		launchGo:    func(fn func()) { h.launches++; fn() },
-		openAdapter: h.openAdapter,
-		pinCache:    cache,
-		logger:      h.logger,
-		setBusy:     func(b bool) { h.busy = append(h.busy, b) },
+		window:   w,
+		app:      newTestApp(t, events, h.prompter),
+		events:   events,
+		launchGo: func(fn func()) { h.launches++; fn() },
+		setBusy:  func(b bool) { h.busy = append(h.busy, b) },
 	}
 	return h
 }
@@ -131,122 +54,39 @@ func (h *bulkUIHarness) lastBusy(t *testing.T) bool {
 	return h.busy[len(h.busy)-1]
 }
 
-func TestBulkSummaryLine(t *testing.T) {
-	tests := []struct {
-		name string
-		c    bulk.Counts
-		want string
-	}{
-		{"zero", bulk.Counts{}, "Processed 0 rows: 0 successful (0 newly signed, 0 already issued), 0 invalid, 0 failed/not attempted."},
-		{
-			"mixed",
-			bulk.Counts{Total: 10, Signed: 3, AlreadyIssued: 2, Invalid: 1, Failed: 1, NotAttempted: 3},
-			"Processed 10 rows: 5 successful (3 newly signed, 2 already issued), 1 invalid, 4 failed/not attempted.",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := bulkSummaryLine(tt.c); got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBulkConfirmText(t *testing.T) {
-	toSign := func(name string) bulk.Result {
-		return bulk.Result{Req: core.SignRequest{Recipient: name}, Status: bulk.StatusToSign}
-	}
-	invalid := func(line int, msg string) bulk.Result {
-		r := bulk.Result{Status: bulk.StatusInvalid, Err: msg}
-		r.Line = line
-		return r
-	}
-	issued := bulk.Result{Req: core.SignRequest{Recipient: "Old"}, Status: bulk.StatusAlreadyIssued}
-
-	tests := []struct {
-		name        string
-		results     []bulk.Result
-		wantCounts  string
-		wantPreview []string
-		wantInvalid []string
-	}{
-		{"empty", nil, "0 rows: 0 to sign, 0 already issued, 0 invalid", nil, nil},
-		{
-			"mixed",
-			[]bulk.Result{toSign("Alice"), issued, invalid(4, "date: bad"), toSign("Bob")},
-			"4 rows: 2 to sign, 1 already issued, 1 invalid",
-			[]string{"Alice", "Bob"},
-			[]string{"line 4: date: bad"},
-		},
-		{
-			"preview capped at five",
-			[]bulk.Result{toSign("A"), toSign("B"), toSign("C"), toSign("D"), toSign("E"), toSign("F"), invalid(8, "x"), invalid(9, "y")},
-			"8 rows: 6 to sign, 0 already issued, 2 invalid",
-			[]string{"A", "B", "C", "D", "E"},
-			[]string{"line 8: x", "line 9: y"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			counts, preview, inv := bulkConfirmText(tt.results)
-			if counts != tt.wantCounts {
-				t.Errorf("counts = %q, want %q", counts, tt.wantCounts)
-			}
-			if strings.Join(preview, "|") != strings.Join(tt.wantPreview, "|") {
-				t.Errorf("preview = %v, want %v", preview, tt.wantPreview)
-			}
-			if strings.Join(inv, "|") != strings.Join(tt.wantInvalid, "|") {
-				t.Errorf("invalid = %v, want %v", inv, tt.wantInvalid)
-			}
-		})
-	}
-}
-
-func TestBulkResultsFilename(t *testing.T) {
-	tests := []struct {
-		name string
-		t    time.Time
-		want string
-	}{
-		{"utc", time.Date(2026, 9, 23, 7, 5, 9, 0, time.UTC), "rhg-bulk-results-2026-09-23-070509.csv"},
-		{"converted to utc", time.Date(2026, 1, 1, 1, 30, 0, 0, time.FixedZone("UTC+4", 4*3600)), "rhg-bulk-results-2025-12-31-213000.csv"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := bulkResultsFilename(tt.t); got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestSaveBulkResults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "results.csv")
-	results := []bulk.Result{{Req: core.SignRequest{Recipient: "Alice", Honor: "Other", Detail: "D", Date: "2026-03-14"}, Status: bulk.StatusSigned, URL: "https://example/v"}}
-	if err := saveBulkResults(path, results); err != nil {
-		t.Fatalf("saveBulkResults: %v", err)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
+// writeCSV writes text to a temp CSV file and returns its path.
+func writeCSV(t *testing.T, text string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "in.csv")
+	if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(got), "Alice,Other,D,2026-03-14,https://example/v,signed,") {
-		t.Errorf("unexpected CSV:\n%s", got)
-	}
-	if err := saveBulkResults(filepath.Join(t.TempDir(), "missing", "r.csv"), results); err == nil {
-		t.Error("expected error for unwritable path")
-	}
+	return p
 }
+
+// load plans csvText in the harness app.
+func (h *bulkUIHarness) load(t *testing.T, csvText string) service.BulkPlan {
+	t.Helper()
+	plan, err := h.deps.app.LoadBulk(writeCSV(t, csvText))
+	if err != nil {
+		t.Fatalf("LoadBulk: %v", err)
+	}
+	return plan
+}
+
+const threeRowCSV = "name,honor,detail,date\n" +
+	"Alice,Other,Service,2026-03-14\n" +
+	"Bob,Appointment,Advisor,2026-03-14\n" +
+	"Dave,Other,Help,2026-03-14\n"
 
 // TestBulkSign_ConfirmCancelClearsBusy: the confirm dialog lists counts,
 // preview names and invalid lines; Cancel re-enables the tab without
 // launching a worker.
 func TestBulkSign_ConfirmCancelClearsBusy(t *testing.T) {
 	h := newBulkUIHarness(t)
-	results := h.plan(t, "name,honor,detail,date\nAlice,Other,Service,2026-03-14\nBad,Nope,X,2026-03-14\n")
+	plan := h.load(t, "name,honor,detail,date\nAlice,Other,Service,2026-03-14\nBad,Nope,X,2026-03-14\n")
 
-	confirmBulkSign(h.deps, results)
+	confirmBulkSign(h.deps, plan)
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
 	for _, want := range []string{"2 rows: 1 to sign, 0 already issued, 1 invalid", "First names to be signed:", "Alice", "line 3: honor"} {
 		if !strings.Contains(texts, want) {
@@ -257,30 +97,27 @@ func TestBulkSign_ConfirmCancelClearsBusy(t *testing.T) {
 	if h.lastBusy(t) {
 		t.Error("expected setBusy(false) after Cancel")
 	}
-	if h.launches != 0 || h.opens != 0 {
-		t.Errorf("launches=%d opens=%d, want 0", h.launches, h.opens)
+	if h.launches != 0 || h.prompter.calls != 0 {
+		t.Errorf("launches=%d prompts=%d, want 0", h.launches, h.prompter.calls)
 	}
 }
 
-// TestBulkSign_ConfirmSignRunsBatch drives confirm → worker → summary with a
-// cached PIN and fake adapter, then closes the summary.
+// TestBulkSign_ConfirmSignRunsBatch drives confirm → worker → summary; the
+// PIN prompt is cancelled, so the summary reports the cancellation. Closing
+// the summary clears busy.
 func TestBulkSign_ConfirmSignRunsBatch(t *testing.T) {
 	h := newBulkUIHarness(t)
-	results := h.plan(t, threeRowCSV)
+	plan := h.load(t, threeRowCSV)
 
-	confirmBulkSign(h.deps, results)
+	confirmBulkSign(h.deps, plan)
 	tapOverlayButton(t, h.w, "Sign")
 
-	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusSigned, bulk.StatusSigned)
-	if n := h.logCount(t); n != 3 {
-		t.Errorf("audit log has %d records, want 3", n)
+	if h.prompter.calls != 1 {
+		t.Errorf("prompts = %d, want 1", h.prompter.calls)
 	}
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
-	if !strings.Contains(texts, "Processed 3 rows: 3 successful (3 newly signed, 0 already issued)") {
-		t.Errorf("summary missing tally:\n%s", texts)
-	}
-	if strings.Contains(texts, "Cancelled.") || strings.Contains(texts, "Batch stopped") {
-		t.Errorf("unexpected stop message:\n%s", texts)
+	if !strings.Contains(texts, "Processed 3 rows: 0 successful") || !strings.Contains(texts, "Cancelled.") {
+		t.Errorf("unexpected summary:\n%s", texts)
 	}
 	if findButton(t, topOverlay(t, h.w), "Export Results CSV…") == nil {
 		t.Error("summary has no export button")
@@ -293,56 +130,60 @@ func TestBulkSign_ConfirmSignRunsBatch(t *testing.T) {
 		t.Error("expected setBusy(false) after closing summary")
 	}
 	if top := h.w.Canvas().Overlays().Top(); top != nil {
-		t.Error("progress or summary dialog left open")
+		t.Error("summary dialog left open")
 	}
 }
 
-// TestBulkSign_CancelDuringBatch taps the progress dialog's Cancel while the
-// first row is signing: that row finishes, the rest are not attempted, and
-// the summary reports the cancellation.
+// TestBulkSign_CancelDuringBatch drives the progress dialog through the
+// service events: connecting shows it, progress updates the label, Cancel
+// stops the run and freezes the label, and the summary reports the
+// cancellation with the progress dialog gone.
 func TestBulkSign_CancelDuringBatch(t *testing.T) {
 	h := newBulkUIHarness(t)
-	results := h.plan(t, threeRowCSV)
+	h.load(t, threeRowCSV)
 
-	inner := h.deps.openAdapter
-	h.deps.openAdapter = func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
-		if h.opens == 0 {
-			top := topOverlay(t, h.w)
-			if !strings.Contains(strings.Join(labelTexts(t, top), "\n"), "Signing 1 of 3: Alice") {
-				t.Errorf("progress label not updated: %v", labelTexts(t, top))
-			}
-			b := findButton(t, top, "Cancel")
-			if b == nil {
-				t.Fatal("progress dialog has no Cancel button")
-			}
-			test.Tap(b)
-			if !b.Disabled() {
-				t.Error("Cancel button not disabled after tap")
-			}
-			if !strings.Contains(strings.Join(labelTexts(t, top), "\n"), "Stopping after current row…") {
-				t.Errorf("stopping label not shown: %v", labelTexts(t, top))
-			}
+	h.prompter.onRequest = func(ctx context.Context) {
+		h.deps.events.Emit(service.EventBulkConnecting, nil)
+		h.deps.events.Emit(service.EventBulkProgress, service.BulkProgress{Done: 0, Total: 3, Name: "Alice"})
+		top := topOverlay(t, h.w)
+		if !strings.Contains(strings.Join(labelTexts(t, top), "\n"), "Signing 1 of 3: Alice") {
+			t.Errorf("progress label not updated: %v", labelTexts(t, top))
 		}
-		return inner(rp)
+		b := findButton(t, top, "Cancel")
+		if b == nil {
+			t.Fatal("progress dialog has no Cancel button")
+		}
+		test.Tap(b)
+		if !b.Disabled() {
+			t.Error("Cancel button not disabled after tap")
+		}
+		// The PIN request's ctx derives from the bulk run's, so this proves the
+		// button cancelled the service run.
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Errorf("Cancel did not cancel the run: ctx.Err() = %v", ctx.Err())
+		}
+		h.deps.events.Emit(service.EventBulkProgress, service.BulkProgress{Done: 1, Total: 3, Name: "Bob"})
+		texts := strings.Join(labelTexts(t, top), "\n")
+		if !strings.Contains(texts, "Stopping after current row…") || strings.Contains(texts, "Bob") {
+			t.Errorf("stopping label not kept: %v", texts)
+		}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	runBulkSignWorker(ctx, cancel, h.deps, results)
+	runBulkSignWorker(h.deps, service.BulkPlan{})
 
-	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusNotAttempted, bulk.StatusNotAttempted)
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
-	if !strings.Contains(texts, "Cancelled.") {
-		t.Errorf("summary missing cancellation:\n%s", texts)
+	if !strings.Contains(texts, "Cancelled.") || strings.Contains(texts, "Stopping after current row…") {
+		t.Errorf("summary missing cancellation or progress dialog left open:\n%s", texts)
 	}
 }
 
 // TestBulkSign_NothingToSignGoesToSummary: with no to_sign rows there is no
-// confirm step and no PIN/worker; the summary is shown directly.
+// confirm step and no PIN prompt; the summary is shown directly.
 func TestBulkSign_NothingToSignGoesToSummary(t *testing.T) {
 	h := newBulkUIHarness(t)
-	results := h.plan(t, "name,honor,detail,date\nBad,Nope,X,2026-03-14\n")
+	plan := h.load(t, "name,honor,detail,date\nBad,Nope,X,2026-03-14\n")
 
-	confirmBulkSign(h.deps, results)
+	confirmBulkSign(h.deps, plan)
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
 	if !strings.Contains(texts, "Processed 1 rows: 0 successful") || !strings.Contains(texts, "Re-open the same file") {
 		t.Errorf("unexpected summary:\n%s", texts)
@@ -352,39 +193,48 @@ func TestBulkSign_NothingToSignGoesToSummary(t *testing.T) {
 	if !strings.Contains(texts, "Invalid rows (skipped):") || !strings.Contains(texts, "line 2: honor: not one of the allowed honor titles") {
 		t.Errorf("summary missing invalid-row reasons:\n%s", texts)
 	}
-	if h.launches != 0 {
-		t.Errorf("launches = %d, want 0", h.launches)
+	if h.prompter.calls != 0 {
+		t.Errorf("prompts = %d, want 0", h.prompter.calls)
 	}
 }
 
-// TestBulkSign_StopErrorShownInSummary: a failing row stops the batch and
-// the summary carries the stop reason.
+// TestBulkSign_StopErrorShownInSummary: the summary carries the stop reason.
 func TestBulkSign_StopErrorShownInSummary(t *testing.T) {
 	h := newBulkUIHarness(t)
-	h.newSigner = func(k ed25519.PrivateKey) core.SigningAdapter { return &authErrSignAdapter{secretKey: k} }
-	results := h.plan(t, threeRowCSV)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	runBulkSignWorker(ctx, cancel, h.deps, results)
-
-	assertStatuses(t, results, bulk.StatusFailed, bulk.StatusNotAttempted, bulk.StatusNotAttempted)
+	showBulkSummary(h.deps, service.BulkPlan{}, service.BulkOutcome{SummaryLine: "Processed 3 rows", StopMessage: "Batch stopped: Incorrect PIN"})
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
 	if !strings.Contains(texts, "Batch stopped: Incorrect PIN") {
 		t.Errorf("summary missing stop reason:\n%s", texts)
 	}
-	if _, ok := h.deps.pinCache.Get(); ok {
-		t.Error("PIN cache not cleared after auth error")
+}
+
+// TestBulkSign_RunErrorShownAndClearsBusy: a run refused by the service
+// (no plan loaded) shows the error and re-enables the tab.
+func TestBulkSign_RunErrorShownAndClearsBusy(t *testing.T) {
+	h := newBulkUIHarness(t)
+	runBulkSignWorker(h.deps, service.BulkPlan{})
+	if h.lastBusy(t) {
+		t.Error("expected setBusy(false) after a run error")
+	}
+	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
+	if !strings.Contains(strings.ToLower(texts), service.ErrNoBulkPlan.Error()) {
+		t.Errorf("error dialog not shown:\n%s", texts)
 	}
 }
 
-// fakeURIReader is a fyne.URIReadCloser over an in-memory string.
+// fakeURIReader is a fyne.URIReadCloser whose URI points at path.
 type fakeURIReader struct {
 	io.Reader
+	path   string
 	closed bool
 }
 
 func (f *fakeURIReader) Close() error  { f.closed = true; return nil }
-func (f *fakeURIReader) URI() fyne.URI { return storage.NewFileURI("/tmp/in.csv") }
+func (f *fakeURIReader) URI() fyne.URI { return storage.NewFileURI(f.path) }
+
+func newFakeURIReader(path string) *fakeURIReader {
+	return &fakeURIReader{Reader: strings.NewReader(""), path: path}
+}
 
 // TestBulkSign_FileChosen covers the file-open callback: dismiss or error
 // clears busy; a parse error is shown and clears busy; a good file closes
@@ -399,7 +249,7 @@ func TestBulkSign_FileChosen(t *testing.T) {
 	})
 	t.Run("dialog error", func(t *testing.T) {
 		h := newBulkUIHarness(t)
-		r := &fakeURIReader{Reader: strings.NewReader(threeRowCSV)}
+		r := newFakeURIReader(writeCSV(t, threeRowCSV))
 		onBulkFileChosen(h.deps, r, errors.New("boom"))
 		if h.lastBusy(t) || h.launches != 0 {
 			t.Errorf("busy=%v launches=%d, want false/0", h.busy, h.launches)
@@ -407,7 +257,7 @@ func TestBulkSign_FileChosen(t *testing.T) {
 	})
 	t.Run("parse error", func(t *testing.T) {
 		h := newBulkUIHarness(t)
-		r := &fakeURIReader{Reader: strings.NewReader("")}
+		r := newFakeURIReader(writeCSV(t, ""))
 		onBulkFileChosen(h.deps, r, nil)
 		if !r.closed {
 			t.Error("reader not closed")
@@ -419,7 +269,7 @@ func TestBulkSign_FileChosen(t *testing.T) {
 	})
 	t.Run("ok", func(t *testing.T) {
 		h := newBulkUIHarness(t)
-		r := &fakeURIReader{Reader: strings.NewReader(threeRowCSV)}
+		r := newFakeURIReader(writeCSV(t, threeRowCSV))
 		onBulkFileChosen(h.deps, r, nil)
 		if !r.closed {
 			t.Error("reader not closed")
@@ -433,49 +283,23 @@ func TestBulkSign_FileChosen(t *testing.T) {
 	})
 }
 
-// fakeURIWriter is a fyne.URIWriteCloser whose URI points at path. Exports
-// that write by path (bulk results) ignore buf; the issuance-log export writes
-// through Write into buf. failWrite / failClose make Write / Close fail.
-type fakeURIWriter struct {
-	path      string
-	buf       bytes.Buffer
-	failWrite bool
-	failClose bool
-	closed    bool
-}
-
-func (f *fakeURIWriter) Write(p []byte) (int, error) {
-	if f.failWrite {
-		return 0, errors.New("write failed")
-	}
-	return f.buf.Write(p)
-}
-func (f *fakeURIWriter) Close() error {
-	f.closed = true
-	if f.failClose {
-		return errors.New("close failed")
-	}
-	return nil
-}
-func (f *fakeURIWriter) URI() fyne.URI { return storage.NewFileURI(f.path) }
-
 // TestBulkSign_Export covers the summary's export button and the save
 // callback: dismissed, save-dialog error, success, and write failure.
 func TestBulkSign_Export(t *testing.T) {
 	h := newBulkUIHarness(t)
-	results := h.plan(t, threeRowCSV)
-	showBulkSummary(h.deps, results, nil)
+	h.load(t, threeRowCSV)
+	showBulkSummary(h.deps, service.BulkPlan{}, service.BulkOutcome{SummaryLine: "Processed 3 rows"})
 	tapOverlayButton(t, h.w, "Export Results CSV…")
 	tapOverlayButton(t, h.w, "Cancel") // dismiss the save dialog: nil writer
 
 	before := len(h.w.Canvas().Overlays().List())
-	onBulkExportChosen(h.deps, results, nil, nil)
+	onBulkExportChosen(h.deps, nil, nil)
 	if n := len(h.w.Canvas().Overlays().List()); n != before {
 		t.Fatalf("cancel changed overlay count %d → %d", before, n)
 	}
 
 	// Fyne reports an uncreatable destination as a writer plus a non-nil error.
-	onBulkExportChosen(h.deps, results, &fakeURIWriter{}, errors.New("boom"))
+	onBulkExportChosen(h.deps, &fakeURIWriter{}, errors.New("boom"))
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
 	if !strings.Contains(strings.ToLower(texts), "failed to save results file") {
 		t.Errorf("save-dialog error not shown:\n%s", texts)
@@ -484,7 +308,7 @@ func TestBulkSign_Export(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "results.csv")
 	w := &fakeURIWriter{path: path}
-	onBulkExportChosen(h.deps, results, w, nil)
+	onBulkExportChosen(h.deps, w, nil)
 	if !w.closed {
 		t.Error("writer not closed")
 	}
@@ -497,7 +321,7 @@ func TestBulkSign_Export(t *testing.T) {
 	}
 
 	bad := &fakeURIWriter{path: filepath.Join(t.TempDir(), "missing", "r.csv")}
-	onBulkExportChosen(h.deps, results, bad, nil)
+	onBulkExportChosen(h.deps, bad, nil)
 	if !bad.closed {
 		t.Error("writer not closed on failure")
 	}
@@ -526,9 +350,8 @@ func TestSignTab_BulkButtonAndBusyToggle(t *testing.T) {
 	w.Resize(fyne.NewSize(800, 600))
 	defer w.Close()
 
-	dir := t.TempDir()
-	form, cleanup := NewSignTab(SignTabConfig{LogPath: filepath.Join(dir, "log.json"), DataDir: dir}, w)
-	defer cleanup()
+	events := NewEvents()
+	form := NewSignTab(newTestApp(t, events, &cancelPrompter{}), events, w)
 	w.SetContent(container.NewStack(form))
 
 	signBtn := findButton(t, form, "Sign Credential")
