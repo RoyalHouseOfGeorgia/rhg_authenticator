@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -20,7 +19,7 @@ import (
 )
 
 // ErrRegistryChanged is returned by SubmitRegistry when upstream's registry no
-// longer matches the snapshot the local edits were based on (or none was loaded).
+// longer matches the snapshot the local edits were based on.
 var ErrRegistryChanged = errors.New("registry on GitHub does not match the loaded snapshot")
 
 // fetchRegistry loads the registry from main via the GitHub API when a client
@@ -40,15 +39,6 @@ func (a *App) fetchRegistry(ctx context.Context, client *ghapi.Client) (core.Reg
 	return registry.FetchRegistry(a.registryURL)
 }
 
-// IsSafeGitHubURL checks whether a URL points to GitHub over HTTPS and is safe to open.
-func IsSafeGitHubURL(rawURL string) (*url.URL, bool) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, false
-	}
-	return u, u.Scheme == "https" && ghapi.IsGitHubHost(u.Host)
-}
-
 // submitIfUnchanged refuses to open a PR if upstream's registry no longer matches
 // the snapshot the edits were based on (base), so a stale fetch can't silently
 // undo another change. Both sides go through marshalRegistry, so whitespace and
@@ -66,7 +56,7 @@ func submitIfUnchanged(ctx context.Context, client *ghapi.Client, base, content 
 	if err != nil {
 		return ghapi.PRResult{}, fmt.Errorf("re-marshaling upstream registry: %w", err)
 	}
-	if len(base) == 0 || !bytes.Equal(upBytes, base) {
+	if !bytes.Equal(upBytes, base) {
 		return ghapi.PRResult{}, ErrRegistryChanged
 	}
 	return client.CreateRegistryPR(ctx, content, title)
@@ -263,6 +253,11 @@ func (f EntryForm) entry(publicKey string) (core.KeyEntry, error) {
 	return buildEntry(f.Authority, f.From, to, publicKey, f.Note), nil
 }
 
+// errNotLoaded is returned by AddEntry before the registry has loaded: edits
+// need a fetched base to be submitted against. (UpdateEntry needs an existing
+// entry, so it is refused by its index check.)
+var errNotLoaded = errors.New("The registry hasn't loaded yet. Click Fetch from Server.")
+
 // AddEntry validates f and appends a new entry for publicKey. The error text
 // is user-facing.
 func (a *App) AddEntry(f EntryForm, publicKey string) error {
@@ -271,9 +266,12 @@ func (a *App) AddEntry(f EntryForm, publicKey string) error {
 		return err
 	}
 	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.baseBytes == nil {
+		return errNotLoaded
+	}
 	a.edit.Keys = append(a.edit.Keys, e)
 	a.dirty = true
-	a.mu.Unlock()
 	return nil
 }
 
@@ -326,26 +324,23 @@ func (a *App) ImportFromYubiKey() (string, error) {
 	}
 	defer a.busy.Store(false)
 
-	key, err := a.readPublicKey()
+	pub, err := a.readPublicKey()
 	if err != nil {
 		a.logger.Log("yubikey import: " + core.SanitizeForLog(err.Error()))
 		return "", errors.New(importKeyErrorMessage(err))
 	}
-	return key, nil
+	return base64.StdEncoding.EncodeToString(pub[:]), nil
 }
 
-// readPublicKey reads the slot-9c public key; no PIN is needed.
-func (a *App) readPublicKey() (string, error) {
+// readPublicKey reads the inserted YubiKey's slot-9c public key; no PIN is
+// needed, as reading it does not log in.
+func (a *App) readPublicKey() ([32]byte, error) {
 	adapter, closer, err := a.openAdapter(func() (string, error) { return "", nil })
 	if err != nil {
-		return "", err
+		return [32]byte{}, err
 	}
 	defer closer.Close()
-	pub, err := adapter.ExportPublicKey()
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(pub[:]), nil
+	return adapter.ExportPublicKey()
 }
 
 // SubmitRegistry opens a pull request with the edited registry and clears
@@ -409,7 +404,7 @@ func SubmitErrorMessage(err error) (title, msg string) {
 		return "Session Expired", "Your GitHub session expired. Log in again, then submit again."
 	}
 	if errors.Is(err, ErrRegistryChanged) {
-		return "Registry Changed", "The registry on GitHub doesn't match the copy you loaded (it changed, or nothing was loaded). Click Fetch from Server, re-apply your edits, and submit again."
+		return "Registry Changed", "The registry on GitHub doesn't match the copy you loaded (it changed since). Click Fetch from Server, re-apply your edits, and submit again."
 	}
 	return "Submission Failed", ghapi.UserMessage(err)
 }

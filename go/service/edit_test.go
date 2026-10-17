@@ -44,6 +44,14 @@ func loadRegistry(t *testing.T, h *appHarness, reg core.Registry) {
 	h.events.reset()
 }
 
+// markLoaded lets h edit without fetching first, as if a fetch had loaded an
+// empty registry.
+func markLoaded(h *appHarness) {
+	h.app.mu.Lock()
+	h.app.baseBytes = []byte("{}")
+	h.app.mu.Unlock()
+}
+
 // logIn puts h in the logged-in state with newClient returning client.
 func logIn(h *appHarness, client *ghapi.Client) {
 	h.app.newClient = func(string) *ghapi.Client { return client }
@@ -62,6 +70,7 @@ func TestAddEntry(t *testing.T) {
 		t.Error("a rejected add must not mark the registry dirty")
 	}
 
+	markLoaded(h)
 	if err := h.app.AddEntry(validForm(), key); err != nil {
 		t.Fatalf("AddEntry: %v", err)
 	}
@@ -72,7 +81,7 @@ func TestAddEntry(t *testing.T) {
 	}
 
 	snap := h.app.Registry()
-	if !snap.Dirty || snap.Loaded || !h.app.Dirty() || len(snap.Entries) != 2 {
+	if !snap.Dirty || !snap.Loaded || !h.app.Dirty() || len(snap.Entries) != 2 {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 	e := snap.Entries[0]
@@ -94,6 +103,7 @@ func TestAddEntry(t *testing.T) {
 
 func TestRegistry_InvalidKeyAndCopy(t *testing.T) {
 	h := newAppHarness(t, nil)
+	markLoaded(h)
 	if err := h.app.AddEntry(validForm(), "not-a-key"); err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +114,16 @@ func TestRegistry_InvalidKeyAndCopy(t *testing.T) {
 	snap.Entries[0].Authority = "mutated"
 	if h.app.Registry().Entries[0].Authority != "Authority A" {
 		t.Error("Registry did not return a copy")
+	}
+}
+
+func TestEditsRefusedUntilLoaded(t *testing.T) {
+	h := newAppHarness(t, nil)
+	if err := h.app.AddEntry(validForm(), testKeyB64(1)); !errors.Is(err, errNotLoaded) {
+		t.Errorf("AddEntry before load = %v, want errNotLoaded", err)
+	}
+	if h.app.Dirty() {
+		t.Error("refused edit marked the registry dirty")
 	}
 }
 
@@ -143,6 +163,7 @@ func TestUpdateEntry(t *testing.T) {
 
 func TestFetchRegistry_LoggedOut(t *testing.T) {
 	h := newAppHarness(t, nil)
+	markLoaded(h)
 	if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +184,7 @@ func TestFetchRegistry_LoggedOut(t *testing.T) {
 
 func TestFetchRegistry_Failure(t *testing.T) {
 	h := newAppHarness(t, nil)
+	markLoaded(h)
 	if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
 		t.Fatal(err)
 	}
@@ -267,6 +289,7 @@ func TestSubmitRegistry_Preconditions(t *testing.T) {
 	if _, err := h.app.SubmitRegistry(context.Background()); err == nil || errors.Is(err, ErrNotLoggedIn) {
 		t.Errorf("empty registry err = %v", err)
 	}
+	markLoaded(h)
 	if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
 		t.Fatal(err)
 	}
@@ -308,6 +331,7 @@ func TestSubmitRegistry_ErrorKeepsDirty(t *testing.T) {
 	h := newAppHarness(t, ghapi.NewFakeKeyring())
 	_, client := newSubmitFake(t, nil, http.StatusUnauthorized)
 	logIn(h, client)
+	markLoaded(h)
 	if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
 		t.Fatal(err)
 	}
@@ -380,6 +404,7 @@ func TestSubmitRegistry_ConcurrentBusy(t *testing.T) {
 
 	h := newAppHarness(t, nil)
 	logIn(h, client)
+	markLoaded(h)
 	if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
 		t.Fatal(err)
 	}

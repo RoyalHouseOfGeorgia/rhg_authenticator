@@ -1,7 +1,6 @@
 package gui
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -14,108 +13,9 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
-	"fyne.io/fyne/v2/widget"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
-
-// findButton walks obj (containers and widget renderers) and returns the
-// first button labelled text, or nil.
-func findButton(t *testing.T, obj fyne.CanvasObject, text string) *widget.Button {
-	t.Helper()
-	switch o := obj.(type) {
-	case *widget.Button:
-		if o.Text == text {
-			return o
-		}
-		return nil
-	case *fyne.Container:
-		for _, child := range o.Objects {
-			if b := findButton(t, child, text); b != nil {
-				return b
-			}
-		}
-		return nil
-	case fyne.Widget:
-		for _, child := range test.TempWidgetRenderer(t, o).Objects() {
-			if b := findButton(t, child, text); b != nil {
-				return b
-			}
-		}
-	}
-	return nil
-}
-
-// labelTexts collects the text of every label under obj.
-func labelTexts(t *testing.T, obj fyne.CanvasObject) []string {
-	var out []string
-	switch o := obj.(type) {
-	case *widget.Label:
-		return []string{o.Text}
-	case *fyne.Container:
-		for _, child := range o.Objects {
-			out = append(out, labelTexts(t, child)...)
-		}
-	case fyne.Widget:
-		for _, child := range test.TempWidgetRenderer(t, o).Objects() {
-			out = append(out, labelTexts(t, child)...)
-		}
-	}
-	return out
-}
-
-func topOverlay(t *testing.T, w fyne.Window) fyne.CanvasObject {
-	t.Helper()
-	top := w.Canvas().Overlays().Top()
-	if top == nil {
-		t.Fatal("expected a dialog overlay, got none")
-	}
-	return top
-}
-
-func tapOverlayButton(t *testing.T, w fyne.Window, text string) {
-	t.Helper()
-	b := findButton(t, topOverlay(t, w), text)
-	if b == nil {
-		t.Fatalf("no %q button in top overlay", text)
-	}
-	test.Tap(b)
-}
-
-// cancelPrompter answers every PIN request with a cancel, unless onRequest
-// is set, in which case it runs first.
-type cancelPrompter struct {
-	calls     int
-	onRequest func()
-}
-
-func (p *cancelPrompter) RequestPIN(ctx context.Context, rememberDefault bool) (string, bool, error) {
-	p.calls++
-	if p.onRequest != nil {
-		p.onRequest()
-	}
-	return "", false, nil
-}
-
-// newTestApp returns a service.App on a temp DataDir with an unreachable
-// registry (offline), wired to events and prompter.
-func newTestApp(t *testing.T, events *Events, prompter service.Prompter) *service.App {
-	t.Helper()
-	dir := t.TempDir()
-	app, err := service.New(service.Config{
-		DataDir:     dir,
-		Logger:      debuglog.New(filepath.Join(dir, debuglog.FileName)),
-		RegistryURL: "http://127.0.0.1:1",
-		Prompter:    prompter,
-		Events:      events,
-	})
-	if err != nil {
-		t.Fatalf("service.New: %v", err)
-	}
-	t.Cleanup(app.Close)
-	return app
-}
 
 // bulkUIHarness wires bulkSignDeps to a test window, a synchronous launcher
 // and a service.App whose PIN prompt always cancels, so no card is touched.
@@ -242,7 +142,7 @@ func TestBulkSign_CancelDuringBatch(t *testing.T) {
 	h := newBulkUIHarness(t)
 	h.load(t, threeRowCSV)
 
-	h.prompter.onRequest = func() {
+	h.prompter.onRequest = func(ctx context.Context) {
 		h.deps.events.Emit(service.EventBulkConnecting, nil)
 		h.deps.events.Emit(service.EventBulkProgress, service.BulkProgress{Done: 0, Total: 3, Name: "Alice"})
 		top := topOverlay(t, h.w)
@@ -256,6 +156,11 @@ func TestBulkSign_CancelDuringBatch(t *testing.T) {
 		test.Tap(b)
 		if !b.Disabled() {
 			t.Error("Cancel button not disabled after tap")
+		}
+		// The PIN request's ctx derives from the bulk run's, so this proves the
+		// button cancelled the service run.
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Errorf("Cancel did not cancel the run: ctx.Err() = %v", ctx.Err())
 		}
 		h.deps.events.Emit(service.EventBulkProgress, service.BulkProgress{Done: 1, Total: 3, Name: "Bob"})
 		texts := strings.Join(labelTexts(t, top), "\n")
@@ -377,32 +282,6 @@ func TestBulkSign_FileChosen(t *testing.T) {
 		}
 	})
 }
-
-// fakeURIWriter is a fyne.URIWriteCloser whose URI points at path. Exports
-// that write by path (bulk results) ignore buf; the issuance-log export writes
-// through Write into buf. failWrite / failClose make Write / Close fail.
-type fakeURIWriter struct {
-	path      string
-	buf       bytes.Buffer
-	failWrite bool
-	failClose bool
-	closed    bool
-}
-
-func (f *fakeURIWriter) Write(p []byte) (int, error) {
-	if f.failWrite {
-		return 0, errors.New("write failed")
-	}
-	return f.buf.Write(p)
-}
-func (f *fakeURIWriter) Close() error {
-	f.closed = true
-	if f.failClose {
-		return errors.New("close failed")
-	}
-	return nil
-}
-func (f *fakeURIWriter) URI() fyne.URI { return storage.NewFileURI(f.path) }
 
 // TestBulkSign_Export covers the summary's export button and the save
 // callback: dismissed, save-dialog error, success, and write failure.

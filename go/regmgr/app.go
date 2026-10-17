@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"path/filepath"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -13,7 +12,6 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
@@ -39,7 +37,7 @@ type RegistryTab struct {
 	// login starts the device login flow; a field so tests can stub it.
 	login func()
 	// onLoginChanged, if set, is invoked whenever login state changes, so other
-	// tabs (History) react to auth changes without polling. nil in tests.
+	// tabs (History) react to auth changes without polling.
 	onLoginChanged func()
 }
 
@@ -191,6 +189,7 @@ func (rt *RegistryTab) StartLoginOrReconnect() {
 // (401, expired token, load failure) falls through to the device login flow.
 func (rt *RegistryTab) reconnected(st service.AuthState, err error) {
 	if err != nil { // ErrBusy: a login is already running
+		rt.statusLabel.SetText("Login already in progress")
 		return
 	}
 	rt.statusLabel.SetText("")
@@ -218,8 +217,7 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 	case errors.Is(err, service.ErrRegistryChanged):
 		dialog.ShowInformation(title, msg, rt.window)
 	default:
-		debugLog := filepath.Join(filepath.Dir(rt.svc.LogPath()), debuglog.FileName)
-		gui.ShowErrorWithLogExport(title, msg, debugLog, rt.window)
+		gui.ShowErrorWithLogExport(title, msg, rt.svc.DebugLogPath(), rt.window)
 	}
 	rt.statusLabel.SetText("")
 }
@@ -228,8 +226,7 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
 	rt.statusLabel.SetText(fmt.Sprintf("PR #%d created", pr.Number))
 
-	prURL, ok := service.IsSafeGitHubURL(pr.HTMLURL)
-	if ok {
+	if prURL := ghapi.ParseGitHubURL(pr.HTMLURL); prURL != nil {
 		dialog.ShowConfirm("Pull Request Created",
 			fmt.Sprintf("PR #%d has been created.\n\nOpen in browser?", pr.Number),
 			func(ok bool) {

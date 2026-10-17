@@ -1,3 +1,6 @@
+// Package service holds the signing, bulk, PIN, YubiKey, GitHub login and
+// registry-editing logic behind the RHG Authenticator user interfaces. App is
+// the entry point.
 package service
 
 import (
@@ -29,8 +32,8 @@ import (
 
 // Sentinel errors returned by App methods.
 var (
-	// ErrBusy is returned when another signing, bulk, key-check or export
-	// operation is already running.
+	// ErrBusy is returned when a conflicting operation is already running
+	// (see App for the three groups).
 	ErrBusy = errors.New("another operation is in progress")
 	// ErrNoBulkPlan is returned when no bulk file has been loaded.
 	ErrNoBulkPlan = errors.New("no bulk file loaded")
@@ -46,10 +49,10 @@ type Prompter interface {
 	RequestPIN(ctx context.Context, rememberDefault bool) (pin string, remember bool, err error)
 }
 
-// Events receives progress notifications. Emit is called from worker
-// goroutines; the implementation marshals onto its UI thread. A host registers
-// its handlers first and then reads AuthState and Registry, so a change that
-// fired before registration is not missed.
+// Events receives progress notifications. Emit may be called from any
+// goroutine, including the UI thread (Logout emits synchronously), and must
+// not block: the implementation queues onto its UI thread (e.g. fyne.Do, never
+// fyne.DoAndWait). A host registers its handlers and then calls App.Start.
 type Events interface {
 	Emit(name string, payload any)
 }
@@ -59,12 +62,15 @@ const (
 	// EventSignConnecting fires once the PIN is resolved and Sign opens the
 	// card. Payload: nil.
 	EventSignConnecting = "sign.connecting"
-	// EventBulkConnecting fires once per RunBulk, after the PIN is resolved
-	// and always before any EventBulkProgress. Payload: nil.
+	// EventBulkConnecting fires at most once per RunBulk — only when there are
+	// rows to sign and the PIN was resolved — and before any EventBulkProgress.
+	// Payload: nil.
 	EventBulkConnecting = "bulk.connecting"
 	// EventBulkProgress fires before each to_sign row. Payload: BulkProgress.
 	EventBulkProgress = "bulk.progress"
-	// EventAuthChanged fires after every login-state change. Payload: nil.
+	// EventAuthChanged fires after every login-state change. Payload: the
+	// AuthState at emit time; overlapping changes can arrive out of order, so a
+	// handler that needs the current state calls App.AuthState.
 	EventAuthChanged = "auth.changed"
 	// EventAuthDeviceCode fires when Login has a code for the user to enter. Payload: DeviceCode.
 	EventAuthDeviceCode = "auth.deviceCode"
@@ -141,14 +147,15 @@ type KeyCheck struct {
 }
 
 // App owns the signing, GitHub login and registry-editing state and rules
-// behind the user interface. Info, Honors, LogPath, CancelBulk, AuthState,
-// CancelLogin, GitHubClient, Registry, AddEntry, UpdateEntry, Dirty, Start
-// and Close never block, and SaveQR, Logout and ImportCertificate do only
-// quick local file or keyring I/O, so these may be called on a UI thread;
-// every other method may block on file, card or network I/O or the PIN prompt
-// and must not be called on a UI thread. Sign, LoadBulk,
-// RunBulk, ExportBulkResults, CheckYubiKey and ImportFromYubiKey return
-// ErrBusy while another of them runs.
+// behind the user interface. Info, Honors, LogPath, DebugLogPath, CancelBulk,
+// AuthState, CancelLogin, GitHubClient, Registry, AddEntry, UpdateEntry,
+// Dirty, Start and Close never block, and SaveQR, Logout and ImportCertificate
+// do only quick local file or keyring I/O, so these may be called on a UI
+// thread; every other method may block on file, card or network I/O or the
+// PIN prompt and must not be called on a UI thread. ErrBusy comes from three independent
+// guards: Sign, LoadBulk, RunBulk, ExportBulkResults, CheckYubiKey and
+// ImportFromYubiKey while another of them runs; Login and Reconnect while
+// either runs; SubmitRegistry while another submit runs.
 type App struct {
 	dataDir     string
 	logPath     string
@@ -190,6 +197,8 @@ type App struct {
 
 // New cleans stale issuance-log temp files, fetches the registry (offline on
 // failure) and returns a ready App. Call Start once the UI listens for events.
+// New blocks for up to registry.FetchTimeout on the network, so the host calls
+// it before its UI loop starts, never from a UI callback.
 func New(cfg Config) (*App, error) {
 	if cfg.DataDir == "" || cfg.Prompter == nil || cfg.Events == nil {
 		return nil, errors.New("service: DataDir, Prompter and Events are required")
@@ -246,6 +255,9 @@ func (a *App) Start() {
 
 // LogPath returns the issuance log path.
 func (a *App) LogPath() string { return a.logPath }
+
+// DebugLogPath returns the diagnostic log path (for "Export Error Log").
+func (a *App) DebugLogPath() string { return a.logger.Path() }
 
 // Info returns the build version and registry statistics.
 func (a *App) Info() Info {
@@ -488,7 +500,12 @@ func (a *App) CheckYubiKey() (KeyCheck, error) {
 	}
 	defer a.busy.Store(false)
 
-	res := checkYubiKey(a.reg, a.openAdapter)
+	var res keyCheckResult
+	if pub, err := a.readPublicKey(); err != nil {
+		res = keyCheckResult{Error: fmt.Errorf("yubikey: %w", err)}
+	} else {
+		res = checkYubiKey(a.reg, pub)
+	}
 	if res.Error != nil {
 		a.logger.Log("yubikey check: " + core.SanitizeForLog(res.Error.Error()))
 	}

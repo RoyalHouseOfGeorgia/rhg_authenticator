@@ -49,23 +49,6 @@ func eventNames(h *appHarness) []string {
 	return names
 }
 
-func TestSafeVerificationURI(t *testing.T) {
-	for raw, want := range map[string]string{
-		"https://github.com/login/device":      "https://github.com/login/device",
-		"http://github.com/login/device":       "",
-		"https://evil.com/login/device":        "",
-		"https://evil.github.com/login/device": "",
-		"https://github.com:8443/login/device": "",
-		"javascript:alert(1)":                  "",
-		"%zz":                                  "",
-		"":                                     "",
-	} {
-		if got := safeVerificationURI(raw); got != want {
-			t.Errorf("safeVerificationURI(%q) = %q, want %q", raw, got, want)
-		}
-	}
-}
-
 func TestLogin_Outcomes(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -217,6 +200,34 @@ func TestLogin_BusyAndCancel(t *testing.T) {
 	}
 }
 
+func TestLogin_CancelWhileValidatingKeepsNoToken(t *testing.T) {
+	kr := ghapi.NewFakeKeyring()
+	h := newAppHarness(t, kr)
+	stubDeviceFlow(h.app, "https://github.com/login/device", nil, "octocat", nil)
+	h.app.validateToken = func(context.Context, ghapi.Token) (string, error) {
+		h.app.CancelLogin() // the user presses Cancel after GitHub issued the token
+		return "octocat", nil
+	}
+	if _, err := h.app.Login(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if h.app.AuthState().LoggedIn {
+		t.Error("cancelled login ended logged in")
+	}
+	if _, err := ghapi.LoadToken(kr, h.dir); err == nil {
+		t.Error("cancelled login saved the token")
+	}
+}
+
+func TestEventAuthChanged_CarriesState(t *testing.T) {
+	h := newAppHarness(t, ghapi.NewFakeKeyring())
+	h.app.setAuth(ghapi.Token{AccessToken: "t"}, "octocat", true, false)
+	_, payloads := h.events.snapshot()
+	if len(payloads) != 1 || payloads[0] != (AuthState{LoggedIn: true, User: "octocat"}) {
+		t.Errorf("payloads = %v, want the new AuthState", payloads)
+	}
+}
+
 func TestReconnect_AppliesRestore(t *testing.T) {
 	h := newAppHarness(t, ghapi.NewFakeKeyring())
 	stubRestore(h.app, ghapi.Token{AccessToken: "t"}, "someuser", true, false, nil)
@@ -344,6 +355,20 @@ func TestStartupRestore(t *testing.T) {
 			t.Error("fetch failure not logged")
 		}
 	})
+	t.Run("already loaded keeps edits", func(t *testing.T) {
+		// A Fetch from Server finished while the restore ran, then an edit.
+		h := newAppHarness(t, ghapi.NewFakeKeyring())
+		stubRestore(h.app, ghapi.Token{}, "", false, false, nil)
+		h.app.registryURL = registryServer(t, http.StatusOK).URL // a fetch would succeed
+		markLoaded(h)
+		if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
+			t.Fatal(err)
+		}
+		h.app.startupRestore()
+		if snap := h.app.Registry(); !snap.Dirty || len(snap.Entries) != 1 {
+			t.Errorf("startup fetch clobbered the edit: %+v", snap)
+		}
+	})
 	t.Run("logged in loads main via the API", func(t *testing.T) {
 		reg := core.Registry{Keys: []core.KeyEntry{testKeyEntry(t, "From API", nil)}}
 		up, err := marshalRegistry(reg)
@@ -358,20 +383,6 @@ func TestStartupRestore(t *testing.T) {
 		h.app.startupRestore()
 		if e := h.app.Registry().Entries; len(e) != 1 || e[0].Authority != "From API" {
 			t.Errorf("entries = %+v, want the API copy", e)
-		}
-	})
-	t.Run("dirty skips fetch", func(t *testing.T) {
-		h := newAppHarness(t, ghapi.NewFakeKeyring())
-		stubRestore(h.app, ghapi.Token{}, "", false, false, nil)
-		if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
-			t.Fatal(err)
-		}
-		h.app.startupRestore()
-		if names := eventNames(h); !reflect.DeepEqual(names, []string{EventAuthChanged}) {
-			t.Errorf("events = %v, want only auth", names)
-		}
-		if snap := h.app.Registry(); !snap.Dirty || len(snap.Entries) != 1 {
-			t.Errorf("edits clobbered: %+v", snap)
 		}
 	})
 }

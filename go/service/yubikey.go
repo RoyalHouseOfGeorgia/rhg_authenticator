@@ -3,8 +3,6 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -20,20 +18,9 @@ type keyCheckResult struct {
 	Error       error          // non-nil if check failed
 }
 
-// checkYubiKey opens a YubiKey adapter with open, reads the public key,
-// computes its fingerprint, and searches the registry for a matching entry.
-// No PIN is needed: reading the slot-9c public key does not log in.
-func checkYubiKey(reg core.Registry, open func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error)) keyCheckResult {
-	adapter, closer, err := open(func() (string, error) { return "", nil })
-	if err != nil {
-		return keyCheckResult{Error: fmt.Errorf("yubikey: %w", err)}
-	}
-	defer closer.Close()
-
-	pubKey, err := adapter.ExportPublicKey()
-	if err != nil {
-		return keyCheckResult{Error: fmt.Errorf("yubikey: %w", err)}
-	}
+// checkYubiKey computes the fingerprint of pubKey, the inserted key's public
+// key, and searches the registry for a matching entry.
+func checkYubiKey(reg core.Registry, pubKey [32]byte) keyCheckResult {
 
 	hash := sha256.Sum256(pubKey[:])
 	fp := hex.EncodeToString(hash[:])

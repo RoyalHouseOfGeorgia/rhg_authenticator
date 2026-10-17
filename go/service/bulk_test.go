@@ -245,7 +245,7 @@ func TestBulkFlow_ReadPinCalledOncePerBatch(t *testing.T) {
 	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusSigned, bulk.StatusSigned)
 }
 
-func TestBulkFlow_WrongPINStopsAndClearsCache(t *testing.T) {
+func TestBulkFlow_WrongPINStops(t *testing.T) {
 	h := newBulkHarness(t)
 	h.newSigner = func(k ed25519.PrivateKey) core.SigningAdapter { return &authErrSignAdapter{secretKey: k} }
 	results := h.plan(t, threeRowCSV)
@@ -262,12 +262,6 @@ func TestBulkFlow_WrongPINStopsAndClearsCache(t *testing.T) {
 	assertCountsInvariant(t, results)
 	if h.opens != 1 {
 		t.Errorf("openAdapter called %d times, want 1", h.opens)
-	}
-
-	cache := seedEnabledCache(t)
-	clearPINCacheOnAuthError(err, cache)
-	if _, ok := cache.Get(); ok {
-		t.Error("expected PIN cache cleared after bulk auth error")
 	}
 }
 

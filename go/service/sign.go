@@ -1,5 +1,3 @@
-// Package service holds the signing, bulk, PIN, YubiKey and registry logic
-// behind the RHG Authenticator user interface.
 package service
 
 import (
@@ -256,11 +254,7 @@ func executeSignFlow(
 // before the YubiKey verifies it; on an authentication failure the cached
 // (wrong) PIN must be cleared so it is not silently replayed on retry — each
 // replay decrements the PIV retry counter and can lock the applet.
-//
-// This lives at package level so the behavior is unit-testable on its own.
-// PinCache.Clear() is mutex-protected and callable off the UI
-// thread; it invalidates-and-zeroes without flipping the user's "remember"
-// preference.
+// PinCache.Clear is goroutine-safe and keeps the remember preference.
 func clearPINCacheOnAuthError(err error, cache *yubikey.PinCache) {
 	if err != nil && yubikey.IsPINAuthError(err) {
 		cache.Clear()

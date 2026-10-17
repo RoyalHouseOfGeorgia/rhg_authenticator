@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -32,23 +31,13 @@ func (s AuthState) StatusText() string {
 	}
 }
 
-// safeVerificationURI returns raw if it is an https URL with host exactly
-// github.com, else "".
-func safeVerificationURI(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host != "github.com" {
-		return ""
-	}
-	return raw
-}
-
 // setAuth applies a login state and emits EventAuthChanged.
 func (a *App) setAuth(tok ghapi.Token, user string, loggedIn, offline bool) AuthState {
 	a.mu.Lock()
 	a.token, a.githubUser, a.loggedIn, a.offline = tok, user, loggedIn, offline
 	st := a.authStateLocked()
 	a.mu.Unlock()
-	a.events.Emit(EventAuthChanged, nil)
+	a.events.Emit(EventAuthChanged, st)
 	return st
 }
 
@@ -87,9 +76,10 @@ func (a *App) Login(ctx context.Context) (AuthState, error) {
 	if err != nil {
 		return AuthState{}, fmt.Errorf("device code request failed: %w", err)
 	}
-	uri := safeVerificationURI(dcr.VerificationURI)
-	if uri == "" {
-		a.logger.Logf("warning: invalid verification URI: %s", core.SanitizeForLog(dcr.VerificationURI))
+	uri := dcr.VerificationURI
+	if ghapi.ParseGitHubURL(uri) == nil {
+		a.logger.Logf("warning: invalid verification URI: %s", core.SanitizeForLog(uri))
+		uri = ""
 	}
 	a.events.Emit(EventAuthDeviceCode, DeviceCode{UserCode: dcr.UserCode, VerificationURI: uri})
 
@@ -99,22 +89,22 @@ func (a *App) Login(ctx context.Context) (AuthState, error) {
 	}
 
 	// Validate the token to get the username before persisting.
-	valCtx, valCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	valCtx, valCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer valCancel()
 	username, valErr := a.validateToken(valCtx, tok)
+	if err := ctx.Err(); err != nil { // cancelled while validating: keep no token
+		return AuthState{}, err
+	}
 	if valErr != nil {
 		a.logger.Logf("warning: token validation failed: %s", core.SanitizeForLog(valErr.Error()))
 	}
-	unauthorized := ghapi.IsUnauthorized(valErr)
-	if !unauthorized {
-		if err := ghapi.SaveToken(a.keyring, a.dataDir, tok); err != nil {
-			a.logger.Logf("warning: failed to save token: %s", core.SanitizeForLog(err.Error()))
-		}
+	if ghapi.IsUnauthorized(valErr) {
+		return a.setAuth(ghapi.Token{}, username, false, false), nil
 	}
-	if unauthorized {
-		tok = ghapi.Token{}
+	if err := ghapi.SaveToken(a.keyring, a.dataDir, tok); err != nil {
+		a.logger.Logf("warning: failed to save token: %s", core.SanitizeForLog(err.Error()))
 	}
-	return a.setAuth(tok, username, !unauthorized, !unauthorized && valErr != nil), nil
+	return a.setAuth(tok, username, true, valErr != nil), nil
 }
 
 // CancelLogin stops a running Login.
@@ -149,16 +139,16 @@ func (a *App) Reconnect(ctx context.Context) (AuthState, error) {
 	return a.restore(ctx), nil
 }
 
-// startupRestore silently restores the saved session, then loads the registry
-// unless it already has unsubmitted edits. Start runs it.
+// startupRestore silently restores the saved session (with a keyring), then
+// loads the registry for editing. Start runs it.
 func (a *App) startupRestore() {
 	if a.keyring != nil {
 		a.restore(context.Background())
 	}
 	a.mu.Lock()
-	dirty := a.dirty
+	loaded := a.baseBytes != nil
 	a.mu.Unlock()
-	if dirty {
+	if loaded { // a Fetch from Server finished during the restore; keep its edits
 		return
 	}
 	if err := a.FetchRegistry(context.Background()); err != nil {

@@ -121,7 +121,7 @@ func TestReconnected(t *testing.T) {
 		rt, logins := newTestRegistryTab(t, unreachable)
 		rt.statusLabel.SetText("Reconnecting to GitHub...")
 		rt.reconnected(service.AuthState{}, service.ErrBusy)
-		if rt.statusLabel.Text != "Reconnecting to GitHub..." || len(logins) != 0 {
+		if rt.statusLabel.Text != "Login already in progress" || len(logins) != 0 {
 			t.Errorf("status = %q, logins = %d", rt.statusLabel.Text, len(logins))
 		}
 	})
@@ -286,7 +286,7 @@ func TestSubmitForReview(t *testing.T) {
 }
 
 func TestFetchButton_ConfirmsDiscardingEdits(t *testing.T) {
-	rt, _ := newTestRegistryTab(t, registryServer(t))
+	rt, _, events := newTestRegistryTabWithEvents(t, registryServer(t))
 	if err := rt.svc.AddEntry(service.EntryForm{Authority: "B", From: "2026-01-01", NoExpiry: true}, rt.snap.Entries[0].PublicKey); err != nil {
 		t.Fatal(err)
 	}
@@ -295,15 +295,18 @@ func TestFetchButton_ConfirmsDiscardingEdits(t *testing.T) {
 	if !overlayHasText(top, "Discard Local Edits?") {
 		t.Fatal("no discard confirm with unsubmitted edits")
 	}
+	// The refetch runs in the background; wait until its event handler has
+	// finished with the widgets before checking or tearing down.
+	done := make(chan struct{})
+	events.On(service.EventRegistryChanged, func(any) { rt.registryChanged(); close(done) })
 	test.Tap(findButton(t, top, "Yes"))
-	// The refetch runs in the background; poll the (locked) service state, not
-	// widgets the fetch's event handler writes.
-	deadline := time.Now().Add(5 * time.Second)
-	for rt.svc.Dirty() || len(rt.svc.Registry().Entries) != 1 {
-		if time.Now().After(deadline) {
-			t.Fatal("refetch did not discard the edits")
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("refetch did not finish")
+	}
+	if rt.svc.Dirty() || len(rt.snap.Entries) != 1 || rt.statusLabel.Text != "Loaded from registry server" {
+		t.Errorf("edits not discarded: dirty %v, %d entries, status %q", rt.svc.Dirty(), len(rt.snap.Entries), rt.statusLabel.Text)
 	}
 }
 

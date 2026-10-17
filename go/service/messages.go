@@ -117,8 +117,8 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	if errors.Is(err, errPINCacheUnavailable) {
 		return "Could not secure the PIN in memory. Please restart the app."
 	}
-	// Checked before ClassifyHardwareError for the same reason as ErrNotLogged:
-	// the wrapped read/parse error text must not be misread as a hardware fault.
+	// Checked before ClassifyHardwareError so the wrapped read/parse error text
+	// is not misread as a hardware fault.
 	if errors.Is(err, errIssuanceLogUnreadable) {
 		return "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable."
 	}

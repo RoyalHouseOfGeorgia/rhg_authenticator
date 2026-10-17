@@ -117,7 +117,7 @@ func showAddDialog(window fyne.Window, svc *service.App, onAdded func()) {
 			key, err := svc.ImportFromYubiKey()
 			fyne.Do(func() {
 				if errors.Is(err, service.ErrBusy) {
-					return // a running import or card operation; leave its result alone
+					return // another card operation is running; leave the current key alone
 				}
 				if err != nil {
 					keyLabel.SetText(err.Error())

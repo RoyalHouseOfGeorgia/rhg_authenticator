@@ -42,6 +42,14 @@ func registryServer(t *testing.T) string {
 // finished. Login is stubbed: each call sends on the returned channel.
 func newTestRegistryTab(t *testing.T, registryURL string) (*RegistryTab, chan struct{}) {
 	t.Helper()
+	rt, logins, _ := newTestRegistryTabWithEvents(t, registryURL)
+	return rt, logins
+}
+
+// newTestRegistryTabWithEvents is newTestRegistryTab plus the events the tab
+// listens on.
+func newTestRegistryTabWithEvents(t *testing.T, registryURL string) (*RegistryTab, chan struct{}, *gui.Events) {
+	t.Helper()
 	a := test.NewTempApp(t)
 	a.Settings().SetTheme(theme.DefaultTheme()) // the test theme has no bold monospace font
 	w := a.NewWindow("test")
@@ -72,7 +80,7 @@ func newTestRegistryTab(t *testing.T, registryURL string) (*RegistryTab, chan st
 	rt := NewRegistryTab(svc, events, w)
 	logins := make(chan struct{}, 10)
 	rt.login = func() { logins <- struct{}{} }
-	return rt, logins
+	return rt, logins, events
 }
 
 // overlayHasText reports whether any label or text in o's object tree reads want.
