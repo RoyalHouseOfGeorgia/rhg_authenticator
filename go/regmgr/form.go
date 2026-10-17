@@ -16,6 +16,10 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
+// yubiKeyBusyMsg is shown when Import from YubiKey finds the card busy with a
+// signing or check.
+const yubiKeyBusyMsg = "The YubiKey is busy with another operation. Try again when it finishes."
+
 // datePickerRow holds widgets for a date input with calendar button.
 type datePickerRow struct {
 	entry  *widget.Entry
@@ -117,7 +121,9 @@ func showAddDialog(window fyne.Window, svc *service.App, onAdded func()) {
 			key, err := svc.ImportFromYubiKey()
 			fyne.Do(func() {
 				if errors.Is(err, service.ErrBusy) {
-					return // another card operation is running; leave the current key alone
+					// Another card operation is running; leave the current key alone.
+					errorLabel.SetText(yubiKeyBusyMsg)
+					return
 				}
 				if err != nil {
 					keyLabel.SetText(err.Error())

@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -84,8 +86,8 @@ func TestLogin_Outcomes(t *testing.T) {
 			if saved := loadErr == nil; saved != tc.wantSaved {
 				t.Errorf("token saved = %v, want %v", saved, tc.wantSaved)
 			}
-			if gotClient := h.app.GitHubClient() != nil; gotClient != (tc.want.LoggedIn && !tc.want.Offline) {
-				t.Errorf("GitHubClient non-nil = %v", gotClient)
+			if gotClient := h.app.githubClient() != nil; gotClient != (tc.want.LoggedIn && !tc.want.Offline) {
+				t.Errorf("githubClient non-nil = %v", gotClient)
 			}
 			if tc.valErr != nil && !strings.Contains(h.debugLog(t), "warning: token validation failed") {
 				t.Error("validation failure not logged")
@@ -183,9 +185,6 @@ func TestLogin_BusyAndCancel(t *testing.T) {
 			if _, err := h.app.Login(context.Background()); !errors.Is(err, ErrBusy) {
 				t.Errorf("second Login err = %v, want ErrBusy", err)
 			}
-			if _, err := h.app.Reconnect(context.Background()); !errors.Is(err, ErrBusy) {
-				t.Errorf("Reconnect err = %v, want ErrBusy", err)
-			}
 			stop(h.app)
 			select {
 			case err := <-done:
@@ -228,27 +227,120 @@ func TestEventAuthChanged_CarriesState(t *testing.T) {
 	}
 }
 
-func TestReconnect_AppliesRestore(t *testing.T) {
+// noDeviceFlow makes the device code request fail the test.
+func noDeviceFlow(t *testing.T, a *App) {
+	a.requestDeviceCode = func(context.Context) (ghapi.DeviceCodeResponse, error) {
+		t.Error("device flow started")
+		return ghapi.DeviceCodeResponse{}, errNetwork
+	}
+}
+
+// TestLogin_Policy covers what Login does for each starting state: online
+// returns at once, offline retries the restore and falls through to the
+// device flow only when that ends logged out.
+func TestLogin_Policy(t *testing.T) {
+	type restoreResult struct {
+		user              string
+		loggedIn, offline bool
+		err               error
+	}
+	online := AuthState{LoggedIn: true, User: "octocat"}
+	offline := AuthState{LoggedIn: true, Offline: true, User: "octocat"}
+	tests := []struct {
+		name       string
+		start      AuthState
+		restore    *restoreResult // nil: the restore must not run
+		deviceFlow bool
+		want       AuthState
+		wantEvents []string
+		wantLog    string
+	}{
+		{"already online", online, nil, false, online, nil, ""},
+		{"offline, restore online", offline, &restoreResult{"someuser", true, false, nil}, false,
+			AuthState{LoggedIn: true, User: "someuser"}, []string{EventAuthChanged}, ""},
+		{"offline, restore still offline", offline, &restoreResult{"", true, true, nil}, false,
+			AuthState{LoggedIn: true, Offline: true}, []string{EventAuthChanged}, ""},
+		{"offline, restore logged out", offline, &restoreResult{"", false, false, errors.New("keyring broken")}, true,
+			AuthState{LoggedIn: true, User: "newuser"}, []string{EventAuthChanged, EventAuthDeviceCode, EventAuthChanged},
+			"warning: token restore failed: keyring broken"},
+		{"logged out", AuthState{}, nil, true,
+			AuthState{LoggedIn: true, User: "newuser"}, []string{EventAuthDeviceCode, EventAuthChanged}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newAppHarness(t, ghapi.NewFakeKeyring())
+			if tc.start.LoggedIn {
+				h.app.setAuth(ghapi.Token{AccessToken: "gho_old"}, tc.start.User, true, tc.start.Offline)
+			}
+			h.events.reset()
+			if r := tc.restore; r != nil {
+				stubRestore(h.app, ghapi.Token{AccessToken: "gho_restored"}, r.user, r.loggedIn, r.offline, r.err)
+			} else {
+				h.app.restoreSession = func(context.Context, ghapi.Keyring, string) (ghapi.Token, string, bool, bool, error) {
+					t.Error("restore ran")
+					return ghapi.Token{}, "", false, false, nil
+				}
+			}
+			if tc.deviceFlow {
+				stubDeviceFlow(h.app, "https://github.com/login/device", nil, "newuser", nil)
+			} else {
+				noDeviceFlow(t, h.app)
+			}
+
+			st, err := h.app.Login(context.Background())
+			if err != nil || st != tc.want || h.app.AuthState() != tc.want {
+				t.Errorf("Login = %+v, %v (state %+v), want %+v", st, err, h.app.AuthState(), tc.want)
+			}
+			if names := eventNames(h); !reflect.DeepEqual(names, tc.wantEvents) {
+				t.Errorf("events = %v, want %v", names, tc.wantEvents)
+			}
+			if tc.wantLog != "" && !strings.Contains(h.debugLog(t), tc.wantLog) {
+				t.Errorf("debug log missing %q", tc.wantLog)
+			}
+		})
+	}
+}
+
+func TestLogin_CancelDuringRestoreAppliesNothing(t *testing.T) {
 	h := newAppHarness(t, ghapi.NewFakeKeyring())
-	stubRestore(h.app, ghapi.Token{AccessToken: "t"}, "someuser", true, false, nil)
+	h.app.setAuth(ghapi.Token{AccessToken: "gho_old"}, "octocat", true, true)
+	before := h.app.AuthState()
+	h.events.reset()
+	entered := make(chan struct{})
+	h.app.restoreSession = func(ctx context.Context, _ ghapi.Keyring, _ string) (ghapi.Token, string, bool, bool, error) {
+		close(entered)
+		<-ctx.Done()
+		// RestoreSession reports a cancelled validation as offline.
+		return ghapi.Token{AccessToken: "gho_other"}, "", true, true, nil
+	}
+	noDeviceFlow(t, h.app)
 
-	st, err := h.app.Reconnect(context.Background())
-	if err != nil || st != (AuthState{LoggedIn: true, User: "someuser"}) {
-		t.Fatalf("Reconnect = %+v, %v", st, err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.app.Login(context.Background())
+		done <- err
+	}()
+	<-entered
+	h.app.CancelLogin()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Login err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Login did not return after cancel")
 	}
-	if names := eventNames(h); !reflect.DeepEqual(names, []string{EventAuthChanged}) {
-		t.Errorf("events = %v", names)
+	if st := h.app.AuthState(); st != before {
+		t.Errorf("state = %+v, want unchanged %+v", st, before)
 	}
-	if h.app.GitHubClient() == nil {
-		t.Error("GitHubClient = nil after reconnect")
+	if names := eventNames(h); len(names) != 0 {
+		t.Errorf("events = %v, want none", names)
 	}
-
-	stubRestore(h.app, ghapi.Token{}, "", false, false, errors.New("keyring broken"))
-	if st, err := h.app.Reconnect(context.Background()); err != nil || st != (AuthState{}) {
-		t.Errorf("Reconnect = %+v, %v; want logged out", st, err)
-	}
-	if !strings.Contains(h.debugLog(t), "warning: token restore failed: keyring broken") {
-		t.Error("restore failure not logged")
+	h.app.mu.Lock()
+	tok := h.app.token.AccessToken
+	h.app.mu.Unlock()
+	if tok != "gho_old" {
+		t.Errorf("token = %q, want the old one kept", tok)
 	}
 }
 
@@ -263,7 +355,7 @@ func TestLogout(t *testing.T) {
 
 	h.app.Logout()
 
-	if h.app.AuthState() != (AuthState{}) || h.app.GitHubClient() != nil {
+	if h.app.AuthState() != (AuthState{}) || h.app.githubClient() != nil {
 		t.Errorf("state = %+v, want logged out", h.app.AuthState())
 	}
 	if _, err := ghapi.LoadToken(kr, h.dir); err == nil {
@@ -284,7 +376,7 @@ func TestLogout_ClearFailureLogged(t *testing.T) {
 	}
 }
 
-func TestGitHubClient(t *testing.T) {
+func TestGithubClient(t *testing.T) {
 	h := newAppHarness(t, ghapi.NewFakeKeyring())
 	for _, tc := range []struct {
 		name              string
@@ -299,7 +391,7 @@ func TestGitHubClient(t *testing.T) {
 		{"empty username", "tok", "", true, false, true},
 	} {
 		h.app.setAuth(ghapi.Token{AccessToken: tc.token}, tc.user, tc.loggedIn, tc.offline)
-		c := h.app.GitHubClient()
+		c := h.app.githubClient()
 		if (c != nil) != tc.wantClient {
 			t.Errorf("%s: client = %v, want non-nil %v", tc.name, c, tc.wantClient)
 		}
@@ -327,8 +419,18 @@ func TestStart_RestoreThenFetch(t *testing.T) {
 	defer app.Close()
 	app.Start()
 	events.waitFor(t, EventRegistryChanged)
+	// RefreshHistory runs alongside; wait for it so it is not still logging
+	// when the test's temp dir is removed.
+	events.waitFor(t, EventRevocationsChanged)
 
-	if names, _ := events.snapshot(); !reflect.DeepEqual(names, []string{EventAuthChanged, EventRegistryChanged}) {
+	names, _ := events.snapshot()
+	var startup []string
+	for _, n := range names {
+		if n == EventAuthChanged || n == EventRegistryChanged {
+			startup = append(startup, n)
+		}
+	}
+	if !reflect.DeepEqual(startup, []string{EventAuthChanged, EventRegistryChanged}) {
 		t.Errorf("events = %v, want auth then registry", names)
 	}
 	snap := app.Registry()
@@ -367,6 +469,35 @@ func TestStartupRestore(t *testing.T) {
 		h.app.startupRestore()
 		if snap := h.app.Registry(); !snap.Dirty || len(snap.Entries) != 1 {
 			t.Errorf("startup fetch clobbered the edit: %+v", snap)
+		}
+	})
+	t.Run("loaded during the startup fetch keeps edits", func(t *testing.T) {
+		// A Fetch from Server and an edit land while the startup fetch is in flight.
+		h := newAppHarness(t, ghapi.NewFakeKeyring())
+		stubRestore(h.app, ghapi.Token{}, "", false, false, nil)
+		site := registryServer(t, http.StatusOK)
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			markLoaded(h)
+			if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
+				t.Error(err)
+			}
+			resp, err := http.Get(site.URL)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer resp.Body.Close()
+			w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+			_, _ = io.Copy(w, resp.Body)
+		}))
+		t.Cleanup(proxy.Close)
+		h.app.registryURL = proxy.URL
+		h.app.startupRestore()
+		if snap := h.app.Registry(); !snap.Dirty || len(snap.Entries) != 1 {
+			t.Errorf("startup fetch clobbered the edit: %+v", snap)
+		}
+		if strings.Contains(h.debugLog(t), "error: registry fetch failed") {
+			t.Error("startup fetch failed; the test did not exercise the race")
 		}
 	})
 	t.Run("logged in loads main via the API", func(t *testing.T) {

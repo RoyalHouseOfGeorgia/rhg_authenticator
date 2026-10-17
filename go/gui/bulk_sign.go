@@ -2,6 +2,7 @@ package gui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	stdlog "log"
 	"strings"
@@ -204,7 +205,11 @@ func onBulkExportChosen(d bulkSignDeps, writer fyne.URIWriteCloser, err error) {
 	d.launchGo(func() {
 		// ExportBulkResults logs its own write failures.
 		if saveErr := d.app.ExportBulkResults(path); saveErr != nil {
-			fyne.Do(func() { dialog.ShowError(fmt.Errorf("failed to save results file"), d.window) })
+			msg := "failed to save results file"
+			if errors.Is(saveErr, service.ErrBusy) {
+				msg = "another YubiKey operation is running — export the results again in a moment"
+			}
+			fyne.Do(func() { dialog.ShowError(errors.New(msg), d.window) })
 		}
 	})
 }

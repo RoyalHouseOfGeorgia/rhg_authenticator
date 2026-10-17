@@ -98,14 +98,33 @@ func (p *cancelPrompter) RequestPIN(ctx context.Context, rememberDefault bool) (
 // registry (offline), wired to events and prompter.
 func newTestApp(t *testing.T, events *Events, prompter service.Prompter) *service.App {
 	t.Helper()
+	return newTestAppWithConfig(t, func(cfg *service.Config) {
+		cfg.Events, cfg.Prompter = events, prompter
+	})
+}
+
+// newTestAppWithLogPath is newTestApp (no events or prompts) with its
+// diagnostic log at path.
+func newTestAppWithLogPath(t *testing.T, path string) *service.App {
+	t.Helper()
+	return newTestAppWithConfig(t, func(cfg *service.Config) { cfg.Logger = debuglog.New(path) })
+}
+
+// newTestAppWithConfig returns a service.App on a temp DataDir with an
+// unreachable registry (offline), no revocation list and no keyring, after
+// edit adjusts its Config.
+func newTestAppWithConfig(t *testing.T, edit func(*service.Config)) *service.App {
+	t.Helper()
 	dir := t.TempDir()
-	app, err := service.New(service.Config{
+	cfg := service.Config{
 		DataDir:     dir,
 		Logger:      debuglog.New(filepath.Join(dir, debuglog.FileName)),
 		RegistryURL: "http://127.0.0.1:1",
-		Prompter:    prompter,
-		Events:      events,
-	})
+		Prompter:    &cancelPrompter{},
+		Events:      NewEvents(),
+	}
+	edit(&cfg)
+	app, err := service.New(cfg)
 	if err != nil {
 		t.Fatalf("service.New: %v", err)
 	}

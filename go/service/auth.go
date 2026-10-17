@@ -52,9 +52,14 @@ func (a *App) AuthState() AuthState {
 	return a.authStateLocked()
 }
 
-// Login runs the GitHub device authorization flow, emitting
-// EventAuthDeviceCode once the user has a code to enter. A Login stopped by
-// CancelLogin, Close or ctx returns an error matching ctx.Err().
+// Login connects to GitHub: logged in and online it returns the current
+// state; logged in but offline it retries restoring the saved session and
+// returns the result unless that ends logged out. Logged out, it runs the
+// device authorization flow, emitting EventAuthDeviceCode once the user has a
+// code to enter. A Login stopped by CancelLogin, Close or ctx returns an error
+// matching ctx.Err(); the login state is unchanged, except that a restore
+// that already finished (and ended logged out) stays applied when the device
+// flow that followed it is cancelled.
 func (a *App) Login(ctx context.Context) (AuthState, error) {
 	if !a.loggingIn.CompareAndSwap(false, true) {
 		return AuthState{}, ErrBusy
@@ -71,6 +76,19 @@ func (a *App) Login(ctx context.Context) (AuthState, error) {
 		a.loginCancel = nil
 		a.mu.Unlock()
 	}()
+
+	if st := a.AuthState(); st.LoggedIn {
+		if !st.Offline {
+			return st, nil
+		}
+		st, err := a.restore(ctx)
+		if err != nil {
+			return AuthState{}, err
+		}
+		if st.LoggedIn {
+			return st, nil
+		}
+	}
 
 	dcr, err := a.requestDeviceCode(ctx)
 	if err != nil {
@@ -118,32 +136,26 @@ func (a *App) CancelLogin() {
 }
 
 // restore reloads and validates the saved session and applies the result.
-func (a *App) restore(ctx context.Context) AuthState {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+// If ctx is cancelled meanwhile it applies nothing and returns ctx.Err();
+// its own timeout expiring is applied as offline.
+func (a *App) restore(ctx context.Context) (AuthState, error) {
+	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	tok, username, loggedIn, offline, err := a.restoreSession(ctx, a.keyring, a.dataDir)
+	tok, username, loggedIn, offline, err := a.restoreSession(rctx, a.keyring, a.dataDir)
+	if cerr := ctx.Err(); cerr != nil {
+		return AuthState{}, cerr
+	}
 	if err != nil {
 		a.logger.Logf("warning: token restore failed: %s", core.SanitizeForLog(err.Error()))
 	}
-	return a.setAuth(tok, username, loggedIn, offline)
-}
-
-// Reconnect retries restoring the saved session (after GitHub was
-// unreachable) and returns the applied state; a restore failure is logged and
-// leaves the state logged out. It returns ErrBusy while a Login runs.
-func (a *App) Reconnect(ctx context.Context) (AuthState, error) {
-	if !a.loggingIn.CompareAndSwap(false, true) {
-		return AuthState{}, ErrBusy
-	}
-	defer a.loggingIn.Store(false)
-	return a.restore(ctx), nil
+	return a.setAuth(tok, username, loggedIn, offline), nil
 }
 
 // startupRestore silently restores the saved session (with a keyring), then
 // loads the registry for editing. Start runs it.
 func (a *App) startupRestore() {
 	if a.keyring != nil {
-		a.restore(context.Background())
+		_, _ = a.restore(context.Background())
 	}
 	a.mu.Lock()
 	loaded := a.baseBytes != nil
@@ -151,13 +163,14 @@ func (a *App) startupRestore() {
 	if loaded { // a Fetch from Server finished during the restore; keep its edits
 		return
 	}
-	if err := a.FetchRegistry(context.Background()); err != nil {
+	if err := a.loadEditRegistry(context.Background(), true); err != nil {
 		a.events.Emit(EventRegistryChanged, nil)
 	}
 }
 
-// Logout clears the saved token and logs out. Hosts also call it after a
-// GitHub 401: an expired session means logged out, not offline.
+// Logout clears the saved token and logs out. Revoke and SubmitRegistry call
+// it themselves after a GitHub 401 (an expired session means logged out, not
+// offline), so hosts never need to.
 func (a *App) Logout() {
 	if err := ghapi.ClearToken(a.keyring, a.dataDir); err != nil {
 		a.logger.Logf("warning: clearing token failed: %s", core.SanitizeForLog(err.Error()))
@@ -173,9 +186,9 @@ func (a *App) clientLocked() *ghapi.Client {
 	return a.newClient(a.token.AccessToken)
 }
 
-// GitHubClient returns a client for the logged-in session, or nil when logged
+// githubClient returns a client for the logged-in session, or nil when logged
 // out or offline.
-func (a *App) GitHubClient() *ghapi.Client {
+func (a *App) githubClient() *ghapi.Client {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.clientLocked()

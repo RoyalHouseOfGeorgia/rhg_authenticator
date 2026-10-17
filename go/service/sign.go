@@ -59,12 +59,14 @@ var errIssuanceLogUnreadable = errors.New("issuance log unreadable")
 
 // signFlowResult holds the output of a successful signing operation.
 // Existing is true when the response was rebuilt from a previously logged
-// issuance instead of a fresh signature.
+// issuance instead of a fresh signature; NotLogged when the credential was
+// signed but its issuance record could not be appended.
 type signFlowResult struct {
 	Response   core.SignResponse
 	PNGPreview []byte
 	Hash8      string
 	Existing   bool
+	NotLogged  bool
 }
 
 // findExistingIssuance looks up payload (from core.BuildPayload) in the
@@ -201,6 +203,7 @@ func executeSignFlow(
 		return signFlowResult{}, err
 	}
 
+	var notLogged bool
 	if !existing {
 		// 1. Resolve the PIN up-front, BEFORE opening the card. piv-go holds an
 		//    exclusive PCSC transaction (SCARD_SHARE_EXCLUSIVE + an open
@@ -228,7 +231,9 @@ func executeSignFlow(
 			return signFlowResult{}, err
 		}
 		// A log-append failure is non-fatal for single-sign: the credential is
-		// already signed and signAndLog has recorded the failure in the debug log.
+		// already signed and signAndLog has recorded the failure in the debug
+		// log. The result carries it so the operator is told.
+		notLogged = err != nil
 	}
 
 	// 3. Generate QR preview.
@@ -246,6 +251,7 @@ func executeSignFlow(
 		PNGPreview: pngData,
 		Hash8:      hash8,
 		Existing:   existing,
+		NotLogged:  notLogged,
 	}, nil
 }
 

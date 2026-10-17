@@ -264,7 +264,7 @@ func TestImportFromYubiKey(t *testing.T) {
 	}
 
 	h.openErr = errors.New("no YubiKey found")
-	if _, err := h.app.ImportFromYubiKey(); err == nil || err.Error() != importKeyErrorMessage(h.openErr) {
+	if _, err := h.app.ImportFromYubiKey(); err == nil || err.Error() != "No YubiKey detected — plug in and try again" {
 		t.Errorf("open error = %v", err)
 	}
 	if !strings.Contains(h.debugLog(t), "yubikey import: no YubiKey found") {
@@ -273,7 +273,7 @@ func TestImportFromYubiKey(t *testing.T) {
 
 	h.openErr = nil
 	h.signer = func(ed25519.PrivateKey) core.SigningAdapter { return &errorExportAdapter{} }
-	if _, err := h.app.ImportFromYubiKey(); err == nil || err.Error() != importKeyErrorMessage(fmt.Errorf("hardware failure")) {
+	if _, err := h.app.ImportFromYubiKey(); err == nil || err.Error() != "No YubiKey detected — plug in and try again" {
 		t.Errorf("export error = %v", err)
 	}
 
@@ -299,6 +299,30 @@ func TestSubmitRegistry_Preconditions(t *testing.T) {
 	h.app.setAuth(ghapi.Token{AccessToken: "tok"}, "", true, true)
 	if _, err := h.app.SubmitRegistry(context.Background()); !errors.Is(err, ErrNotLoggedIn) {
 		t.Errorf("offline err = %v, want ErrNotLoggedIn", err)
+	}
+}
+
+func TestSubmitRegistry_InvalidRegistryLoggedAndExplained(t *testing.T) {
+	h := newAppHarness(t, nil)
+	markLoaded(h)
+	if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
+		t.Fatal(err)
+	}
+	h.app.setAuth(ghapi.Token{AccessToken: "tok"}, "u", true, false)
+	h.app.mu.Lock()
+	h.app.edit.Keys[0].Authority = "Bad\x01Authority" // a pasted control character
+	h.app.mu.Unlock()
+
+	_, err := h.app.SubmitRegistry(context.Background())
+	if !errors.Is(err, errRegistryInvalid) {
+		t.Fatalf("err = %v, want errRegistryInvalid", err)
+	}
+	if !strings.Contains(h.debugLog(t), "error: registry marshal failed") {
+		t.Error("marshal failure not logged")
+	}
+	title, msg := SubmitErrorMessage(err)
+	if title != "Submission Failed" || !strings.HasPrefix(msg, "The edited registry is invalid and was not submitted: registry validation failed: keys[0]") {
+		t.Errorf("message = %q / %q", title, msg)
 	}
 }
 

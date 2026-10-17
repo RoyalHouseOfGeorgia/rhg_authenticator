@@ -1,8 +1,7 @@
 package gui
 
 import (
-	"fmt"
-	"sync/atomic"
+	"errors"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -13,14 +12,24 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
-// NewAuditTab creates the registry audit tab UI showing GitHub commit history.
-func NewAuditTab(window fyne.Window) *fyne.Container {
-	var commits []ghapi.RegistryCommit
-	statusLabel := widget.NewLabel("")
+// AuditTab is the registry audit UI showing the registry's GitHub commit
+// history. Its methods run on the Fyne main thread.
+type AuditTab struct {
+	Content     fyne.CanvasObject
+	svc         *service.App
+	rows        []service.AuditRow
+	list        *widget.List
+	statusLabel *widget.Label
+	refreshBtn  *widget.Button
+}
 
-	list := widget.NewList(
+// NewAuditTab creates the audit tab on svc. It fetches nothing; the caller
+// calls Refresh for the first load.
+func NewAuditTab(svc *service.App) *AuditTab {
+	at := &AuditTab{svc: svc, statusLabel: widget.NewLabel("")}
+	at.list = widget.NewList(
 		func() int {
-			return len(commits)
+			return len(at.rows)
 		},
 		func() fyne.CanvasObject {
 			return widget.NewLabel("template")
@@ -30,62 +39,52 @@ func NewAuditTab(window fyne.Window) *fyne.Container {
 			if !ok {
 				return
 			}
-			if id < 0 || id >= len(commits) {
+			if id < 0 || id >= len(at.rows) {
 				return
 			}
-			label.SetText(service.FormatCommitSummary(commits[id]))
+			label.SetText(at.rows[id].Summary)
 		},
 	)
+	at.list.OnSelected = at.rowSelected
+	at.refreshBtn = widget.NewButton("Refresh", at.Refresh)
 
-	list.OnSelected = func(id widget.ListItemID) {
-		if id < 0 || id >= len(commits) {
-			return
-		}
-		if parsed := ghapi.ParseGitHubURL(commits[id].HTMLURL); parsed != nil {
-			fyne.CurrentApp().OpenURL(parsed)
-		}
-		list.UnselectAll()
+	topBar := container.NewBorder(nil, nil, nil, at.refreshBtn, at.statusLabel)
+	at.Content = container.NewBorder(topBar, nil, nil, nil, at.list)
+	return at
+}
+
+// Refresh fetches the registry commit history in the background.
+func (at *AuditTab) Refresh() {
+	at.refreshBtn.Disable()
+	at.statusLabel.SetText("Fetching...")
+	safego.Go(func() {
+		res, err := at.svc.AuditCommits()
+		fyne.Do(func() { at.auditDone(res, err) })
+	})
+}
+
+// auditDone shows the outcome of an AuditCommits.
+func (at *AuditTab) auditDone(res service.AuditResult, err error) {
+	if errors.Is(err, service.ErrBusy) {
+		return // the running fetch updates the tab
 	}
-
-	var fetching atomic.Bool
-	var lastETag string
-	var refreshBtn *widget.Button
-
-	doFetch := func() {
-		if !fetching.CompareAndSwap(false, true) {
-			return
-		}
-		refreshBtn.Disable()
-		statusLabel.SetText("Fetching...")
-		currentETag := lastETag // capture under UI thread
-		safego.Go(func() {
-			result, newETag, err := ghapi.FetchRegistryCommits("", service.CommitsPerPage, currentETag)
-			fyne.Do(func() {
-				fetching.Store(false)
-				refreshBtn.Enable()
-				if err != nil {
-					if ghapi.IsRateLimited(err) {
-						statusLabel.SetText("GitHub API rate limit reached — try again later")
-					} else {
-						statusLabel.SetText("Failed to fetch registry history")
-					}
-					return
-				}
-				if result != nil { // nil means 304, keep existing commits
-					commits = result
-					lastETag = newETag
-					list.Refresh()
-					statusLabel.SetText(fmt.Sprintf("Loaded %d commits", len(commits)))
-				} else {
-					statusLabel.SetText("No changes since last check")
-				}
-			})
-		})
+	at.refreshBtn.Enable()
+	if err != nil {
+		at.statusLabel.SetText(err.Error())
+		return
 	}
+	at.rows = res.Rows
+	at.list.Refresh()
+	at.statusLabel.SetText(res.Status)
+}
 
-	refreshBtn = widget.NewButton("Refresh", doFetch)
-	doFetch() // auto-fetch on creation
-
-	topBar := container.NewBorder(nil, nil, nil, refreshBtn, statusLabel)
-	return container.NewBorder(topBar, nil, nil, nil, list)
+// rowSelected opens the commit page and clears the selection.
+func (at *AuditTab) rowSelected(id widget.ListItemID) {
+	if id < 0 || id >= len(at.rows) {
+		return
+	}
+	if parsed := ghapi.ParseGitHubURL(at.rows[id].URL); parsed != nil {
+		_ = fyne.CurrentApp().OpenURL(parsed)
+	}
+	at.list.UnselectAll()
 }

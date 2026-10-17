@@ -14,6 +14,10 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
+// msgNotLogged is shown when a credential was signed but its issuance record
+// could not be written.
+const msgNotLogged = "Credential signed but NOT recorded in the audit log — check disk space/permissions."
+
 // sanitizeError returns a generic description for hardware-related errors,
 // stripping implementation details that could leak hardware configuration.
 func sanitizeError(prefix string, err error) string {
@@ -126,7 +130,7 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	// wrapped OS file error (e.g. a path or errno text) as a hardware fault.
 	if errors.Is(err, core.ErrNotLogged) {
 		logger.Log(core.SanitizeForLog(err.Error()))
-		return "Credential signed but NOT recorded in the audit log — check disk space/permissions."
+		return msgNotLogged
 	}
 	// Transient PC/SC contention (card reset) can surface in any phase and via
 	// the raw adapter-open path. Hoist the check so it wins over the PIN

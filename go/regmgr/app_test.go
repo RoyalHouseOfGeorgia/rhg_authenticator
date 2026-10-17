@@ -63,8 +63,6 @@ func TestRegistryChanged(t *testing.T) {
 
 func TestUpdateLoginUI(t *testing.T) {
 	rt, _ := newTestRegistryTab(t, unreachable)
-	fired := 0
-	rt.SetOnLoginChanged(func() { fired++ })
 	for _, tc := range []struct {
 		st   service.AuthState
 		want string
@@ -73,79 +71,60 @@ func TestUpdateLoginUI(t *testing.T) {
 		{service.AuthState{LoggedIn: true, Offline: true}, "Offline — Reconnect"},
 		{service.AuthState{LoggedIn: true, User: "octocat"}, "@octocat ▾"},
 	} {
-		rt.updateLoginUI(tc.st)
+		rt.UpdateLoginUI(tc.st)
 		if rt.loginBtn.Text != tc.want {
 			t.Errorf("%+v: loginBtn = %q, want %q", tc.st, rt.loginBtn.Text, tc.want)
 		}
 	}
-	if fired != 3 {
-		t.Errorf("onLoginChanged fired %d times, want 3", fired)
-	}
 }
 
-// Every service login-state change reaches the button and the observer.
-func TestAuthChangedEvent_ReachesObserver(t *testing.T) {
-	rt, _ := newTestRegistryTab(t, unreachable)
-	fired := 0
-	rt.SetOnLoginChanged(func() { fired++ })
+// The tab leaves EventAuthChanged to the host; a host handler calling
+// UpdateLoginUI (as main registers it) sees every login-state change.
+func TestAuthChangedEvent_HostHandler(t *testing.T) {
+	rt, _, events := newTestRegistryTabWithEvents(t, unreachable)
 	rt.loginBtn.SetText("stale")
-
 	rt.svc.Logout()
+	if rt.loginBtn.Text != "stale" {
+		t.Fatalf("the tab handled EventAuthChanged itself: loginBtn = %q", rt.loginBtn.Text)
+	}
 
+	fired := 0
+	events.On(service.EventAuthChanged, func(any) { fired++; rt.UpdateLoginUI(rt.svc.AuthState()) })
+	rt.svc.Logout()
 	if fired != 1 || rt.loginBtn.Text != "Login to GitHub" {
 		t.Errorf("fired = %d, loginBtn = %q", fired, rt.loginBtn.Text)
 	}
 }
 
-func TestHandleUnauthorized_LogsOutAndStartsLogin(t *testing.T) {
-	rt, logins := newTestRegistryTab(t, unreachable)
-	rt.HandleUnauthorized()
-	if rt.svc.AuthState() != (service.AuthState{}) {
-		t.Errorf("state = %+v", rt.svc.AuthState())
+func TestStartLogin(t *testing.T) {
+	for _, tc := range []struct {
+		st   service.AuthState
+		want string
+	}{
+		{service.AuthState{}, "Requesting device code..."},
+		{service.AuthState{LoggedIn: true, Offline: true}, "Reconnecting to GitHub..."},
+		{service.AuthState{LoggedIn: true, User: "octocat"}, "Requesting device code..."},
+	} {
+		rt, logins := newTestRegistryTab(t, unreachable)
+		rt.startLogin(tc.st)
+		if rt.statusLabel.Text != tc.want || len(logins) != 1 {
+			t.Errorf("%+v: status = %q, logins = %d", tc.st, rt.statusLabel.Text, len(logins))
+		}
 	}
-	if len(logins) != 1 {
-		t.Errorf("login started %d times, want 1", len(logins))
+
+	rt, logins := newTestRegistryTab(t, unreachable)
+	rt.StartLogin() // the service is logged out
+	if rt.statusLabel.Text != "Requesting device code..." || len(logins) != 1 {
+		t.Errorf("StartLogin: status = %q, logins = %d", rt.statusLabel.Text, len(logins))
 	}
 }
 
-func TestStartLoginOrReconnect_LoggedOutStartsLogin(t *testing.T) {
+func TestLoginButton_LoggedOutStartsLogin(t *testing.T) {
 	rt, logins := newTestRegistryTab(t, unreachable)
-	rt.StartLoginOrReconnect()
-	if len(logins) != 1 {
-		t.Errorf("login started %d times, want 1", len(logins))
+	test.Tap(rt.loginBtn)
+	if rt.statusLabel.Text != "Requesting device code..." || len(logins) != 1 {
+		t.Errorf("status = %q, logins = %d", rt.statusLabel.Text, len(logins))
 	}
-}
-
-func TestReconnected(t *testing.T) {
-	t.Run("busy", func(t *testing.T) {
-		rt, logins := newTestRegistryTab(t, unreachable)
-		rt.statusLabel.SetText("Reconnecting to GitHub...")
-		rt.reconnected(service.AuthState{}, service.ErrBusy)
-		if rt.statusLabel.Text != "Login already in progress" || len(logins) != 0 {
-			t.Errorf("status = %q, logins = %d", rt.statusLabel.Text, len(logins))
-		}
-	})
-	t.Run("still offline", func(t *testing.T) {
-		rt, logins := newTestRegistryTab(t, unreachable)
-		rt.reconnected(service.AuthState{LoggedIn: true, Offline: true}, nil)
-		if !overlayHasText(topOverlay(t, rt), "GitHub Unreachable") || rt.statusLabel.Text != "" || len(logins) != 0 {
-			t.Errorf("status = %q, logins = %d", rt.statusLabel.Text, len(logins))
-		}
-	})
-	t.Run("reconnected", func(t *testing.T) {
-		rt, _ := newTestRegistryTab(t, unreachable)
-		rt.reconnected(service.AuthState{LoggedIn: true, User: "someuser"}, nil)
-		if rt.statusLabel.Text != "Reconnected as @someuser." {
-			t.Errorf("status = %q", rt.statusLabel.Text)
-		}
-	})
-	t.Run("logged out", func(t *testing.T) {
-		rt, logins := newTestRegistryTab(t, unreachable)
-		rt.reconnected(service.AuthState{}, nil)
-		if len(logins) != 1 {
-			t.Errorf("login started %d times, want 1", len(logins))
-		}
-	})
 }
 
 func TestShowLoginDialog(t *testing.T) {
@@ -202,6 +181,19 @@ func TestLoginDone(t *testing.T) {
 			t.Errorf("status = %q", rt.statusLabel.Text)
 		}
 	})
+	t.Run("still offline", func(t *testing.T) {
+		rt, logins := newTestRegistryTab(t, unreachable)
+		rt.statusLabel.SetText("Reconnecting to GitHub...")
+		rt.showLoginDialog(service.DeviceCode{UserCode: "ABCD-1234"})
+		rt.loginDone(service.AuthState{LoggedIn: true, Offline: true}, nil)
+		if rt.statusLabel.Text != "" || rt.loginDialog != nil || len(logins) != 0 {
+			t.Errorf("status = %q, dialog = %v, logins = %d", rt.statusLabel.Text, rt.loginDialog, len(logins))
+		}
+		if top := topOverlay(t, rt); !overlayHasText(top, "GitHub Unreachable") ||
+			!overlayHasText(top, "Still can't reach GitHub. Check your connection and try again.") {
+			t.Error("GitHub Unreachable dialog not shown")
+		}
+	})
 	t.Run("outcomes", func(t *testing.T) {
 		rt, _ := newTestRegistryTab(t, unreachable)
 		for _, tc := range []struct {
@@ -209,7 +201,6 @@ func TestLoginDone(t *testing.T) {
 			want string
 		}{
 			{service.AuthState{LoggedIn: true, User: "octocat"}, "Logged in as @octocat"},
-			{service.AuthState{LoggedIn: true, Offline: true}, "GitHub unreachable"},
 			{service.AuthState{}, "Not logged in"},
 		} {
 			rt.loginDone(tc.st, nil)
@@ -241,8 +232,12 @@ func TestHandleSubmitError(t *testing.T) {
 			if len(logins) != tc.wantLogins {
 				t.Errorf("logins = %d, want %d", len(logins), tc.wantLogins)
 			}
-			if tc.wantLogins == 0 && rt.statusLabel.Text != "" {
-				t.Errorf("status = %q, want empty", rt.statusLabel.Text)
+			wantStatus := ""
+			if tc.wantLogins > 0 {
+				wantStatus = "Requesting device code..."
+			}
+			if rt.statusLabel.Text != wantStatus {
+				t.Errorf("status = %q, want %q", rt.statusLabel.Text, wantStatus)
 			}
 		})
 	}

@@ -112,6 +112,9 @@ func NewSignTab(app *service.App, events *Events, window fyne.Window) *fyne.Cont
 				if result.Existing {
 					statusLabel.SetText("Credential previously generated.")
 					dialog.ShowInformation("Already Issued", "Credential previously generated, no new record created.", window)
+				} else if result.Warning != "" {
+					statusLabel.SetText(result.Warning)
+					dialog.ShowInformation("Not Recorded", result.Warning, window)
 				} else {
 					statusLabel.SetText("Signed successfully.")
 				}

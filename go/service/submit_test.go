@@ -47,11 +47,21 @@ func testKeyEntry(t *testing.T, authority string, to *string) core.KeyEntry {
 	}
 }
 
-// submitFake is an httptest GitHub API covering the upstream registry read
-// and the same-repo PR flow. It records every "METHOD path" it serves.
+// revocationsPath is ghapi's revocation list path in the repository.
+const revocationsPath = "verify/keys/revocations.json"
+
+// submitFake is an httptest GitHub API covering the upstream registry and
+// revocation list reads, the open-PR listing and the same-repo PR flow. It
+// records every "METHOD path" it serves. Set the optional fields before the
+// first request.
 type submitFake struct {
 	mu   sync.Mutex
 	hits []string
+
+	revocations       string // upstream revocations.json; "" = an empty list
+	revocationsStatus int    // != 0 and != 200 makes the revocation list GET fail
+	openPulls         string // GET pulls body; "" = no open PRs
+	prURL             string // created PR's html_url; "" = a github.com URL
 }
 
 func (f *submitFake) hitList() []string {
@@ -67,12 +77,21 @@ func newSubmitFake(t *testing.T, upstream []byte, upstreamStatus int) (*submitFa
 	owner, repo := ghapi.DefaultOwner, ghapi.DefaultRepo
 	repoPath := fmt.Sprintf("/repos/%s/%s", owner, repo)
 	upstreamPath := repoPath + "/contents/" + ghapi.RegistryFilePath
+	revPath := repoPath + "/contents/" + revocationsPath
 	f := &submitFake{}
+	serveFile := func(w http.ResponseWriter, content []byte) {
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"content":  base64.StdEncoding.EncodeToString(content),
+			"encoding": "base64",
+			"sha":      "upstreamsha123",
+		})
+	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path, method := r.URL.Path, r.Method
 		f.mu.Lock()
 		f.hits = append(f.hits, method+" "+path)
+		revocations, revStatus, openPulls, prURL := f.revocations, f.revocationsStatus, f.openPulls, f.prURL
 		f.mu.Unlock()
 
 		switch {
@@ -84,11 +103,22 @@ func newSubmitFake(t *testing.T, upstream []byte, upstreamStatus int) (*submitFa
 				fmt.Fprint(w, `{"message":"boom"}`)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"content":  base64.StdEncoding.EncodeToString(upstream),
-				"encoding": "base64",
-				"sha":      "upstreamsha123",
-			})
+			serveFile(w, upstream)
+		case method == http.MethodGet && path == revPath && r.URL.Query().Get("ref") == "main":
+			if revStatus != 0 && revStatus != http.StatusOK {
+				w.WriteHeader(revStatus)
+				fmt.Fprint(w, `{"message":"boom"}`)
+				return
+			}
+			if revocations == "" {
+				revocations = `{"revocations":[]}`
+			}
+			serveFile(w, []byte(revocations))
+		case method == http.MethodGet && path == repoPath+"/pulls":
+			if openPulls == "" {
+				openPulls = "[]"
+			}
+			fmt.Fprint(w, openPulls)
 		case method == http.MethodGet && path == repoPath:
 			fmt.Fprint(w, `{"permissions":{"push":true}}`)
 		case method == http.MethodGet && path == repoPath+"/git/refs/heads/main":
@@ -101,8 +131,11 @@ func newSubmitFake(t *testing.T, upstream []byte, upstreamStatus int) (*submitFa
 		case method == http.MethodPut && strings.HasPrefix(path, repoPath+"/contents/"):
 			fmt.Fprint(w, `{"content":{"sha":"newfilesha789"}}`)
 		case method == http.MethodPost && path == fmt.Sprintf("/repos/%s/%s/pulls", owner, repo):
+			if prURL == "" {
+				prURL = fmt.Sprintf("https://github.com/%s/%s/pull/7", owner, repo)
+			}
 			w.WriteHeader(http.StatusCreated)
-			fmt.Fprintf(w, `{"number":7,"html_url":"https://github.com/%s/%s/pull/7"}`, owner, repo)
+			fmt.Fprintf(w, `{"number":7,"html_url":%q}`, prURL)
 		default:
 			t.Errorf("unexpected request: %s %s", method, path)
 			http.Error(w, "not found", http.StatusNotFound)

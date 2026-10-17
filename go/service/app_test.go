@@ -167,12 +167,13 @@ func newAppHarness(t *testing.T, kr ghapi.Keyring) *appHarness {
 		signer:   func(k ed25519.PrivateKey) core.SigningAdapter { return &mockSignAdapter{secretKey: k} },
 	}
 	app, err := New(Config{
-		DataDir:     dir,
-		Logger:      debuglog.New(filepath.Join(dir, debuglog.FileName)),
-		RegistryURL: "http://127.0.0.1:1",
-		Keyring:     kr,
-		Prompter:    h.prompter,
-		Events:      h.events,
+		DataDir:       dir,
+		Logger:        debuglog.New(filepath.Join(dir, debuglog.FileName)),
+		RegistryURL:   "http://127.0.0.1:1",
+		RevocationURL: "http://127.0.0.1:1",
+		Keyring:       kr,
+		Prompter:      h.prompter,
+		Events:        h.events,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -197,6 +198,20 @@ func (h *appHarness) debugLog(t *testing.T) string {
 	t.Helper()
 	data, _ := os.ReadFile(filepath.Join(h.dir, debuglog.FileName))
 	return string(data)
+}
+
+// receive returns the next value from ch, failing the test after 5 s instead
+// of hanging until the package timeout.
+func receive[T any](t *testing.T, ch <-chan T) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the operation to finish")
+		var zero T
+		return zero
+	}
 }
 
 func validFields(recipient string) SignFields {
@@ -449,6 +464,23 @@ func TestSign_SuccessReturnsCanonicalFields(t *testing.T) {
 	}
 }
 
+func TestSign_LogAppendFailureWarns(t *testing.T) {
+	h := newAppHarness(t, nil)
+	h.app.logPath = filepath.Join(t.TempDir(), "missing", "issuances.json")
+	res, err := h.app.Sign(context.Background(), validFields("Unlogged"))
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if res.Warning != msgNotLogged || res.URL == "" {
+		t.Errorf("Warning = %q, URL = %q; want the not-recorded warning and a URL", res.Warning, res.URL)
+	}
+
+	h.app.logPath = filepath.Join(h.dir, "issuances.json")
+	if res, err := h.app.Sign(context.Background(), validFields("Logged")); err != nil || res.Warning != "" {
+		t.Errorf("logged Sign = %+v, %v; want no warning", res, err)
+	}
+}
+
 func TestSign_ValidationError(t *testing.T) {
 	h := newAppHarness(t, ghapi.NewFakeKeyring())
 	_, err := h.app.Sign(context.Background(), validFields("   "))
@@ -651,7 +683,7 @@ func TestApp_BusyAcrossSignAndBulk(t *testing.T) {
 		t.Errorf("Sign during bulk: err = %v, want ErrBusy", err)
 	}
 	h.app.CancelBulk()
-	r := <-runDone
+	r := receive(t, runDone)
 	if r.err != nil || r.out.StopMessage != "Cancelled." {
 		t.Errorf("RunBulk = %+v, %v; want Cancelled.", r.out, r.err)
 	}
@@ -672,7 +704,7 @@ func TestApp_InfoWhileSignBlocked(t *testing.T) {
 		t.Errorf("Info().Version = %q", got.Version)
 	}
 	h.prompter.release <- struct{}{}
-	<-done
+	receive(t, done)
 }
 
 // --- Bulk ---
@@ -807,7 +839,7 @@ func TestApp_CloseWipesPINCacheAndCancelsBulk(t *testing.T) {
 	}
 
 	h.app.Close()
-	if out := <-runDone; out.StopMessage != "Cancelled." {
+	if out := receive(t, runDone); out.StopMessage != "Cancelled." {
 		t.Errorf("StopMessage = %q, want Cancelled.", out.StopMessage)
 	}
 	if _, ok := h.app.pinCache.Get(); ok {

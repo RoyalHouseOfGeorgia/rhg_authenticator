@@ -34,17 +34,8 @@ type RegistryTab struct {
 	loginBtn    *widget.Button
 	window      fyne.Window
 	loginDialog *dialog.CustomDialog
-	// login starts the device login flow; a field so tests can stub it.
+	// login runs App.Login in the background; a field so tests can stub it.
 	login func()
-	// onLoginChanged, if set, is invoked whenever login state changes, so other
-	// tabs (History) react to auth changes without polling.
-	onLoginChanged func()
-}
-
-// SetOnLoginChanged registers a callback fired on the Fyne main thread whenever
-// login state changes. Must be set before ShowAndRun.
-func (rt *RegistryTab) SetOnLoginChanged(fn func()) {
-	rt.onLoginChanged = fn
 }
 
 // Fetch re-fetches the registry in the background; success arrives as
@@ -76,9 +67,9 @@ func (rt *RegistryTab) registryChanged() {
 	}
 }
 
-// updateLoginUI sets the login button text for st and notifies observers
-// (e.g. History tab). Every login-state change arrives here via EventAuthChanged.
-func (rt *RegistryTab) updateLoginUI(st service.AuthState) {
+// UpdateLoginUI sets the login button text for st. The host calls it on
+// every EventAuthChanged.
+func (rt *RegistryTab) UpdateLoginUI(st service.AuthState) {
 	if !st.LoggedIn {
 		rt.loginBtn.SetText("Login to GitHub")
 	} else if st.Offline {
@@ -86,14 +77,27 @@ func (rt *RegistryTab) updateLoginUI(st service.AuthState) {
 	} else {
 		rt.loginBtn.SetText("@" + st.User + " ▾")
 	}
-	if rt.onLoginChanged != nil {
-		rt.onLoginChanged()
-	}
 }
 
-// startLogin runs the GitHub device authorization flow in the background.
-func (rt *RegistryTab) startLogin() {
-	rt.statusLabel.SetText("Requesting device code...")
+// StartLogin is the single entry point for "log in" buttons: it starts
+// App.Login, which reconnects a session that was offline or else runs the
+// device authorization flow.
+func (rt *RegistryTab) StartLogin() {
+	rt.startLogin(rt.svc.AuthState())
+}
+
+// startLogin is StartLogin from login state st.
+func (rt *RegistryTab) startLogin(st service.AuthState) {
+	if st.LoggedIn && st.Offline {
+		rt.statusLabel.SetText("Reconnecting to GitHub...")
+	} else {
+		rt.statusLabel.SetText("Requesting device code...")
+	}
+	rt.login()
+}
+
+// runLogin is the default login: App.Login in the background, then loginDone.
+func (rt *RegistryTab) runLogin() {
 	safego.Go(func() {
 		st, err := rt.svc.Login(context.Background())
 		fyne.Do(func() { rt.loginDone(st, err) })
@@ -112,6 +116,12 @@ func (rt *RegistryTab) loginDone(st service.AuthState, err error) {
 			dialog.ShowError(err, rt.window)
 		}
 		rt.statusLabel.SetText("")
+		return
+	}
+	if st.Offline {
+		rt.statusLabel.SetText("")
+		dialog.ShowInformation("GitHub Unreachable",
+			"Still can't reach GitHub. Check your connection and try again.", rt.window)
 		return
 	}
 	rt.statusLabel.SetText(st.StatusText())
@@ -162,49 +172,6 @@ func (rt *RegistryTab) hideLoginDialog() {
 	}
 }
 
-// HandleUnauthorized reacts to a GitHub 401: it logs out (clearing the stored
-// token) and restarts the device login flow.
-func (rt *RegistryTab) HandleUnauthorized() {
-	rt.svc.Logout()
-	rt.login()
-}
-
-// StartLoginOrReconnect is the single entry point for "log in" buttons.
-// When a stored session exists but GitHub was unreachable, it retries the
-// session restore instead of starting a new device flow; otherwise it starts
-// the device authorization flow.
-func (rt *RegistryTab) StartLoginOrReconnect() {
-	if st := rt.svc.AuthState(); !st.LoggedIn || !st.Offline {
-		rt.login()
-		return
-	}
-	rt.statusLabel.SetText("Reconnecting to GitHub...")
-	safego.Go(func() {
-		st, err := rt.svc.Reconnect(context.Background())
-		fyne.Do(func() { rt.reconnected(st, err) })
-	})
-}
-
-// reconnected shows the outcome of a Reconnect; one that ends logged out
-// (401, expired token, load failure) falls through to the device login flow.
-func (rt *RegistryTab) reconnected(st service.AuthState, err error) {
-	if err != nil { // ErrBusy: a login is already running
-		rt.statusLabel.SetText("Login already in progress")
-		return
-	}
-	rt.statusLabel.SetText("")
-	if st.Offline {
-		dialog.ShowInformation("GitHub Unreachable",
-			"Still can't reach GitHub. Check your connection and try again.", rt.window)
-	} else if st.LoggedIn {
-		// Confirm success; a Submit that triggered the reconnect did not
-		// run, and a blank status would hide that anything happened.
-		rt.statusLabel.SetText("Reconnected as @" + st.User + ".")
-	} else {
-		rt.login()
-	}
-}
-
 // handleSubmitError shows the dialog for a SubmitRegistry error and, if the
 // session expired (SubmitRegistry has already logged out), restarts login.
 func (rt *RegistryTab) handleSubmitError(err error) {
@@ -212,12 +179,12 @@ func (rt *RegistryTab) handleSubmitError(err error) {
 	switch {
 	case ghapi.IsUnauthorized(err):
 		dialog.ShowInformation(title, msg, rt.window)
-		rt.login()
+		rt.StartLogin()
 		return
 	case errors.Is(err, service.ErrRegistryChanged):
 		dialog.ShowInformation(title, msg, rt.window)
 	default:
-		gui.ShowErrorWithLogExport(title, msg, rt.svc.DebugLogPath(), rt.window)
+		gui.ShowErrorWithLogExport(title, msg, rt.svc.ErrorLogExport, rt.window)
 	}
 	rt.statusLabel.SetText("")
 }
@@ -252,7 +219,7 @@ func (rt *RegistryTab) submitForReview() {
 		fyne.Do(func() {
 			switch {
 			case errors.Is(err, service.ErrNotLoggedIn):
-				rt.StartLoginOrReconnect()
+				rt.StartLogin()
 			case errors.Is(err, service.ErrBusy):
 				rt.statusLabel.SetText("Submit already in progress")
 			case err != nil:
@@ -274,7 +241,7 @@ func NewRegistryTab(svc *service.App, events *gui.Events, window fyne.Window) *R
 		statusLabel: widget.NewLabel(""),
 		window:      window,
 	}
-	rt.login = rt.startLogin
+	rt.login = rt.runLogin
 
 	rt.table = widget.NewTable(
 		func() (int, int) {
@@ -321,7 +288,7 @@ func NewRegistryTab(svc *service.App, events *gui.Events, window fyne.Window) *R
 	// Login button — text changes based on auth state.
 	rt.loginBtn = widget.NewButton("Login to GitHub", func() {
 		if st := svc.AuthState(); !st.LoggedIn || st.Offline {
-			rt.StartLoginOrReconnect()
+			rt.StartLogin()
 			return
 		}
 		dialog.ShowConfirm("Log Out",
@@ -382,11 +349,15 @@ func NewRegistryTab(svc *service.App, events *gui.Events, window fyne.Window) *R
 
 	// Register first, then read state, so a change that fired before
 	// registration is not missed. svc.Start loads the registry once the
-	// session restore is known.
-	events.On(service.EventAuthChanged, func(any) { rt.updateLoginUI(svc.AuthState()) })
-	events.On(service.EventAuthDeviceCode, func(p any) { rt.showLoginDialog(p.(service.DeviceCode)) })
+	// session restore is known. The host handles EventAuthChanged (see
+	// UpdateLoginUI).
+	events.On(service.EventAuthDeviceCode, func(p any) {
+		if dc, ok := p.(service.DeviceCode); ok {
+			rt.showLoginDialog(dc)
+		}
+	})
 	events.On(service.EventRegistryChanged, func(any) { rt.registryChanged() })
-	rt.updateLoginUI(svc.AuthState())
+	rt.UpdateLoginUI(svc.AuthState())
 	rt.refreshTable()
 	if rt.snap.Loaded {
 		rt.statusLabel.SetText("Loaded from registry server")

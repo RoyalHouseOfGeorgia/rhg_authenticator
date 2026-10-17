@@ -22,6 +22,10 @@ import (
 // longer matches the snapshot the local edits were based on.
 var ErrRegistryChanged = errors.New("registry on GitHub does not match the loaded snapshot")
 
+// errRegistryInvalid is returned by SubmitRegistry when the edited registry
+// fails validation; it wraps the validation error.
+var errRegistryInvalid = errors.New("registry is invalid")
+
 // fetchRegistry loads the registry from main via the GitHub API when a client
 // is available, so the submit check compares like with like and isn't tripped
 // by the Pages deploy lag after a merge. Logged out (or if the API read fails)
@@ -221,10 +225,14 @@ func (a *App) Registry() RegistrySnapshot {
 // the API when logged in and online, else the published copy), discarding
 // local edits, and emits EventRegistryChanged.
 func (a *App) FetchRegistry(ctx context.Context) error {
-	a.mu.Lock()
-	client := a.clientLocked()
-	a.mu.Unlock()
-	reg, err := a.fetchRegistry(ctx, client)
+	return a.loadEditRegistry(ctx, false)
+}
+
+// loadEditRegistry fetches the live registry and makes it the edited copy.
+// With onlyIfUnloaded it leaves a registry that got loaded meanwhile (a Fetch
+// from Server that finished first, perhaps edited since) untouched.
+func (a *App) loadEditRegistry(ctx context.Context, onlyIfUnloaded bool) error {
+	reg, err := a.fetchRegistry(ctx, a.githubClient())
 	var base []byte
 	if err == nil {
 		base, err = marshalRegistry(reg)
@@ -234,6 +242,10 @@ func (a *App) FetchRegistry(ctx context.Context) error {
 		return err
 	}
 	a.mu.Lock()
+	if onlyIfUnloaded && a.baseBytes != nil {
+		a.mu.Unlock()
+		return nil
+	}
 	a.edit, a.baseBytes, a.dirty = reg, base, false
 	a.mu.Unlock()
 	a.events.Emit(EventRegistryChanged, nil)
@@ -370,7 +382,8 @@ func (a *App) SubmitRegistry(ctx context.Context) (ghapi.PRResult, error) {
 	case client == nil:
 		return ghapi.PRResult{}, ErrNotLoggedIn
 	case err != nil:
-		return ghapi.PRResult{}, fmt.Errorf("marshal failed: %w", err)
+		a.logger.Logf("error: registry marshal failed: %s", core.SanitizeForLog(err.Error()))
+		return ghapi.PRResult{}, fmt.Errorf("%w: %w", errRegistryInvalid, err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
@@ -405,6 +418,9 @@ func SubmitErrorMessage(err error) (title, msg string) {
 	}
 	if errors.Is(err, ErrRegistryChanged) {
 		return "Registry Changed", "The registry on GitHub doesn't match the copy you loaded (it changed since). Click Fetch from Server, re-apply your edits, and submit again."
+	}
+	if errors.Is(err, errRegistryInvalid) {
+		return "Submission Failed", "The edited registry is invalid and was not submitted: " + core.SanitizeForLog(strings.TrimPrefix(err.Error(), errRegistryInvalid.Error()+": "))
 	}
 	return "Submission Failed", ghapi.UserMessage(err)
 }

@@ -1,6 +1,7 @@
-// Package service holds the signing, bulk, PIN, YubiKey, GitHub login and
-// registry-editing logic behind the RHG Authenticator user interfaces. App is
-// the entry point.
+// Package service holds the signing, bulk, PIN, YubiKey, GitHub login,
+// registry-editing, issuance-history, revocation, registry-audit and
+// log-export logic behind the RHG Authenticator user interfaces. App is the
+// entry point.
 package service
 
 import (
@@ -33,12 +34,12 @@ import (
 // Sentinel errors returned by App methods.
 var (
 	// ErrBusy is returned when a conflicting operation is already running
-	// (see App for the three groups).
+	// (see App for the guard groups).
 	ErrBusy = errors.New("another operation is in progress")
 	// ErrNoBulkPlan is returned when no bulk file has been loaded.
 	ErrNoBulkPlan = errors.New("no bulk file loaded")
-	// ErrNotLoggedIn is returned by SubmitRegistry when there is no usable
-	// GitHub session (logged out or offline).
+	// ErrNotLoggedIn is returned by SubmitRegistry and Revoke when there is no
+	// usable GitHub session (logged out or offline).
 	ErrNotLoggedIn = errors.New("not logged in to GitHub")
 )
 
@@ -77,6 +78,16 @@ const (
 	// EventRegistryChanged fires after a fetch replaces the edited registry, and
 	// after the Start fetch even if it failed (Registry().Loaded then stays false). Payload: nil.
 	EventRegistryChanged = "registry.changed"
+	// EventHistoryChanged fires after RefreshHistory or RemoveDuplicates
+	// re-reads the issuance log, even if the read failed
+	// (HistorySnapshot.LoadFailed). The records may have changed, so a UI
+	// resets its selection. Payload: nil.
+	EventHistoryChanged = "history.changed"
+	// EventRevocationsChanged fires when a RefreshHistory revocation-list fetch
+	// finishes, whether or not it succeeded
+	// (HistorySnapshot.RevocationsUnavailable). The records are unchanged, so a
+	// UI keeps its selection. Payload: nil.
+	EventRevocationsChanged = "history.revocationsChanged"
 )
 
 // Config holds the host-provided dependencies of an App.
@@ -84,9 +95,12 @@ type Config struct {
 	DataDir     string           // app data dir; already created by the host
 	Logger      *debuglog.Logger // host-opened diagnostic log
 	RegistryURL string
-	Keyring     ghapi.Keyring // GitHub token store; nil disables GitHub login and issue reports (then Login, Reconnect and Logout must not be called)
-	Prompter    Prompter
-	Events      Events
+	// RevocationURL is the published revocation list; empty or unreachable
+	// leaves revocations unavailable.
+	RevocationURL string
+	Keyring       ghapi.Keyring // GitHub token store; nil disables GitHub login and issue reports (then Login and Logout must not be called; Revoke and SubmitRegistry return ErrNotLoggedIn)
+	Prompter      Prompter
+	Events        Events
 }
 
 // Info is the registry and build information shown in the status bar.
@@ -100,11 +114,14 @@ type Info struct {
 type SignFields struct{ Recipient, Honor, Detail, Date string }
 
 // SignResult is a successful Sign. The text fields are what was signed
-// (trimmed and NFC-normalized).
+// (trimmed and NFC-normalized). Warning is non-empty when the credential was
+// signed but not recorded in the issuance log; the UI shows it instead of a
+// plain success.
 type SignResult struct {
 	Recipient, Honor, Detail, Date, URL, Hash8 string
 	Existing                                   bool
 	PNGPreview                                 []byte
+	Warning                                    string
 }
 
 // SignError is a failed Sign. Message is the user-facing status text ("" for a cancel).
@@ -146,27 +163,32 @@ type KeyCheck struct {
 	Details []string
 }
 
-// App owns the signing, GitHub login and registry-editing state and rules
-// behind the user interface. Info, Honors, LogPath, DebugLogPath, CancelBulk,
-// AuthState, CancelLogin, GitHubClient, Registry, AddEntry, UpdateEntry,
-// Dirty, Start and Close never block, and SaveQR, Logout and ImportCertificate
-// do only quick local file or keyring I/O, so these may be called on a UI
-// thread; every other method may block on file, card or network I/O or the
-// PIN prompt and must not be called on a UI thread. ErrBusy comes from three independent
-// guards: Sign, LoadBulk, RunBulk, ExportBulkResults, CheckYubiKey and
-// ImportFromYubiKey while another of them runs; Login and Reconnect while
-// either runs; SubmitRegistry while another submit runs.
+// App owns the signing, GitHub login, registry-editing, issuance-history,
+// revocation and audit state and rules behind the user interface. Info,
+// Honors, LogPath, CancelBulk, AuthState, CancelLogin, Registry, AddEntry,
+// UpdateEntry, Dirty, History, Start and Close never block, and SaveQR,
+// Logout, ImportCertificate, IssuanceLogExport, ErrorLogExport,
+// DuplicatePreview and RemoveDuplicates do only short local work (file or
+// keyring I/O; SaveQR renders a PNG in about 0.1 s), so these may be called
+// on a UI thread; every other method may block on
+// file, card or network I/O or the PIN prompt and must not be called on a UI
+// thread. ErrBusy comes from independent guards: Sign, LoadBulk, RunBulk,
+// ExportBulkResults, CheckYubiKey and ImportFromYubiKey while another of them
+// runs; Login while another Login runs; SubmitRegistry while another submit
+// runs; Revoke while another Revoke runs; AuditCommits while another audit
+// fetch runs.
 type App struct {
-	dataDir     string
-	logPath     string
-	logger      *debuglog.Logger
-	registryURL string
-	keyring     ghapi.Keyring
-	prompter    Prompter
-	events      Events
-	reg         core.Registry // signing registry: fetched once by New, never changed (read without mu)
-	online      bool
-	pinCache    *yubikey.PinCache
+	dataDir       string
+	logPath       string
+	logger        *debuglog.Logger
+	registryURL   string
+	revocationURL string
+	keyring       ghapi.Keyring
+	prompter      Prompter
+	events        Events
+	reg           core.Registry // signing registry: fetched once by New, never changed (read without mu)
+	online        bool
+	pinCache      *yubikey.PinCache
 
 	pinTimeout        time.Duration
 	openAdapter       func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error)
@@ -175,10 +197,17 @@ type App struct {
 	pollForToken      func(ctx context.Context, deviceCode string, interval, expiresIn int) (ghapi.Token, error)
 	validateToken     func(ctx context.Context, tok ghapi.Token) (string, error)
 	newClient         func(token string) *ghapi.Client
+	fetchCommits      func(baseURL string, perPage int, etag string) ([]ghapi.RegistryCommit, string, error)
 
 	busy       atomic.Bool
 	loggingIn  atomic.Bool
 	submitting atomic.Bool
+	revoking   atomic.Bool
+	auditing   atomic.Bool
+	// refreshingHistory makes an overlapping RefreshHistory skip its
+	// revocation fetch.
+	refreshingHistory atomic.Bool
+	historyLoadMu     sync.Mutex // serializes loadHistory
 
 	mu          sync.Mutex // guards the fields below
 	plan        []bulk.Result
@@ -193,6 +222,8 @@ type App struct {
 	// baseBytes is the marshalRegistry output of edit as last fetched; nil =
 	// not loaded. SubmitRegistry refuses unless main still matches it.
 	baseBytes []byte
+	history   historyState
+	audit     auditState
 }
 
 // New cleans stale issuance-log temp files, fetches the registry (offline on
@@ -219,17 +250,18 @@ func New(cfg Config) (*App, error) {
 	logger.Logf("registry fetch: online=%v", online)
 
 	a := &App{
-		dataDir:     cfg.DataDir,
-		logPath:     logPath,
-		logger:      logger,
-		registryURL: cfg.RegistryURL,
-		keyring:     cfg.Keyring,
-		prompter:    cfg.Prompter,
-		events:      cfg.Events,
-		reg:         reg,
-		online:      online,
-		pinCache:    yubikey.NewPinCache(),
-		pinTimeout:  defaultPINEntryTimeout,
+		dataDir:       cfg.DataDir,
+		logPath:       logPath,
+		logger:        logger,
+		registryURL:   cfg.RegistryURL,
+		revocationURL: cfg.RevocationURL,
+		keyring:       cfg.Keyring,
+		prompter:      cfg.Prompter,
+		events:        cfg.Events,
+		reg:           reg,
+		online:        online,
+		pinCache:      yubikey.NewPinCache(),
+		pinTimeout:    defaultPINEntryTimeout,
 		openAdapter: func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
 			a, err := yubikey.NewYubiKeyAdapter(readPin)
 			if err != nil {
@@ -242,22 +274,22 @@ func New(cfg Config) (*App, error) {
 		pollForToken:      ghapi.PollForToken,
 		validateToken:     ghapi.ValidateToken,
 		newClient:         ghapi.NewClient,
+		fetchCommits:      ghapi.FetchRegistryCommits,
 	}
 	return a, nil
 }
 
 // Start restores the saved GitHub session (with a keyring) in the background
 // and then loads the registry for editing, emitting EventAuthChanged and
-// EventRegistryChanged. Hosts call it once, after registering event handlers.
+// EventRegistryChanged; independently it runs RefreshHistory. Hosts call it
+// once, after registering event handlers.
 func (a *App) Start() {
 	safego.Go(a.startupRestore)
+	safego.Go(a.RefreshHistory)
 }
 
 // LogPath returns the issuance log path.
 func (a *App) LogPath() string { return a.logPath }
-
-// DebugLogPath returns the diagnostic log path (for "Export Error Log").
-func (a *App) DebugLogPath() string { return a.logger.Path() }
 
 // Info returns the build version and registry statistics.
 func (a *App) Info() Info {
@@ -317,6 +349,10 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 		}
 	}
 
+	var warning string
+	if res.NotLogged {
+		warning = msgNotLogged
+	}
 	return SignResult{
 		Recipient:  norm.NFC.String(req.Recipient),
 		Honor:      norm.NFC.String(req.Honor),
@@ -326,6 +362,7 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 		Hash8:      res.Hash8,
 		Existing:   res.Existing,
 		PNGPreview: res.PNGPreview,
+		Warning:    warning,
 	}, nil
 }
 
