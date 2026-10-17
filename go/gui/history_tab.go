@@ -1,9 +1,7 @@
 package gui
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -25,11 +23,8 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
-
-// maxHonorDisplay is the maximum number of characters to show for the honor
-// field in the history list.
-const maxHonorDisplay = 50
 
 // revocationTimeout is the deadline for the revocation goroutine.
 const revocationTimeout = 180 * time.Second
@@ -37,17 +32,6 @@ const revocationTimeout = 180 * time.Second
 // revocationCacheUnavailableMsg is the error shown when the revocation list
 // has not loaded at revoke time.
 const revocationCacheUnavailableMsg = "Revocation data not loaded. Try refreshing."
-
-// shouldEnableRevoke reports whether the Revoke button should be enabled: a
-// usable GitHub client exists, the revocation list has loaded, a record is
-// selected, and that record is not already revoked. cacheReady keeps the button
-// state in sync with the OnTapped precondition (which needs the revocation list
-// loaded) — without it, selecting a row after a failed fetch would enable a
-// button whose tap dead-ends in the "Revocation unavailable" error. Pure and
-// nil-safe — callable with selected == nil (the login-state refresh case).
-func shouldEnableRevoke(clientNil, cacheReady bool, selected *log.IssuanceRecord, revoked map[string]bool) bool {
-	return !clientNil && cacheReady && selected != nil && !revoked[strings.ToLower(selected.PayloadSHA256)]
-}
 
 // NewHistoryTab creates the issuance history tab UI. It returns the tab content
 // and a refreshLoginState closure that re-syncs the login-dependent UI (the
@@ -89,7 +73,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				return
 			}
 			rec := filtered[id]
-			label.SetText(formatRecordSummaryWithRevocation(rec, revokedHashes))
+			label.SetText(service.FormatRecordSummaryWithRevocation(rec, revokedHashes))
 		},
 	)
 
@@ -99,7 +83,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	// updateRevokeButton applies the shared enable rule. clientNil is passed in
 	// so each caller reads ghClientFn() exactly once (GitHubClient allocates).
 	updateRevokeButton := func(clientNil bool) {
-		if !revokeInFlight && shouldEnableRevoke(clientNil, revocationsLoaded, selectedRecord, revokedHashes) {
+		if !revokeInFlight && service.ShouldEnableRevoke(clientNil, revocationsLoaded, selectedRecord, revokedHashes) {
 			revokeButton.Enable()
 		} else {
 			revokeButton.Disable()
@@ -119,7 +103,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 		updateRevokeButton(ghClientFn() == nil)
 
 		// Show detail dialog (existing behavior).
-		detail := formatRecordDetail(rec)
+		detail := service.FormatRecordDetail(rec)
 		dialog.ShowInformation("Issuance Record", detail, window)
 	}
 
@@ -179,7 +163,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 				// revocations merged since the last fetch are never dropped.
 				pr, err := client.CreateRevocationPR(ctx, rec.PayloadSHA256, time.Now().UTC().Format("2006-01-02"))
 				if err != nil {
-					unauthorized, infoTitle, msg := revokeFailureAction(err)
+					unauthorized, infoTitle, msg := service.RevokeFailureAction(err)
 					if infoTitle != "" {
 						// Nothing to submit: the hash is already revoked upstream
 						// or awaiting review, so mark it locally like a success.
@@ -247,7 +231,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 			return
 		}
 		allRecords = records
-		filtered = filterRecords(allRecords, searchEntry.Text)
+		filtered = service.FilterRecords(allRecords, searchEntry.Text)
 		list.UnselectAll()
 		selectedRecord = nil
 		revokeButton.Disable()
@@ -255,7 +239,7 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	}
 
 	searchEntry.OnChanged = func(query string) {
-		filtered = filterRecords(allRecords, query)
+		filtered = service.FilterRecords(allRecords, query)
 		list.UnselectAll()
 		selectedRecord = nil
 		revokeButton.Disable()
@@ -303,65 +287,6 @@ func NewHistoryTab(logPath string, revocationURL string, ghClientFn func() *ghap
 	return container.NewBorder(topBar, nil, nil, nil, list), refreshLoginState
 }
 
-// revokeFailureAction classifies a revocation-PR error: a 401 means the
-// session expired (caller restarts login); an already-revoked or pending
-// revocation is not a failure and returns a non-empty infoTitle (caller shows
-// an information dialog and marks the record revoked); anything else maps to
-// a user-facing message.
-func revokeFailureAction(err error) (unauthorized bool, infoTitle, msg string) {
-	if ghapi.IsUnauthorized(err) {
-		return true, "", "Your GitHub session expired. Please log in again."
-	}
-	if errors.Is(err, ghapi.ErrAlreadyRevoked) {
-		return false, "Already Revoked", ghapi.UserMessage(err)
-	}
-	if errors.Is(err, ghapi.ErrRevocationPending) {
-		return false, "Revocation Pending", ghapi.UserMessage(err)
-	}
-	return false, "", ghapi.UserMessage(err)
-}
-
-// filterRecords returns records matching the query (case-insensitive substring
-// match on recipient), in reverse chronological order (newest first).
-func filterRecords(records []log.IssuanceRecord, query string) []log.IssuanceRecord {
-	lowerQuery := strings.ToLower(strings.TrimSpace(query))
-	n := len(records)
-	result := make([]log.IssuanceRecord, 0, n)
-
-	// Iterate in reverse for newest-first ordering.
-	for i := n - 1; i >= 0; i-- {
-		rec := records[i]
-		if lowerQuery == "" || strings.Contains(strings.ToLower(rec.Recipient), lowerQuery) {
-			result = append(result, rec)
-		}
-	}
-	return result
-}
-
-// formatRecordSummary returns a one-line summary for the history list.
-func formatRecordSummary(rec log.IssuanceRecord) string {
-	return fmt.Sprintf("%s | %s | %s", core.FormatDateDisplay(rec.Date), rec.Recipient, truncateRunes(rec.Honor, maxHonorDisplay))
-}
-
-// formatRecordSummaryWithRevocation wraps formatRecordSummary, prefixing
-// "[REVOKED] " when the record's payload hash appears in the revoked set.
-func formatRecordSummaryWithRevocation(rec log.IssuanceRecord, revokedHashes map[string]bool) string {
-	summary := formatRecordSummary(rec)
-	if revokedHashes[strings.ToLower(rec.PayloadSHA256)] {
-		return "[REVOKED] " + summary
-	}
-	return summary
-}
-
-// formatRecordDetail returns a multi-line detail string for the record dialog.
-func formatRecordDetail(rec log.IssuanceRecord) string {
-	return fmt.Sprintf(
-		"Timestamp: %s\nRecipient: %s\nHonor: %s\nDetail: %s\nDate: %s\nPayload SHA-256: %s\nSignature: %s",
-		rec.Timestamp, rec.Recipient, rec.Honor, rec.Detail, core.FormatDateDisplay(rec.Date),
-		rec.PayloadSHA256, rec.SignatureB64URL,
-	)
-}
-
 // onIssuanceExportTapped hands the raw log file to a non-technical operator
 // via a save dialog. The log is read before the dialog opens because Fyne
 // truncates the destination before the save callback runs; that keeps the log
@@ -377,7 +302,7 @@ func onIssuanceExportTapped(logPath string, window fyne.Window) {
 		dialog.ShowError(errors.New("could not read the issuance log"), window)
 		return
 	}
-	if !hasRecords(data) {
+	if !service.HasRecords(data) {
 		showNothingToExport(window)
 		return
 	}
@@ -466,18 +391,4 @@ func onIssuanceExportChosen(data []byte, window fyne.Window, writer fyne.URIWrit
 // save to a protected folder (Desktop, Documents, Downloads).
 func showSaveError(window fyne.Window, what string) {
 	dialog.ShowError(errors.New("could not save the "+what+" — on a Mac, check System Settings → Privacy & Security → Files and Folders"), window)
-}
-
-// hasRecords reports whether a log file's contents hold at least one record.
-// Unparseable contents count as records so a corrupt log can still be
-// exported for inspection.
-func hasRecords(data []byte) bool {
-	if len(bytes.TrimSpace(data)) == 0 {
-		return false
-	}
-	var records []json.RawMessage
-	if err := json.Unmarshal(data, &records); err != nil {
-		return true
-	}
-	return len(records) > 0
 }

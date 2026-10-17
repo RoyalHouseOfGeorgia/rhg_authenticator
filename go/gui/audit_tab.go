@@ -2,10 +2,7 @@ package gui
 
 import (
 	"fmt"
-	"strings"
 	"sync/atomic"
-	"time"
-	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -13,50 +10,8 @@ import (
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
-
-const (
-	commitsPerPage    = 50
-	maxCommitMsgRunes = 80
-)
-
-// formatCommitSummary returns a one-line summary for the audit list.
-func formatCommitSummary(c ghapi.RegistryCommit) string {
-	// Date: parse RFC3339, fall back to raw string.
-	dateStr := strings.TrimSpace(c.Commit.Author.Date)
-	if t, err := time.Parse(time.RFC3339, dateStr); err == nil {
-		dateStr = t.Format("2006-Jan-02")
-	}
-
-	// Author: fall back to "Unknown".
-	author := strings.TrimSpace(c.Commit.Author.Name)
-	if author == "" {
-		author = "Unknown"
-	}
-
-	// Message: first line only, truncated.
-	msg := strings.TrimSpace(c.Commit.Message)
-	if msg == "" {
-		msg = "(no message)"
-	} else {
-		msg = strings.SplitN(msg, "\n", 2)[0]
-	}
-	msg = truncateRunes(msg, maxCommitMsgRunes)
-
-	return fmt.Sprintf("%s  %s — %s", dateStr, author, msg)
-}
-
-// truncateRunes truncates s to maxLen runes, appending "..." if truncated.
-func truncateRunes(s string, maxLen int) string {
-	if maxLen <= 0 {
-		return ""
-	}
-	if utf8.RuneCountInString(s) <= maxLen {
-		return s
-	}
-	runes := []rune(s)
-	return string(runes[:maxLen]) + "..."
-}
 
 // NewAuditTab creates the registry audit tab UI showing GitHub commit history.
 func NewAuditTab(window fyne.Window) *fyne.Container {
@@ -78,7 +33,7 @@ func NewAuditTab(window fyne.Window) *fyne.Container {
 			if id < 0 || id >= len(commits) {
 				return
 			}
-			label.SetText(formatCommitSummary(commits[id]))
+			label.SetText(service.FormatCommitSummary(commits[id]))
 		},
 	)
 
@@ -104,7 +59,7 @@ func NewAuditTab(window fyne.Window) *fyne.Container {
 		statusLabel.SetText("Fetching...")
 		currentETag := lastETag // capture under UI thread
 		safego.Go(func() {
-			result, newETag, err := ghapi.FetchRegistryCommits("", commitsPerPage, currentETag)
+			result, newETag, err := ghapi.FetchRegistryCommits("", service.CommitsPerPage, currentETag)
 			fyne.Do(func() {
 				fetching.Store(false)
 				refreshBtn.Enable()

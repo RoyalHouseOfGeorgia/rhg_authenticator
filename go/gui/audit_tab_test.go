@@ -1,84 +1,10 @@
 package gui
 
 import (
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-
-	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 )
-
-// --- formatCommitSummary tests ---
-
-func TestFormatCommitSummary(t *testing.T) {
-	c := ghapi.RegistryCommit{SHA: "abc123"}
-	c.Commit.Message = "Fix registry"
-	c.Commit.Author.Name = "Kimon"
-	c.Commit.Author.Date = "2026-03-15T10:00:00Z"
-
-	got := formatCommitSummary(c)
-	want := "2026-Mar-15  Kimon — Fix registry"
-	if got != want {
-		t.Errorf("formatCommitSummary = %q, want %q", got, want)
-	}
-}
-
-func TestFormatCommitSummary_LongMessage(t *testing.T) {
-	c := ghapi.RegistryCommit{}
-	c.Commit.Message = strings.Repeat("a", 100)
-	c.Commit.Author.Name = "Author"
-	c.Commit.Author.Date = "2026-03-15T10:00:00Z"
-
-	got := formatCommitSummary(c)
-	if !strings.HasSuffix(got, "...") {
-		t.Error("long message should be truncated with '...'")
-	}
-	// The message portion should be 80 runes + "..."
-	// Extract the part after " — "
-	parts := strings.SplitN(got, " — ", 2)
-	if len(parts) != 2 {
-		t.Fatalf("unexpected format: %q", got)
-	}
-	msgRunes := []rune(parts[1])
-	// 80 runes + 3 for "..."
-	if len(msgRunes) != 83 {
-		t.Errorf("truncated message rune count = %d, want 83", len(msgRunes))
-	}
-}
-
-func TestFormatCommitSummary_MultilineMessage(t *testing.T) {
-	c := ghapi.RegistryCommit{}
-	c.Commit.Message = "line1\nline2\nline3"
-	c.Commit.Author.Name = "Author"
-	c.Commit.Author.Date = "2026-03-15T10:00:00Z"
-
-	got := formatCommitSummary(c)
-	if strings.Contains(got, "line2") {
-		t.Error("multiline message should only show first line")
-	}
-	if !strings.Contains(got, "line1") {
-		t.Error("should contain first line")
-	}
-}
-
-func TestFormatCommitSummary_EmptyFields(t *testing.T) {
-	c := ghapi.RegistryCommit{}
-	c.Commit.Message = ""
-	c.Commit.Author.Name = ""
-	c.Commit.Author.Date = "not-a-date"
-
-	got := formatCommitSummary(c)
-	if !strings.Contains(got, "Unknown") {
-		t.Errorf("empty author should show 'Unknown', got: %q", got)
-	}
-	if !strings.Contains(got, "(no message)") {
-		t.Errorf("empty message should show '(no message)', got: %q", got)
-	}
-	if !strings.Contains(got, "not-a-date") {
-		t.Errorf("bad date should use raw string, got: %q", got)
-	}
-}
 
 // --- atomic.Bool guard pattern tests ---
 // These verify the CompareAndSwap guard used in doFetch is race-free.

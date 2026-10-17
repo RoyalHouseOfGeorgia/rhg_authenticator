@@ -2,7 +2,6 @@ package gui
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,9 +9,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
-
-	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
 
 // Note on test coverage for this file: the login-dependent widget glue in
@@ -20,49 +16,11 @@ import (
 // driver-tested here. NewHistoryTab kicks off fetchRevocations at construction
 // (a real network fetch + goroutine), and under the Fyne test driver its
 // fyne.Do body runs inline on that goroutine, racing any synchronous
-// refreshLoginState() call (trips -race). The compensating coverage is: this
-// pure shouldEnableRevoke table test (the decision logic), the regmgr
+// refreshLoginState() call (trips -race). The compensating coverage is: the
+// pure service.ShouldEnableRevoke table test (the decision logic), the regmgr
 // updateLoginUI observer tests (the push wiring), and a manual /verify pass on a
 // target platform (the pixels). Do not "add the missing construction test" — it
 // reintroduces the race.
-
-// TestShouldEnableRevoke pins the Revoke-enable rule: enabled only when a usable
-// client exists AND the revocation cache is ready AND a record is selected AND
-// that record is not revoked. Covers the nil-safe form (selected == nil, the
-// login-refresh case), the not-ready cache (failed/pending fetch), the nil
-// revoked map (startup), and case-insensitive revocation lookup both directions
-// (production stores keys lowercase).
-func TestShouldEnableRevoke(t *testing.T) {
-	rec := &log.IssuanceRecord{PayloadSHA256: "abc123"}
-	recMixed := &log.IssuanceRecord{PayloadSHA256: "ABC123"} // same hash, mixed case
-
-	tests := []struct {
-		name       string
-		clientNil  bool
-		cacheReady bool
-		selected   *log.IssuanceRecord
-		revoked    map[string]bool
-		want       bool
-	}{
-		{"no usable client", true, true, rec, map[string]bool{}, false},
-		{"cache not ready (failed/pending fetch)", false, false, rec, map[string]bool{}, false},
-		{"nil selection (no panic)", false, true, nil, map[string]bool{}, false},
-		{"nil revoked map (startup)", false, true, rec, nil, true},
-		{"selected and revoked", false, true, rec, map[string]bool{"abc123": true}, false},
-		{"selected not revoked", false, true, rec, map[string]bool{}, true},
-		{"mixed-case hash present in revoked", false, true, recMixed, map[string]bool{"abc123": true}, false},
-		{"mixed-case hash absent from revoked", false, true, recMixed, map[string]bool{"other": true}, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldEnableRevoke(tt.clientNil, tt.cacheReady, tt.selected, tt.revoked); got != tt.want {
-				t.Errorf("shouldEnableRevoke(%v, %v, %+v, %v) = %v, want %v",
-					tt.clientNil, tt.cacheReady, tt.selected, tt.revoked, got, tt.want)
-			}
-		})
-	}
-}
 
 // TestOnIssuanceExportChosen covers the export save callback: success,
 // save-dialog error, cancel, and a failed write. Each case gets its own
@@ -167,63 +125,6 @@ func TestOnIssuanceExportTapped(t *testing.T) {
 			}
 			if !strings.Contains(strings.ToLower(texts), strings.ToLower(tc.wantText)) {
 				t.Errorf("dialog missing %q:\n%s", tc.wantText, texts)
-			}
-		})
-	}
-}
-
-func TestHasRecords(t *testing.T) {
-	tests := map[string]bool{
-		"":                       false,
-		" \n\t":                  false,
-		"[]":                     false,
-		"[\n  {},\n  {}\n]":      true,
-		"not json":               true, // exported anyway for inspection
-		`{"recipient":"object"}`: true,
-	}
-	for in, want := range tests {
-		if got := hasRecords([]byte(in)); got != want {
-			t.Errorf("hasRecords(%q) = %v, want %v", in, got, want)
-		}
-	}
-}
-
-// TestRevokeFailureAction pins the revocation-PR error classification: only a
-// 401 (directly or wrapped) restarts login; already-revoked and pending
-// errors (directly or wrapped) are informational; every other error maps to
-// ghapi.UserMessage and never echoes the raw error text into the dialog.
-func TestRevokeFailureAction(t *testing.T) {
-	const sessionExpired = "Your GitHub session expired. Please log in again."
-	secret := "dial tcp internal.example:443: secret-detail"
-	tests := []struct {
-		name             string
-		err              error
-		wantUnauthorized bool
-		wantInfoTitle    string
-		wantMsg          string // checked only when non-empty
-	}{
-		{"401", &ghapi.APIError{StatusCode: 401, Message: "Bad credentials"}, true, "", sessionExpired},
-		{"wrapped 401", fmt.Errorf("create branch: %w", &ghapi.APIError{StatusCode: 401}), true, "", sessionExpired},
-		{"non-401", &ghapi.APIError{StatusCode: 500, Message: secret}, false, "", ""},
-		{"already revoked", ghapi.ErrAlreadyRevoked, false, "Already Revoked", ghapi.UserMessage(ghapi.ErrAlreadyRevoked)},
-		{"wrapped already revoked", fmt.Errorf("x: %w", ghapi.ErrAlreadyRevoked), false, "Already Revoked", ghapi.UserMessage(ghapi.ErrAlreadyRevoked)},
-		{"pending", ghapi.ErrRevocationPending, false, "Revocation Pending", ghapi.UserMessage(ghapi.ErrRevocationPending)},
-		{"wrapped pending", fmt.Errorf("x: %w", ghapi.ErrRevocationPending), false, "Revocation Pending", ghapi.UserMessage(ghapi.ErrRevocationPending)},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			unauthorized, infoTitle, msg := revokeFailureAction(tc.err)
-			if unauthorized != tc.wantUnauthorized {
-				t.Errorf("unauthorized = %v, want %v", unauthorized, tc.wantUnauthorized)
-			}
-			if infoTitle != tc.wantInfoTitle {
-				t.Errorf("infoTitle = %q, want %q", infoTitle, tc.wantInfoTitle)
-			}
-			if tc.wantMsg != "" && msg != tc.wantMsg {
-				t.Errorf("msg = %q, want %q", msg, tc.wantMsg)
-			}
-			if strings.Contains(msg, "secret-detail") {
-				t.Errorf("msg leaks raw error text: %q", msg)
 			}
 		})
 	}
