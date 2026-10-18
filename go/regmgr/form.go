@@ -180,18 +180,13 @@ func showAddDialog(window fyne.Window, svc *service.App, onAdded func()) {
 
 // showEditDialog shows a dialog for editing entry, the registry entry at
 // index; onSaved runs after svc accepted the change.
-func showEditDialog(window fyne.Window, svc *service.App, index int, entry core.KeyEntry, onSaved func()) {
+func showEditDialog(window fyne.Window, svc *service.App, index int, entry service.RegistryEntry, onSaved func()) {
 	authorityEntry := widget.NewEntry()
 	authorityEntry.SetText(entry.Authority)
 
 	fromDP := newDatePickerRow(window, entry.From)
 
-	hasExpiry := entry.To != nil
-	initialTo := ""
-	if hasExpiry {
-		initialTo = *entry.To
-	}
-	toDP, noExpiryCheck := newExpirySection(window, initialTo, hasExpiry)
+	toDP, noExpiryCheck := newExpirySection(window, entry.To, !entry.NoExpiry)
 
 	// Public key is read-only for edit.
 	keyLabel := widget.NewLabel(entry.PublicKey)

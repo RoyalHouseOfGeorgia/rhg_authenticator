@@ -48,7 +48,7 @@ func friendlyYubiKeyError(err error) string {
 	case core.HwErrHardware:
 		return "YubiKey not detected. Ensure the key is plugged in."
 	default:
-		return "Failed to connect to YubiKey. Use Help → Export Error Log… for details."
+		return "Failed to connect to YubiKey. Export the error log for details."
 	}
 }
 
@@ -90,6 +90,16 @@ func capitalize(s string) string {
 		return s
 	}
 	return string(unicode.ToUpper(r)) + s[size:]
+}
+
+// sentence capitalizes s and ends it with a full stop unless it already ends
+// with terminal punctuation.
+func sentence(s string) string {
+	s = capitalize(s)
+	if s == "" || strings.HasSuffix(s, ".") || strings.HasSuffix(s, "?") || strings.HasSuffix(s, "!") {
+		return s
+	}
+	return s + "."
 }
 
 // signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
@@ -154,15 +164,15 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	if errors.As(err, &sfe) {
 		switch sfe.Phase {
 		case phaseExportKey:
-			return "Failed to read YubiKey. Use Help → Export Error Log… for details."
+			return "Failed to read YubiKey. Export the error log for details."
 		case phaseQR:
-			return "QR generation failed. Use Help → Export Error Log… for details."
+			return "QR generation failed. Export the error log for details."
 		case phaseSign:
 			logger.Log(core.SanitizeForLog(sfe.Error()))
-			return "Signing failed. Use Help → Export Error Log… for details."
+			return "Signing failed. Export the error log for details."
 		default:
 			logger.Log(core.SanitizeForLog(sfe.Error()))
-			return "Unexpected error. Use Help → Export Error Log… for details."
+			return "Unexpected error. Export the error log for details."
 		}
 	}
 	// Adapter open failures arrive here (not wrapped in signFlowError).
@@ -178,5 +188,5 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	if cat != "" {
 		return friendlyYubiKeyError(err)
 	}
-	return "Signing failed. Use Help → Export Error Log… for details."
+	return "Signing failed. Export the error log for details."
 }

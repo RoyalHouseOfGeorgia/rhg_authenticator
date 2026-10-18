@@ -53,12 +53,13 @@ func BuildIssueBody(version, errType, errMsg string) string {
 	return b.String()
 }
 
-// ReportIssue attempts to file a GitHub issue via the API. If the user
-// is not logged in or offline, it returns a pre-filled browser URL instead.
-func ReportIssue(ctx context.Context, kr ghapi.Keyring, configDir string, title, body string) (resultURL string, err error) {
+// ReportIssue attempts to file a GitHub issue via the API and returns its URL
+// with filed set. If the user is not logged in or offline, or the API call
+// fails, it returns a pre-filled browser URL instead.
+func ReportIssue(ctx context.Context, kr ghapi.Keyring, configDir string, title, body string) (resultURL string, filed bool) {
 	tok, _, loggedIn, offline, err := restoreSessionFunc(ctx, kr, configDir)
 	if err != nil {
-		return browserURL(title, body), nil
+		return browserURL(title, body), false
 	}
 
 	if loggedIn && !offline {
@@ -66,13 +67,13 @@ func ReportIssue(ctx context.Context, kr ghapi.Keyring, configDir string, title,
 		result, createErr := client.CreateIssue(ctx, title, body, []string{"bug", "auto-reported"})
 		if createErr != nil {
 			// Fall through to browser URL on API failure.
-			return browserURL(title, body), nil
+			return browserURL(title, body), false
 		}
-		return result.HTMLURL, nil
+		return result.HTMLURL, true
 	}
 
 	// Logged in but offline, or not logged in — use browser fallback.
-	return browserURL(title, body), nil
+	return browserURL(title, body), false
 }
 
 // browserURL constructs a pre-filled GitHub new-issue URL. The body is

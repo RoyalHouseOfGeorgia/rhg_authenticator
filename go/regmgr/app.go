@@ -19,7 +19,7 @@ import (
 )
 
 // tableColumnWidths defines the minimum widths for each column of
-// service.RegistryColumns.
+// service.RegistryColumns().
 var tableColumnWidths = []float32{40, 200, 100, 100, 150, 200, 450}
 
 // RegistryTab is the registry manager UI on top of service.App. Its methods
@@ -28,7 +28,8 @@ type RegistryTab struct {
 	Content     fyne.CanvasObject
 	svc         *service.App
 	snap        service.RegistrySnapshot
-	selected    int // selected table row, -1 = none
+	columns     []string // service.RegistryColumns()
+	selected    int      // selected table row, -1 = none
 	table       *widget.Table
 	statusLabel *widget.Label
 	loginBtn    *widget.Button
@@ -175,27 +176,26 @@ func (rt *RegistryTab) hideLoginDialog() {
 // handleSubmitError shows the dialog for a SubmitRegistry error and, if the
 // session expired (SubmitRegistry has already logged out), restarts login.
 func (rt *RegistryTab) handleSubmitError(err error) {
-	title, msg := service.SubmitErrorMessage(err)
 	switch {
-	case ghapi.IsUnauthorized(err):
-		dialog.ShowInformation(title, msg, rt.window)
+	case errors.Is(err, service.ErrSessionExpired):
+		dialog.ShowInformation("Session Expired", err.Error(), rt.window)
 		rt.StartLogin()
 		return
 	case errors.Is(err, service.ErrRegistryChanged):
-		dialog.ShowInformation(title, msg, rt.window)
+		dialog.ShowInformation("Registry Changed", err.Error(), rt.window)
 	default:
-		gui.ShowErrorWithLogExport(title, msg, rt.svc.ErrorLogExport, rt.window)
+		gui.ShowErrorWithLogExport("Submission Failed", err.Error(), rt.svc.ErrorLogExport, rt.window)
 	}
 	rt.statusLabel.SetText("")
 }
 
 // handleSubmitSuccess shows the created pull request.
-func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
-	rt.statusLabel.SetText(fmt.Sprintf("PR #%d created", pr.Number))
+func (rt *RegistryTab) handleSubmitSuccess(pr service.SubmitResult) {
+	rt.statusLabel.SetText(fmt.Sprintf("PR #%d created", pr.PRNumber))
 
-	if prURL := ghapi.ParseGitHubURL(pr.HTMLURL); prURL != nil {
+	if prURL := ghapi.ParseGitHubURL(pr.URL); prURL != nil {
 		dialog.ShowConfirm("Pull Request Created",
-			fmt.Sprintf("PR #%d has been created.\n\nOpen in browser?", pr.Number),
+			fmt.Sprintf("PR #%d has been created.\n\nOpen in browser?", pr.PRNumber),
 			func(ok bool) {
 				if ok {
 					_ = fyne.CurrentApp().OpenURL(prURL)
@@ -203,7 +203,7 @@ func (rt *RegistryTab) handleSubmitSuccess(pr ghapi.PRResult) {
 			}, rt.window)
 	} else {
 		dialog.ShowInformation("Pull Request Created",
-			fmt.Sprintf("PR #%d has been created.", pr.Number), rt.window)
+			fmt.Sprintf("PR #%d has been created.", pr.PRNumber), rt.window)
 	}
 }
 
@@ -237,6 +237,7 @@ func (rt *RegistryTab) submitForReview() {
 func NewRegistryTab(svc *service.App, events *gui.Events, window fyne.Window) *RegistryTab {
 	rt := &RegistryTab{
 		svc:         svc,
+		columns:     service.RegistryColumns(),
 		selected:    -1,
 		statusLabel: widget.NewLabel(""),
 		window:      window,
@@ -245,7 +246,7 @@ func NewRegistryTab(svc *service.App, events *gui.Events, window fyne.Window) *R
 
 	rt.table = widget.NewTable(
 		func() (int, int) {
-			return len(rt.snap.Rows) + 1, len(service.RegistryColumns) // +1 for header row
+			return len(rt.snap.Rows) + 1, len(rt.columns) // +1 for header row
 		},
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("placeholder")
@@ -260,7 +261,7 @@ func NewRegistryTab(svc *service.App, events *gui.Events, window fyne.Window) *R
 			label.Truncation = fyne.TextTruncateEllipsis
 			if id.Row == 0 {
 				// Header row.
-				label.SetText(service.RegistryColumns[id.Col])
+				label.SetText(rt.columns[id.Col])
 				label.TextStyle = fyne.TextStyle{Bold: true}
 				return
 			}

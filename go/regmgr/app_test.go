@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 
 	"fyne.io/fyne/v2/test"
@@ -17,9 +16,9 @@ import (
 const unreachable = "http://127.0.0.1:1"
 
 func TestTableColumnWidths(t *testing.T) {
-	if len(service.RegistryColumns) != len(tableColumnWidths) {
+	if len(service.RegistryColumns()) != len(tableColumnWidths) {
 		t.Errorf("RegistryColumns (%d) and tableColumnWidths (%d) length mismatch",
-			len(service.RegistryColumns), len(tableColumnWidths))
+			len(service.RegistryColumns()), len(tableColumnWidths))
 	}
 }
 
@@ -31,8 +30,8 @@ func TestNewRegistryTab_LoadedAtStartup(t *testing.T) {
 	if rt.loginBtn.Text != "Login to GitHub" {
 		t.Errorf("loginBtn = %q", rt.loginBtn.Text)
 	}
-	if rows, cols := rt.table.Length(); rows != 2 || cols != len(service.RegistryColumns) {
-		t.Errorf("table = %dx%d, want 2x%d", rows, cols, len(service.RegistryColumns))
+	if rows, cols := rt.table.Length(); rows != 2 || cols != len(service.RegistryColumns()) {
+		t.Errorf("table = %dx%d, want 2x%d", rows, cols, len(service.RegistryColumns()))
 	}
 	if got := rt.snap.Rows[0][1]; got != "Auth A" {
 		t.Errorf("authority cell = %q", got)
@@ -176,8 +175,8 @@ func TestLoginDone(t *testing.T) {
 	})
 	t.Run("error", func(t *testing.T) {
 		rt, _ := newTestRegistryTab(t, unreachable)
-		rt.loginDone(service.AuthState{}, errors.New("device code request failed: boom"))
-		if rt.statusLabel.Text != "" || !overlayHasText(topOverlay(t, rt), "Error") {
+		rt.loginDone(service.AuthState{}, errors.New("An error occurred. Please try again later."))
+		if top := topOverlay(t, rt); rt.statusLabel.Text != "" || !overlayHasText(top, "Error") || !overlayHasText(top, "An error occurred. Please try again later.") {
 			t.Errorf("status = %q", rt.statusLabel.Text)
 		}
 	})
@@ -218,15 +217,15 @@ func TestHandleSubmitError(t *testing.T) {
 		wantDialog string
 		wantLogins int
 	}{
-		{"unauthorized", fmt.Errorf("submit: %w", &ghapi.APIError{StatusCode: 401}), "Session Expired", 1},
+		{"session expired", fmt.Errorf("submit: %w", service.ErrSessionExpired), "Session Expired", 1},
 		{"registry changed", fmt.Errorf("submit: %w", service.ErrRegistryChanged), "Registry Changed", 0},
-		{"generic", &ghapi.APIError{StatusCode: 429}, "Submission Failed", 0},
+		{"generic", errors.New("GitHub rate limit reached. Try again in a few minutes."), "Submission Failed", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rt, logins := newTestRegistryTab(t, unreachable)
 			rt.statusLabel.SetText("Creating pull request...")
 			rt.handleSubmitError(tc.err)
-			if !overlayHasText(topOverlay(t, rt), tc.wantDialog) {
+			if top := topOverlay(t, rt); !overlayHasText(top, tc.wantDialog) || !overlayHasText(top, tc.err.Error()) {
 				t.Errorf("want the %q dialog", tc.wantDialog)
 			}
 			if len(logins) != tc.wantLogins {
@@ -246,7 +245,7 @@ func TestHandleSubmitError(t *testing.T) {
 func TestHandleSubmitSuccess(t *testing.T) {
 	for _, u := range []string{"https://github.com/owner/repo/pull/42", "http://insecure.example.com/pull/42", "", "://bad-url"} {
 		rt, _ := newTestRegistryTab(t, unreachable)
-		rt.handleSubmitSuccess(ghapi.PRResult{Number: 42, HTMLURL: u})
+		rt.handleSubmitSuccess(service.SubmitResult{PRNumber: 42, URL: u})
 		if rt.statusLabel.Text != "PR #42 created" {
 			t.Errorf("%q: status = %q", u, rt.statusLabel.Text)
 		}
@@ -318,6 +317,29 @@ func TestEditDialog_SaveMarksDirty(t *testing.T) {
 	}
 }
 
+// TestEditDialog_PrefillsExpiry saves the dialog unchanged: the To date or
+// no-expiry choice it was opened with must come back, and the entry's
+// allowed_honors must survive.
+func TestEditDialog_PrefillsExpiry(t *testing.T) {
+	rt, _ := newTestRegistryTab(t, registryServer(t))
+	original := rt.snap.Entries[0]
+	if !original.NoExpiry || original.To != "" {
+		t.Fatalf("served entry = %+v, want no expiry", original)
+	}
+	dated := original
+	dated.To, dated.NoExpiry = "2027-01-01", false
+	for _, entry := range []service.RegistryEntry{dated, original} {
+		showEditDialog(rt.window, rt.svc, 0, entry, rt.refreshTable)
+		test.Tap(findButton(t, topOverlay(t, rt), "Save"))
+		if got := rt.snap.Entries[0]; got != entry {
+			t.Errorf("saved %+v, want %+v", got, entry)
+		}
+		if got := rt.snap.Rows[0][4]; got != "Other" {
+			t.Errorf("restrictions cell = %q, want Other", got)
+		}
+	}
+}
+
 func TestEditDialog_StaleEntryShowsError(t *testing.T) {
 	rt, _ := newTestRegistryTab(t, registryServer(t))
 	stale := rt.snap.Entries[0]
@@ -338,7 +360,7 @@ func TestAddDialog_ValidationError(t *testing.T) {
 	showAddDialog(rt.window, rt.svc, rt.refreshTable)
 	top := topOverlay(t, rt)
 	test.Tap(findButton(t, top, "Add"))
-	if !overlayHasText(top, "Authority is required") {
+	if !overlayHasText(top, "Authority is required.") {
 		t.Error("validation error not shown")
 	}
 	if rt.window.Canvas().Overlays().Top() != top || len(rt.snap.Entries) != 0 {

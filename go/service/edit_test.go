@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,7 +64,7 @@ func TestAddEntry(t *testing.T) {
 	h := newAppHarness(t, nil)
 	key := testKeyB64(1)
 
-	if err := h.app.AddEntry(EntryForm{From: "2026-01-01", NoExpiry: true}, key); err == nil || err.Error() != "Authority is required" {
+	if err := h.app.AddEntry(EntryForm{From: "2026-01-01", NoExpiry: true}, key); err == nil || err.Error() != "Authority is required." {
 		t.Errorf("err = %v, want the validation message", err)
 	}
 	if h.app.Registry().Dirty || h.app.Dirty() {
@@ -84,14 +85,18 @@ func TestAddEntry(t *testing.T) {
 	if !snap.Dirty || !snap.Loaded || !h.app.Dirty() || len(snap.Entries) != 2 {
 		t.Fatalf("snapshot = %+v", snap)
 	}
-	e := snap.Entries[0]
-	if e.Authority != "Authority A" || e.To == nil || *e.To != "2027-01-01" || e.PublicKey != key || e.Algorithm != core.SupportedAlgorithm {
-		t.Errorf("entry = %+v", e)
+	wantEntries := []RegistryEntry{
+		{Authority: "Authority A", From: "2026-01-01", To: "2027-01-01", PublicKey: key, Note: "n"},
+		{Authority: "Authority A", From: "2026-01-01", NoExpiry: true, PublicKey: key, Note: "n"},
 	}
-	if snap.Entries[1].To != nil {
-		t.Error("NoExpiry entry has a To date")
+	if !reflect.DeepEqual(snap.Entries, wantEntries) {
+		t.Errorf("entries = %+v, want %+v", snap.Entries, wantEntries)
 	}
-	fp, _ := core.KeyFingerprint(e)
+	stored := h.app.edit.Keys[0]
+	if stored.To == nil || *stored.To != "2027-01-01" || stored.Algorithm != core.SupportedAlgorithm || h.app.edit.Keys[1].To != nil {
+		t.Errorf("stored entries = %+v", h.app.edit.Keys)
+	}
+	fp, _ := core.KeyFingerprint(stored)
 	want := []string{"1", "Authority A", core.FormatDateDisplay("2026-01-01"), core.FormatDateDisplay("2027-01-01"), "(none)", "n", fp}
 	if !reflect.DeepEqual(snap.Rows[0], want) {
 		t.Errorf("row = %v, want %v", snap.Rows[0], want)
@@ -117,10 +122,58 @@ func TestRegistry_InvalidKeyAndCopy(t *testing.T) {
 	}
 }
 
+func TestRegistryColumns_ReturnsCopy(t *testing.T) {
+	want := []string{"#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"}
+	cols := RegistryColumns()
+	if !reflect.DeepEqual(cols, want) {
+		t.Fatalf("RegistryColumns() = %q, want %q", cols, want)
+	}
+	cols[0] = "mutated"
+	if got := RegistryColumns(); !reflect.DeepEqual(got, want) {
+		t.Errorf("RegistryColumns() after mutating a result = %q", got)
+	}
+}
+
+// TestRegistryEntry_RoundTripThroughUpdateEntry saves an entry unchanged the
+// way an edit dialog does, from the RegistryEntry Registry returned: the
+// entry, its row and its stored extra fields must survive.
+func TestRegistryEntry_RoundTripThroughUpdateEntry(t *testing.T) {
+	h := newAppHarness(t, nil)
+	to := "2027-06-30"
+	extra := map[string]json.RawMessage{"allowed_honors": json.RawMessage(`["Other"]`)}
+	loadRegistry(t, h, core.Registry{Keys: []core.KeyEntry{
+		{Authority: "A", From: "2025-01-01", To: &to, Algorithm: core.SupportedAlgorithm, PublicKey: testKeyB64(1), Note: "first", Extra: extra},
+		{Authority: "B", From: "2025-02-01", Algorithm: core.SupportedAlgorithm, PublicKey: testKeyB64(2)},
+	}})
+	before := h.app.Registry()
+	wantEntries := []RegistryEntry{
+		{Authority: "A", From: "2025-01-01", To: "2027-06-30", PublicKey: testKeyB64(1), Note: "first"},
+		{Authority: "B", From: "2025-02-01", NoExpiry: true, PublicKey: testKeyB64(2)},
+	}
+	if !reflect.DeepEqual(before.Entries, wantEntries) {
+		t.Fatalf("entries = %+v, want %+v", before.Entries, wantEntries)
+	}
+	storedExtra := h.app.edit.Keys[0].Extra
+
+	for i, e := range before.Entries {
+		f := EntryForm{Authority: e.Authority, From: e.From, To: e.To, NoExpiry: e.NoExpiry, Note: e.Note}
+		if err := h.app.UpdateEntry(i, e.PublicKey, f); err != nil {
+			t.Fatalf("UpdateEntry(%d): %v", i, err)
+		}
+	}
+	after := h.app.Registry()
+	if !reflect.DeepEqual(after.Entries, before.Entries) || !reflect.DeepEqual(after.Rows, before.Rows) {
+		t.Errorf("round trip changed the registry:\n before %+v\n after  %+v", before, after)
+	}
+	if got := h.app.edit.Keys[0].Extra; got == nil || !reflect.DeepEqual(got, storedExtra) {
+		t.Errorf("stored Extra = %s, want %s", got, storedExtra)
+	}
+}
+
 func TestEditsRefusedUntilLoaded(t *testing.T) {
 	h := newAppHarness(t, nil)
-	if err := h.app.AddEntry(validForm(), testKeyB64(1)); !errors.Is(err, errNotLoaded) {
-		t.Errorf("AddEntry before load = %v, want errNotLoaded", err)
+	if err := h.app.AddEntry(validForm(), testKeyB64(1)); !errors.Is(err, ErrRegistryNotLoaded) {
+		t.Errorf("AddEntry before load = %v, want ErrRegistryNotLoaded", err)
 	}
 	if h.app.Dirty() {
 		t.Error("refused edit marked the registry dirty")
@@ -133,6 +186,7 @@ func TestUpdateEntry(t *testing.T) {
 	extra := map[string]json.RawMessage{"allowed_honors": json.RawMessage(`["Other"]`)}
 	loadRegistry(t, h, core.Registry{Keys: []core.KeyEntry{{Authority: "A", From: "2025-01-01", Algorithm: core.SupportedAlgorithm, PublicKey: key, Extra: extra}}})
 	before := h.app.Registry()
+	storedExtra := h.app.edit.Keys[0].Extra
 
 	for name, call := range map[string]func() error{
 		"mismatched key": func() error { return h.app.UpdateEntry(0, testKeyB64(2), validForm()) },
@@ -153,8 +207,11 @@ func TestUpdateEntry(t *testing.T) {
 	}
 	snap := h.app.Registry()
 	e := snap.Entries[0]
-	if !snap.Dirty || e.Authority != "Authority A" || e.Note != "n" || !reflect.DeepEqual(e.Extra, before.Entries[0].Extra) || e.Extra == nil {
+	if !snap.Dirty || e != (RegistryEntry{Authority: "Authority A", From: "2026-01-01", To: "2027-01-01", PublicKey: key, Note: "n"}) {
 		t.Errorf("updated = %+v, dirty %v", e, snap.Dirty)
+	}
+	if got := h.app.edit.Keys[0].Extra; got == nil || !reflect.DeepEqual(got, storedExtra) {
+		t.Errorf("stored Extra = %s, want the original %s", got, storedExtra)
 	}
 	if snap.Rows[0][4] != "Other" {
 		t.Errorf("restrictions cell = %q", snap.Rows[0][4])
@@ -190,8 +247,12 @@ func TestFetchRegistry_Failure(t *testing.T) {
 	}
 	h.app.registryURL = registryServer(t, http.StatusInternalServerError).URL
 
-	if err := h.app.FetchRegistry(context.Background()); err == nil {
-		t.Fatal("err = nil")
+	err := h.app.FetchRegistry(context.Background())
+	if err == nil || err.Error() != "Could not load the registry from GitHub. Check your connection and try again." {
+		t.Fatalf("err = %v, want the user-facing fetch message", err)
+	}
+	if causes := err.(interface{ Unwrap() []error }).Unwrap(); len(causes) != 1 || !strings.Contains(causes[0].Error(), "registry fetch failed") {
+		t.Errorf("causes = %v, want the fetch error", causes)
 	}
 	if snap := h.app.Registry(); !snap.Dirty || len(snap.Entries) != 1 {
 		t.Errorf("failed fetch changed the registry: %+v", snap)
@@ -201,6 +262,19 @@ func TestFetchRegistry_Failure(t *testing.T) {
 	}
 	if !strings.Contains(h.debugLog(t), "error: registry fetch failed") {
 		t.Error("failure not logged")
+	}
+}
+
+func TestFetchRegistry_InvalidUpstream(t *testing.T) {
+	h := newAppHarness(t, nil)
+	_, client := newSubmitFake(t, []byte(`{"keys":"nope"}`), http.StatusOK)
+	logIn(h, client)
+	err := h.app.FetchRegistry(context.Background())
+	if !errors.Is(err, errUpstreamInvalid) || err.Error() != "The registry on GitHub is invalid. Please report this to the maintainer." {
+		t.Errorf("err = %v, want the invalid-registry message", err)
+	}
+	if h.app.Registry().Loaded {
+		t.Error("an invalid registry was loaded")
 	}
 }
 
@@ -242,7 +316,8 @@ func TestImportCertificate(t *testing.T) {
 		t.Errorf("ImportCertificate = %q, %v", key, err)
 	}
 
-	if _, err := h.app.ImportCertificate(filepath.Join(h.dir, "missing.crt")); err == nil || !strings.HasPrefix(err.Error(), "Failed to read file: ") {
+	if _, err := h.app.ImportCertificate(filepath.Join(h.dir, "missing.crt")); !errors.Is(err, fs.ErrNotExist) ||
+		!strings.HasPrefix(err.Error(), "Failed to read file: ") || !strings.HasSuffix(err.Error(), ".") {
 		t.Errorf("missing file err = %v", err)
 	}
 
@@ -250,7 +325,7 @@ func TestImportCertificate(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("garbage\x1b[31m"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.app.ImportCertificate(bad); err == nil || !strings.HasPrefix(err.Error(), "not a valid certificate") {
+	if _, err := h.app.ImportCertificate(bad); err == nil || !strings.HasPrefix(err.Error(), "Not a valid certificate: ") || !strings.HasSuffix(err.Error(), ".") {
 		t.Errorf("bad cert err = %v", err)
 	}
 }
@@ -264,7 +339,7 @@ func TestImportFromYubiKey(t *testing.T) {
 	}
 
 	h.openErr = errors.New("no YubiKey found")
-	if _, err := h.app.ImportFromYubiKey(); err == nil || err.Error() != "No YubiKey detected — plug in and try again" {
+	if _, err := h.app.ImportFromYubiKey(); err == nil || err.Error() != "No YubiKey detected — plug in and try again." {
 		t.Errorf("open error = %v", err)
 	}
 	if !strings.Contains(h.debugLog(t), "yubikey import: no YubiKey found") {
@@ -273,7 +348,7 @@ func TestImportFromYubiKey(t *testing.T) {
 
 	h.openErr = nil
 	h.signer = func(ed25519.PrivateKey) core.SigningAdapter { return &errorExportAdapter{} }
-	if _, err := h.app.ImportFromYubiKey(); err == nil || err.Error() != "No YubiKey detected — plug in and try again" {
+	if _, err := h.app.ImportFromYubiKey(); err == nil || err.Error() != "No YubiKey detected — plug in and try again." {
 		t.Errorf("export error = %v", err)
 	}
 
@@ -286,7 +361,7 @@ func TestImportFromYubiKey(t *testing.T) {
 
 func TestSubmitRegistry_Preconditions(t *testing.T) {
 	h := newAppHarness(t, nil)
-	if _, err := h.app.SubmitRegistry(context.Background()); err == nil || errors.Is(err, ErrNotLoggedIn) {
+	if _, err := h.app.SubmitRegistry(context.Background()); err == nil || err.Error() != "The registry has no entries to submit." {
 		t.Errorf("empty registry err = %v", err)
 	}
 	markLoaded(h)
@@ -314,15 +389,12 @@ func TestSubmitRegistry_InvalidRegistryLoggedAndExplained(t *testing.T) {
 	h.app.mu.Unlock()
 
 	_, err := h.app.SubmitRegistry(context.Background())
-	if !errors.Is(err, errRegistryInvalid) {
-		t.Fatalf("err = %v, want errRegistryInvalid", err)
+	if err == nil || !strings.HasPrefix(err.Error(), "The edited registry is invalid and was not submitted: registry validation failed: keys[0]") ||
+		!strings.HasSuffix(err.Error(), ".") || strings.Contains(err.Error(), "\x01") {
+		t.Errorf("err = %v, want the sanitized invalid-registry message", err)
 	}
 	if !strings.Contains(h.debugLog(t), "error: registry marshal failed") {
 		t.Error("marshal failure not logged")
-	}
-	title, msg := SubmitErrorMessage(err)
-	if title != "Submission Failed" || !strings.HasPrefix(msg, "The edited registry is invalid and was not submitted: registry validation failed: keys[0]") {
-		t.Errorf("message = %q / %q", title, msg)
 	}
 }
 
@@ -343,11 +415,41 @@ func TestSubmitRegistry_SuccessClearsDirty(t *testing.T) {
 	}
 
 	pr, err := h.app.SubmitRegistry(context.Background())
-	if err != nil || pr.Number != 7 {
-		t.Fatalf("SubmitRegistry = %+v, %v", pr, err)
+	want := SubmitResult{PRNumber: 7, URL: fmt.Sprintf("https://github.com/%s/%s/pull/7", ghapi.DefaultOwner, ghapi.DefaultRepo)}
+	if err != nil || pr != want {
+		t.Fatalf("SubmitRegistry = %+v, %v; want %+v", pr, err, want)
 	}
 	if h.app.Dirty() || h.app.Registry().Dirty {
 		t.Error("dirty not cleared after submit")
+	}
+}
+
+func TestSubmitRegistry_NonGitHubPRURLBlanked(t *testing.T) {
+	reg := core.Registry{Keys: []core.KeyEntry{testKeyEntry(t, "Key X", nil)}}
+	up, err := marshalRegistry(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newAppHarness(t, nil)
+	f, client := newSubmitFake(t, up, http.StatusOK)
+	f.prURL = "https://evil.example/pull/7"
+	logIn(h, client)
+	if err := h.app.FetchRegistry(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
+		t.Fatal(err)
+	}
+
+	pr, err := h.app.SubmitRegistry(context.Background())
+	if err != nil || pr != (SubmitResult{PRNumber: 7}) {
+		t.Errorf("SubmitRegistry = %+v, %v; want PR 7 with no URL", pr, err)
+	}
+	if h.app.Dirty() {
+		t.Error("dirty not cleared after submit")
+	}
+	if !strings.Contains(h.debugLog(t), "registry PR URL is not a GitHub URL: https://evil.example/pull/7") {
+		t.Error("blanked URL not logged")
 	}
 }
 
@@ -359,8 +461,11 @@ func TestSubmitRegistry_ErrorKeepsDirty(t *testing.T) {
 	if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.app.SubmitRegistry(context.Background()); !ghapi.IsUnauthorized(err) {
-		t.Errorf("err = %v, want unauthorized", err)
+	_, err := h.app.SubmitRegistry(context.Background())
+	var apiErr *ghapi.APIError
+	if !errors.Is(err, ErrSessionExpired) || !ghapi.IsUnauthorized(err) || !errors.As(err, &apiErr) ||
+		err.Error() != "Your GitHub session expired. Log in again, then submit again." {
+		t.Errorf("err = %v, want session expired wrapping the 401", err)
 	}
 	if !h.app.Dirty() {
 		t.Error("failed submit cleared dirty")
@@ -455,19 +560,44 @@ func TestSubmitRegistry_ConcurrentBusy(t *testing.T) {
 	}
 }
 
-func TestSubmitErrorMessage(t *testing.T) {
+func TestSubmitRegistry_ErrorTexts(t *testing.T) {
+	reg := core.Registry{Keys: []core.KeyEntry{testKeyEntry(t, "Main copy", nil)}}
+	up, err := marshalRegistry(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
-		err              error
-		wantTitle, inMsg string
+		name     string
+		upstream []byte
+		status   int
+		want     error // matched with errors.Is; nil = none
+		wantText string
 	}{
-		{fmt.Errorf("x: %w", &ghapi.APIError{StatusCode: 401}), "Session Expired", "session expired"},
-		{fmt.Errorf("x: %w", ErrRegistryChanged), "Registry Changed", "Fetch from Server"},
-		{&ghapi.APIError{StatusCode: 429}, "Submission Failed", "rate limit"},
-		{errors.New("timeout"), "Submission Failed", "try again later"},
+		{"registry changed", up, http.StatusOK, ErrRegistryChanged, ErrRegistryChanged.Error()},
+		{"rate limited", nil, http.StatusTooManyRequests, nil, "GitHub rate limit reached. Try again in a few minutes."},
+		{"server error", nil, http.StatusInternalServerError, nil, "An error occurred. Please try again later."},
 	} {
-		title, msg := SubmitErrorMessage(tc.err)
-		if title != tc.wantTitle || !strings.Contains(msg, tc.inMsg) {
-			t.Errorf("%v: got %q / %q", tc.err, title, msg)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			h := newAppHarness(t, nil)
+			_, client := newSubmitFake(t, tc.upstream, tc.status)
+			logIn(h, client)
+			markLoaded(h) // a base that never matches upstream
+			if err := h.app.AddEntry(validForm(), testKeyB64(1)); err != nil {
+				t.Fatal(err)
+			}
+			_, err := h.app.SubmitRegistry(context.Background())
+			if err == nil || err.Error() != tc.wantText {
+				t.Errorf("err = %v, want %q", err, tc.wantText)
+			}
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want matching %v", err, tc.want)
+			}
+			if errors.Is(err, ErrSessionExpired) || !h.app.AuthState().LoggedIn {
+				t.Error("non-401 failure reported as an expired session")
+			}
+		})
+	}
+	if !strings.HasPrefix(ErrRegistryChanged.Error(), "The registry on GitHub doesn't match the copy you loaded (it changed since).") {
+		t.Errorf("ErrRegistryChanged = %q", ErrRegistryChanged)
 	}
 }

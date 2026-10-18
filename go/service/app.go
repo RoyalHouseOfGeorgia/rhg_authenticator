@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,17 +32,40 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
-// Sentinel errors returned by App methods.
+// Sentinel errors returned by App methods. Like every error an App method
+// returns, their text is user-facing; a method may return one wrapped behind
+// its own message, so callers match them with errors.Is.
 var (
 	// ErrBusy is returned when a conflicting operation is already running
 	// (see App for the guard groups).
-	ErrBusy = errors.New("another operation is in progress")
+	ErrBusy = errors.New("Another operation is in progress.")
 	// ErrNoBulkPlan is returned when no bulk file has been loaded.
-	ErrNoBulkPlan = errors.New("no bulk file loaded")
+	ErrNoBulkPlan = errors.New("No bulk file loaded.")
 	// ErrNotLoggedIn is returned by SubmitRegistry and Revoke when there is no
 	// usable GitHub session (logged out or offline).
-	ErrNotLoggedIn = errors.New("not logged in to GitHub")
+	ErrNotLoggedIn = errors.New("Not logged in to GitHub.")
+	// ErrSessionExpired is matched by a SubmitRegistry or Revoke error when
+	// GitHub rejected the session (HTTP 401); the App has then logged out.
+	ErrSessionExpired = errors.New("Your GitHub session expired. Please log in again.")
+	// ErrNotFound is matched by a ReportSignError error when the report id is
+	// unknown or no longer the latest reportable failure.
+	ErrNotFound = errors.New("The requested item was not found.")
 )
+
+// userError is an error whose text is the user-facing msg, wrapping the
+// sentinels and causes in errs so errors.Is and errors.As still match them.
+type userError struct {
+	msg  string
+	errs []error
+}
+
+func (e *userError) Error() string   { return e.msg }
+func (e *userError) Unwrap() []error { return e.errs }
+
+// userErr returns an error with the user-facing text msg that wraps errs.
+func userErr(msg string, errs ...error) error {
+	return &userError{msg: msg, errs: errs}
+}
 
 // Prompter asks the operator for the YubiKey PIN.
 type Prompter interface {
@@ -98,7 +122,7 @@ type Config struct {
 	// RevocationURL is the published revocation list; empty or unreachable
 	// leaves revocations unavailable.
 	RevocationURL string
-	Keyring       ghapi.Keyring // GitHub token store; nil disables GitHub login and issue reports (then Login and Logout must not be called; Revoke and SubmitRegistry return ErrNotLoggedIn)
+	Keyring       ghapi.Keyring // GitHub token store; nil disables GitHub login and issue reports (Login then returns an error; Revoke and SubmitRegistry return ErrNotLoggedIn)
 	Prompter      Prompter
 	Events        Events
 }
@@ -116,19 +140,24 @@ type SignFields struct{ Recipient, Honor, Detail, Date string }
 // SignResult is a successful Sign. The text fields are what was signed
 // (trimmed and NFC-normalized). Warning is non-empty when the credential was
 // signed but not recorded in the issuance log; the UI shows it instead of a
-// plain success.
+// plain success. SVGFilename and PNGFilename are the default names for
+// saving the QR code with SaveQR.
 type SignResult struct {
 	Recipient, Honor, Detail, Date, URL, Hash8 string
 	Existing                                   bool
 	PNGPreview                                 []byte
 	Warning                                    string
+	SVGFilename, PNGFilename                   string
 }
 
-// SignError is a failed Sign. Message is the user-facing status text ("" for a cancel).
+// SignError is a failed Sign. Message is the user-facing status text ("" for
+// a cancel). ReportID, set only when OfferReport, is the opaque id to pass to
+// ReportSignError.
 type SignError struct {
 	Message     string
 	OfferReport bool
-	Err         error
+	ReportID    string
+	Err         error `json:"-"`
 }
 
 func (e *SignError) Error() string {
@@ -147,9 +176,25 @@ type BulkPlan struct {
 	PreviewNames, InvalidLines []string
 }
 
-// BulkOutcome summarizes a finished bulk run. The invalid rows are the
-// BulkPlan's InvalidLines; a run never changes them.
-type BulkOutcome struct{ SummaryLine, StopMessage string }
+// BulkStop is why a bulk run ended.
+type BulkStop string
+
+// Bulk run endings.
+const (
+	BulkCompleted BulkStop = "completed" // every to_sign row was attempted
+	BulkCancelled BulkStop = "cancelled" // CancelBulk, ctx or the PIN prompt cancelled it
+	BulkFailed    BulkStop = "failed"    // a sign-flow error stopped it
+)
+
+// BulkOutcome summarizes a finished bulk run. StopMessage is the
+// user-facing text for Stopped ("" when BulkCompleted). ResultsFilename is
+// the default name for ExportBulkResults, timestamped when the run finished.
+// The invalid rows are the BulkPlan's InvalidLines; a run never changes them.
+type BulkOutcome struct {
+	SummaryLine, StopMessage string
+	Stopped                  BulkStop
+	ResultsFilename          string
+}
 
 // BulkProgress is the EventBulkProgress payload.
 type BulkProgress struct {
@@ -157,8 +202,28 @@ type BulkProgress struct {
 	Name        string
 }
 
-// KeyCheck is the user-facing result of a YubiKey registry check.
+// ReportResult is a ReportSignError outcome. URL is the filed issue, or a
+// pre-filled new-issue form when the issue could not be filed through the API
+// (Filed false); it is "" unless an https github.com URL.
+type ReportResult struct {
+	URL   string
+	Filed bool
+}
+
+// KeyCheckResult is the outcome of a YubiKey registry check.
+type KeyCheckResult string
+
+// YubiKey registry check outcomes.
+const (
+	KeyCheckFound    KeyCheckResult = "found"    // the key matches a registry entry valid today
+	KeyCheckNotFound KeyCheckResult = "notFound" // the key was read but matches no valid entry
+	KeyCheckFailed   KeyCheckResult = "failed"   // the key could not be read (none plugged in, card error)
+)
+
+// KeyCheck is the result of a YubiKey registry check. Status and Details are
+// the user-facing text for Result.
 type KeyCheck struct {
+	Result  KeyCheckResult
 	Status  string
 	Details []string
 }
@@ -168,15 +233,15 @@ type KeyCheck struct {
 // Honors, LogPath, CancelBulk, AuthState, CancelLogin, Registry, AddEntry,
 // UpdateEntry, Dirty, History, Start and Close never block, and SaveQR,
 // Logout, ImportCertificate, IssuanceLogExport, ErrorLogExport,
-// DuplicatePreview and RemoveDuplicates do only short local work (file or
-// keyring I/O; SaveQR renders a PNG in about 0.1 s), so these may be called
-// on a UI thread; every other method may block on
-// file, card or network I/O or the PIN prompt and must not be called on a UI
-// thread. ErrBusy comes from independent guards: Sign, LoadBulk, RunBulk,
-// ExportBulkResults, CheckYubiKey and ImportFromYubiKey while another of them
-// runs; Login while another Login runs; SubmitRegistry while another submit
-// runs; Revoke while another Revoke runs; AuditCommits while another audit
-// fetch runs.
+// ExportIssuanceLog, ExportErrorLog, DuplicatePreview and RemoveDuplicates
+// do only short local work (file or keyring I/O; SaveQR renders a PNG in
+// about 0.1 s), so these may be called on a UI thread; every other method
+// may block on file, card or network I/O or the PIN prompt and must not be
+// called on a UI thread. ErrBusy comes from independent guards: Sign,
+// LoadBulk, RunBulk, ExportBulkResults, CheckYubiKey and ImportFromYubiKey
+// while another of them runs; Login while another Login runs; SubmitRegistry
+// while another submit runs; Revoke while another Revoke runs; AuditCommits
+// while another audit fetch runs; ReportSignError while another report runs.
 type App struct {
 	dataDir       string
 	logPath       string
@@ -198,12 +263,14 @@ type App struct {
 	validateToken     func(ctx context.Context, tok ghapi.Token) (string, error)
 	newClient         func(token string) *ghapi.Client
 	fetchCommits      func(baseURL string, perPage int, etag string) ([]ghapi.RegistryCommit, string, error)
+	reportIssue       func(ctx context.Context, kr ghapi.Keyring, configDir, title, body string) (string, bool)
 
 	busy       atomic.Bool
 	loggingIn  atomic.Bool
 	submitting atomic.Bool
 	revoking   atomic.Bool
 	auditing   atomic.Bool
+	reporting  atomic.Bool
 	// refreshingHistory makes an overlapping RefreshHistory skip its
 	// revocation fetch.
 	refreshingHistory atomic.Bool
@@ -224,6 +291,12 @@ type App struct {
 	baseBytes []byte
 	history   historyState
 	audit     auditState
+	// lastReport is the latest reportable Sign failure (nil = none); a newer
+	// one replaces it. reportSeq numbers them for SignError.ReportID.
+	// lastFiled is lastReport's issue once filed through the API (else nil).
+	lastReport *SignError
+	lastFiled  *ReportResult
+	reportSeq  uint64
 }
 
 // New cleans stale issuance-log temp files, fetches the registry (offline on
@@ -275,6 +348,7 @@ func New(cfg Config) (*App, error) {
 		validateToken:     ghapi.ValidateToken,
 		newClient:         ghapi.NewClient,
 		fetchCommits:      ghapi.FetchRegistryCommits,
+		reportIssue:       errorreport.ReportIssue,
 	}
 	return a, nil
 }
@@ -324,7 +398,9 @@ func (f SignFields) Validate() error {
 }
 
 // Sign validates f, prompts for the PIN if needed, and signs and logs the
-// credential. A failure is a *SignError, except ErrBusy.
+// credential. A failure is a *SignError, except ErrBusy. A reportable failure
+// (OfferReport) becomes the one ReportSignError can file, replacing any
+// earlier one.
 func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 	if !a.busy.CompareAndSwap(false, true) {
 		return SignResult{}, ErrBusy
@@ -342,11 +418,21 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 		a.logger)
 	if err != nil {
 		clearPINCacheOnAuthError(err, a.pinCache)
-		return SignResult{}, &SignError{
+		se := &SignError{
 			Message:     signFlowErrorMessage(err, a.logger),
 			OfferReport: offerIssueReport(err) && a.keyring != nil,
 			Err:         err,
 		}
+		if se.OfferReport {
+			a.mu.Lock()
+			a.reportSeq++
+			se.ReportID = strconv.FormatUint(a.reportSeq, 10)
+			kept := *se
+			a.lastReport = &kept
+			a.lastFiled = nil
+			a.mu.Unlock()
+		}
+		return SignResult{}, se
 	}
 
 	var warning string
@@ -354,15 +440,17 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 		warning = msgNotLogged
 	}
 	return SignResult{
-		Recipient:  norm.NFC.String(req.Recipient),
-		Honor:      norm.NFC.String(req.Honor),
-		Detail:     norm.NFC.String(req.Detail),
-		Date:       req.Date,
-		URL:        res.Response.URL,
-		Hash8:      res.Hash8,
-		Existing:   res.Existing,
-		PNGPreview: res.PNGPreview,
-		Warning:    warning,
+		Recipient:   norm.NFC.String(req.Recipient),
+		Honor:       norm.NFC.String(req.Honor),
+		Detail:      norm.NFC.String(req.Detail),
+		Date:        req.Date,
+		URL:         res.Response.URL,
+		Hash8:       res.Hash8,
+		Existing:    res.Existing,
+		PNGPreview:  res.PNGPreview,
+		Warning:     warning,
+		SVGFilename: buildFilename(req.Date, res.Hash8, "svg"),
+		PNGFilename: buildFilename(req.Date, res.Hash8, "png"),
 	}, nil
 }
 
@@ -400,39 +488,65 @@ func (a *App) SaveQR(url, format, path string) error {
 	case "png":
 		data, err = qr.GeneratePNG(url, qrSavePx)
 	default:
-		return fmt.Errorf("unsupported QR format %q", format)
-	}
-	if err == nil {
-		err = os.WriteFile(path, data, 0o644)
+		return fmt.Errorf("Unsupported QR format %q.", format)
 	}
 	if err != nil {
-		a.logger.Log(strings.ToUpper(format) + " save failed: " + core.SanitizeForLog(err.Error()))
+		a.logger.Log(strings.ToUpper(format) + " generation failed: " + core.SanitizeForLog(err.Error()))
+		return userErr("Could not create the "+strings.ToUpper(format)+" file.", err)
 	}
-	return err
+	return a.saveUserFile(path, data)
 }
 
-// errNotReportable is returned by ReportSignError for an error whose
-// OfferReport is false.
-var errNotReportable = errors.New("this error is not reportable")
+// ReportSignError files a GitHub issue for the Sign failure whose
+// SignError.ReportID is reportID. Only the latest reportable failure can be
+// reported: an unknown or older id returns an error matching ErrNotFound. It
+// files at most one issue per failure: once one is filed through the API,
+// later calls return it again. A try that only produced the new-issue form
+// can be repeated. It returns ErrBusy while another report runs.
+func (a *App) ReportSignError(ctx context.Context, reportID string) (ReportResult, error) {
+	if !a.reporting.CompareAndSwap(false, true) {
+		return ReportResult{}, ErrBusy
+	}
+	defer a.reporting.Store(false)
 
-// ReportSignError files a GitHub issue for se, a Sign failure with
-// OfferReport set, and returns its https://github.com URL ("" if the result
-// is not a GitHub URL).
-func (a *App) ReportSignError(ctx context.Context, se *SignError) (string, error) {
-	if se == nil || !se.OfferReport || a.keyring == nil {
-		return "", errNotReportable
+	a.mu.Lock()
+	var se SignError
+	found := reportID != "" && a.lastReport != nil && a.lastReport.ReportID == reportID
+	filed := a.lastFiled
+	if found {
+		se = *a.lastReport
+	}
+	a.mu.Unlock()
+	switch {
+	case !found:
+		return ReportResult{}, userErr("This failure can no longer be reported.", ErrNotFound)
+	case filed != nil:
+		return *filed, nil
 	}
 	title := errorreport.BuildIssueTitle("signing", se.Message)
 	body := signIssueBody(se.Err, se.Message)
-	resultURL, err := errorreport.ReportIssue(ctx, a.keyring, a.dataDir, title, body)
-	if resultURL != "" && ghapi.ParseGitHubURL(resultURL) == nil {
-		a.logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(resultURL))
-		return "", err
+	resultURL, apiFiled := a.reportIssue(ctx, a.keyring, a.dataDir, title, body)
+	if ghapi.ParseGitHubURL(resultURL) == nil {
+		// A filed issue stays filed (no duplicates); only its link is dropped.
+		if resultURL != "" {
+			a.logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(resultURL))
+		}
+		resultURL = ""
 	}
-	return resultURL, err
+	res := ReportResult{URL: resultURL, Filed: apiFiled}
+	if res.Filed {
+		a.mu.Lock()
+		if a.lastReport != nil && a.lastReport.ReportID == reportID {
+			a.lastFiled = &res
+		}
+		a.mu.Unlock()
+	}
+	return res, nil
 }
 
-// LoadBulk reads and plans the bulk CSV at path, storing it for RunBulk.
+// LoadBulk reads and plans the bulk CSV at path, storing it for RunBulk. It
+// returns ErrBusy while another card operation runs; other errors are
+// logged, wrap their cause, and their text is user-facing.
 func (a *App) LoadBulk(path string) (BulkPlan, error) {
 	if !a.busy.CompareAndSwap(false, true) {
 		return BulkPlan{}, ErrBusy
@@ -441,10 +555,11 @@ func (a *App) LoadBulk(path string) (BulkPlan, error) {
 
 	f, err := os.Open(path)
 	if err != nil {
-		return BulkPlan{}, err
+		a.logger.Log("bulk load: " + core.SanitizeForLog(err.Error()))
+		return BulkPlan{}, userErr("Could not open the CSV file.", err)
 	}
 	defer f.Close()
-	results, err := loadBulkPlan(f, a.logPath)
+	results, err := loadBulkPlan(f, a.logPath, a.logger)
 	a.mu.Lock()
 	a.plan = results
 	a.mu.Unlock()
@@ -494,9 +609,12 @@ func (a *App) RunBulk(ctx context.Context) (BulkOutcome, error) {
 		a.logger)
 	clearPINCacheOnAuthError(err, a.pinCache)
 
+	stop := bulkStop(err)
 	return BulkOutcome{
-		SummaryLine: bulkSummaryLine(bulk.Summarize(results)),
-		StopMessage: bulkStopMessage(err, a.logger),
+		SummaryLine:     bulkSummaryLine(bulk.Summarize(results)),
+		StopMessage:     bulkStopMessage(stop, err, a.logger),
+		Stopped:         stop,
+		ResultsFilename: bulkResultsFilename(time.Now()),
 	}, nil
 }
 
@@ -511,6 +629,7 @@ func (a *App) CancelBulk() {
 }
 
 // ExportBulkResults writes the loaded plan's per-row results as CSV to path.
+// Save errors are as for every save (see saveUserFile).
 func (a *App) ExportBulkResults(path string) error {
 	if !a.busy.CompareAndSwap(false, true) {
 		return ErrBusy
@@ -523,11 +642,12 @@ func (a *App) ExportBulkResults(path string) error {
 	if results == nil {
 		return ErrNoBulkPlan
 	}
-	if err := saveBulkResults(path, results); err != nil {
-		a.logger.Log("bulk results save failed: " + core.SanitizeForLog(err.Error()))
-		return err
+	data, err := bulkResultsCSV(results)
+	if err != nil {
+		a.logger.Log("bulk results CSV failed: " + core.SanitizeForLog(err.Error()))
+		return userErr("Could not create the results file.", err)
 	}
-	return nil
+	return a.saveUserFile(path, data)
 }
 
 // CheckYubiKey reads the inserted key and looks it up in the registry.
@@ -546,8 +666,7 @@ func (a *App) CheckYubiKey() (KeyCheck, error) {
 	if res.Error != nil {
 		a.logger.Log("yubikey check: " + core.SanitizeForLog(res.Error.Error()))
 	}
-	status, details := formatKeyResult(res)
-	return KeyCheck{Status: status, Details: details}, nil
+	return formatKeyResult(res), nil
 }
 
 // Close cancels a running bulk batch and login and wipes the PIN cache.

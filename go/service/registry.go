@@ -20,11 +20,10 @@ import (
 
 // ErrRegistryChanged is returned by SubmitRegistry when upstream's registry no
 // longer matches the snapshot the local edits were based on.
-var ErrRegistryChanged = errors.New("registry on GitHub does not match the loaded snapshot")
+var ErrRegistryChanged = errors.New("The registry on GitHub doesn't match the copy you loaded (it changed since). Fetch the registry again, re-apply your edits, and submit again.")
 
-// errRegistryInvalid is returned by SubmitRegistry when the edited registry
-// fails validation; it wraps the validation error.
-var errRegistryInvalid = errors.New("registry is invalid")
+// errUpstreamInvalid marks a registry read from GitHub that fails validation.
+var errUpstreamInvalid = errors.New("upstream registry is invalid")
 
 // fetchRegistry loads the registry from main via the GitHub API when a client
 // is available, so the submit check compares like with like and isn't tripped
@@ -36,7 +35,11 @@ func (a *App) fetchRegistry(ctx context.Context, client *ghapi.Client) (core.Reg
 		defer cancel()
 		up, err := client.FetchUpstreamFile(ctx, ghapi.RegistryFilePath)
 		if err == nil {
-			return core.ValidateRegistry(up)
+			reg, err := core.ValidateRegistry(up)
+			if err != nil {
+				return core.Registry{}, fmt.Errorf("%w: %w", errUpstreamInvalid, err)
+			}
+			return reg, nil
 		}
 		a.logger.Logf("warning: registry fetch from GitHub failed, using site copy: %s", core.SanitizeForLog(err.Error()))
 	}
@@ -137,11 +140,11 @@ func entryCellText(entry core.KeyEntry, col, entryIdx int, fp string) string {
 func importKeyErrorMessage(err error) string {
 	switch core.ClassifyHardwareError(err) {
 	case core.HwErrSmartcard:
-		return "Smart card service not available"
+		return "Smart card service not available."
 	case core.HwErrTransient:
 		return core.MsgYubiKeyReset
 	default:
-		return "No YubiKey detected — plug in and try again"
+		return "No YubiKey detected — plug in and try again."
 	}
 }
 
@@ -161,24 +164,24 @@ func buildEntry(authority, from string, to *string, publicKey, note string) core
 // Returns nil if valid, or an error with a user-facing message.
 func validateEntryForm(authority, from, key string, noExpiry bool, to string) error {
 	if strings.TrimSpace(authority) == "" {
-		return fmt.Errorf("Authority is required")
+		return errors.New("Authority is required.")
 	}
 	if from == "" {
-		return fmt.Errorf("From date is required")
+		return errors.New("From date is required.")
 	}
 	if !core.IsValidDate(from) {
-		return fmt.Errorf("Invalid from date format")
+		return errors.New("Invalid from date format.")
 	}
 	if !noExpiry && to == "" {
-		return fmt.Errorf("To date is required when 'No expiry' is not checked")
+		return errors.New("To date is required when 'No expiry' is not checked.")
 	}
 	if !noExpiry && to != "" && !core.IsValidDate(to) {
-		return fmt.Errorf("Invalid to date format")
+		return errors.New("Invalid to date format.")
 	}
 	// To may be before From: from is informational, and revoking a key
 	// registered with a future From sets To to today.
 	if key == "" {
-		return fmt.Errorf("Import a public key first")
+		return errors.New("Import a public key first.")
 	}
 	return nil
 }
@@ -189,32 +192,54 @@ type EntryForm struct {
 	NoExpiry                  bool
 }
 
+// RegistryEntry is one key in the registry being edited. To is "" when
+// NoExpiry. PublicKey is the base64 Ed25519 key that UpdateEntry takes.
+type RegistryEntry struct {
+	Authority, From, To string
+	NoExpiry            bool
+	PublicKey, Note     string
+}
+
+// registryEntry returns the RegistryEntry for e.
+func registryEntry(e core.KeyEntry) RegistryEntry {
+	re := RegistryEntry{Authority: e.Authority, From: e.From, NoExpiry: e.To == nil, PublicKey: e.PublicKey, Note: e.Note}
+	if e.To != nil {
+		re.To = *e.To
+	}
+	return re
+}
+
 // RegistrySnapshot is a copy of the registry being edited. Rows[i] holds the
 // table cell texts for Entries[i]; Loaded is false until a fetch succeeds.
 type RegistrySnapshot struct {
-	Entries       []core.KeyEntry
+	Entries       []RegistryEntry
 	Rows          [][]string
 	Dirty, Loaded bool
 }
 
-// RegistryColumns are the table column headers; RegistrySnapshot.Rows cells
-// follow this order.
-var RegistryColumns = []string{"#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"}
+// registryColumns are the table column headers.
+var registryColumns = []string{"#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"}
+
+// RegistryColumns returns the table column headers; RegistrySnapshot.Rows
+// cells follow this order. The slice is a copy.
+func RegistryColumns() []string { return append([]string(nil), registryColumns...) }
 
 // Registry returns a copy of the registry being edited.
 func (a *App) Registry() RegistrySnapshot {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	entries := make([]RegistryEntry, len(a.edit.Keys))
 	rows := make([][]string, len(a.edit.Keys))
 	for i, key := range a.edit.Keys {
+		entries[i] = registryEntry(key)
 		fp, _ := core.KeyFingerprint(key)
-		rows[i] = make([]string, len(RegistryColumns))
+		rows[i] = make([]string, len(registryColumns))
 		for col := range rows[i] {
 			rows[i][col] = entryCellText(key, col, i, fp)
 		}
 	}
 	return RegistrySnapshot{
-		Entries: append([]core.KeyEntry(nil), a.edit.Keys...),
+		Entries: entries,
 		Rows:    rows,
 		Dirty:   a.dirty,
 		Loaded:  a.baseBytes != nil,
@@ -223,14 +248,24 @@ func (a *App) Registry() RegistrySnapshot {
 
 // FetchRegistry replaces the edited registry with the live one (from main via
 // the API when logged in and online, else the published copy), discarding
-// local edits, and emits EventRegistryChanged.
+// local edits, and emits EventRegistryChanged. A failure leaves the edited
+// registry unchanged, is logged, and returns an error with user-facing text
+// that wraps the cause.
 func (a *App) FetchRegistry(ctx context.Context) error {
 	return a.loadEditRegistry(ctx, false)
 }
 
+// fetchErrorMessage is the user-facing text for a failed registry fetch.
+func fetchErrorMessage(err error) string {
+	if errors.Is(err, errUpstreamInvalid) {
+		return "The registry on GitHub is invalid. Please report this to the maintainer."
+	}
+	return "Could not load the registry from GitHub. Check your connection and try again."
+}
+
 // loadEditRegistry fetches the live registry and makes it the edited copy.
-// With onlyIfUnloaded it leaves a registry that got loaded meanwhile (a Fetch
-// from Server that finished first, perhaps edited since) untouched.
+// With onlyIfUnloaded it leaves a registry that got loaded meanwhile (a
+// FetchRegistry that finished first, perhaps edited since) untouched.
 func (a *App) loadEditRegistry(ctx context.Context, onlyIfUnloaded bool) error {
 	reg, err := a.fetchRegistry(ctx, a.githubClient())
 	var base []byte
@@ -239,7 +274,7 @@ func (a *App) loadEditRegistry(ctx context.Context, onlyIfUnloaded bool) error {
 	}
 	if err != nil {
 		a.logger.Logf("error: registry fetch failed: %s", core.SanitizeForLog(err.Error()))
-		return err
+		return userErr(fetchErrorMessage(err), err)
 	}
 	a.mu.Lock()
 	if onlyIfUnloaded && a.baseBytes != nil {
@@ -265,10 +300,10 @@ func (f EntryForm) entry(publicKey string) (core.KeyEntry, error) {
 	return buildEntry(f.Authority, f.From, to, publicKey, f.Note), nil
 }
 
-// errNotLoaded is returned by AddEntry before the registry has loaded: edits
-// need a fetched base to be submitted against. (UpdateEntry needs an existing
-// entry, so it is refused by its index check.)
-var errNotLoaded = errors.New("The registry hasn't loaded yet. Click Fetch from Server.")
+// ErrRegistryNotLoaded is returned by AddEntry before the registry has
+// loaded: edits need a fetched base to be submitted against. (UpdateEntry
+// needs an existing entry, so it is refused by its index check.)
+var ErrRegistryNotLoaded = errors.New("The registry hasn't loaded yet. Fetch it again.")
 
 // AddEntry validates f and appends a new entry for publicKey. The error text
 // is user-facing.
@@ -280,14 +315,15 @@ func (a *App) AddEntry(f EntryForm, publicKey string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.baseBytes == nil {
-		return errNotLoaded
+		return ErrRegistryNotLoaded
 	}
 	a.edit.Keys = append(a.edit.Keys, e)
 	a.dirty = true
 	return nil
 }
 
-// UpdateEntry validates f and replaces entry index, keeping its extra fields.
+// UpdateEntry validates f and replaces entry index, keeping the fields of the
+// stored entry that RegistryEntry does not carry (such as allowed_honors).
 // publicKey is the entry's key as shown to the user; if it no longer matches,
 // a fetch replaced the list and the update is refused. The error text is
 // user-facing.
@@ -319,11 +355,11 @@ func (a *App) Dirty() bool {
 func (a *App) ImportCertificate(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", errors.New("Failed to read file: " + core.StripControlChars(err.Error()))
+		return "", userErr(sentence("Failed to read file: "+core.StripControlChars(err.Error())), err)
 	}
 	key, err := extractEd25519Key(data)
 	if err != nil {
-		return "", errors.New(core.StripControlChars(err.Error()))
+		return "", userErr(sentence(core.StripControlChars(err.Error())), err)
 	}
 	return key, nil
 }
@@ -339,7 +375,7 @@ func (a *App) ImportFromYubiKey() (string, error) {
 	pub, err := a.readPublicKey()
 	if err != nil {
 		a.logger.Log("yubikey import: " + core.SanitizeForLog(err.Error()))
-		return "", errors.New(importKeyErrorMessage(err))
+		return "", userErr(importKeyErrorMessage(err), err)
 	}
 	return base64.StdEncoding.EncodeToString(pub[:]), nil
 }
@@ -355,16 +391,23 @@ func (a *App) readPublicKey() ([32]byte, error) {
 	return adapter.ExportPublicKey()
 }
 
+// SubmitResult is the pull request a SubmitRegistry opened. URL is "" unless
+// an https github.com URL.
+type SubmitResult struct {
+	PRNumber int
+	URL      string
+}
+
 // SubmitRegistry opens a pull request with the edited registry and clears
 // the unsubmitted flag on success, unless the registry was edited while the
 // request ran. It returns ErrNotLoggedIn without a usable session, ErrBusy
-// while another submit runs, an error matching ErrRegistryChanged when main
-// moved since the fetch, and a GitHub error detectable with
-// ghapi.IsUnauthorized when the session expired (it then logs out). Failures
-// are logged; SubmitErrorMessage gives the text to show.
-func (a *App) SubmitRegistry(ctx context.Context) (ghapi.PRResult, error) {
+// while another submit runs, ErrRegistryChanged when main moved since the
+// fetch, and an error matching ErrSessionExpired when GitHub rejected the
+// session (it then logs out). Failures are logged; every error's text is
+// user-facing and GitHub errors stay wrapped.
+func (a *App) SubmitRegistry(ctx context.Context) (SubmitResult, error) {
 	if !a.submitting.CompareAndSwap(false, true) {
-		return ghapi.PRResult{}, ErrBusy
+		return SubmitResult{}, ErrBusy
 	}
 	defer a.submitting.Store(false)
 
@@ -378,12 +421,12 @@ func (a *App) SubmitRegistry(ctx context.Context) (ghapi.PRResult, error) {
 	a.mu.Unlock()
 	switch {
 	case !canSave:
-		return ghapi.PRResult{}, errors.New("the registry has no entries to submit")
+		return SubmitResult{}, errors.New("The registry has no entries to submit.")
 	case client == nil:
-		return ghapi.PRResult{}, ErrNotLoggedIn
+		return SubmitResult{}, ErrNotLoggedIn
 	case err != nil:
 		a.logger.Logf("error: registry marshal failed: %s", core.SanitizeForLog(err.Error()))
-		return ghapi.PRResult{}, fmt.Errorf("%w: %w", errRegistryInvalid, err)
+		return SubmitResult{}, userErr(sentence("The edited registry is invalid and was not submitted: "+core.SanitizeForLog(err.Error())), err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
@@ -393,13 +436,13 @@ func (a *App) SubmitRegistry(ctx context.Context) (ghapi.PRResult, error) {
 	case ghapi.IsUnauthorized(err):
 		a.logger.Logf("warning: registry submit unauthorized, logging out: %s", core.SanitizeForLog(err.Error()))
 		a.Logout()
-		return ghapi.PRResult{}, err
+		return SubmitResult{}, userErr("Your GitHub session expired. Log in again, then submit again.", ErrSessionExpired, err)
 	case errors.Is(err, ErrRegistryChanged):
-		a.logger.Logf("warning: registry submit refused: %s", core.SanitizeForLog(err.Error()))
-		return ghapi.PRResult{}, err
+		a.logger.Log("warning: registry submit refused: upstream registry changed")
+		return SubmitResult{}, err
 	case err != nil:
 		a.logger.Logf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
-		return ghapi.PRResult{}, err
+		return SubmitResult{}, userErr(ghapi.UserMessage(err), err)
 	}
 	a.mu.Lock()
 	// Edits made while the request ran are not in the PR; keep them unsubmitted.
@@ -407,20 +450,10 @@ func (a *App) SubmitRegistry(ctx context.Context) (ghapi.PRResult, error) {
 		a.dirty = false
 	}
 	a.mu.Unlock()
-	return pr, nil
-}
-
-// SubmitErrorMessage returns the dialog title and message for a
-// SubmitRegistry error.
-func SubmitErrorMessage(err error) (title, msg string) {
-	if ghapi.IsUnauthorized(err) {
-		return "Session Expired", "Your GitHub session expired. Log in again, then submit again."
+	url := pr.HTMLURL
+	if ghapi.ParseGitHubURL(url) == nil {
+		a.logger.Log("warning: registry PR URL is not a GitHub URL: " + core.SanitizeForLog(url))
+		url = ""
 	}
-	if errors.Is(err, ErrRegistryChanged) {
-		return "Registry Changed", "The registry on GitHub doesn't match the copy you loaded (it changed since). Click Fetch from Server, re-apply your edits, and submit again."
-	}
-	if errors.Is(err, errRegistryInvalid) {
-		return "Submission Failed", "The edited registry is invalid and was not submitted: " + core.SanitizeForLog(strings.TrimPrefix(err.Error(), errRegistryInvalid.Error()+": "))
-	}
-	return "Submission Failed", ghapi.UserMessage(err)
+	return SubmitResult{PRNumber: pr.Number, URL: url}, nil
 }

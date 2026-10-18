@@ -1,7 +1,6 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -51,9 +50,9 @@ func (a *App) AuditCommits() (AuditResult, error) {
 	if err != nil {
 		a.logger.Logf("audit: registry commit fetch failed: %s", core.SanitizeForLog(err.Error()))
 		if ghapi.IsRateLimited(err) {
-			return AuditResult{}, errors.New("GitHub API rate limit reached — try again later")
+			return AuditResult{}, userErr(ghapi.UserMessage(err), err)
 		}
-		return AuditResult{}, errors.New("Failed to fetch registry history")
+		return AuditResult{}, userErr("Failed to fetch registry history.", err)
 	}
 
 	a.mu.Lock()

@@ -157,7 +157,7 @@ func TestIsOperatorInputError(t *testing.T) {
 
 func TestSignIssueBody_OmitsRawError(t *testing.T) {
 	err := &signFlowError{Phase: phaseQR, Err: errors.New("open /home/alice/secret/issuance.log: denied")}
-	msg := "QR generation failed. Use Help → Export Error Log… for details."
+	msg := "QR generation failed. Export the error log for details."
 	body := signIssueBody(err, msg)
 	if strings.Contains(body, "/home/alice/secret") {
 		t.Errorf("body leaks raw error text: %q", body)

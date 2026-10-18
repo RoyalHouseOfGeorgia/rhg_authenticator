@@ -6,7 +6,6 @@ import (
 	"fmt"
 	stdlog "log"
 	"strings"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -167,7 +166,7 @@ func showBulkSummary(d bulkSignDeps, plan service.BulkPlan, outcome service.Bulk
 		saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 			onBulkExportChosen(d, writer, err)
 		}, d.window)
-		saveDialog.SetFileName(service.BulkResultsFilename(time.Now()))
+		saveDialog.SetFileName(outcome.ResultsFilename)
 		saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
 		setDialogLocation(saveDialog)
 		saveDialog.Show()

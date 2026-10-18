@@ -36,7 +36,7 @@ func TestValidateSignForm_EmptyRecipient(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty recipient")
 	}
-	if !strings.Contains(err.Error(), "recipient") {
+	if err.Error() != "Recipient is required." {
 		t.Errorf("error should mention recipient, got: %v", err)
 	}
 }
@@ -53,7 +53,7 @@ func TestValidateSignForm_NoHonorSelected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty honor")
 	}
-	if !strings.Contains(err.Error(), "honor") {
+	if err.Error() != "Honor title must be selected." {
 		t.Errorf("error should mention honor, got: %v", err)
 	}
 }
@@ -63,7 +63,7 @@ func TestValidateSignForm_EmptyDetail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty detail")
 	}
-	if !strings.Contains(err.Error(), "detail") {
+	if err.Error() != "Detail is required." {
 		t.Errorf("error should mention detail, got: %v", err)
 	}
 }
@@ -106,30 +106,30 @@ func TestValidateSignForm_ValidLeapYear(t *testing.T) {
 	}
 }
 
-// --- BuildFilename tests ---
+// --- buildFilename tests ---
 
 func TestBuildFilename_SVG(t *testing.T) {
-	got := BuildFilename("2026-03-14", "abcd1234", "svg")
+	got := buildFilename("2026-03-14", "abcd1234", "svg")
 	want := "rhg-credential-2026-03-14-abcd1234-min3cm.svg"
 	if got != want {
-		t.Errorf("BuildFilename SVG = %q, want %q", got, want)
+		t.Errorf("buildFilename SVG = %q, want %q", got, want)
 	}
 }
 
 func TestBuildFilename_PNG(t *testing.T) {
-	got := BuildFilename("2026-03-14", "abcd1234", "png")
+	got := buildFilename("2026-03-14", "abcd1234", "png")
 	want := "rhg-credential-2026-03-14-abcd1234-2048px.png"
 	if got != want {
-		t.Errorf("BuildFilename PNG = %q, want %q", got, want)
+		t.Errorf("buildFilename PNG = %q, want %q", got, want)
 	}
 }
 
 func TestBuildFilename_OtherExt(t *testing.T) {
 	// Non-png extensions should use "min3cm" suffix.
-	got := BuildFilename("2026-01-01", "deadbeef", "pdf")
+	got := buildFilename("2026-01-01", "deadbeef", "pdf")
 	want := "rhg-credential-2026-01-01-deadbeef-min3cm.pdf"
 	if got != want {
-		t.Errorf("BuildFilename other = %q, want %q", got, want)
+		t.Errorf("buildFilename other = %q, want %q", got, want)
 	}
 }
 
@@ -297,8 +297,8 @@ func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 	if !strings.Contains(got, "Failed to connect") {
 		t.Errorf("expected 'Failed to connect' message, got: %q", got)
 	}
-	if !strings.Contains(got, "Export Error Log") {
-		t.Errorf("expected Export Error Log reference in message, got: %q", got)
+	if !strings.HasSuffix(got, "Export the error log for details.") {
+		t.Errorf("expected error log export reference in message, got: %q", got)
 	}
 }
 
@@ -524,10 +524,10 @@ func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
 	}
 }
 
-// Every "see logs" fallback must point at the Help-menu export, not at a raw
+// Every "see logs" fallback must point at the error log export, not at a raw
 // debug.log file path the operator cannot easily locate.
 func TestSignFlowErrorMessage_DetailsPointToExportErrorLog(t *testing.T) {
-	const want = "Use Help → Export Error Log… for details."
+	const want = "Export the error log for details."
 	cases := map[string]error{
 		"export key":   &signFlowError{Phase: phaseExportKey, Err: fmt.Errorf("x")},
 		"qr":           &signFlowError{Phase: phaseQR, Err: fmt.Errorf("x")},
@@ -545,5 +545,20 @@ func TestSignFlowErrorMessage_DetailsPointToExportErrorLog(t *testing.T) {
 				t.Errorf("message must not reference debug.log: %q", got)
 			}
 		})
+	}
+}
+
+func TestSentence(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                    "",
+		"file is empty":       "File is empty.",
+		"Already a sentence.": "Already a sentence.",
+		"what?":               "What?",
+		"stop!":               "Stop!",
+		"ünïcode start":       "Ünïcode start.",
+	} {
+		if got := sentence(in); got != want {
+			t.Errorf("sentence(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -891,8 +891,8 @@ func TestPollForToken_Expired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "expired") {
-		t.Errorf("error = %v, want containing 'expired'", err)
+	if !errors.Is(err, ErrDeviceCodeExpired) {
+		t.Errorf("error = %v, want ErrDeviceCodeExpired", err)
 	}
 }
 
@@ -910,8 +910,8 @@ func TestPollForToken_Denied(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "denied") {
-		t.Errorf("error = %v, want containing 'denied'", err)
+	if !errors.Is(err, ErrAccessDenied) {
+		t.Errorf("error = %v, want ErrAccessDenied", err)
 	}
 }
 
@@ -1364,8 +1364,8 @@ func TestPollForToken_WrongScope(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrong scope")
 	}
-	if !strings.Contains(err.Error(), "missing required scope") {
-		t.Errorf("error = %v, want containing 'missing required scope'", err)
+	if !errors.Is(err, ErrMissingScope) {
+		t.Errorf("error = %v, want ErrMissingScope", err)
 	}
 }
 

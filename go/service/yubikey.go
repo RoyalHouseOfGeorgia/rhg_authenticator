@@ -35,9 +35,10 @@ func checkYubiKey(reg core.Registry, pubKey [32]byte) keyCheckResult {
 	}
 }
 
-// formatKeyResult converts a keyCheckResult into a user-friendly status string
-// and detail lines for display.
-func formatKeyResult(result keyCheckResult) (status string, details []string) {
+// formatKeyResult converts a keyCheckResult into the KeyCheck shown to the
+// user: its outcome, a status line and detail lines.
+func formatKeyResult(result keyCheckResult) KeyCheck {
+	var status string
 	if result.Error != nil {
 		switch core.ClassifyHardwareError(result.Error) {
 		case core.HwErrTransient:
@@ -51,12 +52,12 @@ func formatKeyResult(result keyCheckResult) (status string, details []string) {
 			// key/cert, which requires no PIN (readPin is a no-op).
 			status = "Failed to read YubiKey"
 		}
-		return status, nil
+		return KeyCheck{Result: KeyCheckFailed, Status: status}
 	}
 
 	if result.Found && result.Entry != nil {
 		status = "Key found in registry"
-		details = []string{
+		details := []string{
 			"Authority: " + result.Entry.Authority,
 			"Valid from: " + core.FormatDateDisplay(result.Entry.From),
 		}
@@ -69,10 +70,12 @@ func formatKeyResult(result keyCheckResult) (status string, details []string) {
 		if note := strings.TrimSpace(result.Entry.Note); note != "" {
 			details = append(details, "Note: "+result.Entry.Note)
 		}
-		return status, details
+		return KeyCheck{Result: KeyCheckFound, Status: status, Details: details}
 	}
 
-	status = "Key NOT found in registry"
-	details = []string{"Fingerprint: " + result.Fingerprint}
-	return status, details
+	return KeyCheck{
+		Result:  KeyCheckNotFound,
+		Status:  "Key NOT found in registry",
+		Details: []string{"Fingerprint: " + result.Fingerprint},
+	}
 }

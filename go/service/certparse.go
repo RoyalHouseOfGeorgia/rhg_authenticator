@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 )
 
@@ -30,7 +31,7 @@ func extractEd25519Key(certData []byte) (string, error) {
 
 	edKey, ok := cert.PublicKey.(ed25519.PublicKey)
 	if !ok {
-		return "", fmt.Errorf("certificate does not contain an Ed25519 public key")
+		return "", errors.New("certificate does not contain an Ed25519 public key")
 	}
 
 	return base64.StdEncoding.EncodeToString(edKey), nil

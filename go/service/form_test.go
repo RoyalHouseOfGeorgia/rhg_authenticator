@@ -230,12 +230,12 @@ func TestImportKeyErrorMessage(t *testing.T) {
 		{
 			name: "pcsc error",
 			err:  errors.New("pcsc daemon not running"),
-			want: "Smart card service not available",
+			want: "Smart card service not available.",
 		},
 		{
 			name: "generic error",
 			err:  errors.New("something else"),
-			want: "No YubiKey detected — plug in and try again",
+			want: "No YubiKey detected — plug in and try again.",
 		},
 	}
 	for _, tt := range tests {

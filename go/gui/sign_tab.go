@@ -130,10 +130,10 @@ func NewSignTab(app *service.App, events *Events, window fyne.Window) *fyne.Cont
 				printAdvisory.Alignment = fyne.TextAlignCenter
 
 				saveSVGButton := widget.NewButton("Save SVG", func() {
-					showSaveQRDialog(app, window, result.URL, "svg", service.BuildFilename(result.Date, result.Hash8, "svg"))
+					showSaveQRDialog(app, window, result.URL, "svg", result.SVGFilename)
 				})
 				savePNGButton := widget.NewButton("Save PNG", func() {
-					showSaveQRDialog(app, window, result.URL, "png", service.BuildFilename(result.Date, result.Hash8, "png"))
+					showSaveQRDialog(app, window, result.URL, "png", result.PNGFilename)
 				})
 
 				copyURLButton := widget.NewButton("Copy URL", func() {
@@ -179,8 +179,8 @@ func NewSignTab(app *service.App, events *Events, window fyne.Window) *fyne.Cont
 	return form
 }
 
-// newReportIssueButton returns a "Report Issue" button that files se.
-// UI thread only.
+// newReportIssueButton returns a "Report Issue" button that files se (a
+// failure with OfferReport set). UI thread only.
 func newReportIssueButton(app *service.App, se *service.SignError) *widget.Button {
 	var reportBtn *widget.Button
 	reportBtn = widget.NewButton("Report Issue", func() {
@@ -189,22 +189,22 @@ func newReportIssueButton(app *service.App, se *service.SignError) *widget.Butto
 		reportBtn.Disable()
 		reportBtn.SetText("Reporting…")
 		safego.Go(func() {
-			resultURL := ""
+			var res service.ReportResult
 			// Deferred so the button comes back even if the report panics
 			// (safego recovers it).
 			defer fyne.Do(func() {
 				reportBtn.SetText("Report Issue")
-				if strings.Contains(resultURL, "/issues/new") || resultURL == "" {
-					reportBtn.Enable() // browser form or failure: allow another try
-				} else {
+				if res.Filed {
 					reportBtn.SetText("Issue Reported") // filed via API: no duplicates
+				} else {
+					reportBtn.Enable() // browser form or failure: allow another try
 				}
 			})
 			ctx, cancel := context.WithTimeout(context.Background(), reportIssueTimeout)
 			defer cancel()
-			resultURL, _ = app.ReportSignError(ctx, se)
+			res, _ = app.ReportSignError(ctx, se.ReportID)
 			// Only https://github.com URLs are returned; parse for OpenURL.
-			if u := ghapi.ParseGitHubURL(resultURL); u != nil {
+			if u := ghapi.ParseGitHubURL(res.URL); u != nil {
 				fyne.Do(func() { fyne.CurrentApp().OpenURL(u) })
 			}
 		})

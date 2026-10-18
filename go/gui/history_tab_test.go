@@ -18,7 +18,6 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
@@ -345,8 +344,9 @@ func TestHistoryTab_RevokeDone(t *testing.T) {
 	})
 	t.Run("session expired logs in on close", func(t *testing.T) {
 		h := setup(t)
-		h.tab.revokeDone(service.RevokeResult{}, fmt.Errorf("revoke: %w", &ghapi.APIError{StatusCode: 401}))
-		if !h.overlayHas(t, "Your GitHub session expired. Please log in again.") {
+		// Wrapped, as Revoke returns it, so an == check would fail.
+		h.tab.revokeDone(service.RevokeResult{}, errors.Join(service.ErrSessionExpired))
+		if !h.overlayHas(t, "Session Expired") || !h.overlayHas(t, "Your GitHub session expired. Please log in again.") {
 			t.Errorf("session expired not shown:\n%s", h.overlayText(t))
 		}
 		if h.tab.revokeInFlight || h.logins != 0 {
@@ -359,11 +359,12 @@ func TestHistoryTab_RevokeDone(t *testing.T) {
 	})
 	t.Run("other error offers the log", func(t *testing.T) {
 		h := setup(t)
-		h.tab.revokeDone(service.RevokeResult{}, &ghapi.APIError{StatusCode: 500})
+		h.tab.revokeDone(service.RevokeResult{}, errors.New("An error occurred. Please try again later."))
 		if h.tab.revokeInFlight || h.logins != 0 || h.tab.selected != 0 {
 			t.Errorf("inFlight %v, logins %d, selected %d", h.tab.revokeInFlight, h.logins, h.tab.selected)
 		}
-		if findButton(t, topOverlay(t, h.window), "Export Error Log…") == nil {
+		if findButton(t, topOverlay(t, h.window), "Export Error Log…") == nil ||
+			!h.overlayHas(t, "Revocation Failed") || !h.overlayHas(t, "An error occurred. Please try again later.") {
 			t.Errorf("no log export offered:\n%s", h.overlayText(t))
 		}
 	})

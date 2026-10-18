@@ -270,24 +270,24 @@ func clearPINCacheOnAuthError(err error, cache *yubikey.PinCache) {
 // validateSignForm checks that all required sign form fields are filled and valid.
 func validateSignForm(recipient, honor, detail, date string) error {
 	if strings.TrimSpace(recipient) == "" {
-		return fmt.Errorf("recipient is required")
+		return errors.New("Recipient is required.")
 	}
 	if honor == "" {
-		return fmt.Errorf("honor title must be selected")
+		return errors.New("Honor title must be selected.")
 	}
 	if strings.TrimSpace(detail) == "" {
-		return fmt.Errorf("detail is required")
+		return errors.New("Detail is required.")
 	}
 	if !core.IsValidDate(date) {
-		return fmt.Errorf("date must be in YYYY-MM-DD format and be a valid calendar date")
+		return errors.New("Date must be in YYYY-MM-DD format and be a valid calendar date.")
 	}
 	return nil
 }
 
-// BuildFilename constructs a default filename for saving QR code output.
+// buildFilename constructs a default filename for saving QR code output.
 // Format: rhg-credential-<date>-<hash8>-<suffix>.<ext>
 // where suffix is "min3cm" for SVG and "2048px" for PNG.
-func BuildFilename(date, hash8, ext string) string {
+func buildFilename(date, hash8, ext string) string {
 	suffix := "min3cm"
 	if ext == "png" {
 		suffix = "2048px"

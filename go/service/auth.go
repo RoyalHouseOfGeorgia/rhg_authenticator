@@ -2,12 +2,16 @@ package service
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 )
+
+// ErrLoginUnavailable is returned by Login when the App has no Keyring: GitHub
+// login can't work on this computer, so a UI need not offer it again.
+var ErrLoginUnavailable = errors.New("GitHub login isn't available: no secure credential store on this computer.")
 
 // AuthState is the GitHub login state.
 type AuthState struct {
@@ -57,10 +61,17 @@ func (a *App) AuthState() AuthState {
 // returns the result unless that ends logged out. Logged out, it runs the
 // device authorization flow, emitting EventAuthDeviceCode once the user has a
 // code to enter. A Login stopped by CancelLogin, Close or ctx returns an error
-// matching ctx.Err(); the login state is unchanged, except that a restore
-// that already finished (and ended logged out) stays applied when the device
-// flow that followed it is cancelled.
+// wrapping ctx.Err() (matching context.Canceled when cancelled); the login
+// state is unchanged,
+// except that a restore that already finished (and ended logged out) stays
+// applied when the device flow that followed it is cancelled. It returns
+// ErrBusy while another Login runs; a failed device flow returns an error
+// with user-facing text that wraps the GitHub error. Without a Keyring it
+// returns ErrLoginUnavailable and changes nothing.
 func (a *App) Login(ctx context.Context) (AuthState, error) {
+	if a.keyring == nil {
+		return AuthState{}, ErrLoginUnavailable
+	}
 	if !a.loggingIn.CompareAndSwap(false, true) {
 		return AuthState{}, ErrBusy
 	}
@@ -92,7 +103,7 @@ func (a *App) Login(ctx context.Context) (AuthState, error) {
 
 	dcr, err := a.requestDeviceCode(ctx)
 	if err != nil {
-		return AuthState{}, fmt.Errorf("device code request failed: %w", err)
+		return AuthState{}, a.loginError(ctx, "device code request", err)
 	}
 	uri := dcr.VerificationURI
 	if ghapi.ParseGitHubURL(uri) == nil {
@@ -103,7 +114,7 @@ func (a *App) Login(ctx context.Context) (AuthState, error) {
 
 	tok, err := a.pollForToken(ctx, dcr.DeviceCode, dcr.Interval, dcr.ExpiresIn)
 	if err != nil {
-		return AuthState{}, fmt.Errorf("login failed: %w", err)
+		return AuthState{}, a.loginError(ctx, "token polling", err)
 	}
 
 	// Validate the token to get the username before persisting.
@@ -111,7 +122,7 @@ func (a *App) Login(ctx context.Context) (AuthState, error) {
 	defer valCancel()
 	username, valErr := a.validateToken(valCtx, tok)
 	if err := ctx.Err(); err != nil { // cancelled while validating: keep no token
-		return AuthState{}, err
+		return AuthState{}, loginStopped(err)
 	}
 	if valErr != nil {
 		a.logger.Logf("warning: token validation failed: %s", core.SanitizeForLog(valErr.Error()))
@@ -123,6 +134,35 @@ func (a *App) Login(ctx context.Context) (AuthState, error) {
 		a.logger.Logf("warning: failed to save token: %s", core.SanitizeForLog(err.Error()))
 	}
 	return a.setAuth(tok, username, true, valErr != nil), nil
+}
+
+// loginError is the Login error for a failed device-flow step: loginStopped
+// once the login was stopped, else err (logged) behind its user-facing text.
+func (a *App) loginError(ctx context.Context, step string, err error) error {
+	if cerr := ctx.Err(); cerr != nil {
+		return loginStopped(cerr)
+	}
+	a.logger.Logf("warning: login %s failed: %s", step, core.SanitizeForLog(err.Error()))
+	return userErr(loginMessage(err), err)
+}
+
+// loginStopped is the Login error once ctx ended with cerr.
+func loginStopped(cerr error) error {
+	return userErr("Login cancelled.", cerr)
+}
+
+// loginMessage returns the user-facing text for a failed device-flow step.
+func loginMessage(err error) string {
+	switch {
+	case errors.Is(err, ghapi.ErrDeviceCodeExpired):
+		return "The login code expired. Start the login again to get a new one."
+	case errors.Is(err, ghapi.ErrAccessDenied):
+		return "GitHub access was denied, so you are not logged in."
+	case errors.Is(err, ghapi.ErrMissingScope):
+		return "GitHub didn't grant the public_repo permission the app needs. Log in again and approve it."
+	default:
+		return ghapi.UserMessage(err)
+	}
 }
 
 // CancelLogin stops a running Login.
@@ -143,7 +183,7 @@ func (a *App) restore(ctx context.Context) (AuthState, error) {
 	defer cancel()
 	tok, username, loggedIn, offline, err := a.restoreSession(rctx, a.keyring, a.dataDir)
 	if cerr := ctx.Err(); cerr != nil {
-		return AuthState{}, cerr
+		return AuthState{}, loginStopped(cerr)
 	}
 	if err != nil {
 		a.logger.Logf("warning: token restore failed: %s", core.SanitizeForLog(err.Error()))
@@ -160,7 +200,7 @@ func (a *App) startupRestore() {
 	a.mu.Lock()
 	loaded := a.baseBytes != nil
 	a.mu.Unlock()
-	if loaded { // a Fetch from Server finished during the restore; keep its edits
+	if loaded { // a FetchRegistry finished during the restore; keep its edits
 		return
 	}
 	if err := a.loadEditRegistry(context.Background(), true); err != nil {
@@ -168,12 +208,15 @@ func (a *App) startupRestore() {
 	}
 }
 
-// Logout clears the saved token and logs out. Revoke and SubmitRegistry call
-// it themselves after a GitHub 401 (an expired session means logged out, not
-// offline), so hosts never need to.
+// Logout clears the saved token (with a Keyring) and logs out. Revoke and
+// SubmitRegistry call it themselves after a GitHub 401 (an expired session
+// means logged out, not offline), so hosts never need to.
 func (a *App) Logout() {
-	if err := ghapi.ClearToken(a.keyring, a.dataDir); err != nil {
-		a.logger.Logf("warning: clearing token failed: %s", core.SanitizeForLog(err.Error()))
+	// Without a keyring Login refuses, so this App never saved a token.
+	if a.keyring != nil {
+		if err := ghapi.ClearToken(a.keyring, a.dataDir); err != nil {
+			a.logger.Logf("warning: clearing token failed: %s", core.SanitizeForLog(err.Error()))
+		}
 	}
 	a.setAuth(ghapi.Token{}, "", false, false)
 }

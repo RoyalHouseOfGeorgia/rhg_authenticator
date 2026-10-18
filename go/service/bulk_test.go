@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,7 +87,7 @@ func (h *bulkHarness) run(t *testing.T, ctx context.Context, results []bulk.Resu
 
 func (h *bulkHarness) plan(t *testing.T, csvText string) []bulk.Result {
 	t.Helper()
-	results, err := loadBulkPlan(strings.NewReader(csvText), h.logPath)
+	results, err := loadBulkPlan(strings.NewReader(csvText), h.logPath, h.logger)
 	if err != nil {
 		t.Fatalf("loadBulkPlan: %v", err)
 	}
@@ -266,11 +266,11 @@ func TestBulkFlow_WrongPINStops(t *testing.T) {
 }
 
 func TestLoadBulkPlan_UnreadableLogRefuses(t *testing.T) {
-	results, err := loadBulkPlan(strings.NewReader(threeRowCSV), t.TempDir())
+	results, err := loadBulkPlan(strings.NewReader(threeRowCSV), t.TempDir(), nil)
 	if err == nil {
 		t.Fatal("expected error for a directory log path")
 	}
-	if !strings.HasPrefix(err.Error(), "cannot read audit log; bulk signing needs it to avoid duplicates") {
+	if err.Error() != "Cannot read audit log; bulk signing needs it to avoid duplicates." {
 		t.Errorf("err = %q", err)
 	}
 	if results != nil {
@@ -283,13 +283,13 @@ func TestLoadBulkPlan_InputErrorsPropagate(t *testing.T) {
 	cases := []struct {
 		name, input, want string
 	}{
-		{"empty", "", "file is empty"},
-		{"missing header", "name,honor,detail\nA,Other,x\n", `missing required column "date"`},
+		{"empty", "", "File is empty."},
+		{"missing header", "name,honor,detail\nA,Other,x\n", `Missing required column "date" (need name, honor, detail, date).`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			results, err := loadBulkPlan(strings.NewReader(tc.input), logPath)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
+			results, err := loadBulkPlan(strings.NewReader(tc.input), logPath, nil)
+			if err == nil || err.Error() != tc.want {
 				t.Errorf("err = %v, want containing %q", err, tc.want)
 			}
 			if results != nil {
@@ -316,7 +316,7 @@ func TestBulkFlow_LogAppendFailureStopsBatch(t *testing.T) {
 		t.Errorf("row 0 Err = %q", results[0].Err)
 	}
 	assertCountsInvariant(t, results)
-	if msg := bulkStopMessage(err, h.logger); !strings.HasPrefix(msg, "Batch stopped: Credential signed but NOT recorded") {
+	if msg := bulkStopMessage(bulkStop(err), err, h.logger); !strings.HasPrefix(msg, "Batch stopped: Credential signed but NOT recorded") {
 		t.Errorf("bulkStopMessage = %q", msg)
 	}
 }
@@ -379,7 +379,7 @@ func TestBulkFlow_CancelDuringProgress(t *testing.T) {
 	}
 	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusSigned, bulk.StatusNotAttempted)
 	assertCountsInvariant(t, results)
-	if msg := bulkStopMessage(err, h.logger); msg != "Cancelled." {
+	if msg := bulkStopMessage(bulkStop(err), err, h.logger); msg != "Cancelled." {
 		t.Errorf("bulkStopMessage = %q, want Cancelled.", msg)
 	}
 	if n := h.logCount(t); n != 2 {
@@ -389,17 +389,35 @@ func TestBulkFlow_CancelDuringProgress(t *testing.T) {
 
 func TestBulkStopMessage(t *testing.T) {
 	logger := debuglog.New(filepath.Join(t.TempDir(), "debug.log"))
-	if got := bulkStopMessage(nil, logger); got != "" {
+	if got := bulkStopMessage(bulkStop(nil), nil, logger); got != "" {
 		t.Errorf("nil: got %q, want empty", got)
 	}
-	if got := bulkStopMessage(context.Canceled, logger); got != "Cancelled." {
+	if got := bulkStopMessage(BulkCancelled, context.Canceled, logger); got != "Cancelled." {
 		t.Errorf("context.Canceled: got %q", got)
 	}
-	if got := bulkStopMessage(errSigningCancelled, logger); got != "Cancelled." {
+	if got := bulkStopMessage(BulkCancelled, errSigningCancelled, logger); got != "Cancelled." {
 		t.Errorf("errSigningCancelled: got %q", got)
 	}
-	if got := bulkStopMessage(errors.New("something odd"), logger); !strings.HasPrefix(got, "Batch stopped: ") {
+	if got := bulkStopMessage(BulkFailed, errors.New("something odd"), logger); !strings.HasPrefix(got, "Batch stopped: ") {
 		t.Errorf("generic: got %q, want 'Batch stopped: ' prefix", got)
+	}
+}
+
+func TestBulkStop(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want BulkStop
+	}{
+		{nil, BulkCompleted},
+		{context.Canceled, BulkCancelled},
+		{fmt.Errorf("bulk: %w", context.Canceled), BulkCancelled},
+		{errSigningCancelled, BulkCancelled},
+		{errPINEntryTimedOut, BulkFailed},
+		{errors.New("something odd"), BulkFailed},
+	} {
+		if got := bulkStop(tc.err); got != tc.want {
+			t.Errorf("bulkStop(%v) = %q, want %q", tc.err, got, tc.want)
+		}
 	}
 }
 
@@ -486,27 +504,20 @@ func TestBulkResultsFilename(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := BulkResultsFilename(tt.t); got != tt.want {
+			if got := bulkResultsFilename(tt.t); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestSaveBulkResults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "results.csv")
+func TestBulkResultsCSV(t *testing.T) {
 	results := []bulk.Result{{Req: core.SignRequest{Recipient: "Alice", Honor: "Other", Detail: "D", Date: "2026-03-14"}, Status: bulk.StatusSigned, URL: "https://example/v"}}
-	if err := saveBulkResults(path, results); err != nil {
-		t.Fatalf("saveBulkResults: %v", err)
-	}
-	got, err := os.ReadFile(path)
+	got, err := bulkResultsCSV(results)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("bulkResultsCSV: %v", err)
 	}
 	if !strings.Contains(string(got), "Alice,Other,D,2026-03-14,https://example/v,signed,") {
 		t.Errorf("unexpected CSV:\n%s", got)
-	}
-	if err := saveBulkResults(filepath.Join(t.TempDir(), "missing", "r.csv"), results); err == nil {
-		t.Error("expected error for unwritable path")
 	}
 }

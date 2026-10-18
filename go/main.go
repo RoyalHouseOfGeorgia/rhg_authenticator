@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -20,7 +19,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/host"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/regmgr"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
@@ -40,7 +39,7 @@ func main() {
 			// Best-effort write to the diagnostic log via a fresh Logger
 			// (synchronous file I/O only; the main logger may not exist yet).
 			if configDir, err := os.UserConfigDir(); err == nil {
-				debuglog.New(filepath.Join(configDir, "rhg-authenticator", debuglog.FileName)).Logf("PANIC: %v %s", r, stack)
+				debuglog.New(filepath.Join(configDir, host.AppDirName, debuglog.FileName)).Logf("PANIC: %v %s", r, stack)
 			}
 			fmt.Fprintf(os.Stderr, "RHG Authenticator crashed. Please report at https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/issues\n\nPanic: %v\n%s\n", r, stack)
 			panic(r) // re-panic so the OS gets the signal
@@ -70,54 +69,32 @@ func main() {
 	window.Resize(fyne.NewSize(800, 600))
 
 	// 2. Data directory.
-	configDir, err := os.UserConfigDir()
+	dataDir, err := host.DataDir("")
 	if err != nil {
-		fatalDialog(window, fmt.Sprintf("Cannot determine config directory: %v", err))
-		return
-	}
-	dataDir := filepath.Join(configDir, "rhg-authenticator")
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		fatalDialog(window, fmt.Sprintf("Cannot create data directory: %v", err))
+		fatalDialog(window, err.Error())
 		return
 	}
 
-	// Diagnostic logging (always on). Prune entries older than the retention
-	// window before opening; prune failures go to the log itself, never stderr.
-	debugLogPath := filepath.Join(dataDir, debuglog.FileName)
-	pruneErr := debuglog.Prune(debugLogPath, debuglog.LogRetention, time.Now())
-	logger := debuglog.New(debugLogPath)
-	if pruneErr != nil {
-		logger.Logf("warning: log prune failed: %v", pruneErr)
-	}
-	debuglog.CaptureStdlib(logger)
-	safego.SetPanicHandler(func(r any, stack []byte) {
-		fmt.Fprintf(os.Stderr, "goroutine panic: %v\n%s\n", r, stack)
-		logger.Logf("PANIC (goroutine): %v %s", r, stack)
+	// Diagnostic logging (always on): prune, then route stdlib logging, runtime
+	// crash reports and goroutine panics into the log.
+	logger := host.OpenLogs(dataDir, func() {
 		fyne.Do(func() {
 			dialog.ShowError(fmt.Errorf("an internal error occurred — please restart"), window)
 		})
-	})
-	startMsg := "RHG Authenticator starting (version: " + buildinfo.Version + ")"
-	if buildinfo.IsDebug() {
-		startMsg += " (debug mode)"
-	}
-	logger.Log(startMsg)
+	}).Logger
 
 	// 3. Signing service: cleans stale log temp files and fetches the registry
 	// (remote only — no cache or embedded fallback).
 	events := gui.NewEvents()
-	kr := ghapi.NewOSKeyring()
-	svc, err := service.New(service.Config{
-		DataDir:       dataDir,
-		Logger:        logger,
-		RegistryURL:   registry.DefaultRegistryURL,
-		RevocationURL: registry.DefaultRevocationURL,
-		Keyring:       kr,
-		Prompter:      gui.NewPrompter(window),
-		Events:        events,
+	svc, err := host.NewService(service.Config{
+		DataDir:  dataDir,
+		Logger:   logger,
+		Keyring:  ghapi.NewOSKeyring(),
+		Prompter: gui.NewPrompter(window),
+		Events:   events,
 	})
 	if err != nil {
-		fatalDialog(window, fmt.Sprintf("Cannot start signing service: %v", err))
+		fatalDialog(window, err.Error())
 		return
 	}
 
@@ -178,19 +155,15 @@ func main() {
 	)
 	banner := newUpdateBannerView(updateBanner, restart)
 	ctx, cancel := context.WithCancel(context.Background())
-	manager := update.NewManager(update.Config{
-		DataDir: dataDir,
-		Running: buildinfo.Version,
-		Owner:   ghapi.DefaultOwner,
-		Repo:    ghapi.DefaultRepo,
-		OnStatus: func(s update.Status) {
-			fyne.Do(func() { banner.showStatus(s) })
-		},
-		OnUpdated: func(version, releaseURL string) {
-			fyne.Do(func() { banner.showUpdated(version, releaseURL) })
-		},
-		Logf: logger.Logf,
-	})
+	updateCfg := host.UpdateConfig(dataDir)
+	updateCfg.OnStatus = func(s update.Status) {
+		fyne.Do(func() { banner.showStatus(s) })
+	}
+	updateCfg.OnUpdated = func(version, releaseURL string) {
+		fyne.Do(func() { banner.showUpdated(version, releaseURL) })
+	}
+	updateCfg.Logf = logger.Logf
+	manager := update.NewManager(updateCfg)
 	safego.Go(func() { manager.Run(ctx) })
 
 	window.ShowAndRun()

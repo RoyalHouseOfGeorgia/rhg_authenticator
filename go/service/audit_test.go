@@ -219,8 +219,8 @@ func TestAuditCommits_ErrorsKeepRowsAndETag(t *testing.T) {
 		name, wantErr string
 		status        int
 	}{
-		{"rate limited", "GitHub API rate limit reached — try again later", http.StatusTooManyRequests},
-		{"server error", "Failed to fetch registry history", http.StatusInternalServerError},
+		{"rate limited", "GitHub rate limit reached. Try again in a few minutes.", http.StatusTooManyRequests},
+		{"server error", "Failed to fetch registry history.", http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newAppHarness(t, nil)

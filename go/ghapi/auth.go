@@ -83,6 +83,13 @@ const maxTokenAge = 90 * 24 * time.Hour
 // Tests MUST use t.Cleanup() to restore the original value.
 var timeNow = time.Now
 
+// Device-flow failures PollForToken returns, matchable with errors.Is.
+var (
+	ErrDeviceCodeExpired = errors.New("device code expired")
+	ErrAccessDenied      = errors.New("access denied by user")
+	ErrMissingScope      = errors.New("token missing required scope: public_repo")
+)
+
 // Endpoint variables — tests override these to point at httptest servers.
 var (
 	deviceCodeEndpoint  = deviceCodeURL
@@ -388,9 +395,9 @@ func pollForTokenInternal(ctx context.Context, deviceCode string, interval, expi
 				}
 				continue
 			case "expired_token":
-				return Token{}, fmt.Errorf("device code expired")
+				return Token{}, ErrDeviceCodeExpired
 			case "access_denied":
-				return Token{}, fmt.Errorf("access denied by user")
+				return Token{}, ErrAccessDenied
 			default:
 				return Token{}, fmt.Errorf("unexpected OAuth error: %s", core.SanitizeForLog(pr.Error))
 			}
@@ -398,7 +405,7 @@ func pollForTokenInternal(ctx context.Context, deviceCode string, interval, expi
 
 		if pr.AccessToken != "" {
 			if !hasRequiredScope(pr.Scope) {
-				return Token{}, fmt.Errorf("token missing required scope: public_repo")
+				return Token{}, ErrMissingScope
 			}
 			return Token{
 				AccessToken: pr.AccessToken,

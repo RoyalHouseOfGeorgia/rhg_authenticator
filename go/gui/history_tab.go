@@ -13,7 +13,6 @@ import (
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
@@ -214,18 +213,16 @@ func (h *HistoryTab) revokeDone(res service.RevokeResult, err error) {
 	case errors.Is(err, service.ErrNotLoggedIn):
 		h.updateRevokeButton()
 		h.login()
-	case ghapi.IsUnauthorized(err):
+	case errors.Is(err, service.ErrSessionExpired):
 		// Revoke has already logged out; log in again once the user has
 		// read why.
 		h.updateRevokeButton()
-		title, msg := service.RevokeErrorMessage(err)
-		d := dialog.NewInformation(title, msg, h.window)
+		d := dialog.NewInformation("Session Expired", err.Error(), h.window)
 		d.SetOnClosed(h.login)
 		d.Show()
 	default:
 		h.updateRevokeButton()
-		title, msg := service.RevokeErrorMessage(err)
-		ShowErrorWithLogExport(title, msg, h.svc.ErrorLogExport, h.window)
+		ShowErrorWithLogExport("Revocation Failed", err.Error(), h.svc.ErrorLogExport, h.window)
 	}
 }
 

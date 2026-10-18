@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -217,7 +218,7 @@ func TestBulkSign_RunErrorShownAndClearsBusy(t *testing.T) {
 		t.Error("expected setBusy(false) after a run error")
 	}
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
-	if !strings.Contains(strings.ToLower(texts), service.ErrNoBulkPlan.Error()) {
+	if !strings.Contains(texts, service.ErrNoBulkPlan.Error()) {
 		t.Errorf("error dialog not shown:\n%s", texts)
 	}
 }
@@ -288,8 +289,11 @@ func TestBulkSign_FileChosen(t *testing.T) {
 func TestBulkSign_Export(t *testing.T) {
 	h := newBulkUIHarness(t)
 	h.load(t, threeRowCSV)
-	showBulkSummary(h.deps, service.BulkPlan{}, service.BulkOutcome{SummaryLine: "Processed 3 rows"})
+	showBulkSummary(h.deps, service.BulkPlan{}, service.BulkOutcome{SummaryLine: "Processed 3 rows", ResultsFilename: "rhg-bulk-results-2026-03-14-101500.csv"})
 	tapOverlayButton(t, h.w, "Export Results CSV…")
+	if names := entryTexts(t, topOverlay(t, h.w)); !slices.Contains(names, "rhg-bulk-results-2026-03-14-101500.csv") {
+		t.Errorf("save dialog file name entries = %q, want the outcome's ResultsFilename", names)
+	}
 	tapOverlayButton(t, h.w, "Cancel") // dismiss the save dialog: nil writer
 
 	before := len(h.w.Canvas().Overlays().List())

@@ -34,6 +34,10 @@ var (
 	ErrNothingToExport = errors.New("No credentials have been signed on this computer yet.")
 )
 
+// msgIssuanceLogUnreadable is the error text when the issuance log can't be
+// read for an export or duplicate check.
+const msgIssuanceLogUnreadable = "Could not read the issuance log."
+
 // historyState is the issuance history held under App.mu.
 type historyState struct {
 	records []issuancelog.IssuanceRecord
@@ -46,9 +50,30 @@ type historyState struct {
 	loadFailed                 bool // the last log read failed
 }
 
+// HistoryRecord is one issuance log record. Timestamp is RFC 3339; Date is
+// YYYY-MM-DD; PayloadSHA256 is lower-case hex and identifies the credential
+// to Revoke.
+type HistoryRecord struct {
+	Timestamp, Recipient, Honor, Detail, Date string
+	PayloadSHA256, SignatureB64URL            string
+}
+
+// historyRecord returns the HistoryRecord for rec.
+func historyRecord(rec issuancelog.IssuanceRecord) HistoryRecord {
+	return HistoryRecord{
+		Timestamp:       rec.Timestamp,
+		Recipient:       rec.Recipient,
+		Honor:           rec.Honor,
+		Detail:          rec.Detail,
+		Date:            rec.Date,
+		PayloadSHA256:   rec.PayloadSHA256,
+		SignatureB64URL: rec.SignatureB64URL,
+	}
+}
+
 // HistoryRow is one issuance record in the history list.
 type HistoryRow struct {
-	Record  issuancelog.IssuanceRecord
+	Record  HistoryRecord
 	Summary string // list text; "[REVOKED] " prefix when revoked
 	Revoked bool
 }
@@ -87,7 +112,7 @@ func formatRecordSummary(rec issuancelog.IssuanceRecord) string {
 }
 
 // FormatRecordDetail returns a multi-line detail string for the record dialog.
-func FormatRecordDetail(rec issuancelog.IssuanceRecord) string {
+func FormatRecordDetail(rec HistoryRecord) string {
 	return fmt.Sprintf(
 		"Timestamp: %s\nRecipient: %s\nHonor: %s\nDetail: %s\nDate: %s\nPayload SHA-256: %s\nSignature: %s",
 		rec.Timestamp, rec.Recipient, rec.Honor, rec.Detail, core.FormatDateDisplay(rec.Date),
@@ -96,7 +121,7 @@ func FormatRecordDetail(rec issuancelog.IssuanceRecord) string {
 }
 
 // RevokeConfirmText returns the confirmation prompt for revoking rec.
-func RevokeConfirmText(rec issuancelog.IssuanceRecord) string {
+func RevokeConfirmText(rec HistoryRecord) string {
 	return fmt.Sprintf("Revoke credential for %s dated %s?\n\nThis cannot be undone.", rec.Recipient, core.FormatDateDisplay(rec.Date))
 }
 
@@ -184,7 +209,7 @@ func (a *App) History(query string) HistorySnapshot {
 			continue
 		}
 		rec := h.records[i]
-		row := HistoryRow{Record: rec, Summary: h.summaries[i], Revoked: core.IsRevoked(rec.PayloadSHA256, h.revoked)}
+		row := HistoryRow{Record: historyRecord(rec), Summary: h.summaries[i], Revoked: core.IsRevoked(rec.PayloadSHA256, h.revoked)}
 		if row.Revoked {
 			row.Summary = "[REVOKED] " + row.Summary
 		}
@@ -204,9 +229,10 @@ func (a *App) History(query string) HistorySnapshot {
 // or upstream) or with a revocation PR already open is not a failure: the
 // result says so. It returns ErrNotLoggedIn without a usable session,
 // ErrRevocationsNotLoaded before the revocation list has loaded, ErrBusy while
-// another Revoke runs, and a GitHub error detectable with ghapi.IsUnauthorized
-// when the session expired (it then logs out). Failures are logged;
-// RevokeErrorMessage gives the text to show. Revoke emits no history events.
+// another Revoke runs, and an error matching ErrSessionExpired when GitHub
+// rejected the session (it then logs out). Failures are logged; every error's
+// text is user-facing and GitHub errors stay wrapped. Revoke emits no history
+// events.
 func (a *App) Revoke(ctx context.Context, payloadSHA256 string) (RevokeResult, error) {
 	if !a.revoking.CompareAndSwap(false, true) {
 		return RevokeResult{}, ErrBusy
@@ -252,10 +278,10 @@ func (a *App) Revoke(ctx context.Context, payloadSHA256 string) (RevokeResult, e
 	case ghapi.IsUnauthorized(err):
 		a.logger.Logf("warning: revocation unauthorized, logging out: %s", core.SanitizeForLog(err.Error()))
 		a.Logout()
-		return RevokeResult{}, err
+		return RevokeResult{}, userErr(ErrSessionExpired.Error(), ErrSessionExpired, err)
 	default:
 		a.logger.Logf("error: revocation PR failed: %s", core.SanitizeForLog(err.Error()))
-		return RevokeResult{}, err
+		return RevokeResult{}, userErr(ghapi.UserMessage(err), err)
 	}
 	if err != nil {
 		// Nothing to submit: the hash is already revoked upstream or awaiting
@@ -278,20 +304,6 @@ func submittedMessage(prNumber int, url string) string {
 	return created + "\n\nIf several revocation PRs are open, merge them one at a time."
 }
 
-// RevokeErrorMessage returns the dialog title and message for a Revoke error.
-func RevokeErrorMessage(err error) (title, msg string) {
-	switch {
-	case ghapi.IsUnauthorized(err):
-		return "Session Expired", "Your GitHub session expired. Please log in again."
-	case errors.Is(err, ErrRevocationsNotLoaded):
-		return "Revocation Failed", ErrRevocationsNotLoaded.Error()
-	case errors.Is(err, ErrNotLoggedIn):
-		return "Revocation Failed", ErrNotLoggedIn.Error()
-	default:
-		return "Revocation Failed", ghapi.UserMessage(err)
-	}
-}
-
 // IssuanceLogExport returns the raw issuance log for the operator to save.
 // It returns ErrNothingToExport when no credential has been logged; other
 // errors are logged and their text is user-facing.
@@ -302,7 +314,7 @@ func (a *App) IssuanceLogExport() ([]byte, error) {
 	}
 	if err != nil {
 		a.logger.Logf("history: failed to read log for export: %s", core.SanitizeForLog(err.Error()))
-		return nil, errors.New("could not read the issuance log")
+		return nil, userErr(msgIssuanceLogUnreadable, err)
 	}
 	if !hasRecords(data) {
 		return nil, ErrNothingToExport
@@ -316,7 +328,7 @@ func (a *App) ErrorLogExport() ([]byte, error) {
 	data, err := os.ReadFile(a.logger.Path())
 	if err != nil {
 		a.logger.Logf("errorlog: failed to read log for export: %s", core.SanitizeForLog(err.Error()))
-		return nil, errors.New("could not read the error log")
+		return nil, userErr("Could not read the error log.", err)
 	}
 	return data, nil
 }
@@ -328,7 +340,7 @@ func (a *App) DuplicatePreview() (int, error) {
 	records, err := issuancelog.ReadLog(a.logPath)
 	if err != nil {
 		a.logger.Logf("history: failed to read log for dedup: %s", core.SanitizeForLog(err.Error()))
-		return 0, errors.New("Could not read the issuance log.")
+		return 0, userErr(msgIssuanceLogUnreadable, err)
 	}
 	_, n := issuancelog.Dedupe(records)
 	return n, nil
@@ -342,7 +354,7 @@ func (a *App) RemoveDuplicates() (removed int, backup string, err error) {
 	removed, backup, err = issuancelog.RemoveDuplicates(a.logPath)
 	if err != nil {
 		a.logger.Logf("history: remove duplicates failed: %s", core.SanitizeForLog(err.Error()))
-		return 0, "", errors.New("Could not remove duplicates. The issuance log was not changed.")
+		return 0, "", userErr("Could not remove duplicates. The issuance log was not changed.", err)
 	}
 	if removed > 0 {
 		a.loadHistory()

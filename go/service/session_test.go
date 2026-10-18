@@ -136,16 +136,22 @@ func TestLogin_Errors(t *testing.T) {
 	h.app.requestDeviceCode = func(context.Context) (ghapi.DeviceCodeResponse, error) {
 		return ghapi.DeviceCodeResponse{}, errNetwork
 	}
-	if _, err := h.app.Login(context.Background()); err == nil || err.Error() != "device code request failed: "+errNetwork.Error() {
-		t.Errorf("err = %v", err)
+	if _, err := h.app.Login(context.Background()); !errors.Is(err, errNetwork) || err.Error() != "An error occurred. Please try again later." {
+		t.Errorf("err = %v, want ghapi.UserMessage's text wrapping the cause", err)
+	}
+	if !strings.Contains(h.debugLog(t), "warning: login device code request failed: "+errNetwork.Error()) {
+		t.Error("device code failure not logged")
 	}
 	if names := eventNames(h); len(names) != 0 {
 		t.Errorf("events = %v, want none", names)
 	}
 
-	stubDeviceFlow(h.app, "https://github.com/login/device", errors.New("expired_token"), "", nil)
-	if _, err := h.app.Login(context.Background()); err == nil || err.Error() != "login failed: expired_token" {
-		t.Errorf("err = %v", err)
+	rateLimited := &ghapi.APIError{StatusCode: 429}
+	stubDeviceFlow(h.app, "https://github.com/login/device", rateLimited, "", nil)
+	_, err := h.app.Login(context.Background())
+	var apiErr *ghapi.APIError
+	if !errors.As(err, &apiErr) || err.Error() != "GitHub rate limit reached. Try again in a few minutes." {
+		t.Errorf("err = %v, want ghapi.UserMessage's text wrapping the cause", err)
 	}
 	if names := eventNames(h); !reflect.DeepEqual(names, []string{EventAuthDeviceCode}) {
 		t.Errorf("events = %v, want only the device code", names)
@@ -153,6 +159,36 @@ func TestLogin_Errors(t *testing.T) {
 	if h.app.AuthState() != (AuthState{}) {
 		t.Errorf("state = %+v, want logged out", h.app.AuthState())
 	}
+}
+
+// TestLogin_CancelReturnsContextError: once Login is cancelled, a failed
+// device-flow step returns "Login cancelled." wrapping the ctx error, whatever
+// the step returned.
+func TestLogin_CancelReturnsContextError(t *testing.T) {
+	t.Run("device code request", func(t *testing.T) {
+		h := newAppHarness(t, ghapi.NewFakeKeyring())
+		h.app.requestDeviceCode = func(context.Context) (ghapi.DeviceCodeResponse, error) {
+			h.app.CancelLogin()
+			return ghapi.DeviceCodeResponse{}, errNetwork
+		}
+		if _, err := h.app.Login(context.Background()); !errors.Is(err, context.Canceled) || err.Error() != "Login cancelled." {
+			t.Errorf("err = %v, want Login cancelled. wrapping context.Canceled", err)
+		}
+	})
+	t.Run("token polling", func(t *testing.T) {
+		h := newAppHarness(t, ghapi.NewFakeKeyring())
+		stubDeviceFlow(h.app, "https://github.com/login/device", nil, "", nil)
+		h.app.pollForToken = func(context.Context, string, int, int) (ghapi.Token, error) {
+			h.app.CancelLogin()
+			return ghapi.Token{}, errors.New("poll aborted")
+		}
+		if _, err := h.app.Login(context.Background()); !errors.Is(err, context.Canceled) || err.Error() != "Login cancelled." {
+			t.Errorf("err = %v, want Login cancelled. wrapping context.Canceled", err)
+		}
+		if h.app.AuthState() != (AuthState{}) {
+			t.Errorf("state = %+v, want logged out", h.app.AuthState())
+		}
+	})
 }
 
 // blockingPoll makes pollForToken signal entered and wait for ctx.
@@ -366,6 +402,44 @@ func TestLogout(t *testing.T) {
 	}
 }
 
+func TestLogin_NoKeyring(t *testing.T) {
+	h := newAppHarness(t, nil)
+	noDeviceFlow(t, h.app)
+	h.app.restoreSession = func(context.Context, ghapi.Keyring, string) (ghapi.Token, string, bool, bool, error) {
+		t.Error("restore attempted")
+		return ghapi.Token{}, "", false, false, nil
+	}
+
+	st, err := h.app.Login(context.Background())
+	if !errors.Is(err, ErrLoginUnavailable) || err.Error() != "GitHub login isn't available: no secure credential store on this computer." {
+		t.Errorf("Login err = %v, want the no-keyring message", err)
+	}
+	if st != (AuthState{}) || h.app.AuthState() != (AuthState{}) {
+		t.Errorf("state = %+v / %+v, want logged out", st, h.app.AuthState())
+	}
+	if names := eventNames(h); len(names) != 0 {
+		t.Errorf("events = %v, want none", names)
+	}
+}
+
+func TestLogout_NoKeyring(t *testing.T) {
+	h := newAppHarness(t, nil)
+	h.app.setAuth(ghapi.Token{AccessToken: "gho_old"}, "octocat", true, false)
+	h.events.reset()
+
+	h.app.Logout()
+
+	if h.app.AuthState() != (AuthState{}) || h.app.githubClient() != nil {
+		t.Errorf("state = %+v, want logged out", h.app.AuthState())
+	}
+	if names := eventNames(h); !reflect.DeepEqual(names, []string{EventAuthChanged}) {
+		t.Errorf("events = %v", names)
+	}
+	if strings.Contains(h.debugLog(t), "clearing token failed") {
+		t.Error("Logout without a keyring logged a clear failure")
+	}
+}
+
 func TestLogout_ClearFailureLogged(t *testing.T) {
 	kr := ghapi.NewFakeKeyring()
 	h := newAppHarness(t, kr)
@@ -458,7 +532,7 @@ func TestStartupRestore(t *testing.T) {
 		}
 	})
 	t.Run("already loaded keeps edits", func(t *testing.T) {
-		// A Fetch from Server finished while the restore ran, then an edit.
+		// A FetchRegistry finished while the restore ran, then an edit.
 		h := newAppHarness(t, ghapi.NewFakeKeyring())
 		stubRestore(h.app, ghapi.Token{}, "", false, false, nil)
 		h.app.registryURL = registryServer(t, http.StatusOK).URL // a fetch would succeed
@@ -472,7 +546,7 @@ func TestStartupRestore(t *testing.T) {
 		}
 	})
 	t.Run("loaded during the startup fetch keeps edits", func(t *testing.T) {
-		// A Fetch from Server and an edit land while the startup fetch is in flight.
+		// A FetchRegistry and an edit land while the startup fetch is in flight.
 		h := newAppHarness(t, ghapi.NewFakeKeyring())
 		stubRestore(h.app, ghapi.Token{}, "", false, false, nil)
 		site := registryServer(t, http.StatusOK)
@@ -516,4 +590,26 @@ func TestStartupRestore(t *testing.T) {
 			t.Errorf("entries = %+v, want the API copy", e)
 		}
 	})
+}
+
+func TestLogin_DeviceFlowMessages(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{ghapi.ErrDeviceCodeExpired, "The login code expired. Start the login again to get a new one."},
+		{ghapi.ErrAccessDenied, "GitHub access was denied, so you are not logged in."},
+		{ghapi.ErrMissingScope, "GitHub didn't grant the public_repo permission the app needs. Log in again and approve it."},
+		{errors.New("other"), "An error occurred. Please try again later."},
+	} {
+		h := newAppHarness(t, ghapi.NewFakeKeyring())
+		stubDeviceFlow(h.app, "https://github.com/login/device", nil, "", nil)
+		h.app.pollForToken = func(context.Context, string, int, int) (ghapi.Token, error) {
+			return ghapi.Token{}, tc.err
+		}
+		_, err := h.app.Login(context.Background())
+		if err == nil || err.Error() != tc.want || !errors.Is(err, tc.err) {
+			t.Errorf("poll %v: err = %v, want %q", tc.err, err, tc.want)
+		}
+	}
 }

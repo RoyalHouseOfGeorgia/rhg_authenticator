@@ -128,9 +128,9 @@ func TestReportIssue_LoggedIn_CreatesIssue(t *testing.T) {
 	}
 
 	kr := ghapi.NewFakeKeyring()
-	result, err := ReportIssue(context.Background(), kr, t.TempDir(), "Test Title", "Test Body")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "Test Title", "Test Body")
+	if !filed {
+		t.Fatal("filed = false for an API-created issue")
 	}
 	if !called {
 		t.Fatal("CreateIssue was not called")
@@ -170,9 +170,9 @@ func TestReportIssue_APIError_FallsThrough(t *testing.T) {
 	}
 
 	kr := ghapi.NewFakeKeyring()
-	result, err := ReportIssue(context.Background(), kr, t.TempDir(), "Title", "Body")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "Title", "Body")
+	if filed {
+		t.Fatal("filed = true for a browser fallback")
 	}
 	assertBrowserURL(t, result, "Title")
 }
@@ -188,9 +188,9 @@ func TestReportIssue_Offline_ReturnsBrowserURL(t *testing.T) {
 	}
 
 	kr := ghapi.NewFakeKeyring()
-	result, err := ReportIssue(context.Background(), kr, t.TempDir(), "Title", "Body")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "Title", "Body")
+	if filed {
+		t.Fatal("filed = true for a browser fallback")
 	}
 	assertBrowserURL(t, result, "Title")
 }
@@ -206,9 +206,9 @@ func TestReportIssue_NotLoggedIn_ReturnsBrowserURL(t *testing.T) {
 	}
 
 	kr := ghapi.NewFakeKeyring()
-	result, err := ReportIssue(context.Background(), kr, t.TempDir(), "My Title", "My Body")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "My Title", "My Body")
+	if filed {
+		t.Fatal("filed = true for a browser fallback")
 	}
 	assertBrowserURL(t, result, "My Title")
 }
@@ -224,9 +224,9 @@ func TestReportIssue_SessionError_ReturnsBrowserURL(t *testing.T) {
 	}
 
 	kr := ghapi.NewFakeKeyring()
-	result, err := ReportIssue(context.Background(), kr, t.TempDir(), "Title", "Body")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "Title", "Body")
+	if filed {
+		t.Fatal("filed = true for a browser fallback")
 	}
 	assertBrowserURL(t, result, "Title")
 }

@@ -12,7 +12,7 @@ import (
 // errSigningCancelled is returned when the user dismisses the PIN dialog.
 // This is a normal outcome, not an error — the sign flow should show a
 // neutral status message rather than an error.
-var errSigningCancelled = errors.New("signing cancelled")
+var errSigningCancelled = errors.New("Signing cancelled.")
 
 // errPINEntryTimedOut is returned when the PIN dialog is left unanswered past
 // the timeout. Like errSigningCancelled it is a neutral outcome. It is a typed

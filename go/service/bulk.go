@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/bulk"
@@ -20,21 +19,26 @@ import (
 const bulkPreviewNames = 5
 
 // loadBulkPlan reads and parses the operator's CSV from r and classifies each
-// row against the audit log at logPath. Input and parse errors are returned
-// as-is (their messages are user-facing). An unreadable audit log is fatal:
-// without it, already-issued credentials cannot be detected.
-func loadBulkPlan(r io.Reader, logPath string) ([]bulk.Result, error) {
+// row against the audit log at logPath. Input and parse errors keep bulk's
+// text (it describes the file to the operator) as a sentence. An unreadable
+// audit log is fatal: without it, already-issued credentials cannot be
+// detected. Every error is logged and wraps its cause.
+func loadBulkPlan(r io.Reader, logPath string, logger *debuglog.Logger) ([]bulk.Result, error) {
+	fail := func(msg string, err error) error {
+		logger.Log("bulk load: " + core.SanitizeForLog(err.Error()))
+		return userErr(msg, err)
+	}
 	data, err := bulk.ReadInput(r)
 	if err != nil {
-		return nil, err
+		return nil, fail(sentence(err.Error()), err)
 	}
 	rows, err := bulk.ParseCSV(data, bulk.MaxRows)
 	if err != nil {
-		return nil, err
+		return nil, fail(sentence(err.Error()), err)
 	}
 	records, err := issuancelog.ReadLog(logPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read audit log; bulk signing needs it to avoid duplicates: %w", err)
+		return nil, fail("Cannot read audit log; bulk signing needs it to avoid duplicates.", err)
 	}
 	issued := make(map[string]string, len(records))
 	for _, rec := range records {
@@ -82,25 +86,38 @@ func runBulkFlow(
 	)
 }
 
-// bulkStopMessage returns the user-facing reason a batch stopped early, or ""
-// when it completed.
-func bulkStopMessage(err error, logger *debuglog.Logger) string {
-	if err == nil {
-		return ""
+// bulkStop classifies runBulkFlow's error.
+func bulkStop(err error) BulkStop {
+	switch {
+	case err == nil:
+		return BulkCompleted
+	case errors.Is(err, context.Canceled) || errors.Is(err, errSigningCancelled):
+		return BulkCancelled
+	default:
+		return BulkFailed
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, errSigningCancelled) {
-		return "Cancelled."
-	}
-	return "Batch stopped: " + signFlowErrorMessage(err, logger)
 }
 
-// saveBulkResults renders results as CSV and writes them to path.
-func saveBulkResults(path string, results []bulk.Result) error {
+// bulkStopMessage returns the user-facing reason a batch stopped early, or ""
+// when it completed; stop is bulkStop(err).
+func bulkStopMessage(stop BulkStop, err error, logger *debuglog.Logger) string {
+	switch stop {
+	case BulkCompleted:
+		return ""
+	case BulkCancelled:
+		return "Cancelled."
+	default:
+		return "Batch stopped: " + signFlowErrorMessage(err, logger)
+	}
+}
+
+// bulkResultsCSV renders results as CSV.
+func bulkResultsCSV(results []bulk.Result) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := bulk.WriteResultCSV(&buf, results); err != nil {
-		return err
+		return nil, err
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	return buf.Bytes(), nil
 }
 
 // bulkSummaryLine formats the per-status tally shown after a batch.
@@ -128,8 +145,8 @@ func bulkConfirmText(results []bulk.Result) (counts string, preview []string, in
 	return counts, preview, invalid
 }
 
-// BulkResultsFilename returns the default export name for a results CSV,
+// bulkResultsFilename returns the default export name for a results CSV,
 // timestamped in UTC.
-func BulkResultsFilename(t time.Time) string {
+func bulkResultsFilename(t time.Time) string {
 	return t.UTC().Format("rhg-bulk-results-2006-01-02-150405.csv")
 }

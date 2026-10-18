@@ -61,6 +61,24 @@ func labelTexts(t *testing.T, obj fyne.CanvasObject) []string {
 	return out
 }
 
+// entryTexts collects the text of every entry under obj.
+func entryTexts(t *testing.T, obj fyne.CanvasObject) []string {
+	var out []string
+	switch o := obj.(type) {
+	case *widget.Entry:
+		return []string{o.Text}
+	case *fyne.Container:
+		for _, child := range o.Objects {
+			out = append(out, entryTexts(t, child)...)
+		}
+	case fyne.Widget:
+		for _, child := range test.TempWidgetRenderer(t, o).Objects() {
+			out = append(out, entryTexts(t, child)...)
+		}
+	}
+	return out
+}
+
 func topOverlay(t *testing.T, w fyne.Window) fyne.CanvasObject {
 	t.Helper()
 	top := w.Canvas().Overlays().Top()

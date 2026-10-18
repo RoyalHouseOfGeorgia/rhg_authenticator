@@ -57,7 +57,7 @@ func TestFormatRecordSummary_LongHonor(t *testing.T) {
 // --- FormatRecordDetail tests ---
 
 func TestFormatRecordDetail(t *testing.T) {
-	rec := issuancelog.IssuanceRecord{
+	rec := HistoryRecord{
 		Timestamp:       "2026-03-14T10:30:00Z",
 		Recipient:       "John Doe",
 		Honor:           "Test Honor",
@@ -81,7 +81,7 @@ func TestFormatRecordDetail(t *testing.T) {
 // --- maxHonorDisplay constant test ---
 
 func TestRevokeConfirmText(t *testing.T) {
-	got := RevokeConfirmText(issuancelog.IssuanceRecord{Recipient: "John Doe", Date: "2026-03-14"})
+	got := RevokeConfirmText(HistoryRecord{Recipient: "John Doe", Date: "2026-03-14"})
 	want := "Revoke credential for John Doe dated 2026-Mar-14?\n\nThis cannot be undone."
 	if got != want {
 		t.Errorf("RevokeConfirmText = %q, want %q", got, want)
@@ -198,6 +198,35 @@ func TestRefreshHistory_LoadsRecordsAndRevocations(t *testing.T) {
 	}
 	if snap.RevokeAvailable {
 		t.Error("RevokeAvailable while logged out")
+	}
+}
+
+func TestHistory_RecordCarriesEveryField(t *testing.T) {
+	h := newAppHarness(t, nil)
+	full := issuancelog.IssuanceRecord{
+		Timestamp:       "2026-03-14T10:30:00Z",
+		Recipient:       "Alice",
+		Honor:           "Honor",
+		Detail:          "For service",
+		Date:            "2026-03-14",
+		PayloadSHA256:   hashA,
+		SignatureB64URL: validSig,
+	}
+	writeIssuanceLog(t, h, full)
+	h.app.RefreshHistory()
+
+	snap := h.app.History("")
+	want := HistoryRecord{
+		Timestamp:       full.Timestamp,
+		Recipient:       full.Recipient,
+		Honor:           full.Honor,
+		Detail:          full.Detail,
+		Date:            full.Date,
+		PayloadSHA256:   full.PayloadSHA256,
+		SignatureB64URL: full.SignatureB64URL,
+	}
+	if len(snap.Rows) != 1 || snap.Rows[0].Record != want {
+		t.Errorf("rows = %+v, want one with record %+v", snap.Rows, want)
 	}
 }
 
@@ -499,8 +528,12 @@ func TestRevoke_Unauthorized(t *testing.T) {
 	f.revocationsStatus = http.StatusUnauthorized
 
 	_, err := h.app.Revoke(context.Background(), hashA)
-	if !ghapi.IsUnauthorized(err) {
-		t.Fatalf("err = %v, want unauthorized", err)
+	var apiErr *ghapi.APIError
+	if !errors.Is(err, ErrSessionExpired) || !ghapi.IsUnauthorized(err) || !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want session expired wrapping the 401", err)
+	}
+	if err.Error() != "Your GitHub session expired. Please log in again." {
+		t.Errorf("text = %q", err.Error())
 	}
 	if h.app.AuthState() != (AuthState{}) {
 		t.Errorf("state = %+v, want logged out", h.app.AuthState())
@@ -531,8 +564,11 @@ func TestRevoke_Failures(t *testing.T) {
 			h, f := revokeHarness(t)
 			tc.setup(f)
 			_, err := h.app.Revoke(context.Background(), tc.hash)
-			if err == nil || ghapi.IsUnauthorized(err) {
+			if err == nil || ghapi.IsUnauthorized(err) || errors.Is(err, ErrSessionExpired) {
 				t.Fatalf("err = %v, want a non-401 error", err)
+			}
+			if err.Error() != "An error occurred. Please try again later." {
+				t.Errorf("text = %q, want ghapi.UserMessage's", err.Error())
 			}
 			if !h.app.AuthState().LoggedIn {
 				t.Error("failure logged out")
@@ -614,24 +650,6 @@ func TestRevoke_ConcurrentBusy(t *testing.T) {
 	}
 }
 
-func TestRevokeErrorMessage(t *testing.T) {
-	for _, tc := range []struct {
-		err              error
-		wantTitle, inMsg string
-	}{
-		{fmt.Errorf("x: %w", &ghapi.APIError{StatusCode: 401}), "Session Expired", "Your GitHub session expired. Please log in again."},
-		{ErrRevocationsNotLoaded, "Revocation Failed", "Revocation data not loaded. Try refreshing."},
-		{ErrNotLoggedIn, "Revocation Failed", "not logged in to GitHub"},
-		{&ghapi.APIError{StatusCode: 429}, "Revocation Failed", "rate limit"},
-		{errors.New("dial tcp internal.example:443: secret-detail"), "Revocation Failed", "try again later"},
-	} {
-		title, msg := RevokeErrorMessage(tc.err)
-		if title != tc.wantTitle || !strings.Contains(msg, tc.inMsg) || strings.Contains(msg, "secret-detail") {
-			t.Errorf("%v: got %q / %q", tc.err, title, msg)
-		}
-	}
-}
-
 // --- Exports and duplicates ---
 
 func TestIssuanceLogExport(t *testing.T) {
@@ -668,7 +686,7 @@ func TestIssuanceLogExport_ReadError(t *testing.T) {
 	h := newAppHarness(t, nil)
 	h.app.logPath = h.dir // a directory can't be read as a file
 	_, err := h.app.IssuanceLogExport()
-	if err == nil || err.Error() != "could not read the issuance log" {
+	if err == nil || err.Error() != "Could not read the issuance log." {
 		t.Errorf("err = %v", err)
 	}
 	if !strings.Contains(h.debugLog(t), "history: failed to read log for export: ") {
@@ -686,7 +704,7 @@ func TestErrorLogExport(t *testing.T) {
 
 	missing := filepath.Join(h.dir, "absent.log")
 	h.app.logger = debuglog.New(missing)
-	if _, err := h.app.ErrorLogExport(); err == nil || err.Error() != "could not read the error log" {
+	if _, err := h.app.ErrorLogExport(); err == nil || err.Error() != "Could not read the error log." {
 		t.Errorf("err = %v", err)
 	}
 	// The failure is logged to the (now created) log itself.

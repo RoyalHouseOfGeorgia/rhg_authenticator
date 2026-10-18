@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/errorreport"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 )
 
@@ -449,6 +451,12 @@ func TestSign_SuccessReturnsCanonicalFields(t *testing.T) {
 	if !strings.HasPrefix(res.URL, "https://") || len(res.Hash8) != 8 || res.Existing || len(res.PNGPreview) == 0 {
 		t.Errorf("unexpected result: URL=%q Hash8=%q Existing=%v png=%d", res.URL, res.Hash8, res.Existing, len(res.PNGPreview))
 	}
+	if want := "rhg-credential-2026-03-14-" + res.Hash8 + "-min3cm.svg"; res.SVGFilename != want {
+		t.Errorf("SVGFilename = %q, want %q", res.SVGFilename, want)
+	}
+	if want := "rhg-credential-2026-03-14-" + res.Hash8 + "-2048px.png"; res.PNGFilename != want {
+		t.Errorf("PNGFilename = %q, want %q", res.PNGFilename, want)
+	}
 	names, _ := h.events.snapshot()
 	if len(names) != 1 || names[0] != "sign.connecting" {
 		t.Errorf("events = %v, want [sign.connecting]", names)
@@ -488,7 +496,7 @@ func TestSign_ValidationError(t *testing.T) {
 	if !errors.As(err, &se) {
 		t.Fatalf("err = %v, want *SignError", err)
 	}
-	if se.Message != "recipient is required" || se.OfferReport || se.Error() != se.Message {
+	if se.Message != "Recipient is required." || se.OfferReport || se.Error() != se.Message {
 		t.Errorf("SignError = %+v", se)
 	}
 	if h.prompter.callCount() != 0 || h.opens != 0 {
@@ -513,7 +521,7 @@ func TestSign_FlowErrorOffersReport(t *testing.T) {
 		if !errors.As(err, &se) {
 			t.Fatalf("%s: err = %v, want *SignError", tc.name, err)
 		}
-		if se.Message != "Signing failed. Use Help → Export Error Log… for details." || se.OfferReport != tc.offer {
+		if se.Message != "Signing failed. Export the error log for details." || se.OfferReport != tc.offer {
 			t.Errorf("%s: SignError = %+v", tc.name, se)
 		}
 		if !errors.Is(err, boom) {
@@ -543,7 +551,8 @@ func TestSaveQR_WritesFormatsAndLogsFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svgPath, pngPath := filepath.Join(h.dir, "q.svg"), filepath.Join(h.dir, "q.png")
+	out := t.TempDir()
+	svgPath, pngPath := filepath.Join(out, "q.svg"), filepath.Join(out, "q.png")
 	if err := h.app.SaveQR(res.URL, "svg", svgPath); err != nil {
 		t.Fatalf("svg: %v", err)
 	}
@@ -556,13 +565,13 @@ func TestSaveQR_WritesFormatsAndLogsFailure(t *testing.T) {
 	if png, _ := os.ReadFile(pngPath); !strings.HasPrefix(string(png), "\x89PNG") {
 		t.Error("PNG not written")
 	}
-	if err := h.app.SaveQR(res.URL, "gif", filepath.Join(h.dir, "q.gif")); err == nil {
-		t.Error("unsupported format accepted")
+	if err := h.app.SaveQR(res.URL, "gif", filepath.Join(out, "q.gif")); err == nil || err.Error() != `Unsupported QR format "gif".` {
+		t.Errorf("unsupported format err = %v", err)
 	}
-	if err := h.app.SaveQR(res.URL, "png", filepath.Join(h.dir, "missing", "q.png")); err == nil {
-		t.Error("write into a missing directory succeeded")
+	if err := h.app.SaveQR(res.URL, "png", filepath.Join(out, "missing", "q.png")); !errors.Is(err, fs.ErrNotExist) || err.Error() != msgSaveNoFolder {
+		t.Errorf("write into a missing directory err = %v", err)
 	}
-	if !strings.Contains(h.debugLog(t), "PNG save failed") {
+	if !strings.Contains(h.debugLog(t), "save failed: ") {
 		t.Error("save failure not logged")
 	}
 }
@@ -578,33 +587,145 @@ func signError(t *testing.T, h *appHarness, f SignFields) *SignError {
 	return se
 }
 
-func TestReportSignError_RefusesNonReportable(t *testing.T) {
+func TestReportSignError_NonReportableHasNoID(t *testing.T) {
 	h := newAppHarness(t, ghapi.NewFakeKeyring())
-	invalid := signError(t, h, SignFields{})
-	for name, se := range map[string]*SignError{"nil": nil, "validation error": invalid} {
-		if url, err := h.app.ReportSignError(context.Background(), se); !errors.Is(err, errNotReportable) || url != "" {
-			t.Errorf("%s: ReportSignError = %q, %v; want errNotReportable", name, url, err)
+	if se := signError(t, h, SignFields{}); se.OfferReport || se.ReportID != "" {
+		t.Errorf("validation SignError = %+v, want no report id", se)
+	}
+	h.openErr = errors.New("boom")
+	h.app.keyring = nil
+	if se := signError(t, h, validFields("Alice")); se.OfferReport || se.ReportID != "" {
+		t.Errorf("no-keyring SignError = %+v, want no report id", se)
+	}
+	for _, id := range []string{"", "1", "bogus"} {
+		res, err := h.app.ReportSignError(context.Background(), id)
+		if !errors.Is(err, ErrNotFound) || res != (ReportResult{}) || err.Error() != "This failure can no longer be reported." {
+			t.Errorf("ReportSignError(%q) = %+v, %v; want ErrNotFound", id, res, err)
 		}
 	}
 }
 
-func TestReportSignError_NoKeyring(t *testing.T) {
-	h := newAppHarness(t, nil)
-	se := &SignError{Message: "Signing failed.", OfferReport: true, Err: errors.New("boom")}
-	if url, err := h.app.ReportSignError(context.Background(), se); !errors.Is(err, errNotReportable) || url != "" {
-		t.Errorf("ReportSignError = %q, %v; want errNotReportable", url, err)
+// stubReportIssue makes ReportSignError's filing return url and filed,
+// recording each issue title.
+func stubReportIssue(h *appHarness, url string, filed bool) *[]string {
+	var titles []string
+	h.app.reportIssue = func(_ context.Context, _ ghapi.Keyring, _, title, _ string) (string, bool) {
+		titles = append(titles, title)
+		return url, filed
+	}
+	return &titles
+}
+
+func TestReportSignError_OnlyLatestFailure(t *testing.T) {
+	h := newAppHarness(t, ghapi.NewFakeKeyring())
+	titles := stubReportIssue(h, "https://github.com/o/r/issues/7", true)
+	h.openErr = errors.New("boom")
+	first := signError(t, h, validFields("Alice"))
+	h.openErr = errors.New("certificate missing")
+	second := signError(t, h, validFields("Bob"))
+	if first.ReportID == "" || second.ReportID == "" || first.ReportID == second.ReportID {
+		t.Fatalf("report ids = %q, %q; want two distinct ids", first.ReportID, second.ReportID)
+	}
+
+	res, err := h.app.ReportSignError(context.Background(), first.ReportID)
+	if !errors.Is(err, ErrNotFound) || res != (ReportResult{}) {
+		t.Errorf("stale id = %+v, %v; want ErrNotFound", res, err)
+	}
+	if len(*titles) != 0 {
+		t.Fatalf("stale id filed %v", *titles)
+	}
+
+	for range 2 { // a repeat returns the filed issue without filing again
+		res, err = h.app.ReportSignError(context.Background(), second.ReportID)
+		if err != nil || res != (ReportResult{URL: "https://github.com/o/r/issues/7", Filed: true}) {
+			t.Errorf("latest id = %+v, %v; want filed", res, err)
+		}
+	}
+	want := errorreport.BuildIssueTitle("signing", second.Message)
+	if len(*titles) != 1 || (*titles)[0] != want {
+		t.Errorf("filed titles = %q, want one %q", *titles, want)
+	}
+
+	// A newer failure is reportable again.
+	third := signError(t, h, validFields("Carol"))
+	if _, err := h.app.ReportSignError(context.Background(), third.ReportID); err != nil || len(*titles) != 2 {
+		t.Errorf("newer failure: err = %v, filed %d issues; want 2", err, len(*titles))
+	}
+}
+
+func TestReportSignError_BrowserFormCanRepeat(t *testing.T) {
+	h := newAppHarness(t, ghapi.NewFakeKeyring())
+	titles := stubReportIssue(h, "https://github.com/o/r/issues/new?title=x", false)
+	h.openErr = errors.New("boom")
+	id := signError(t, h, validFields("Alice")).ReportID
+	for range 2 {
+		if res, err := h.app.ReportSignError(context.Background(), id); err != nil || res.Filed {
+			t.Fatalf("ReportSignError = %+v, %v", res, err)
+		}
+	}
+	if len(*titles) != 2 {
+		t.Errorf("tries = %d, want 2", len(*titles))
+	}
+}
+
+func TestReportSignError_Busy(t *testing.T) {
+	h := newAppHarness(t, ghapi.NewFakeKeyring())
+	titles := stubReportIssue(h, "https://github.com/o/r/issues/7", true)
+	h.openErr = errors.New("boom")
+	id := signError(t, h, validFields("Alice")).ReportID
+	h.app.reporting.Store(true)
+	if _, err := h.app.ReportSignError(context.Background(), id); err != ErrBusy {
+		t.Errorf("err = %v, want ErrBusy", err)
+	}
+	if len(*titles) != 0 {
+		t.Errorf("busy report filed %v", *titles)
+	}
+}
+
+func TestReportSignError_Results(t *testing.T) {
+	for _, tc := range []struct {
+		name, url string
+		filed     bool
+		want      ReportResult
+	}{
+		{"filed", "https://github.com/o/r/issues/7", true, ReportResult{URL: "https://github.com/o/r/issues/7", Filed: true}},
+		{"browser form", "https://github.com/o/r/issues/new?title=x", false, ReportResult{URL: "https://github.com/o/r/issues/new?title=x"}},
+		{"filed, non-GitHub URL", "https://evil.example/issues/7", true, ReportResult{Filed: true}},
+		{"filed, empty URL", "", true, ReportResult{Filed: true}},
+		{"non-GitHub URL", "https://evil.example/issues/new", false, ReportResult{}},
+		{"empty URL", "", false, ReportResult{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newAppHarness(t, ghapi.NewFakeKeyring())
+			titles := stubReportIssue(h, tc.url, tc.filed)
+			h.openErr = errors.New("boom")
+			id := signError(t, h, validFields("Alice")).ReportID
+			res, err := h.app.ReportSignError(context.Background(), id)
+			if res != tc.want || err != nil {
+				t.Errorf("ReportSignError = %+v, %v; want %+v", res, err, tc.want)
+			}
+			// A filed issue is never filed again; anything else may be retried.
+			wantCalls := 2
+			if tc.filed {
+				wantCalls = 1
+			}
+			res, _ = h.app.ReportSignError(context.Background(), id)
+			if res != tc.want || len(*titles) != wantCalls {
+				t.Errorf("repeat = %+v after %d reports; want %+v after %d", res, len(*titles), tc.want, wantCalls)
+			}
+		})
 	}
 }
 
 func TestReportSignError_ReturnsBrowserURL(t *testing.T) {
 	h := newAppHarness(t, ghapi.NewFakeKeyring())
 	h.openErr = errors.New("boom")
-	url, err := h.app.ReportSignError(context.Background(), signError(t, h, validFields("Alice")))
+	res, err := h.app.ReportSignError(context.Background(), signError(t, h, validFields("Alice")).ReportID)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if ghapi.ParseGitHubURL(url) == nil || !strings.Contains(url, "/issues/new") {
-		t.Errorf("url = %q, want a GitHub new-issue URL", url)
+	if res.Filed || ghapi.ParseGitHubURL(res.URL) == nil || !strings.Contains(res.URL, "/issues/new") {
+		t.Errorf("result = %+v, want a GitHub new-issue URL, not filed", res)
 	}
 }
 
@@ -684,7 +805,7 @@ func TestApp_BusyAcrossSignAndBulk(t *testing.T) {
 	}
 	h.app.CancelBulk()
 	r := receive(t, runDone)
-	if r.err != nil || r.out.StopMessage != "Cancelled." {
+	if r.err != nil || r.out.StopMessage != "Cancelled." || r.out.Stopped != BulkCancelled {
 		t.Errorf("RunBulk = %+v, %v; want Cancelled.", r.out, r.err)
 	}
 }
@@ -722,11 +843,14 @@ func TestBulk_NoPlan(t *testing.T) {
 
 func TestBulk_LoadErrors(t *testing.T) {
 	h := newAppHarness(t, nil)
-	if _, err := h.app.LoadBulk(filepath.Join(h.dir, "missing.csv")); err == nil {
-		t.Error("missing file accepted")
+	if _, err := h.app.LoadBulk(filepath.Join(h.dir, "missing.csv")); !errors.Is(err, fs.ErrNotExist) || err.Error() != "Could not open the CSV file." {
+		t.Errorf("missing file err = %v, want the open message wrapping fs.ErrNotExist", err)
 	}
-	if _, err := h.app.LoadBulk(writeCSV(t, h.dir, "")); err == nil {
-		t.Error("empty CSV accepted")
+	if _, err := h.app.LoadBulk(writeCSV(t, h.dir, "")); err == nil || err.Error() != "File is empty." {
+		t.Errorf("empty CSV err = %v", err)
+	}
+	if log := h.debugLog(t); !strings.Contains(log, "bulk load: open ") || !strings.Contains(log, "bulk load: file is empty") {
+		t.Errorf("load failures not logged:\n%s", log)
 	}
 	if _, err := h.app.RunBulk(context.Background()); !errors.Is(err, ErrNoBulkPlan) {
 		t.Errorf("failed load left a plan: %v", err)
@@ -744,12 +868,17 @@ func TestBulk_LoadRunExport(t *testing.T) {
 		t.Errorf("plan = %+v", plan)
 	}
 
+	start := time.Now().UTC().Truncate(time.Second)
 	out, err := h.app.RunBulk(context.Background())
 	if err != nil {
 		t.Fatalf("RunBulk: %v", err)
 	}
-	if !strings.HasPrefix(out.SummaryLine, "Processed 4 rows: 3 successful") || out.StopMessage != "" {
+	if !strings.HasPrefix(out.SummaryLine, "Processed 4 rows: 3 successful") || out.StopMessage != "" || out.Stopped != BulkCompleted {
 		t.Errorf("outcome = %+v", out)
+	}
+	stamp, err := time.Parse("rhg-bulk-results-2006-01-02-150405.csv", out.ResultsFilename)
+	if err != nil || stamp.Before(start) || stamp.After(time.Now().UTC()) {
+		t.Errorf("ResultsFilename = %q, want one stamped with the run's end time", out.ResultsFilename)
 	}
 	names, payloads := h.events.snapshot()
 	if len(names) != 4 || names[0] != "bulk.connecting" || names[1] != "bulk.progress" {
@@ -759,17 +888,17 @@ func TestBulk_LoadRunExport(t *testing.T) {
 		t.Errorf("first progress = %#v", payloads[1])
 	}
 
-	csvPath := filepath.Join(h.dir, "results.csv")
+	csvPath := filepath.Join(t.TempDir(), "results.csv")
 	if err := h.app.ExportBulkResults(csvPath); err != nil {
 		t.Fatalf("ExportBulkResults: %v", err)
 	}
 	if data, _ := os.ReadFile(csvPath); !strings.Contains(string(data), "Alice") {
 		t.Errorf("results CSV:\n%s", data)
 	}
-	if err := h.app.ExportBulkResults(filepath.Join(h.dir, "missing", "r.csv")); err == nil {
-		t.Error("export into a missing directory succeeded")
+	if err := h.app.ExportBulkResults(filepath.Join(t.TempDir(), "missing", "r.csv")); !errors.Is(err, fs.ErrNotExist) || err.Error() != msgSaveNoFolder {
+		t.Errorf("export into a missing directory err = %v", err)
 	}
-	if !strings.Contains(h.debugLog(t), "bulk results save failed") {
+	if !strings.Contains(h.debugLog(t), "save failed: ") {
 		t.Error("export failure not logged")
 	}
 }
@@ -782,7 +911,7 @@ func TestBulk_AuthErrorClearsCacheAndStops(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := h.app.RunBulk(context.Background())
-	if err != nil || !strings.HasPrefix(out.StopMessage, "Batch stopped: Incorrect PIN") {
+	if err != nil || !strings.HasPrefix(out.StopMessage, "Batch stopped: Incorrect PIN") || out.Stopped != BulkFailed {
 		t.Errorf("RunBulk = %+v, %v", out, err)
 	}
 	if _, ok := h.app.pinCache.Get(); ok {
@@ -800,16 +929,17 @@ func TestApp_CheckYubiKey(t *testing.T) {
 		name    string
 		reg     core.Registry
 		openErr error
+		result  KeyCheckResult
 		want    string
 	}{
-		{"registered key", registered, nil, "Key found in registry"},
-		{"unknown key", core.Registry{}, nil, "Key NOT found in registry"},
-		{"no key plugged in", registered, errors.New("no YubiKey found among 0 smart card(s)"), "Please plug in your YubiKey and try again"},
+		{"registered key", registered, nil, KeyCheckFound, "Key found in registry"},
+		{"unknown key", core.Registry{}, nil, KeyCheckNotFound, "Key NOT found in registry"},
+		{"no key plugged in", registered, errors.New("no YubiKey found among 0 smart card(s)"), KeyCheckFailed, "Please plug in your YubiKey and try again"},
 	} {
 		h.app.reg, h.openErr = tc.reg, tc.openErr
 		kc, err := h.app.CheckYubiKey()
-		if err != nil || kc.Status != tc.want {
-			t.Errorf("%s: CheckYubiKey = %+v, %v; want status %q", tc.name, kc, err, tc.want)
+		if err != nil || kc.Result != tc.result || kc.Status != tc.want {
+			t.Errorf("%s: CheckYubiKey = %+v, %v; want %q with status %q", tc.name, kc, err, tc.result, tc.want)
 		}
 	}
 	if !strings.Contains(h.debugLog(t), "yubikey check: yubikey: no YubiKey found") {
@@ -839,8 +969,8 @@ func TestApp_CloseWipesPINCacheAndCancelsBulk(t *testing.T) {
 	}
 
 	h.app.Close()
-	if out := receive(t, runDone); out.StopMessage != "Cancelled." {
-		t.Errorf("StopMessage = %q, want Cancelled.", out.StopMessage)
+	if out := receive(t, runDone); out.StopMessage != "Cancelled." || out.Stopped != BulkCancelled {
+		t.Errorf("outcome = %+v, want Cancelled.", out)
 	}
 	if _, ok := h.app.pinCache.Get(); ok {
 		t.Error("PIN cache not wiped by Close")
