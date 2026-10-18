@@ -18,7 +18,9 @@ regexes = [
   '''Ov23li5iKh6JEcL1Vj3d''',
   # Fake access token used in ghapi tests.
   '''gho_secret123''',
-  # Ed25519 test public key (bytes 0x01..0x20) in the generated RPC contract
-  # fixtures, go/service/rpc/testdata/contract.
+  # Generated RPC contract fixtures (go/service/rpc/testdata/contract): an
+  # Ed25519 test public key (bytes 0x01..0x20) and a test key's SHA-256
+  # fingerprint from the registry table rows.
   '''AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=''',
+  '''03396219237f75a64f12aeb7f39723abf400b160c364980a765dac24aeba2464''',
 ]
