@@ -54,8 +54,13 @@ type historyState struct {
 // YYYY-MM-DD; PayloadSHA256 is lower-case hex and identifies the credential
 // to Revoke.
 type HistoryRecord struct {
-	Timestamp, Recipient, Honor, Detail, Date string
-	PayloadSHA256, SignatureB64URL            string
+	Timestamp       string `json:"timestamp"`
+	Recipient       string `json:"recipient"`
+	Honor           string `json:"honor"`
+	Detail          string `json:"detail"`
+	Date            string `json:"date"`
+	PayloadSHA256   string `json:"payloadSha256"`
+	SignatureB64URL string `json:"signatureB64url"`
 }
 
 // historyRecord returns the HistoryRecord for rec.
@@ -73,18 +78,19 @@ func historyRecord(rec issuancelog.IssuanceRecord) HistoryRecord {
 
 // HistoryRow is one issuance record in the history list.
 type HistoryRow struct {
-	Record  HistoryRecord
-	Summary string // list text; "[REVOKED] " prefix when revoked
-	Revoked bool
+	Record  HistoryRecord `json:"record"`
+	Summary string        `json:"summary"` // list text; "[REVOKED] " prefix when revoked
+	Revoked bool          `json:"revoked"`
 }
 
 // HistorySnapshot is the filtered history list. A UI enables Revoke for a
 // selected row when RevokeAvailable is set and the row is not Revoked.
 type HistorySnapshot struct {
-	Rows                               []HistoryRow // newest first, filtered by query
-	LoadFailed, RevocationsUnavailable bool
-	RevocationsLoaded                  bool
-	RevokeAvailable                    bool // logged in, online and revocations loaded
+	Rows                   []HistoryRow `json:"rows"` // newest first, filtered by query
+	LoadFailed             bool         `json:"loadFailed"`
+	RevocationsUnavailable bool         `json:"revocationsUnavailable"`
+	RevocationsLoaded      bool         `json:"revocationsLoaded"`
+	RevokeAvailable        bool         `json:"revokeAvailable"` // logged in, online and revocations loaded
 }
 
 // RevokeStatus is the outcome of a Revoke that did not fail.
@@ -100,10 +106,11 @@ const (
 // RevokeResult is a Revoke that did not fail. Title and Message are the
 // dialog copy to show.
 type RevokeResult struct {
-	Status         RevokeStatus
-	PRNumber       int    // submitted only
-	URL            string // submitted only; "" unless an https github.com URL
-	Title, Message string
+	Status   RevokeStatus `json:"status"`
+	PRNumber int          `json:"prNumber"` // submitted only
+	URL      string       `json:"url"`      // submitted only; "" unless an https github.com URL
+	Title    string       `json:"title"`
+	Message  string       `json:"message"`
 }
 
 // formatRecordSummary returns a one-line summary for the history list.
@@ -168,10 +175,17 @@ func (a *App) RefreshHistory() {
 	a.events.Emit(EventRevocationsChanged, nil)
 }
 
-// loadHistory re-reads the issuance log and emits EventHistoryChanged.
-// historyLoadMu spans the read and the apply, so an older read never
-// replaces a newer one.
+// loadHistory re-reads the issuance log and emits EventHistoryChanged, after
+// the read is applied and its lock released, so a handler may call back into
+// the App.
 func (a *App) loadHistory() {
+	a.readHistory()
+	a.events.Emit(EventHistoryChanged, nil)
+}
+
+// readHistory re-reads the issuance log into the history. historyLoadMu spans
+// the read and the apply, so an older read never replaces a newer one.
+func (a *App) readHistory() {
 	a.historyLoadMu.Lock()
 	defer a.historyLoadMu.Unlock()
 	records, err := issuancelog.ReadLog(a.logPath)
@@ -193,7 +207,6 @@ func (a *App) loadHistory() {
 		a.history.records, a.history.lowerRecipients, a.history.summaries = records, lower, summaries
 	}
 	a.mu.Unlock()
-	a.events.Emit(EventHistoryChanged, nil)
 }
 
 // History returns the loaded records whose recipient contains query
@@ -260,10 +273,7 @@ func (a *App) Revoke(ctx context.Context, payloadSHA256 string) (RevokeResult, e
 	var res RevokeResult
 	switch {
 	case err == nil:
-		url := pr.HTMLURL
-		if ghapi.ParseGitHubURL(url) == nil {
-			url = ""
-		}
+		url := ghapi.GitHubURLOrEmpty(pr.HTMLURL)
 		res = RevokeResult{
 			Status:   RevokeSubmitted,
 			PRNumber: pr.Number,

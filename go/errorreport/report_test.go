@@ -1,4 +1,3 @@
-// Tests in this file mutate package-level function vars and MUST NOT use t.Parallel().
 package errorreport
 
 import (
@@ -7,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -87,20 +85,9 @@ func TestBuildIssueBody_ControlCharsStripped(t *testing.T) {
 	}
 }
 
-// --- ReportIssue: logged-in, online ---
+// --- ReportIssue: logged in ---
 
 func TestReportIssue_LoggedIn_CreatesIssue(t *testing.T) {
-	origRestore := restoreSessionFunc
-	origClient := newClientFunc
-	t.Cleanup(func() {
-		restoreSessionFunc = origRestore
-		newClientFunc = origClient
-	})
-
-	restoreSessionFunc = func(_ context.Context, _ ghapi.Keyring, _ string) (ghapi.Token, string, bool, bool, error) {
-		return ghapi.Token{AccessToken: "tok123"}, "testuser", true, false, nil
-	}
-
 	called := false
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -119,16 +106,7 @@ func TestReportIssue_LoggedIn_CreatesIssue(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	var capturedToken string
-	newClientFunc = func(token string) *ghapi.Client {
-		capturedToken = token
-		c := ghapi.NewClient(token)
-		c.BaseURL = ts.URL
-		return c
-	}
-
-	kr := ghapi.NewFakeKeyring()
-	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "Test Title", "Test Body")
+	result, filed := ReportIssue(context.Background(), testClient("tok123", ts.URL), "Test Title", "Test Body")
 	if !filed {
 		t.Fatal("filed = false for an API-created issue")
 	}
@@ -138,97 +116,32 @@ func TestReportIssue_LoggedIn_CreatesIssue(t *testing.T) {
 	if result != "https://github.com/test/repo/issues/99" {
 		t.Errorf("result = %q, want issue URL", result)
 	}
-	if capturedToken != "tok123" {
-		t.Errorf("token = %q, want %q", capturedToken, "tok123")
-	}
 }
 
-// --- ReportIssue: logged-in, API error falls through to browser ---
+// --- ReportIssue: API error falls through to browser ---
 
 func TestReportIssue_APIError_FallsThrough(t *testing.T) {
-	origRestore := restoreSessionFunc
-	origClient := newClientFunc
-	t.Cleanup(func() {
-		restoreSessionFunc = origRestore
-		newClientFunc = origClient
-	})
-
-	restoreSessionFunc = func(_ context.Context, _ ghapi.Keyring, _ string) (ghapi.Token, string, bool, bool, error) {
-		return ghapi.Token{AccessToken: "tok"}, "user", true, false, nil
-	}
-
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"message":"server error"}`))
 	}))
 	defer ts.Close()
 
-	newClientFunc = func(token string) *ghapi.Client {
-		c := ghapi.NewClient(token)
-		c.BaseURL = ts.URL
-		return c
-	}
-
-	kr := ghapi.NewFakeKeyring()
-	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "Title", "Body")
+	result, filed := ReportIssue(context.Background(), testClient("tok", ts.URL), "Title", "Body")
 	if filed {
 		t.Fatal("filed = true for a browser fallback")
 	}
 	assertBrowserURL(t, result, "Title")
 }
 
-// --- ReportIssue: logged-in, offline ---
+// --- ReportIssue: no session (logged out or offline) ---
 
-func TestReportIssue_Offline_ReturnsBrowserURL(t *testing.T) {
-	origRestore := restoreSessionFunc
-	t.Cleanup(func() { restoreSessionFunc = origRestore })
-
-	restoreSessionFunc = func(_ context.Context, _ ghapi.Keyring, _ string) (ghapi.Token, string, bool, bool, error) {
-		return ghapi.Token{AccessToken: "tok"}, "", true, true, nil
-	}
-
-	kr := ghapi.NewFakeKeyring()
-	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "Title", "Body")
-	if filed {
-		t.Fatal("filed = true for a browser fallback")
-	}
-	assertBrowserURL(t, result, "Title")
-}
-
-// --- ReportIssue: not logged in ---
-
-func TestReportIssue_NotLoggedIn_ReturnsBrowserURL(t *testing.T) {
-	origRestore := restoreSessionFunc
-	t.Cleanup(func() { restoreSessionFunc = origRestore })
-
-	restoreSessionFunc = func(_ context.Context, _ ghapi.Keyring, _ string) (ghapi.Token, string, bool, bool, error) {
-		return ghapi.Token{}, "", false, false, nil
-	}
-
-	kr := ghapi.NewFakeKeyring()
-	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "My Title", "My Body")
+func TestReportIssue_NilClient_ReturnsBrowserURL(t *testing.T) {
+	result, filed := ReportIssue(context.Background(), nil, "My Title", "My Body")
 	if filed {
 		t.Fatal("filed = true for a browser fallback")
 	}
 	assertBrowserURL(t, result, "My Title")
-}
-
-// --- ReportIssue: RestoreSession error ---
-
-func TestReportIssue_SessionError_ReturnsBrowserURL(t *testing.T) {
-	origRestore := restoreSessionFunc
-	t.Cleanup(func() { restoreSessionFunc = origRestore })
-
-	restoreSessionFunc = func(_ context.Context, _ ghapi.Keyring, _ string) (ghapi.Token, string, bool, bool, error) {
-		return ghapi.Token{}, "", false, false, os.ErrPermission
-	}
-
-	kr := ghapi.NewFakeKeyring()
-	result, filed := ReportIssue(context.Background(), kr, t.TempDir(), "Title", "Body")
-	if filed {
-		t.Fatal("filed = true for a browser fallback")
-	}
-	assertBrowserURL(t, result, "Title")
 }
 
 // --- Body truncation for browser path ---
@@ -290,13 +203,6 @@ func TestBrowserURL_MultibyteTruncation(t *testing.T) {
 // --- Token never in body ---
 
 func TestReportIssue_TokenNotInBody(t *testing.T) {
-	origRestore := restoreSessionFunc
-	t.Cleanup(func() { restoreSessionFunc = origRestore })
-
-	restoreSessionFunc = func(_ context.Context, _ ghapi.Keyring, _ string) (ghapi.Token, string, bool, bool, error) {
-		return ghapi.Token{}, "", false, false, nil
-	}
-
 	token := "gho_supersecrettoken123"
 	body := BuildIssueBody("v1.0.0", "internal", "error occurred")
 
@@ -304,14 +210,20 @@ func TestReportIssue_TokenNotInBody(t *testing.T) {
 		t.Error("issue body contains token")
 	}
 
-	kr := ghapi.NewFakeKeyring()
-	result, _ := ReportIssue(context.Background(), kr, t.TempDir(), "Title", body)
+	result, _ := ReportIssue(context.Background(), nil, "Title", body)
 	if strings.Contains(result, token) {
 		t.Error("result URL contains token")
 	}
 }
 
 // --- helpers ---
+
+// testClient returns a client with token that talks to baseURL.
+func testClient(token, baseURL string) *ghapi.Client {
+	c := ghapi.NewClient(token)
+	c.BaseURL = baseURL
+	return c
+}
 
 func assertContains(t *testing.T, s, sub string) {
 	t.Helper()

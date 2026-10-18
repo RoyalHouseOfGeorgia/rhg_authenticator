@@ -23,14 +23,14 @@ type auditState struct {
 
 // AuditRow is one registry commit in the audit list.
 type AuditRow struct {
-	Summary string
-	URL     string // the commit page; "" unless an https github.com URL
+	Summary string `json:"summary"`
+	URL     string `json:"url"` // the commit page; "" unless an https github.com URL
 }
 
 // AuditResult is the registry commit history and the status line to show.
 type AuditResult struct {
-	Rows   []AuditRow
-	Status string
+	Rows   []AuditRow `json:"rows"`
+	Status string     `json:"status"`
 }
 
 // AuditCommits fetches the registry file's recent commits. When nothing
@@ -62,10 +62,7 @@ func (a *App) AuditCommits() (AuditResult, error) {
 	}
 	rows := make([]AuditRow, len(commits))
 	for i, c := range commits {
-		rows[i] = AuditRow{Summary: formatCommitSummary(c)}
-		if ghapi.ParseGitHubURL(c.HTMLURL) != nil {
-			rows[i].URL = c.HTMLURL
-		}
+		rows[i] = AuditRow{Summary: formatCommitSummary(c), URL: ghapi.GitHubURLOrEmpty(c.HTMLURL)}
 	}
 	a.audit.rows, a.audit.etag = rows, newETag
 	return AuditResult{Rows: append([]AuditRow(nil), rows...), Status: fmt.Sprintf("Loaded %d commits", len(rows))}, nil

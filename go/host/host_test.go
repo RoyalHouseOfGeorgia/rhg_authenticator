@@ -293,23 +293,20 @@ func TestDataDir_Errors(t *testing.T) {
 	}
 }
 
-func TestNewService_Errors(t *testing.T) {
-	_, err := NewService(service.Config{})
-	if err == nil || !strings.HasPrefix(err.Error(), "Cannot start signing service: ") {
-		t.Errorf("err = %v", err)
-	}
-}
-
-func TestNewService_URLs(t *testing.T) {
+func TestNewService_URLsAndError(t *testing.T) {
 	prev := newService
 	t.Cleanup(func() { newService = prev })
 	var got service.Config
+	stop := errors.New("stop")
 	newService = func(cfg service.Config) (*service.App, error) {
 		got = cfg
-		return nil, errors.New("stop")
+		return nil, stop
 	}
 
-	_, _ = NewService(service.Config{DataDir: "/d"})
+	_, err := NewService(service.Config{DataDir: "/d"})
+	if !errors.Is(err, stop) || err.Error() != "Cannot start signing service: stop" {
+		t.Errorf("err = %v, want the wrapped service error", err)
+	}
 	if got.RegistryURL != registry.DefaultRegistryURL || got.RevocationURL != registry.DefaultRevocationURL || got.DataDir != "/d" {
 		t.Errorf("defaults: config = %+v", got)
 	}

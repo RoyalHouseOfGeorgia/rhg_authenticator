@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -15,13 +16,17 @@ var ErrLoginUnavailable = errors.New("GitHub login isn't available: no secure cr
 
 // AuthState is the GitHub login state.
 type AuthState struct {
-	LoggedIn, Offline bool
-	User              string
+	LoggedIn bool   `json:"loggedIn"`
+	Offline  bool   `json:"offline"`
+	User     string `json:"user"`
 }
 
 // DeviceCode is the EventAuthDeviceCode payload. VerificationURI is "" unless
 // it is an https URL on github.com.
-type DeviceCode struct{ UserCode, VerificationURI string }
+type DeviceCode struct {
+	UserCode        string `json:"userCode"`
+	VerificationURI string `json:"verificationUri"`
+}
 
 // StatusText is the status-line text for s.
 func (s AuthState) StatusText() string {
@@ -33,6 +38,16 @@ func (s AuthState) StatusText() string {
 	default:
 		return "Logged in as @" + s.User
 	}
+}
+
+// MarshalJSON encodes s with its StatusText as "statusText", so a JSON client
+// shows the same status line.
+func (s AuthState) MarshalJSON() ([]byte, error) {
+	type fields AuthState // drops this method, so Marshal doesn't recurse
+	return json.Marshal(struct {
+		fields
+		StatusText string `json:"statusText"`
+	}{fields(s), s.StatusText()})
 }
 
 // setAuth applies a login state and emits EventAuthChanged.
@@ -105,10 +120,9 @@ func (a *App) Login(ctx context.Context) (AuthState, error) {
 	if err != nil {
 		return AuthState{}, a.loginError(ctx, "device code request", err)
 	}
-	uri := dcr.VerificationURI
-	if ghapi.ParseGitHubURL(uri) == nil {
-		a.logger.Logf("warning: invalid verification URI: %s", core.SanitizeForLog(uri))
-		uri = ""
+	uri := ghapi.GitHubURLOrEmpty(dcr.VerificationURI)
+	if uri == "" {
+		a.logger.Logf("warning: invalid verification URI: %s", core.SanitizeForLog(dcr.VerificationURI))
 	}
 	a.events.Emit(EventAuthDeviceCode, DeviceCode{UserCode: dcr.UserCode, VerificationURI: uri})
 

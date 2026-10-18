@@ -135,7 +135,7 @@ func TestExecuteSignFlow_ReadPINErrorShortCircuits(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	req := core.SignRequest{Recipient: "A", Honor: "Order of the Crown of Georgia", Detail: "x", Date: "2026-03-14"}
-	_, err := executeSignFlow(req, "", openAdapter, readPin, func() { onConnectingCalled = true }, logger)
+	_, err := executeSignFlow(req, tempLogPath(t), openAdapter, readPin, func() { onConnectingCalled = true }, logger)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("expected readPin error, got %v", err)
 	}
@@ -159,7 +159,7 @@ func TestExecuteSignFlow_PINSentinelsSurviveAndClassify(t *testing.T) {
 		name        string
 		readPinErr  error
 		base        error  // sentinel that errors.Is must still match afterwards
-		wantMsgPart string // substring of signFlowErrorMessage output ("" = exactly "")
+		wantMsgPart string // substring of signFlowErrorMessage output ("" = not checked: Sign and bulk handle a cancel before mapping it)
 	}{
 		{"cancelled", errSigningCancelled, errSigningCancelled, ""},
 		{"timed out", errPINEntryTimedOut, errPINEntryTimedOut, "timed out"},
@@ -177,7 +177,7 @@ func TestExecuteSignFlow_PINSentinelsSurviveAndClassify(t *testing.T) {
 			logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 			req := core.SignRequest{Recipient: "A", Honor: "Order of the Crown of Georgia", Detail: "x", Date: "2026-03-14"}
 
-			_, err := executeSignFlow(req, "", openAdapter, readPin, nil, logger)
+			_, err := executeSignFlow(req, tempLogPath(t), openAdapter, readPin, nil, logger)
 
 			if !errors.Is(err, tc.base) {
 				t.Errorf("sentinel lost through executeSignFlow: errors.Is(%v, %v) = false", err, tc.base)
@@ -185,12 +185,7 @@ func TestExecuteSignFlow_PINSentinelsSurviveAndClassify(t *testing.T) {
 			if openCalled {
 				t.Error("openAdapter must not be called after a readPin error (keeps piv-go from value-wrapping the sentinel)")
 			}
-			got := signFlowErrorMessage(err, logger)
-			if tc.wantMsgPart == "" {
-				if got != "" {
-					t.Errorf("signFlowErrorMessage = %q, want empty", got)
-				}
-			} else if !strings.Contains(got, tc.wantMsgPart) {
+			if got := signFlowErrorMessage(err, logger); tc.wantMsgPart != "" && !strings.Contains(got, tc.wantMsgPart) {
 				t.Errorf("signFlowErrorMessage = %q, want substring %q", got, tc.wantMsgPart)
 			}
 		})
@@ -245,7 +240,7 @@ func TestExecuteSignFlow_AdapterOpenError(t *testing.T) {
 		return nil, nil, fmt.Errorf("pcsc daemon not running")
 	}
 
-	_, err := executeSignFlow(inputReq("Distinguished service"), "", openAdapter, dummyReadPin, nil, nil)
+	_, err := executeSignFlow(inputReq("Distinguished service"), tempLogPath(t), openAdapter, dummyReadPin, nil, nil)
 	if err == nil {
 		t.Fatal("expected error from adapter open")
 	}
@@ -263,7 +258,7 @@ func TestExecuteSignFlow_ExportKeyError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 
-	_, err := executeSignFlow(inputReq("Distinguished service"), "", openAdapter, dummyReadPin, nil, logger)
+	_, err := executeSignFlow(inputReq("Distinguished service"), tempLogPath(t), openAdapter, dummyReadPin, nil, logger)
 	if err == nil {
 		t.Fatal("expected error from ExportPublicKey")
 	}
@@ -398,37 +393,6 @@ func TestExecuteSignFlow_RecordFieldsNFCNormalized(t *testing.T) {
 	}
 	if records[0].Date != "2026-03-14" {
 		t.Errorf("Date = %q, want %q", records[0].Date, "2026-03-14")
-	}
-}
-
-func TestExecuteSignFlow_NoLogWhenPathEmpty(t *testing.T) {
-	_, priv, _ := ed25519.GenerateKey(nil)
-	adapter := &mockSignAdapter{secretKey: priv}
-
-	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
-		return adapter, nopCloser{}, nil
-	}
-
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-
-	req := core.SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Order of the Crown of Georgia",
-		Detail:    "Distinguished service",
-		Date:      "2026-03-14",
-	}
-
-	// Pass empty logPath — no log file should be created.
-	_, err := executeSignFlow(req, "", openAdapter, dummyReadPin, nil, logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify no log file was created in the temp directory.
-	logPath := filepath.Join(tmpDir, "issuances.json")
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Errorf("log file should not exist when logPath is empty, got stat result: %v", err)
 	}
 }
 
@@ -669,27 +633,6 @@ func TestSignAndLog_Success(t *testing.T) {
 	}
 }
 
-func TestSignAndLog_EmptyLogPathSkipsAppend(t *testing.T) {
-	_, priv, _ := ed25519.GenerateKey(nil)
-	closer := &countingCloser{}
-	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
-		return &mockSignAdapter{secretKey: priv}, closer, nil
-	}
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-
-	resp, err := signAndLog(validSignRequest(), "", openAdapter, "123456", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.URL == "" {
-		t.Error("expected non-empty URL")
-	}
-	if closer.n != 1 {
-		t.Errorf("closer.Close called %d times, want 1", closer.n)
-	}
-}
-
 func TestSignAndLog_LogAppendFailureReturnsResponseAndPhaseLog(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	closer := &countingCloser{}
@@ -821,7 +764,7 @@ func TestSignAndLog_OpenError(t *testing.T) {
 
 // TestExecuteSignFlow_LogPathMissingDirIsNonFatal pins that executeSignFlow
 // swallows signAndLog's phaseLog error: single-sign still returns a full
-// result (including the QR PNG) when the audit-log append fails.
+// result (including the QR PNG) when the issuance-log append fails.
 func TestExecuteSignFlow_LogPathMissingDirIsNonFatal(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
@@ -1014,4 +957,10 @@ func TestExecuteSignFlow_MalformedStoredSignatureIsResigned(t *testing.T) {
 	if got := records[1].SignatureB64URL; got != result.Response.Signature || got == rec.SignatureB64URL {
 		t.Errorf("appended signature = %q, want the fresh signature %q", got, result.Response.Signature)
 	}
+}
+
+// tempLogPath returns an issuance log path in a fresh temp dir.
+func tempLogPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "issuances.json")
 }

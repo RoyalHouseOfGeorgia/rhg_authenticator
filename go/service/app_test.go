@@ -11,8 +11,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -76,13 +78,20 @@ type fakeEvents struct {
 	mu       sync.Mutex
 	names    []string
 	payloads []any
+	// onEmit, if set, runs synchronously after each event is recorded, like
+	// a host handler that calls back into the App.
+	onEmit func(name string)
 }
 
 func (e *fakeEvents) Emit(name string, payload any) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.names = append(e.names, name)
 	e.payloads = append(e.payloads, payload)
+	onEmit := e.onEmit
+	e.mu.Unlock()
+	if onEmit != nil {
+		onEmit(name)
+	}
 }
 
 func (e *fakeEvents) snapshot() ([]string, []any) {
@@ -458,8 +467,11 @@ func TestSign_SuccessReturnsCanonicalFields(t *testing.T) {
 		t.Errorf("PNGFilename = %q, want %q", res.PNGFilename, want)
 	}
 	names, _ := h.events.snapshot()
-	if len(names) != 1 || names[0] != "sign.connecting" {
-		t.Errorf("events = %v, want [sign.connecting]", names)
+	if len(names) != 2 || names[0] != "sign.connecting" || names[1] != EventHistoryChanged {
+		t.Errorf("events = %v, want [sign.connecting history.changed]", names)
+	}
+	if hist := h.app.History(""); len(hist.Rows) != 1 || hist.Rows[0].Record.Recipient != res.Recipient {
+		t.Errorf("history after Sign = %+v, want the new record", hist.Rows)
 	}
 
 	// Re-signing the same credential returns the logged one without a prompt.
@@ -507,12 +519,11 @@ func TestSign_ValidationError(t *testing.T) {
 func TestSign_FlowErrorOffersReport(t *testing.T) {
 	boom := errors.New("boom")
 	for _, tc := range []struct {
-		name  string
-		kr    ghapi.Keyring
-		offer bool
+		name string
+		kr   ghapi.Keyring
 	}{
-		{"with keyring", ghapi.NewFakeKeyring(), true},
-		{"without keyring", nil, false},
+		{"with keyring", ghapi.NewFakeKeyring()},
+		{"without keyring (browser form)", nil},
 	} {
 		h := newAppHarness(t, tc.kr)
 		h.openErr = boom
@@ -521,7 +532,7 @@ func TestSign_FlowErrorOffersReport(t *testing.T) {
 		if !errors.As(err, &se) {
 			t.Fatalf("%s: err = %v, want *SignError", tc.name, err)
 		}
-		if se.Message != "Signing failed. Export the error log for details." || se.OfferReport != tc.offer {
+		if se.Message != "Signing failed. Export the error log for details." || !se.OfferReport {
 			t.Errorf("%s: SignError = %+v", tc.name, se)
 		}
 		if !errors.Is(err, boom) {
@@ -530,16 +541,37 @@ func TestSign_FlowErrorOffersReport(t *testing.T) {
 	}
 }
 
-func TestSign_CancelHasEmptyMessage(t *testing.T) {
+func TestSign_UnlistedHonorRefusedBeforePIN(t *testing.T) {
+	h := newAppHarness(t, nil)
+	f := validFields("Alice")
+	f.Honor = "Order of Something Else"
+	const want = "Honor title must be one of the listed titles."
+	if err := f.Validate(); err == nil || err.Error() != want {
+		t.Errorf("Validate err = %v, want %q", err, want)
+	}
+	_, err := h.app.Sign(context.Background(), f)
+	var se *SignError
+	if !errors.As(err, &se) || se.Message != want || se.OfferReport {
+		t.Fatalf("Sign err = %#v, want a SignError %q", err, want)
+	}
+	if h.prompter.callCount() != 0 || h.opens != 0 {
+		t.Errorf("an unlisted honor reached the PIN prompt (%d) or the card (%d)", h.prompter.callCount(), h.opens)
+	}
+}
+
+func TestSign_CancelIsContextCanceled(t *testing.T) {
 	h := newAppHarness(t, ghapi.NewFakeKeyring())
 	h.prompter.pin = ""
 	_, err := h.app.Sign(context.Background(), validFields("Alice"))
 	var se *SignError
-	if !errors.As(err, &se) || se.Message != "" || se.OfferReport {
-		t.Fatalf("err = %#v, want cancel SignError", err)
+	if errors.As(err, &se) {
+		t.Fatalf("err = %#v, want a plain cancel, not a SignError", err)
 	}
-	if !errors.Is(err, errSigningCancelled) || err.Error() != errSigningCancelled.Error() {
-		t.Errorf("Error() = %q", err.Error())
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, errSigningCancelled) || err.Error() != "Signing cancelled." {
+		t.Errorf("err = %v, want context.Canceled with the cancel text", err)
+	}
+	if names, _ := h.events.snapshot(); len(names) != 0 {
+		t.Errorf("events = %v, want none for a cancel", names)
 	}
 }
 
@@ -565,7 +597,7 @@ func TestSaveQR_WritesFormatsAndLogsFailure(t *testing.T) {
 	if png, _ := os.ReadFile(pngPath); !strings.HasPrefix(string(png), "\x89PNG") {
 		t.Error("PNG not written")
 	}
-	if err := h.app.SaveQR(res.URL, "gif", filepath.Join(out, "q.gif")); err == nil || err.Error() != `Unsupported QR format "gif".` {
+	if err := h.app.SaveQR(res.URL, "gif", filepath.Join(out, "q.gif")); err == nil || err.Error() != "Unsupported QR format." {
 		t.Errorf("unsupported format err = %v", err)
 	}
 	if err := h.app.SaveQR(res.URL, "png", filepath.Join(out, "missing", "q.png")); !errors.Is(err, fs.ErrNotExist) || err.Error() != msgSaveNoFolder {
@@ -592,11 +624,6 @@ func TestReportSignError_NonReportableHasNoID(t *testing.T) {
 	if se := signError(t, h, SignFields{}); se.OfferReport || se.ReportID != "" {
 		t.Errorf("validation SignError = %+v, want no report id", se)
 	}
-	h.openErr = errors.New("boom")
-	h.app.keyring = nil
-	if se := signError(t, h, validFields("Alice")); se.OfferReport || se.ReportID != "" {
-		t.Errorf("no-keyring SignError = %+v, want no report id", se)
-	}
 	for _, id := range []string{"", "1", "bogus"} {
 		res, err := h.app.ReportSignError(context.Background(), id)
 		if !errors.Is(err, ErrNotFound) || res != (ReportResult{}) || err.Error() != "This failure can no longer be reported." {
@@ -609,7 +636,7 @@ func TestReportSignError_NonReportableHasNoID(t *testing.T) {
 // recording each issue title.
 func stubReportIssue(h *appHarness, url string, filed bool) *[]string {
 	var titles []string
-	h.app.reportIssue = func(_ context.Context, _ ghapi.Keyring, _, title, _ string) (string, bool) {
+	h.app.reportIssue = func(_ context.Context, _ *ghapi.Client, title, _ string) (string, bool) {
 		titles = append(titles, title)
 		return url, filed
 	}
@@ -881,8 +908,11 @@ func TestBulk_LoadRunExport(t *testing.T) {
 		t.Errorf("ResultsFilename = %q, want one stamped with the run's end time", out.ResultsFilename)
 	}
 	names, payloads := h.events.snapshot()
-	if len(names) != 4 || names[0] != "bulk.connecting" || names[1] != "bulk.progress" {
-		t.Fatalf("events = %v", names)
+	if len(names) != 5 || names[0] != "bulk.connecting" || names[1] != "bulk.progress" || names[4] != EventHistoryChanged {
+		t.Fatalf("events = %v, want connecting, 3 progress, history.changed", names)
+	}
+	if hist := h.app.History(""); len(hist.Rows) != 3 {
+		t.Errorf("history after RunBulk has %d rows, want 3", len(hist.Rows))
 	}
 	if p, ok := payloads[1].(BulkProgress); !ok || p != (BulkProgress{Done: 0, Total: 3, Name: "Alice"}) {
 		t.Errorf("first progress = %#v", payloads[1])
@@ -974,5 +1004,97 @@ func TestApp_CloseWipesPINCacheAndCancelsBulk(t *testing.T) {
 	}
 	if _, ok := h.app.pinCache.Get(); ok {
 		t.Error("PIN cache not wiped by Close")
+	}
+}
+
+func TestLoadBulk_FailedOpenClearsPlan(t *testing.T) {
+	h := newAppHarness(t, nil)
+	if _, err := h.app.LoadBulk(writeCSV(t, h.dir, "name,honor,detail,date\nBob,Other,Help,2026-03-14\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.app.LoadBulk(filepath.Join(h.dir, "missing.csv")); err == nil {
+		t.Fatal("LoadBulk of a missing file succeeded")
+	}
+	if _, err := h.app.RunBulk(context.Background()); !errors.Is(err, ErrNoBulkPlan) {
+		t.Errorf("RunBulk after a failed load: err = %v, want ErrNoBulkPlan (never the earlier file)", err)
+	}
+	if h.prompter.callCount() != 0 {
+		t.Error("RunBulk prompted for a PIN")
+	}
+}
+
+func TestLoadHistory_HandlerMayCallBack(t *testing.T) {
+	h := newAppHarness(t, nil)
+	var reloaded atomic.Bool
+	h.events.mu.Lock()
+	h.events.onEmit = func(name string) {
+		if name == EventHistoryChanged && reloaded.CompareAndSwap(false, true) {
+			h.app.loadHistory() // re-entered from the handler
+		}
+	}
+	h.events.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		h.app.loadHistory()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loadHistory deadlocked when its event handler reloaded the history")
+	}
+}
+
+func TestSign_QRFailureAfterRecordReloadsHistory(t *testing.T) {
+	h := newAppHarness(t, ghapi.NewFakeKeyring())
+	prev := generatePreviewPNG
+	t.Cleanup(func() { generatePreviewPNG = prev })
+	generatePreviewPNG = func(string, int) ([]byte, error) { return nil, errors.New("encode failed") }
+
+	_, err := h.app.Sign(context.Background(), validFields("Alice"))
+	var se *SignError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want a SignError", err)
+	}
+	if names, _ := h.events.snapshot(); !slices.Contains(names, EventHistoryChanged) {
+		t.Errorf("events = %v, want history.changed for the record written before the QR failed", names)
+	}
+	if hist := h.app.History(""); len(hist.Rows) != 1 {
+		t.Errorf("history has %d rows, want the written record", len(hist.Rows))
+	}
+}
+
+func TestReportSignError_UsesSessionAndTimeout(t *testing.T) {
+	h := newAppHarness(t, ghapi.NewFakeKeyring())
+	var gotClient *ghapi.Client
+	var deadline time.Time
+	var hasDeadline bool
+	h.app.reportIssue = func(ctx context.Context, client *ghapi.Client, _, _ string) (string, bool) {
+		gotClient = client
+		deadline, hasDeadline = ctx.Deadline()
+		return "", false // the browser form: the failure stays reportable
+	}
+	h.openErr = errors.New("boom")
+	id := signError(t, h, validFields("Alice")).ReportID
+
+	start := time.Now()
+	if _, err := h.app.ReportSignError(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	end := time.Now()
+	if gotClient != nil {
+		t.Error("logged out: reportIssue got a client, want nil (the browser form)")
+	}
+	if !hasDeadline || deadline.Before(start.Add(reportTimeout)) || deadline.After(end.Add(reportTimeout)) {
+		t.Errorf("deadline = %v after the call (set %v), want %v", deadline.Sub(start), hasDeadline, reportTimeout)
+	}
+
+	session := ghapi.NewClient("tok")
+	logIn(h, session)
+	if _, err := h.app.ReportSignError(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if gotClient != session {
+		t.Error("logged in: reportIssue did not get the App's session client")
 	}
 }

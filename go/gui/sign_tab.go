@@ -95,10 +95,11 @@ func NewSignTab(app *service.App, events *Events, window fyne.Window) *fyne.Cont
 			result, err := app.Sign(context.Background(), fields)
 			if err != nil {
 				msg := err.Error()
-				var se *service.SignError
-				if errors.As(err, &se) {
-					msg = se.Message
+				if errors.Is(err, context.Canceled) {
+					msg = "" // the operator cancelled the PIN prompt
 				}
+				var se *service.SignError
+				errors.As(err, &se)
 				fyne.Do(func() {
 					statusLabel.SetText(msg)
 					if se != nil && se.OfferReport {
@@ -184,8 +185,8 @@ func NewSignTab(app *service.App, events *Events, window fyne.Window) *fyne.Cont
 func newReportIssueButton(app *service.App, se *service.SignError) *widget.Button {
 	var reportBtn *widget.Button
 	reportBtn = widget.NewButton("Report Issue", func() {
-		// Keychain read + GitHub calls: off the UI thread, with the button
-		// disabled until they finish.
+		// GitHub calls: off the UI thread, with the button disabled until
+		// they finish.
 		reportBtn.Disable()
 		reportBtn.SetText("Reporting…")
 		safego.Go(func() {
@@ -200,9 +201,7 @@ func newReportIssueButton(app *service.App, se *service.SignError) *widget.Butto
 					reportBtn.Enable() // browser form or failure: allow another try
 				}
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), reportIssueTimeout)
-			defer cancel()
-			res, _ = app.ReportSignError(ctx, se.ReportID)
+			res, _ = app.ReportSignError(context.Background(), se.ReportID)
 			// Only https://github.com URLs are returned; parse for OpenURL.
 			if u := ghapi.ParseGitHubURL(res.URL); u != nil {
 				fyne.Do(func() { fyne.CurrentApp().OpenURL(u) })
@@ -242,6 +241,3 @@ func onSaveQRChosen(app *service.App, window fyne.Window, url, format string, wr
 		showSaveError(window, what)
 	}
 }
-
-// reportIssueTimeout bounds the Report Issue keychain read and GitHub calls.
-const reportIssueTimeout = 30 * time.Second

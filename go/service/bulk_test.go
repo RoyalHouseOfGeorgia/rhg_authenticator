@@ -35,7 +35,7 @@ func (a *authErrSignAdapter) SignBytes(data []byte) ([]byte, error) {
 	return nil, piv.AuthErr{Retries: 2}
 }
 
-// bulkHarness bundles a temp audit log, debug logger, and call-counting
+// bulkHarness bundles a temp issuance log, debug logger, and call-counting
 // openAdapter/readPin fakes backed by an in-test ed25519 key.
 type bulkHarness struct {
 	logPath   string
@@ -270,7 +270,7 @@ func TestLoadBulkPlan_UnreadableLogRefuses(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for a directory log path")
 	}
-	if err.Error() != "Cannot read audit log; bulk signing needs it to avoid duplicates." {
+	if err.Error() != "Cannot read the issuance log; bulk signing needs it to avoid duplicates." {
 		t.Errorf("err = %q", err)
 	}
 	if results != nil {
@@ -312,29 +312,13 @@ func TestBulkFlow_LogAppendFailureStopsBatch(t *testing.T) {
 	if results[0].URL == "" {
 		t.Error("row 0: expected URL for signed-but-unlogged credential")
 	}
-	if results[0].Err != "signed but NOT recorded in audit log" {
+	if results[0].Err != "signed but NOT recorded in issuance log" {
 		t.Errorf("row 0 Err = %q", results[0].Err)
 	}
 	assertCountsInvariant(t, results)
 	if msg := bulkStopMessage(bulkStop(err), err, h.logger); !strings.HasPrefix(msg, "Batch stopped: Credential signed but NOT recorded") {
 		t.Errorf("bulkStopMessage = %q", msg)
 	}
-}
-
-func TestBulkFlow_EmptyLogPathRefuses(t *testing.T) {
-	h := newBulkHarness(t)
-	results := h.plan(t, threeRowCSV)
-	h.logPath = ""
-
-	err := h.run(t, context.Background(), results, nil)
-	if err == nil || err.Error() != "audit log path is not configured" {
-		t.Fatalf("err = %v", err)
-	}
-	if h.pinReads != 0 || h.opens != 0 {
-		t.Errorf("pinReads=%d opens=%d, want 0", h.pinReads, h.opens)
-	}
-	assertStatuses(t, results, bulk.StatusNotAttempted, bulk.StatusNotAttempted, bulk.StatusNotAttempted)
-	assertCountsInvariant(t, results)
 }
 
 func TestBulkFlow_ReadPinErrorSignsNothing(t *testing.T) {

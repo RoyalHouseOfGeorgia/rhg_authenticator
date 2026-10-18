@@ -361,25 +361,6 @@ func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
 	}
 }
 
-func TestSignFlowErrorMessage_Cancelled(t *testing.T) {
-	// After the prompt-before-open reorder, cancellation is returned bare from
-	// readPin — piv-go no longer %v-wraps it — and is matched via errors.Is,
-	// which also traverses any %w wrap. The old %v-wrapped-in-signFlowError
-	// chain can no longer be produced.
-	wrapped := fmt.Errorf("outer: %w", errSigningCancelled)
-	got := signFlowErrorMessage(wrapped, nil)
-	if got != "" {
-		t.Errorf("expected empty string for cancellation, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_CancelledRaw(t *testing.T) {
-	got := signFlowErrorMessage(errSigningCancelled, nil)
-	if got != "" {
-		t.Errorf("expected empty string for cancellation, got: %q", got)
-	}
-}
-
 func TestSignFlowErrorMessage_Timeout(t *testing.T) {
 	// The timeout sentinel must yield a timeout message, NOT a hardware message
 	// (the literal "PIN entry timed out" matches the \bpin\b classifier).
@@ -511,7 +492,7 @@ func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
 	err := &signFlowError{Phase: phaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, pathErr)}
 
 	got := signFlowErrorMessage(err, logger)
-	want := "Credential signed but NOT recorded in the audit log — check disk space/permissions."
+	want := "Credential signed but NOT recorded in the issuance log — check disk space/permissions."
 	if got != want {
 		t.Errorf("signFlowErrorMessage = %q, want %q", got, want)
 	}
@@ -519,7 +500,7 @@ func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("debug log not created: %v", readErr)
 	}
-	if !strings.Contains(string(data), "signed but not recorded in audit log") {
+	if !strings.Contains(string(data), "signed but not recorded in issuance log") {
 		t.Errorf("debug log should contain the wrapped error, got: %q", string(data))
 	}
 }

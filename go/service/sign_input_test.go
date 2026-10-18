@@ -215,7 +215,6 @@ func TestOfferIssueReport(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"cancelled", errSigningCancelled, false},
 		{"timed out", errPINEntryTimedOut, false},
 		{"too long", &core.TooLongForQRError{OverBytes: 5}, false},
 		{"too long wrapped", &signFlowError{Phase: phaseSign, Err: &core.TooLongForQRError{OverBytes: 5}}, false},

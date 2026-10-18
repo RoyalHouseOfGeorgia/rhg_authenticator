@@ -188,16 +188,22 @@ func validateEntryForm(authority, from, key string, noExpiry bool, to string) er
 
 // EntryForm holds the add/edit entry dialog inputs.
 type EntryForm struct {
-	Authority, From, To, Note string
-	NoExpiry                  bool
+	Authority string `json:"authority"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Note      string `json:"note"`
+	NoExpiry  bool   `json:"noExpiry"`
 }
 
 // RegistryEntry is one key in the registry being edited. To is "" when
 // NoExpiry. PublicKey is the base64 Ed25519 key that UpdateEntry takes.
 type RegistryEntry struct {
-	Authority, From, To string
-	NoExpiry            bool
-	PublicKey, Note     string
+	Authority string `json:"authority"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	NoExpiry  bool   `json:"noExpiry"`
+	PublicKey string `json:"publicKey"`
+	Note      string `json:"note"`
 }
 
 // registryEntry returns the RegistryEntry for e.
@@ -212,9 +218,10 @@ func registryEntry(e core.KeyEntry) RegistryEntry {
 // RegistrySnapshot is a copy of the registry being edited. Rows[i] holds the
 // table cell texts for Entries[i]; Loaded is false until a fetch succeeds.
 type RegistrySnapshot struct {
-	Entries       []RegistryEntry
-	Rows          [][]string
-	Dirty, Loaded bool
+	Entries []RegistryEntry `json:"entries"`
+	Rows    [][]string      `json:"rows"`
+	Dirty   bool            `json:"dirty"`
+	Loaded  bool            `json:"loaded"`
 }
 
 // registryColumns are the table column headers.
@@ -394,8 +401,8 @@ func (a *App) readPublicKey() ([32]byte, error) {
 // SubmitResult is the pull request a SubmitRegistry opened. URL is "" unless
 // an https github.com URL.
 type SubmitResult struct {
-	PRNumber int
-	URL      string
+	PRNumber int    `json:"prNumber"`
+	URL      string `json:"url"`
 }
 
 // SubmitRegistry opens a pull request with the edited registry and clears
@@ -450,10 +457,9 @@ func (a *App) SubmitRegistry(ctx context.Context) (SubmitResult, error) {
 		a.dirty = false
 	}
 	a.mu.Unlock()
-	url := pr.HTMLURL
-	if ghapi.ParseGitHubURL(url) == nil {
-		a.logger.Log("warning: registry PR URL is not a GitHub URL: " + core.SanitizeForLog(url))
-		url = ""
+	url := ghapi.GitHubURLOrEmpty(pr.HTMLURL)
+	if url == "" {
+		a.logger.Log("warning: registry PR URL is not a GitHub URL: " + core.SanitizeForLog(pr.HTMLURL))
 	}
 	return SubmitResult{PRNumber: pr.Number, URL: url}, nil
 }

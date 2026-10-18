@@ -52,6 +52,9 @@ var (
 	ErrNotFound = errors.New("The requested item was not found.")
 )
 
+// reportTimeout bounds ReportSignError's GitHub calls.
+const reportTimeout = 30 * time.Second
+
 // userError is an error whose text is the user-facing msg, wrapping the
 // sentinels and causes in errs so errors.Is and errors.As still match them.
 type userError struct {
@@ -102,8 +105,9 @@ const (
 	// EventRegistryChanged fires after a fetch replaces the edited registry, and
 	// after the Start fetch even if it failed (Registry().Loaded then stays false). Payload: nil.
 	EventRegistryChanged = "registry.changed"
-	// EventHistoryChanged fires after RefreshHistory or RemoveDuplicates
-	// re-reads the issuance log, even if the read failed
+	// EventHistoryChanged fires after RefreshHistory, RemoveDuplicates, a Sign
+	// that wrote a new record, or a RunBulk that signed any row re-reads the
+	// issuance log, even if the read failed
 	// (HistorySnapshot.LoadFailed). The records may have changed, so a UI
 	// resets its selection. Payload: nil.
 	EventHistoryChanged = "history.changed"
@@ -122,20 +126,26 @@ type Config struct {
 	// RevocationURL is the published revocation list; empty or unreachable
 	// leaves revocations unavailable.
 	RevocationURL string
-	Keyring       ghapi.Keyring // GitHub token store; nil disables GitHub login and issue reports (Login then returns an error; Revoke and SubmitRegistry return ErrNotLoggedIn)
+	Keyring       ghapi.Keyring // GitHub token store; nil disables GitHub login (Login then returns ErrLoginUnavailable; Revoke and SubmitRegistry return ErrNotLoggedIn; Report Issue opens the browser form)
 	Prompter      Prompter
 	Events        Events
 }
 
 // Info is the registry and build information shown in the status bar.
 type Info struct {
-	Version                     string
-	Online                      bool
-	ActiveKeys, RecentlyExpired int
+	Version         string `json:"version"`
+	Online          bool   `json:"online"`
+	ActiveKeys      int    `json:"activeKeys"`
+	RecentlyExpired int    `json:"recentlyExpired"`
 }
 
 // SignFields are the operator's sign form inputs.
-type SignFields struct{ Recipient, Honor, Detail, Date string }
+type SignFields struct {
+	Recipient string `json:"recipient"`
+	Honor     string `json:"honor"`
+	Detail    string `json:"detail"`
+	Date      string `json:"date"`
+}
 
 // SignResult is a successful Sign. The text fields are what was signed
 // (trimmed and NFC-normalized). Warning is non-empty when the credential was
@@ -143,37 +153,39 @@ type SignFields struct{ Recipient, Honor, Detail, Date string }
 // plain success. SVGFilename and PNGFilename are the default names for
 // saving the QR code with SaveQR.
 type SignResult struct {
-	Recipient, Honor, Detail, Date, URL, Hash8 string
-	Existing                                   bool
-	PNGPreview                                 []byte
-	Warning                                    string
-	SVGFilename, PNGFilename                   string
+	Recipient   string `json:"recipient"`
+	Honor       string `json:"honor"`
+	Detail      string `json:"detail"`
+	Date        string `json:"date"`
+	URL         string `json:"url"`
+	Hash8       string `json:"hash8"`
+	Existing    bool   `json:"existing"`
+	PNGPreview  []byte `json:"pngPreview"` // base64 in JSON
+	Warning     string `json:"warning"`
+	SVGFilename string `json:"svgFilename"`
+	PNGFilename string `json:"pngFilename"`
 }
 
-// SignError is a failed Sign. Message is the user-facing status text ("" for
-// a cancel). ReportID, set only when OfferReport, is the opaque id to pass to
+// SignError is a failed Sign. Message is the user-facing status text.
+// ReportID, set only when OfferReport, is the opaque id to pass to
 // ReportSignError.
 type SignError struct {
 	Message     string
 	OfferReport bool
 	ReportID    string
-	Err         error `json:"-"`
+	Err         error
 }
 
-func (e *SignError) Error() string {
-	if e.Message != "" {
-		return e.Message
-	}
-	return e.Err.Error()
-}
+func (e *SignError) Error() string { return e.Message }
 
 func (e *SignError) Unwrap() error { return e.Err }
 
 // BulkPlan describes a loaded bulk file for the confirm step.
 type BulkPlan struct {
-	ToSign                     int
-	CountsLine                 string
-	PreviewNames, InvalidLines []string
+	ToSign       int      `json:"toSign"`
+	CountsLine   string   `json:"countsLine"`
+	PreviewNames []string `json:"previewNames"`
+	InvalidLines []string `json:"invalidLines"`
 }
 
 // BulkStop is why a bulk run ended.
@@ -191,23 +203,25 @@ const (
 // the default name for ExportBulkResults, timestamped when the run finished.
 // The invalid rows are the BulkPlan's InvalidLines; a run never changes them.
 type BulkOutcome struct {
-	SummaryLine, StopMessage string
-	Stopped                  BulkStop
-	ResultsFilename          string
+	SummaryLine     string   `json:"summaryLine"`
+	StopMessage     string   `json:"stopMessage"`
+	Stopped         BulkStop `json:"stopped"`
+	ResultsFilename string   `json:"resultsFilename"`
 }
 
 // BulkProgress is the EventBulkProgress payload.
 type BulkProgress struct {
-	Done, Total int
-	Name        string
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
+	Name  string `json:"name"`
 }
 
 // ReportResult is a ReportSignError outcome. URL is the filed issue, or a
 // pre-filled new-issue form when the issue could not be filed through the API
 // (Filed false); it is "" unless an https github.com URL.
 type ReportResult struct {
-	URL   string
-	Filed bool
+	URL   string `json:"url"`
+	Filed bool   `json:"filed"`
 }
 
 // KeyCheckResult is the outcome of a YubiKey registry check.
@@ -223,9 +237,9 @@ const (
 // KeyCheck is the result of a YubiKey registry check. Status and Details are
 // the user-facing text for Result.
 type KeyCheck struct {
-	Result  KeyCheckResult
-	Status  string
-	Details []string
+	Result  KeyCheckResult `json:"result"`
+	Status  string         `json:"status"`
+	Details []string       `json:"details"`
 }
 
 // App owns the signing, GitHub login, registry-editing, issuance-history,
@@ -256,14 +270,14 @@ type App struct {
 	pinCache      *yubikey.PinCache
 
 	pinTimeout        time.Duration
-	openAdapter       func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error)
+	openAdapter       adapterOpener
 	restoreSession    func(ctx context.Context, kr ghapi.Keyring, configDir string) (ghapi.Token, string, bool, bool, error)
 	requestDeviceCode func(ctx context.Context) (ghapi.DeviceCodeResponse, error)
 	pollForToken      func(ctx context.Context, deviceCode string, interval, expiresIn int) (ghapi.Token, error)
 	validateToken     func(ctx context.Context, tok ghapi.Token) (string, error)
 	newClient         func(token string) *ghapi.Client
 	fetchCommits      func(baseURL string, perPage int, etag string) ([]ghapi.RegistryCommit, string, error)
-	reportIssue       func(ctx context.Context, kr ghapi.Keyring, configDir, title, body string) (string, bool)
+	reportIssue       func(ctx context.Context, client *ghapi.Client, title, body string) (string, bool)
 
 	busy       atomic.Bool
 	loggingIn  atomic.Bool
@@ -398,9 +412,10 @@ func (f SignFields) Validate() error {
 }
 
 // Sign validates f, prompts for the PIN if needed, and signs and logs the
-// credential. A failure is a *SignError, except ErrBusy. A reportable failure
-// (OfferReport) becomes the one ReportSignError can file, replacing any
-// earlier one.
+// credential. A failure is a *SignError, except ErrBusy and a cancelled PIN
+// prompt, which matches context.Canceled. A reportable failure (OfferReport)
+// becomes the one ReportSignError can file, replacing any earlier one. A new
+// issuance record reloads the history (EventHistoryChanged).
 func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 	if !a.busy.CompareAndSwap(false, true) {
 		return SignResult{}, ErrBusy
@@ -416,11 +431,18 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 		func() (string, error) { return a.readPIN(ctx) },
 		func() { a.events.Emit(EventSignConnecting, nil) },
 		a.logger)
+	if errors.Is(err, errSigningCancelled) {
+		return SignResult{}, userErr(errSigningCancelled.Error(), context.Canceled, err)
+	}
 	if err != nil {
 		clearPINCacheOnAuthError(err, a.pinCache)
+		// A QR failure may follow a newly written record.
+		if sfe := (*signFlowError)(nil); errors.As(err, &sfe) && sfe.Phase == phaseQR {
+			a.loadHistory()
+		}
 		se := &SignError{
 			Message:     signFlowErrorMessage(err, a.logger),
-			OfferReport: offerIssueReport(err) && a.keyring != nil,
+			OfferReport: offerIssueReport(err),
 			Err:         err,
 		}
 		if se.OfferReport {
@@ -438,6 +460,8 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 	var warning string
 	if res.NotLogged {
 		warning = msgNotLogged
+	} else if !res.Existing {
+		a.loadHistory()
 	}
 	return SignResult{
 		Recipient:   norm.NFC.String(req.Recipient),
@@ -488,7 +512,7 @@ func (a *App) SaveQR(url, format, path string) error {
 	case "png":
 		data, err = qr.GeneratePNG(url, qrSavePx)
 	default:
-		return fmt.Errorf("Unsupported QR format %q.", format)
+		return errors.New("Unsupported QR format.")
 	}
 	if err != nil {
 		a.logger.Log(strings.ToUpper(format) + " generation failed: " + core.SanitizeForLog(err.Error()))
@@ -502,12 +526,15 @@ func (a *App) SaveQR(url, format, path string) error {
 // reported: an unknown or older id returns an error matching ErrNotFound. It
 // files at most one issue per failure: once one is filed through the API,
 // later calls return it again. A try that only produced the new-issue form
-// can be repeated. It returns ErrBusy while another report runs.
+// can be repeated. It returns ErrBusy while another report runs, and gives
+// up on GitHub after reportTimeout.
 func (a *App) ReportSignError(ctx context.Context, reportID string) (ReportResult, error) {
 	if !a.reporting.CompareAndSwap(false, true) {
 		return ReportResult{}, ErrBusy
 	}
 	defer a.reporting.Store(false)
+	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
+	defer cancel()
 
 	a.mu.Lock()
 	var se SignError
@@ -525,13 +552,11 @@ func (a *App) ReportSignError(ctx context.Context, reportID string) (ReportResul
 	}
 	title := errorreport.BuildIssueTitle("signing", se.Message)
 	body := signIssueBody(se.Err, se.Message)
-	resultURL, apiFiled := a.reportIssue(ctx, a.keyring, a.dataDir, title, body)
-	if ghapi.ParseGitHubURL(resultURL) == nil {
-		// A filed issue stays filed (no duplicates); only its link is dropped.
-		if resultURL != "" {
-			a.logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(resultURL))
-		}
-		resultURL = ""
+	rawURL, apiFiled := a.reportIssue(ctx, a.githubClient(), title, body)
+	// A filed issue stays filed (no duplicates); only a bad link is dropped.
+	resultURL := ghapi.GitHubURLOrEmpty(rawURL)
+	if resultURL == "" && rawURL != "" {
+		a.logger.Log("Report Issue: refusing to open non-GitHub URL: " + core.SanitizeForLog(rawURL))
 	}
 	res := ReportResult{URL: resultURL, Filed: apiFiled}
 	if res.Filed {
@@ -553,6 +578,10 @@ func (a *App) LoadBulk(path string) (BulkPlan, error) {
 	}
 	defer a.busy.Store(false)
 
+	// A failed load leaves no plan, so RunBulk never signs an earlier file.
+	a.mu.Lock()
+	a.plan = nil
+	a.mu.Unlock()
 	f, err := os.Open(path)
 	if err != nil {
 		a.logger.Log("bulk load: " + core.SanitizeForLog(err.Error()))
@@ -608,6 +637,9 @@ func (a *App) RunBulk(ctx context.Context) (BulkOutcome, error) {
 		},
 		a.logger)
 	clearPINCacheOnAuthError(err, a.pinCache)
+	if bulk.Summarize(results).Signed > 0 {
+		a.loadHistory()
+	}
 
 	stop := bulkStop(err)
 	return BulkOutcome{

@@ -163,6 +163,15 @@ func IsGitHubHost(host string) bool {
 	return h == "github.com" || strings.HasSuffix(h, ".github.com")
 }
 
+// GitHubURLOrEmpty returns rawURL if ParseGitHubURL accepts it, else "", so
+// only https github.com links reach the user.
+func GitHubURLOrEmpty(rawURL string) string {
+	if ParseGitHubURL(rawURL) == nil {
+		return ""
+	}
+	return rawURL
+}
+
 // ParseGitHubURL validates and parses a URL as HTTPS github.com without
 // embedded credentials. Returns nil if invalid.
 func ParseGitHubURL(rawURL string) *url.URL {

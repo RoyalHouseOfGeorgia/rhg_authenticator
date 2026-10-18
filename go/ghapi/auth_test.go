@@ -983,12 +983,25 @@ func TestPollForToken_ExpiresInDeadline(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("error = %v, want context.DeadlineExceeded", err)
+	if !errors.Is(err, ErrDeviceCodeExpired) {
+		t.Errorf("error = %v, want ErrDeviceCodeExpired (the code's own expiry fired)", err)
 	}
 	// Should time out within ~2 seconds (1s expiresIn + slack).
 	if elapsed > 5*time.Second {
 		t.Errorf("elapsed = %v, should have timed out quickly", elapsed)
+	}
+}
+
+func TestPollForToken_CallerDeadlineIsNotExpiry(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	blockingSleep := func(ctx context.Context, _ time.Duration) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	_, err := pollForTokenInternal(ctx, "dc_123", 1, 600, blockingSleep)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrDeviceCodeExpired) {
+		t.Errorf("error = %v, want the caller's context.DeadlineExceeded", err)
 	}
 }
 

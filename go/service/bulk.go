@@ -19,9 +19,9 @@ import (
 const bulkPreviewNames = 5
 
 // loadBulkPlan reads and parses the operator's CSV from r and classifies each
-// row against the audit log at logPath. Input and parse errors keep bulk's
+// row against the issuance log at logPath. Input and parse errors keep bulk's
 // text (it describes the file to the operator) as a sentence. An unreadable
-// audit log is fatal: without it, already-issued credentials cannot be
+// issuance log is fatal: without it, already-issued credentials cannot be
 // detected. Every error is logged and wraps its cause.
 func loadBulkPlan(r io.Reader, logPath string, logger *debuglog.Logger) ([]bulk.Result, error) {
 	fail := func(msg string, err error) error {
@@ -38,7 +38,7 @@ func loadBulkPlan(r io.Reader, logPath string, logger *debuglog.Logger) ([]bulk.
 	}
 	records, err := issuancelog.ReadLog(logPath)
 	if err != nil {
-		return nil, fail("Cannot read audit log; bulk signing needs it to avoid duplicates.", err)
+		return nil, fail("Cannot read the issuance log; bulk signing needs it to avoid duplicates.", err)
 	}
 	issued := make(map[string]string, len(records))
 	for _, rec := range records {
@@ -56,16 +56,12 @@ func runBulkFlow(
 	ctx context.Context,
 	results []bulk.Result,
 	logPath string,
-	openAdapter func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error),
+	openAdapter adapterOpener,
 	readPin func() (string, error),
 	onConnecting func(),
 	onProgress func(done, total int, name string),
 	logger *debuglog.Logger,
 ) error {
-	if logPath == "" {
-		bulk.MarkNotAttempted(results)
-		return errors.New("audit log path is not configured")
-	}
 	if bulk.Summarize(results).ToSign == 0 {
 		return nil
 	}

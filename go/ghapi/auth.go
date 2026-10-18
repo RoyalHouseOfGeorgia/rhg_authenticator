@@ -342,13 +342,25 @@ func pollForTokenInternal(ctx context.Context, deviceCode string, interval, expi
 		expiresIn = maxExpiresIn
 	}
 
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(expiresIn)*time.Second)
 	defer cancel()
+	// stopped is the error for a poll loop ended by ctx: ErrDeviceCodeExpired
+	// when only its own expiry deadline fired, else the caller's error.
+	stopped := func() error {
+		if parent.Err() == nil && ctx.Err() != nil {
+			return ErrDeviceCodeExpired
+		}
+		return ctx.Err()
+	}
 
 	client := newAuthHTTPClient()
 
 	for {
 		if err := sleepFn(ctx, time.Duration(interval)*time.Second); err != nil {
+			if ctx.Err() != nil {
+				return Token{}, stopped()
+			}
 			return Token{}, err
 		}
 
@@ -368,7 +380,7 @@ func pollForTokenInternal(ctx context.Context, deviceCode string, interval, expi
 		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return Token{}, ctx.Err()
+				return Token{}, stopped()
 			}
 			return Token{}, fmt.Errorf("polling for token: %w", err)
 		}

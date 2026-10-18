@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +27,13 @@ var honorTitles = []string{
 	"Appointment",
 	"Other",
 }
+
+// adapterOpener opens the YubiKey signing adapter; readPin supplies the PIN
+// when the card asks for it. The caller closes the returned io.Closer.
+type adapterOpener func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error)
+
+// generatePreviewPNG renders the QR preview; replaceable in tests.
+var generatePreviewPNG = qr.GeneratePNG
 
 // QR code output sizes.
 const (
@@ -75,13 +83,8 @@ type signFlowResult struct {
 // issued (Ed25519 is deterministic per key). The stored signature is not
 // re-verified against the registry; a malformed one is skipped as if absent.
 //
-// An empty logPath never matches. Log read failures wrap
-// errIssuanceLogUnreadable.
+// Log read failures wrap errIssuanceLogUnreadable.
 func findExistingIssuance(payload []byte, logPath string) (core.SignResponse, bool, error) {
-	if logPath == "" {
-		return core.SignResponse{}, false, nil
-	}
-
 	hash := core.PayloadSHA256Hex(payload)
 
 	records, err := issuancelog.ReadLog(logPath)
@@ -111,8 +114,7 @@ func findExistingIssuance(payload []byte, logPath string) (core.SignResponse, bo
 }
 
 // signAndLog opens the adapter with a pre-resolved PIN, exports the public
-// key, signs, and appends an NFC-normalized issuance record to logPath (skipped
-// when logPath is empty).
+// key, signs, and appends an NFC-normalized issuance record to logPath.
 //
 // Adapter-open failures are returned unwrapped; export-key and sign failures
 // are wrapped in a *signFlowError with phaseExportKey / phaseSign. If the
@@ -122,7 +124,7 @@ func findExistingIssuance(payload []byte, logPath string) (core.SignResponse, bo
 func signAndLog(
 	req core.SignRequest,
 	logPath string,
-	openAdapter func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error),
+	openAdapter adapterOpener,
 	pin string,
 	logger *debuglog.Logger,
 ) (core.SignResponse, error) {
@@ -161,11 +163,9 @@ func signAndLog(
 		SignatureB64URL: resp.Signature,
 	}
 
-	if logPath != "" {
-		if logErr := issuancelog.AppendRecord(logPath, record); logErr != nil {
-			logger.Log("log append failed: " + core.SanitizeForLog(logErr.Error()))
-			return resp, &signFlowError{Phase: phaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, logErr)}
-		}
+	if logErr := issuancelog.AppendRecord(logPath, record); logErr != nil {
+		logger.Log("log append failed: " + core.SanitizeForLog(logErr.Error()))
+		return resp, &signFlowError{Phase: phaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, logErr)}
 	}
 
 	return resp, nil
@@ -182,7 +182,7 @@ func signAndLog(
 func executeSignFlow(
 	req core.SignRequest,
 	logPath string,
-	openAdapter func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error),
+	openAdapter adapterOpener,
 	readPin func() (string, error),
 	onConnecting func(),
 	logger *debuglog.Logger,
@@ -237,7 +237,7 @@ func executeSignFlow(
 	}
 
 	// 3. Generate QR preview.
-	pngData, err := qr.GeneratePNG(resp.URL, qrPreviewPx)
+	pngData, err := generatePreviewPNG(resp.URL, qrPreviewPx)
 	if err != nil {
 		logger.Log(sanitizeError("QR", err))
 		return signFlowResult{}, &signFlowError{Phase: phaseQR, Err: err}
@@ -274,6 +274,9 @@ func validateSignForm(recipient, honor, detail, date string) error {
 	}
 	if honor == "" {
 		return errors.New("Honor title must be selected.")
+	}
+	if !slices.Contains(honorTitles, honor) {
+		return errors.New("Honor title must be one of the listed titles.")
 	}
 	if strings.TrimSpace(detail) == "" {
 		return errors.New("Detail is required.")

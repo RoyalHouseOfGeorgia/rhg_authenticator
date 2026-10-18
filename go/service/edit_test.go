@@ -522,8 +522,9 @@ func TestSubmitRegistry_EditDuringSubmitStaysDirty(t *testing.T) {
 
 func TestSubmitRegistry_ConcurrentBusy(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		close(entered)
+		once.Do(func() { close(entered) }) // a retried request must not close it again
 		<-release
 		w.WriteHeader(http.StatusInternalServerError)
 	}))

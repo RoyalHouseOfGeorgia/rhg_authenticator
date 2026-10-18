@@ -16,7 +16,7 @@ import (
 
 // msgNotLogged is shown when a credential was signed but its issuance record
 // could not be written.
-const msgNotLogged = "Credential signed but NOT recorded in the audit log — check disk space/permissions."
+const msgNotLogged = "Credential signed but NOT recorded in the issuance log — check disk space/permissions."
 
 // sanitizeError returns a generic description for hardware-related errors,
 // stripping implementation details that could leak hardware configuration.
@@ -59,11 +59,10 @@ func isOperatorInputError(err error) bool {
 }
 
 // offerIssueReport reports whether a sign-flow error warrants a "Report Issue"
-// button. Cancellations, benign PIN-entry timeouts, and operator input errors
-// are not bugs.
+// button. Benign PIN-entry timeouts and operator input errors are not bugs
+// (Sign handles a cancel before asking).
 func offerIssueReport(err error) bool {
-	return !errors.Is(err, errSigningCancelled) &&
-		!errors.Is(err, errPINEntryTimedOut) &&
+	return !errors.Is(err, errPINEntryTimedOut) &&
 		!isOperatorInputError(err)
 }
 
@@ -122,9 +121,6 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	// regex would otherwise misclassify the timeout/mlock messages as HwErrPIN.
 	// This depends on the prompt-before-open ordering in executeSignFlow —
 	// reintroducing a lazy PINPrompt would break the errors.Is match.
-	if errors.Is(err, errSigningCancelled) {
-		return ""
-	}
 	if errors.Is(err, errPINEntryTimedOut) {
 		return "PIN entry timed out. Click Sign to try again."
 	}
