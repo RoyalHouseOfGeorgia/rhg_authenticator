@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	stdlog "log"
@@ -324,5 +325,43 @@ func TestUpdateConfig(t *testing.T) {
 	}
 	if cfg.OnStatus != nil || cfg.OnUpdated != nil || cfg.Logf != nil {
 		t.Error("callbacks set; the caller owns them")
+	}
+}
+
+func TestRunCLI(t *testing.T) {
+	missingZip := filepath.Join(t.TempDir(), "missing.zip")
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		code      int
+		stdout    string
+		stderrHas string
+	}{
+		{name: "no args", args: nil, code: -1},
+		{name: "other args", args: []string{"-psn_0_123", "--debug"}, code: -1},
+		{name: "version", args: []string{"--version"}, code: 0, stdout: "v9.8.7\n"},
+		{name: "version anywhere", args: []string{"-x", "--version", "y"}, code: 0, stdout: "v9.8.7\n"},
+		{name: "version before verify", args: []string{"--version", "--verify-update-zip"}, code: 0, stdout: "v9.8.7\n"},
+		{name: "verify only first", args: []string{"x", "--verify-update-zip", "a.zip", "v1.0.0"}, code: -1},
+		// --verify-update-zip first wins over a later --version: a usage error.
+		{name: "verify usage", args: []string{"--verify-update-zip", "--version"}, code: 2, stderrHas: "usage:"},
+		{name: "verify no args", args: []string{"--verify-update-zip"}, code: 2, stderrHas: "usage:"},
+		{name: "verify fails", args: []string{"--verify-update-zip", missingZip, "v1.0.0"}, code: 1, stderrHas: "FAIL: "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := RunCLI(tc.args, "v9.8.7", &stdout, &stderr); code != tc.code {
+				t.Fatalf("code = %d, want %d (stderr %q)", code, tc.code, stderr.String())
+			}
+			if stdout.String() != tc.stdout {
+				t.Errorf("stdout = %q, want %q", stdout.String(), tc.stdout)
+			}
+			if tc.stderrHas == "" && stderr.Len() != 0 {
+				t.Errorf("stderr = %q, want empty", stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tc.stderrHas) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tc.stderrHas)
+			}
+		})
 	}
 }

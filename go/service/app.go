@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -337,25 +336,19 @@ func New(cfg Config) (*App, error) {
 	logger.Logf("registry fetch: online=%v", online)
 
 	a := &App{
-		dataDir:       cfg.DataDir,
-		logPath:       logPath,
-		logger:        logger,
-		registryURL:   cfg.RegistryURL,
-		revocationURL: cfg.RevocationURL,
-		keyring:       cfg.Keyring,
-		prompter:      cfg.Prompter,
-		events:        cfg.Events,
-		reg:           reg,
-		online:        online,
-		pinCache:      yubikey.NewPinCache(),
-		pinTimeout:    defaultPINEntryTimeout,
-		openAdapter: func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
-			a, err := yubikey.NewYubiKeyAdapter(readPin)
-			if err != nil {
-				return nil, nil, err
-			}
-			return a, a, nil
-		},
+		dataDir:           cfg.DataDir,
+		logPath:           logPath,
+		logger:            logger,
+		registryURL:       cfg.RegistryURL,
+		revocationURL:     cfg.RevocationURL,
+		keyring:           cfg.Keyring,
+		prompter:          cfg.Prompter,
+		events:            cfg.Events,
+		reg:               reg,
+		online:            online,
+		pinCache:          yubikey.NewPinCache(),
+		pinTimeout:        defaultPINEntryTimeout,
+		openAdapter:       openYubiKey,
 		restoreSession:    ghapi.RestoreSession,
 		requestDeviceCode: ghapi.RequestDeviceCode,
 		pollForToken:      ghapi.PollForToken,

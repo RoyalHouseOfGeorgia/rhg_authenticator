@@ -113,6 +113,44 @@ jobs:
       - working-directory: go
         run: go test -race ./... -count=1
 
+  # The rhgcore C library (release and rhgfake variants) built and smoke-tested
+  # through its C ABI on each release OS. Interim and never a required check:
+  # no job needs it and it uploads nothing, so release assets are unchanged.
+  # The required jobs never compile the rhgfake-tagged files, so it also vets
+  # and tests them.
+  native-lib:
+    name: native-lib (${{ matrix.suffix }})
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-26
+            suffix: darwin-arm64
+          - os: windows-latest
+            suffix: windows-amd64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash  # Git Bash on Windows; the smoke script needs bash and the runner's MinGW gcc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Toolchain versions
+        run: uname -a && go version && cc --version
+      - working-directory: go
+        run: go vet -tags rhgfake ./...
+      - working-directory: go
+        run: go test -tags rhgfake -count=1 ./service/... ./host/... ./cmd/...
+      - name: Build both library variants and run the C smoke test
+        run: bash scripts/rhgcore-smoke.sh
+      - name: Link list (macOS)
+        if: runner.os == 'macOS'
+        run: cat go/release/rhgcore/release/librhgcore.link
+
   build:
     # Explicit name → stable check contexts "build (darwin-arm64)" /
     # "build (windows-amd64)" that don't change when a runner label is bumped

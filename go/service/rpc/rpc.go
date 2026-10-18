@@ -171,7 +171,7 @@ type server struct {
 // newServer returns a server in stateNew with the production dependencies.
 func newServer() *server {
 	events := newJSONEvents(nil)
-	return &server{
+	s := &server{
 		methods:    methodTable(),
 		events:     events,
 		pins:       &pinBridge{events: events},
@@ -179,6 +179,8 @@ func newServer() *server {
 		newService: host.NewService,
 		newManager: func(cfg update.Config) updateManager { return update.NewManager(cfg) },
 	}
+	addTestMethods(s)
+	return s
 }
 
 // Dispatch runs method with params, a JSON object (empty for none), and
@@ -227,6 +229,10 @@ type errorInfo struct {
 }
 
 var internalEnvelope = mustMarshal(errorBody{Error: errorInfo{Code: CodeInternal, Message: msgInternal}})
+
+// InternalEnvelope returns the CodeInternal envelope Dispatch returns for a
+// panic, for a host's own panic guard around Dispatch.
+func InternalEnvelope() []byte { return bytes.Clone(internalEnvelope) }
 
 // mustMarshal encodes v, panicking on failure: every result type encodes, so
 // a failure is a bug, reported through Dispatch's recover.

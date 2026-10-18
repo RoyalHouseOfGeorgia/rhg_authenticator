@@ -7,6 +7,7 @@ package host
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -171,4 +172,24 @@ func UpdateConfig(dataDir string) update.Config {
 		Owner:   ghapi.DefaultOwner,
 		Repo:    ghapi.DefaultRepo,
 	}
+}
+
+// RunCLI handles the command-line invocations that run before any UI: with
+// "--verify-update-zip" as the first argument it runs update.VerifyZipCLI on
+// the rest; otherwise "--version" anywhere prints version. args excludes the
+// program name. It returns the process exit code, or -1 when args is not a
+// command-line invocation and the host should start its UI.
+func RunCLI(args []string, version string, stdout, stderr io.Writer) int {
+	// Release CI verifies the signed update zip with the app's own install
+	// check.
+	if len(args) > 0 && args[0] == "--verify-update-zip" {
+		return update.VerifyZipCLI(args[1:], stdout, stderr)
+	}
+	for _, arg := range args {
+		if arg == "--version" {
+			fmt.Fprintln(stdout, version)
+			return 0
+		}
+	}
+	return -1
 }

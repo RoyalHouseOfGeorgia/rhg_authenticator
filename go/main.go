@@ -46,18 +46,10 @@ func main() {
 		}
 	}()
 
-	// Release CI verifies the signed update zip with the app's own install
-	// check; like --version, this must run before any GUI initialization.
-	if len(os.Args) > 1 && os.Args[1] == "--verify-update-zip" {
-		os.Exit(update.VerifyZipCLI(os.Args[2:], os.Stdout, os.Stderr))
-	}
-
-	// Handle --version before any GUI initialization.
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" {
-			fmt.Println(buildinfo.Version)
-			os.Exit(0)
-		}
+	// Command-line invocations (--version, --verify-update-zip) run before
+	// any GUI initialization.
+	if code := host.RunCLI(os.Args[1:], buildinfo.Version, os.Stdout, os.Stderr); code >= 0 {
+		os.Exit(code)
 	}
 
 	// 1. Create Fyne app and window.

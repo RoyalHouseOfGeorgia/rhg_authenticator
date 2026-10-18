@@ -606,6 +606,9 @@ func TestPackageEntryPoints(t *testing.T) {
 }
 
 func TestNewServer_ProductionDeps(t *testing.T) {
+	if rhgfakeBuild {
+		t.Skip("the rhgfake build replaces the production dependencies (TestFakeBuild_Defaults)")
+	}
 	s := newServer()
 	if s.newKeyring() == nil || s.newService == nil {
 		t.Error("missing keyring or service constructor")

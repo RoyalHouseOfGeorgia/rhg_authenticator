@@ -32,6 +32,16 @@ var honorTitles = []string{
 // when the card asks for it. The caller closes the returned io.Closer.
 type adapterOpener func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error)
 
+// openYubiKey is New's adapterOpener: the inserted YubiKey. The rhgfake test
+// build replaces it with a software card (fakecard_rhgfake.go).
+var openYubiKey adapterOpener = func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+	a, err := yubikey.NewYubiKeyAdapter(readPin)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a, a, nil
+}
+
 // generatePreviewPNG renders the QR preview; replaceable in tests.
 var generatePreviewPNG = qr.GeneratePNG
 
