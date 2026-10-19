@@ -1,8 +1,10 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,8 +49,22 @@ func TestFormatKeyResult_Found(t *testing.T) {
 	if !strings.Contains(details[2], "2027-Dec-31") {
 		t.Errorf("details[2] should contain formatted to date, got: %q", details[2])
 	}
-	if !strings.Contains(details[3], "Fingerprint: ") {
-		t.Errorf("details[3] should contain fingerprint, got: %q", details[3])
+	if details[3] != "Restrictions: (none)" {
+		t.Errorf("details[3] = %q, want the key's honor restrictions", details[3])
+	}
+	if !strings.Contains(details[4], "Fingerprint: ") {
+		t.Errorf("details[4] should contain fingerprint, got: %q", details[4])
+	}
+}
+
+// TestFormatKeyResult_Restricted: a key limited to some honors lists them, so
+// a check that says "found" explains a later honor refusal.
+func TestFormatKeyResult_Restricted(t *testing.T) {
+	entry := &core.KeyEntry{Authority: "A", From: "2026-01-01",
+		Extra: map[string]json.RawMessage{"allowed_honors": json.RawMessage(`["Appointment"]`)}}
+	kc := formatKeyResult(keyCheckResult{Found: true, Fingerprint: "ab", Entry: entry})
+	if !slices.Contains(kc.Details, "Restrictions: Appointment") {
+		t.Errorf("details = %q, want the allowed honors", kc.Details)
 	}
 }
 

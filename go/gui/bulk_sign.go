@@ -17,10 +17,18 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
+// bulkService is the part of *service.App the bulk sign flow uses.
+type bulkService interface {
+	LoadBulk(path string) (service.BulkPlan, error)
+	RunBulk(ctx context.Context) (service.BulkOutcome, error)
+	CancelBulk()
+	ExportBulkResults(path string) error
+}
+
 // bulkSignDeps holds what the bulk sign UI flow needs from the Sign tab.
 type bulkSignDeps struct {
 	window   fyne.Window
-	app      *service.App
+	app      bulkService
 	events   *Events
 	launchGo func(func())
 	setBusy  func(bool) // UI thread only
@@ -157,6 +165,9 @@ func showBulkSummary(d bulkSignDeps, plan service.BulkPlan, outcome service.Bulk
 		stop := widget.NewLabel(outcome.StopMessage)
 		stop.Wrapping = fyne.TextWrapWord
 		items = append(items, stop)
+	}
+	if len(outcome.FailedLines) > 0 {
+		items = append(items, invalidRowsView("Failed rows:", outcome.FailedLines)...)
 	}
 	if len(plan.InvalidLines) > 0 {
 		items = append(items, invalidRowsView("Invalid rows (skipped):", plan.InvalidLines)...)

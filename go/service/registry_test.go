@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -164,6 +165,22 @@ func TestRestrictionsText(t *testing.T) {
 			}
 			if got := restrictionsText(entry); got != tt.want {
 				t.Errorf("restrictionsText(%s) = %q, want %q", tt.raw, got, tt.want)
+			}
+			// allowedHonors is the parse behind the text.
+			honors, valid := allowedHonors(entry)
+			switch tt.want {
+			case "(invalid)":
+				if valid || honors != nil {
+					t.Errorf("allowedHonors(%s) = %q, %v; want invalid", tt.raw, honors, valid)
+				}
+			case "(none)":
+				if !valid || len(honors) != 0 {
+					t.Errorf("allowedHonors(%s) = %q, %v; want unrestricted", tt.raw, honors, valid)
+				}
+			default:
+				if !valid || strings.Join(honors, ", ") != tt.want {
+					t.Errorf("allowedHonors(%s) = %q, %v; want %s", tt.raw, honors, valid, tt.want)
+				}
 			}
 		})
 	}

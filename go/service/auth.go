@@ -53,7 +53,7 @@ func (s AuthState) MarshalJSON() ([]byte, error) {
 // setAuth applies a login state and emits EventAuthChanged.
 func (a *App) setAuth(tok ghapi.Token, user string, loggedIn, offline bool) AuthState {
 	a.mu.Lock()
-	a.token, a.githubUser, a.loggedIn, a.offline = tok, user, loggedIn, offline
+	a.token, a.githubUser, a.loggedIn, a.githubOffline = tok, user, loggedIn, offline
 	st := a.authStateLocked()
 	a.mu.Unlock()
 	a.events.Emit(EventAuthChanged, st)
@@ -61,7 +61,7 @@ func (a *App) setAuth(tok ghapi.Token, user string, loggedIn, offline bool) Auth
 }
 
 func (a *App) authStateLocked() AuthState {
-	return AuthState{LoggedIn: a.loggedIn, Offline: a.offline, User: a.githubUser}
+	return AuthState{LoggedIn: a.loggedIn, Offline: a.githubOffline, User: a.githubUser}
 }
 
 // AuthState returns the current GitHub login state.
@@ -237,7 +237,7 @@ func (a *App) Logout() {
 
 // clientLocked returns a GitHub client when logged in and online, or nil.
 func (a *App) clientLocked() *ghapi.Client {
-	if !a.loggedIn || a.offline || a.token.AccessToken == "" {
+	if !a.loggedIn || a.githubOffline || a.token.AccessToken == "" {
 		return nil
 	}
 	return a.newClient(a.token.AccessToken)

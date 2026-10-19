@@ -3,9 +3,16 @@
  * scripts/rhgcore-smoke.sh on Linux, macOS and Windows (only the link line
  * differs).
  *
- *   smoke --version [...]          RHGMainCLI(argc, argv); exits with its code
- *   smoke <data-dir> release|fake  the checks below; "fake" adds the flows
- *                                  that need the rhgfake build
+ *   smoke --version [...]   RHGMainCLI(argc, argv); exits with its code
+ *   smoke <data-dir> <mode> the checks below; mode is one of
+ *     release       the checks every build passes, and no test.* methods
+ *     fake-offline  rhgfake build, registry unreachable: signing is refused
+ *                   before any PIN prompt
+ *     fake-online   rhgfake build, registry served: signing succeeds with
+ *                   the PIN answered from the event callback
+ *
+ * A fake mode initializes the app once, so each runs in its own process with
+ * a fresh data dir.
  *
  * Prints each check and exits non-zero on the first failure.
  */
@@ -21,6 +28,7 @@
 
 static int checks;
 static volatile int events_seen;
+static volatile int pins_requested;
 static volatile int pins_submitted;
 
 /* on_event counts events and answers a pin.request with the fake card's PIN
@@ -34,6 +42,7 @@ static void on_event(const char *json) {
 	if (strstr(json, "\"event\":\"pin.request\"") == NULL) {
 		return;
 	}
+	pins_requested++;
 	id = strstr(json, "\"requestId\":");
 	if (id == NULL) {
 		return;
@@ -92,12 +101,17 @@ int main(int argc, char **argv) {
 		fflush(stdout);
 		return code;
 	}
-	if (argc != 3 || (strcmp(argv[2], "release") != 0 && strcmp(argv[2], "fake") != 0)) {
-		fprintf(stderr, "usage: %s --version | %s <data-dir> release|fake\n", argv[0], argv[0]);
+	if (argc != 3 || (strcmp(argv[2], "release") != 0 && strcmp(argv[2], "fake-offline") != 0 &&
+	                  strcmp(argv[2], "fake-online") != 0)) {
+		fprintf(stderr, "usage: %s --version | %s <data-dir> release|fake-offline|fake-online\n", argv[0], argv[0]);
 		return 2;
 	}
 	const char *data_dir = argv[1];
-	int fake = strcmp(argv[2], "fake") == 0;
+	const char *mode = argv[2];
+	int fake = strcmp(mode, "release") != 0;
+	int online = strcmp(mode, "fake-online") == 0;
+	const char *sign_params = "{\"recipient\":\"Jane Doe\",\"honor\":\"Ennoblement\","
+	                          "\"detail\":\"For service\",\"date\":\"2026-01-02\"}";
 
 	char *version_argv[] = {"rhgcore", "--version", NULL};
 	char *ui_argv[] = {"rhgcore", NULL};
@@ -119,6 +133,12 @@ int main(int argc, char **argv) {
 	RHGFree(NULL);
 	pass("RHGFree(NULL)");
 
+	if (!fake) {
+		/* The test build's methods must not exist in a release library. */
+		expect("no test.configure in a release build", "test.configure", "{}", "\"code\":\"input\"", "Unknown method.");
+		expect("no test.panic in a release build", "test.panic", "{}", "\"code\":\"input\"", "Unknown method.");
+	}
+
 	if (fake) {
 		char escaped[4096];
 		char params[4200];
@@ -126,24 +146,33 @@ int main(int argc, char **argv) {
 		snprintf(params, sizeof params, "{\"dataDir\":\"%s\"}", escaped);
 
 		RHGSetEventCallback(on_event);
-		expect("test.configure offline", "test.configure", "{\"online\":false}", "\"ok\":true", NULL);
-		expect("app.init", "app.init", params, "\"ok\":true", "\"online\":false");
-		expect("sign.sign, PIN answered from the event callback", "sign.sign",
-		       "{\"recipient\":\"Jane Doe\",\"honor\":\"Ennoblement\","
-		       "\"detail\":\"For service\",\"date\":\"2026-01-02\"}",
-		       "\"ok\":true", "\"url\":\"https://");
-		if (pins_submitted != 1) {
-			fail("one pin.request answered through the callback", "not exactly one");
+		if (online) {
+			expect("test.configure online", "test.configure", "{\"online\":true}", "\"ok\":true", NULL);
+			expect("app.init online with the fake card's key", "app.init", params, "\"online\":true", "\"activeKeys\":1");
+			expect("sign.sign, PIN answered from the event callback", "sign.sign", sign_params,
+			       "\"ok\":true", "\"url\":\"https://");
+			if (pins_requested != 1 || pins_submitted != 1) {
+				fail("one pin.request answered through the callback", "not exactly one");
+			}
+			pass("one pin.request answered through the callback");
+		} else {
+			expect("test.configure offline", "test.configure", "{\"online\":false}", "\"ok\":true", NULL);
+			expect("app.init offline", "app.init", params, "\"ok\":true", "\"online\":false");
+			expect("sign.sign offline fails", "sign.sign", sign_params, "\"code\":\"failed\"",
+			       "the key registry could not be downloaded");
+			if (pins_requested != 0) {
+				fail("no pin.request when offline", "a pin.request");
+			}
+			pass("no pin.request when offline");
+			expect("test.panic is an internal error", "test.panic", "{}", "\"ok\":false", "\"code\":\"internal\"");
+			expect("app.canQuit after a panic", "app.canQuit", NULL, "\"ok\":true", NULL);
 		}
-		pass("one pin.request answered through the callback");
-		expect("test.panic is an internal error", "test.panic", "{}", "\"ok\":false", "\"code\":\"internal\"");
-		expect("app.canQuit after a panic", "app.canQuit", NULL, "\"ok\":true", NULL);
 		expect("app.shutdown", "app.shutdown", "{}", "\"ok\":true", NULL);
 		RHGSetEventCallback(NULL);
 		pass("RHGSetEventCallback(NULL)");
 		printf("events received: %d\n", events_seen);
 	}
 
-	printf("PASS: %d checks (%s)\n", checks, fake ? "fake" : "release");
+	printf("PASS: %d checks (%s)\n", checks, mode);
 	return 0;
 }

@@ -7,8 +7,8 @@
 //	void  RHGSetEventCallback(rhg_event_cb cb);
 //	int   RHGMainCLI(int argc, char** argv);
 //
-// The rhgfake build (-tags rhgfake) signs with a software card and never
-// reaches GitHub or the production registry, for tests of a front end
+// The rhgfake build (-tags rhgfake) signs with a software card, has no
+// GitHub login and never uses the production registry, for tests of a front end
 // through the C ABI; its version string ends in " (rhgfake)".
 package main
 

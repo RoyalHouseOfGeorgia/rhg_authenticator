@@ -49,6 +49,10 @@ var (
 	// ErrNotFound is matched by a ReportSignError error when the report id is
 	// unknown or no longer the latest reportable failure.
 	ErrNotFound = errors.New("The requested item was not found.")
+	// ErrOffline is matched by a Sign or RunBulk error when New could not
+	// fetch the registry: nothing is signed (the registry is fetched only at
+	// start-up, so signing needs a restart).
+	ErrOffline = errors.New("Signing is unavailable: the key registry could not be downloaded. Check your internet connection and restart RHG Authenticator.")
 )
 
 // reportTimeout bounds ReportSignError's GitHub calls.
@@ -200,11 +204,15 @@ const (
 // BulkOutcome summarizes a finished bulk run. StopMessage is the
 // user-facing text for Stopped ("" when BulkCompleted). ResultsFilename is
 // the default name for ExportBulkResults, timestamped when the run finished.
-// The invalid rows are the BulkPlan's InvalidLines; a run never changes them.
+// FailedLines has one "line N: <reason>" entry per row that failed (for
+// example refused by the key check before the PIN), including the row whose
+// error stopped the batch (also in StopMessage). The invalid rows are the
+// BulkPlan's InvalidLines; a run never changes them.
 type BulkOutcome struct {
 	SummaryLine     string   `json:"summaryLine"`
 	StopMessage     string   `json:"stopMessage"`
 	Stopped         BulkStop `json:"stopped"`
+	FailedLines     []string `json:"failedLines"`
 	ResultsFilename string   `json:"resultsFilename"`
 }
 
@@ -230,7 +238,7 @@ type KeyCheckResult string
 const (
 	KeyCheckFound    KeyCheckResult = "found"    // the key matches a registry entry valid today
 	KeyCheckNotFound KeyCheckResult = "notFound" // the key was read but matches no valid entry
-	KeyCheckFailed   KeyCheckResult = "failed"   // the key could not be read (none plugged in, card error)
+	KeyCheckFailed   KeyCheckResult = "failed"   // the key could not be read or checked (registry unavailable, none plugged in, card error)
 )
 
 // KeyCheck is the result of a YubiKey registry check. Status and Details are
@@ -243,30 +251,31 @@ type KeyCheck struct {
 
 // App owns the signing, GitHub login, registry-editing, issuance-history,
 // revocation and audit state and rules behind the user interface. Info,
-// Honors, LogPath, CancelBulk, AuthState, CancelLogin, Registry, AddEntry,
+// Honors, CancelBulk, AuthState, CancelLogin, Registry, AddEntry,
 // UpdateEntry, Dirty, History, Start and Close never block, and SaveQR,
-// Logout, ImportCertificate, IssuanceLogExport, ErrorLogExport,
-// ExportIssuanceLog, ExportErrorLog, DuplicatePreview and RemoveDuplicates
-// do only short local work (file or keyring I/O; SaveQR renders a PNG in
-// about 0.1 s), so these may be called on a UI thread; every other method
-// may block on file, card or network I/O or the PIN prompt and must not be
-// called on a UI thread. ErrBusy comes from independent guards: Sign,
+// Logout, ImportCertificate and ExportErrorLog do only short local work
+// (file or keyring I/O; SaveQR renders a PNG in about 0.1 s), so these may be
+// called on a UI thread. IssuanceLogExport, ExportIssuanceLog,
+// DuplicatePreview and RemoveDuplicates read (and RemoveDuplicates rewrites)
+// the whole issuance log, 100-300 ms at 10k records; they and every other
+// method may block on file, card or network I/O or the PIN prompt and must
+// not be called on a UI thread. ErrBusy comes from independent guards: Sign,
 // LoadBulk, RunBulk, ExportBulkResults, CheckYubiKey and ImportFromYubiKey
 // while another of them runs; Login while another Login runs; SubmitRegistry
 // while another submit runs; Revoke while another Revoke runs; AuditCommits
 // while another audit fetch runs; ReportSignError while another report runs.
 type App struct {
-	dataDir       string
-	logPath       string
-	logger        *debuglog.Logger
-	registryURL   string
-	revocationURL string
-	keyring       ghapi.Keyring
-	prompter      Prompter
-	events        Events
-	reg           core.Registry // signing registry: fetched once by New, never changed (read without mu)
-	online        bool
-	pinCache      *yubikey.PinCache
+	dataDir         string
+	logPath         string
+	logger          *debuglog.Logger
+	registryURL     string
+	revocationURL   string
+	keyring         ghapi.Keyring
+	prompter        Prompter
+	events          Events
+	reg             core.Registry // signing registry: fetched once by New, never changed (read without mu)
+	registryFetched bool          // New fetched reg; false = offline, so nothing new is signed
+	pinCache        *yubikey.PinCache
 
 	pinTimeout        time.Duration
 	openAdapter       adapterOpener
@@ -289,16 +298,16 @@ type App struct {
 	refreshingHistory atomic.Bool
 	historyLoadMu     sync.Mutex // serializes loadHistory
 
-	mu          sync.Mutex // guards the fields below
-	plan        []bulk.Result
-	bulkCancel  context.CancelFunc
-	loginCancel context.CancelFunc
-	token       ghapi.Token
-	loggedIn    bool
-	offline     bool
-	githubUser  string
-	edit        core.Registry // the copy being edited; replaced by FetchRegistry
-	dirty       bool
+	mu            sync.Mutex // guards the fields below
+	plan          []bulk.Result
+	bulkCancel    context.CancelFunc
+	loginCancel   context.CancelFunc
+	token         ghapi.Token
+	loggedIn      bool
+	githubOffline bool
+	githubUser    string
+	edit          core.Registry // the copy being edited; replaced by FetchRegistry
+	dirty         bool
 	// baseBytes is the marshalRegistry output of edit as last fetched; nil =
 	// not loaded. SubmitRegistry refuses unless main still matches it.
 	baseBytes []byte
@@ -345,7 +354,7 @@ func New(cfg Config) (*App, error) {
 		prompter:          cfg.Prompter,
 		events:            cfg.Events,
 		reg:               reg,
-		online:            online,
+		registryFetched:   online,
 		pinCache:          yubikey.NewPinCache(),
 		pinTimeout:        defaultPINEntryTimeout,
 		openAdapter:       openYubiKey,
@@ -369,15 +378,12 @@ func (a *App) Start() {
 	safego.Go(a.RefreshHistory)
 }
 
-// LogPath returns the issuance log path.
-func (a *App) LogPath() string { return a.logPath }
-
 // Info returns the build version and registry statistics.
 func (a *App) Info() Info {
 	stats := computeRegistryStats(a.reg, time.Now().UTC().Format("2006-01-02"))
 	return Info{
-		Version:         buildinfo.Version,
-		Online:          a.online,
+		Version:         buildinfo.Display(),
+		Online:          a.registryFetched,
 		ActiveKeys:      stats.ActiveKeys,
 		RecentlyExpired: stats.RecentlyExpired,
 	}
@@ -404,11 +410,17 @@ func (f SignFields) Validate() error {
 	return validateSignForm(req.Recipient, req.Honor, req.Detail, req.Date)
 }
 
-// Sign validates f, prompts for the PIN if needed, and signs and logs the
+// Sign validates f, checks the inserted YubiKey's key against the registry
+// (no PIN needed), prompts for the PIN if needed, and signs and logs the
 // credential. A failure is a *SignError, except ErrBusy and a cancelled PIN
-// prompt, which matches context.Canceled. A reportable failure (OfferReport)
-// becomes the one ReportSignError can file, replacing any earlier one. A new
-// issuance record reloads the history (EventHistoryChanged).
+// prompt, which matches context.Canceled. A credential already in the
+// issuance log is returned from it (Existing), even offline, with no card
+// access. Otherwise, offline it fails with ErrOffline before the card is
+// touched, and a key whose credential the verify page would reject fails
+// before the PIN prompt, matching ErrKeyNotRegistered, ErrKeyExpired or
+// ErrHonorNotAllowed. A reportable failure (OfferReport) becomes the one ReportSignError
+// can file, replacing any earlier one. A new issuance record reloads the
+// history (EventHistoryChanged).
 func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 	if !a.busy.CompareAndSwap(false, true) {
 		return SignResult{}, ErrBusy
@@ -420,7 +432,7 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 	}
 	req := f.request()
 
-	res, err := executeSignFlow(req, a.logPath, a.openAdapter,
+	res, err := executeSignFlow(req, a.logPath, a.registryFetched, a.openAdapter, a.checkSigningKey,
 		func() (string, error) { return a.readPIN(ctx) },
 		func() { a.events.Emit(EventSignConnecting, nil) },
 		a.logger)
@@ -469,6 +481,11 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 		SVGFilename: buildFilename(req.Date, res.Hash8, "svg"),
 		PNGFilename: buildFilename(req.Date, res.Hash8, "png"),
 	}, nil
+}
+
+// checkSigningKey is the keyChecker for the signing registry.
+func (a *App) checkSigningKey(pub [32]byte, req core.SignRequest) error {
+	return checkSigningKey(a.reg, pub, req)
 }
 
 // readPIN returns the cached PIN or prompts for one, applying the remember
@@ -597,8 +614,13 @@ func (a *App) LoadBulk(path string) (BulkPlan, error) {
 	}, nil
 }
 
-// RunBulk signs the loaded plan's to_sign rows. A flow failure is reported
-// only through BulkOutcome.StopMessage.
+// RunBulk signs the loaded plan's to_sign rows. Offline, a plan with rows to
+// sign returns ErrOffline, leaving the plan untouched; a plan with none still
+// completes, so its results can be exported. A row whose credential the
+// inserted key cannot sign (see Sign) fails with that message before the PIN
+// prompt and the batch goes on; a key refused after the PIN (the card was
+// swapped) stops the batch. A flow failure is reported only through
+// BulkOutcome.StopMessage.
 func (a *App) RunBulk(ctx context.Context) (BulkOutcome, error) {
 	if !a.busy.CompareAndSwap(false, true) {
 		return BulkOutcome{}, ErrBusy
@@ -607,14 +629,20 @@ func (a *App) RunBulk(ctx context.Context) (BulkOutcome, error) {
 
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// The plan is read under the busy flag, which LoadBulk also takes, so the
+	// offline check covers exactly the plan that runs.
 	a.mu.Lock()
 	results := a.plan
-	if results != nil {
+	offline := results != nil && !a.registryFetched && bulk.Summarize(results).ToSign > 0
+	if results != nil && !offline {
 		a.bulkCancel = cancel
 	}
 	a.mu.Unlock()
 	if results == nil {
 		return BulkOutcome{}, ErrNoBulkPlan
+	}
+	if offline {
+		return BulkOutcome{}, ErrOffline
 	}
 	defer func() {
 		a.mu.Lock()
@@ -622,7 +650,7 @@ func (a *App) RunBulk(ctx context.Context) (BulkOutcome, error) {
 		a.mu.Unlock()
 	}()
 
-	err := runBulkFlow(cctx, results, a.logPath, a.openAdapter,
+	err := runBulkFlow(cctx, results, a.logPath, a.openAdapter, a.checkSigningKey,
 		func() (string, error) { return a.readPIN(cctx) },
 		func() { a.events.Emit(EventBulkConnecting, nil) },
 		func(done, total int, name string) {
@@ -639,6 +667,7 @@ func (a *App) RunBulk(ctx context.Context) (BulkOutcome, error) {
 		SummaryLine:     bulkSummaryLine(bulk.Summarize(results)),
 		StopMessage:     bulkStopMessage(stop, err, a.logger),
 		Stopped:         stop,
+		FailedLines:     bulkFailedLines(results),
 		ResultsFilename: bulkResultsFilename(time.Now()),
 	}, nil
 }
@@ -676,11 +705,17 @@ func (a *App) ExportBulkResults(path string) error {
 }
 
 // CheckYubiKey reads the inserted key and looks it up in the registry.
+// Offline (no registry) it reports that without reading the card, so a
+// registered key is never shown as missing.
 func (a *App) CheckYubiKey() (KeyCheck, error) {
 	if !a.busy.CompareAndSwap(false, true) {
 		return KeyCheck{}, ErrBusy
 	}
 	defer a.busy.Store(false)
+
+	if !a.registryFetched {
+		return KeyCheck{Result: KeyCheckFailed, Status: msgRegistryUnavailable}, nil
+	}
 
 	var res keyCheckResult
 	if pub, err := a.readPublicKey(); err != nil {

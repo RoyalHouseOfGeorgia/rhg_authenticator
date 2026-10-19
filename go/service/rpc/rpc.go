@@ -50,13 +50,15 @@ import (
 
 // Error codes in an error envelope.
 const (
-	// CodeCancelled: the operation was cancelled (bulk.cancel,
-	// auth.cancelLogin or the PIN prompt).
+	// CodeCancelled: the operation was cancelled (auth.cancelLogin, or the
+	// PIN prompt in sign.sign). A cancelled bulk.run succeeds with stopped
+	// "cancelled".
 	CodeCancelled = "cancelled"
 	// CodeBusy: a conflicting operation is running (service.ErrBusy).
 	CodeBusy = "busy"
-	// CodeUnauthorized: no usable GitHub session (service.ErrNotLoggedIn).
-	CodeUnauthorized = "unauthorized"
+	// CodeNotLoggedIn: no usable GitHub session (service.ErrNotLoggedIn). A
+	// session GitHub rejected is CodeSessionExpired.
+	CodeNotLoggedIn = "notLoggedIn"
 	// CodeSessionExpired: GitHub rejected the session, which is now logged out
 	// (service.ErrSessionExpired).
 	CodeSessionExpired = "sessionExpired"
@@ -263,7 +265,7 @@ func classify(err error) errorInfo {
 		code     string
 	}{
 		{service.ErrBusy, CodeBusy},
-		{service.ErrNotLoggedIn, CodeUnauthorized},
+		{service.ErrNotLoggedIn, CodeNotLoggedIn},
 		{service.ErrSessionExpired, CodeSessionExpired},
 		{service.ErrRegistryChanged, CodeRegistryChanged},
 		{service.ErrNotFound, CodeNotFound},

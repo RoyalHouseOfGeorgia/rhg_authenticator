@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-piv/piv-go/v2/piv"
+
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 )
@@ -53,7 +55,7 @@ func TestExecuteSignFlow_InputErrorsRefusedBeforePIN(t *testing.T) {
 					return nil, nil, errors.New("must not be called")
 				}
 
-				_, err := executeSignFlow(tc.req, logPath, openAdapter, readPin, nil, logger)
+				_, err := executeSignFlow(tc.req, logPath, true, openAdapter, acceptAnyKey, readPin, nil, logger)
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err = %v, want errors.Is %v", err, tc.wantErr)
 				}
@@ -216,6 +218,8 @@ func TestOfferIssueReport(t *testing.T) {
 		want bool
 	}{
 		{"timed out", errPINEntryTimedOut, false},
+		{"wrong PIN", &signFlowError{Phase: phaseSign, Err: fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})}, false},
+		{"blocked PIN", &signFlowError{Phase: phaseSign, Err: fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 0})}, false},
 		{"too long", &core.TooLongForQRError{OverBytes: 5}, false},
 		{"too long wrapped", &signFlowError{Phase: phaseSign, Err: &core.TooLongForQRError{OverBytes: 5}}, false},
 		{"invalid credential", invalid, false},

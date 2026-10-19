@@ -36,10 +36,11 @@ func issuance(recipient, date, hash string) issuancelog.IssuanceRecord {
 
 // historyHarness is a HistoryTab on a real service.App in its own window.
 type historyHarness struct {
-	tab    *HistoryTab
-	svc    *service.App
-	window fyne.Window
-	logins int
+	tab     *HistoryTab
+	svc     *service.App
+	logPath string // the service's issuance log
+	window  fyne.Window
+	logins  int
 }
 
 // newHistoryHarness builds a HistoryTab whose service fetches revocations
@@ -55,6 +56,7 @@ func newHistoryHarness(t *testing.T, revocationURL string) *historyHarness {
 	h.svc = newTestAppWithConfig(t, func(cfg *service.Config) {
 		cfg.Events = events
 		cfg.RevocationURL = revocationURL
+		h.logPath = filepath.Join(cfg.DataDir, "issuances.json")
 	})
 	h.tab = NewHistoryTab(h.svc, events, func() { h.logins++ }, h.window)
 	h.window.SetContent(h.tab.Content)
@@ -73,7 +75,7 @@ func (h *historyHarness) writeLog(t *testing.T, records ...issuancelog.IssuanceR
 
 func (h *historyHarness) writeRawLog(t *testing.T, content string) {
 	t.Helper()
-	if err := os.WriteFile(h.svc.LogPath(), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(h.logPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

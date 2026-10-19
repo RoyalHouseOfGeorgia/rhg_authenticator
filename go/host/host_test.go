@@ -110,7 +110,7 @@ func TestOpenLogs(t *testing.T) {
 	if _, err := (*calls)[0].Write([]byte("x")); !errors.Is(err, os.ErrClosed) {
 		t.Errorf("crash output file still open: write err = %v", err)
 	}
-	want := "RHG Authenticator starting (version: " + buildinfo.Version + ")"
+	want := "RHG Authenticator starting (version: " + buildinfo.Display() + ")"
 	if !strings.Contains(readLog(t, dir), want) {
 		t.Errorf("start line %q not logged", want)
 	}
@@ -329,6 +329,10 @@ func TestUpdateConfig(t *testing.T) {
 }
 
 func TestRunCLI(t *testing.T) {
+	prev := buildinfo.Version
+	t.Cleanup(func() { buildinfo.Version = prev })
+	buildinfo.Version = "v9.8.7"
+	want := buildinfo.Display() + "\n"
 	missingZip := filepath.Join(t.TempDir(), "missing.zip")
 	for _, tc := range []struct {
 		name      string
@@ -339,9 +343,9 @@ func TestRunCLI(t *testing.T) {
 	}{
 		{name: "no args", args: nil, code: -1},
 		{name: "other args", args: []string{"-psn_0_123", "--debug"}, code: -1},
-		{name: "version", args: []string{"--version"}, code: 0, stdout: "v9.8.7\n"},
-		{name: "version anywhere", args: []string{"-x", "--version", "y"}, code: 0, stdout: "v9.8.7\n"},
-		{name: "version before verify", args: []string{"--version", "--verify-update-zip"}, code: 0, stdout: "v9.8.7\n"},
+		{name: "version", args: []string{"--version"}, code: 0, stdout: want},
+		{name: "version anywhere", args: []string{"-x", "--version", "y"}, code: 0, stdout: want},
+		{name: "version before verify", args: []string{"--version", "--verify-update-zip"}, code: 0, stdout: want},
 		{name: "verify only first", args: []string{"x", "--verify-update-zip", "a.zip", "v1.0.0"}, code: -1},
 		// --verify-update-zip first wins over a later --version: a usage error.
 		{name: "verify usage", args: []string{"--verify-update-zip", "--version"}, code: 2, stderrHas: "usage:"},
@@ -350,7 +354,7 @@ func TestRunCLI(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			if code := RunCLI(tc.args, "v9.8.7", &stdout, &stderr); code != tc.code {
+			if code := RunCLI(tc.args, &stdout, &stderr); code != tc.code {
 				t.Fatalf("code = %d, want %d (stderr %q)", code, tc.code, stderr.String())
 			}
 			if stdout.String() != tc.stdout {

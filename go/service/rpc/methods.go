@@ -133,7 +133,11 @@ func methodTable() map[string]handler {
 			plan.PreviewNames, plan.InvalidLines = orEmpty(plan.PreviewNames), orEmpty(plan.InvalidLines)
 			return plan, nil
 		}),
-		"bulk.run":    noParams(func(s *server) (any, error) { return s.app.RunBulk(bg) }),
+		"bulk.run": noParams(func(s *server) (any, error) {
+			out, err := s.app.RunBulk(bg)
+			out.FailedLines = orEmpty(out.FailedLines)
+			return out, err
+		}),
 		"bulk.cancel": noParams(func(s *server) (any, error) { s.app.CancelBulk(); return void(nil) }),
 		"bulk.exportResults": method(func(s *server, p pathParams) (any, error) {
 			return void(s.app.ExportBulkResults(p.Path))

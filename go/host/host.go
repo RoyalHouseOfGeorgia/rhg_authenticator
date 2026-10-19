@@ -92,7 +92,7 @@ func OpenLogs(dataDir string, onPanic func()) *Logs {
 	active.Store(l)
 	handlerOnce.Do(func() { safego.SetPanicHandler(handlePanic) })
 
-	msg := "RHG Authenticator starting (version: " + buildinfo.Version + ")"
+	msg := "RHG Authenticator starting (version: " + buildinfo.Display() + ")"
 	if buildinfo.IsDebug() {
 		msg += " (debug mode)"
 	}
@@ -145,10 +145,15 @@ func handlePanic(r any, stack []byte) {
 }
 
 // NewService returns service.New(cfg) with an empty RegistryURL or
-// RevocationURL replaced by the production default. Like service.New it
-// blocks on the registry fetch and starts offline when that fails. The error
-// text is user-facing.
+// RevocationURL replaced by the production default, and with no Keyring in
+// the rhgfake build. Like service.New it blocks on the registry fetch and
+// starts offline when that fails. The error text is user-facing.
 func NewService(cfg service.Config) (*service.App, error) {
+	if buildinfo.FakeBuild {
+		// The test build signs with a card whose key anyone can derive, so no
+		// front end of it may get a GitHub session that could submit that key.
+		cfg.Keyring = nil
+	}
 	if cfg.RegistryURL == "" {
 		cfg.RegistryURL = registry.DefaultRegistryURL
 	}
@@ -176,10 +181,10 @@ func UpdateConfig(dataDir string) update.Config {
 
 // RunCLI handles the command-line invocations that run before any UI: with
 // "--verify-update-zip" as the first argument it runs update.VerifyZipCLI on
-// the rest; otherwise "--version" anywhere prints version. args excludes the
-// program name. It returns the process exit code, or -1 when args is not a
-// command-line invocation and the host should start its UI.
-func RunCLI(args []string, version string, stdout, stderr io.Writer) int {
+// the rest; otherwise "--version" anywhere prints buildinfo.Display(). args
+// excludes the program name. It returns the process exit code, or -1 when args
+// is not a command-line invocation and the host should start its UI.
+func RunCLI(args []string, stdout, stderr io.Writer) int {
 	// Release CI verifies the signed update zip with the app's own install
 	// check.
 	if len(args) > 0 && args[0] == "--verify-update-zip" {
@@ -187,7 +192,7 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) int {
 	}
 	for _, arg := range args {
 		if arg == "--version" {
-			fmt.Fprintln(stdout, version)
+			fmt.Fprintln(stdout, buildinfo.Display())
 			return 0
 		}
 	}

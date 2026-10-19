@@ -20,10 +20,17 @@ Without -update the test fails on any missing, extra or changed file.
   type went through Dispatch's success encoder. Encoded: `audit.commits`, `auth.login`, `history.revoke`, `registry.importFromYubiKey`, `registry.submit`, `sign.reportError`, `yubikey.check`.
 - errors/<code>.json: one error envelope per error code.
   errors/failed-with-report.json is a "failed" error offering a report
-  (offerReport true, with reportId); reportId is absent otherwise.
+  (offerReport true, with reportId); reportId is absent otherwise. busy,
+  cancelled, sessionExpired and registryChanged need a card or GitHub, so
+  their files went through Dispatch's error encoder.
 - events/<event>.json: one event, {"event":...,"data":...}, as delivered to
   the event callback. update.status has one file per state:
   events/update.status.<state>.json.
+- methods/<method>/result.<value>.json: for a result enum clients decode
+  (bulk.run stopped, yubikey.check result, history.revoke status), result.json
+  holds the first value and one file per other value holds the rest, through
+  the success encoder. bulk.run/result.json is a run of a second,
+  nothing-to-sign load, not of the recorded bulk.load plan.
 - pin-truncation.json: [{"input","maxBytes","output"}] cases from
   service.TruncatePINToBytes. Clients cap a PIN to maxBytes bytes of its
   UTF-8 encoding, cutting only between Unicode scalar values; never count

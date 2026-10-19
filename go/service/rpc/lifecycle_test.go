@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/host"
@@ -152,19 +153,25 @@ func newLC(t *testing.T) *lcHarness {
 	}
 	h.srv.events.SetSink(h.sink.add)
 
+	cleanupServer(t, h.srv)
+	return h
+}
+
+// cleanupServer shuts srv down when the test ends and closes its logs,
+// restoring the standard logger, before the test's temp dirs are removed.
+func cleanupServer(t *testing.T, srv *server) {
 	w, flags := log.Writer(), log.Flags()
 	t.Cleanup(func() {
-		h.srv.Dispatch("app.shutdown", nil)
-		h.srv.mu.Lock()
-		logs := h.srv.logs
-		h.srv.mu.Unlock()
+		srv.Dispatch("app.shutdown", nil)
+		srv.mu.Lock()
+		logs := srv.logs
+		srv.mu.Unlock()
 		if logs != nil {
 			logs.Close()
 		}
 		log.SetOutput(w)
 		log.SetFlags(flags)
 	})
-	return h
 }
 
 func (h *lcHarness) call(t testing.TB, method, params string) envelope {
@@ -474,35 +481,6 @@ func TestShutdown_DuringFailingInit(t *testing.T) {
 	h.call(t, "app.init", ``).fails(t, CodeInput, errShutDown.msg)
 }
 
-func TestShutdown_PendingPIN(t *testing.T) {
-	h := newLC(t)
-	h.init(t)
-	signDone := goDispatch(h.srv, "sign.sign", validSign)
-	var req pinRequestEvent
-	if err := json.Unmarshal(h.sink.wait(t, EventPINRequest, 1), &req); err != nil {
-		t.Fatal(err)
-	}
-	if req.RequestID != 1 || req.MaxBytes != service.PIVMaxPINBytes {
-		t.Errorf("pin.request = %+v", req)
-	}
-
-	h.call(t, "app.shutdown", ``).ok(t, nil)
-	select {
-	case out := <-signDone:
-		decodeEnvelope(t, "sign.sign", out).fails(t, CodeCancelled, "Signing cancelled.")
-	case <-time.After(waitTimeout):
-		t.Fatal("sign.sign still blocked after shutdown")
-	}
-	if got := h.sink.named(t, EventPINDismiss); len(got) != 1 || string(got[0]) != `{"requestId":1}` {
-		t.Errorf("pin.dismiss = %s", got)
-	}
-	n := len(h.sink.all())
-	h.srv.events.Emit("late", nil)
-	if len(h.sink.all()) != n {
-		t.Error("event delivered after shutdown")
-	}
-}
-
 func TestInternalErrorEvent(t *testing.T) {
 	h := newLC(t)
 	dir := h.init(t)
@@ -606,7 +584,7 @@ func TestPackageEntryPoints(t *testing.T) {
 }
 
 func TestNewServer_ProductionDeps(t *testing.T) {
-	if rhgfakeBuild {
+	if buildinfo.FakeBuild {
 		t.Skip("the rhgfake build replaces the production dependencies (TestFakeBuild_Defaults)")
 	}
 	s := newServer()

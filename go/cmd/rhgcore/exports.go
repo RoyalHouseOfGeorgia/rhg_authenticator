@@ -21,9 +21,6 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service/rpc"
 )
 
-// events is the process's event callback.
-var events = &eventCallback{invoke: invokeEventCallback, setSink: rpc.SetEventCallback}
-
 // invokeEventCallback passes event to fn as a NUL-terminated C string it
 // frees after fn returns.
 func invokeEventCallback(fn *[0]byte, event []byte) {
@@ -31,6 +28,10 @@ func invokeEventCallback(fn *[0]byte, event []byte) {
 	defer C.free(unsafe.Pointer(s))
 	C.rhg_call_event(C.rhg_event_cb(fn), s)
 }
+
+// cChar is C.char under a name the tests can use (test files can't import
+// "C").
+type cChar = C.char
 
 // goString returns the C string p, "" for NULL.
 func goString(p *C.char) string {
@@ -62,10 +63,18 @@ func RHGFree(p *C.char) {
 }
 
 // RHGSetEventCallback makes cb receive every later event; NULL detaches it.
+// An event already being delivered when cb is replaced may still reach the
+// previous callback, so a host keeps every callback it registers valid for
+// the life of the process.
 //
 //export RHGSetEventCallback
 func RHGSetEventCallback(cb C.rhg_event_cb) {
-	events.set((*[0]byte)(cb))
+	if cb == nil {
+		rpc.SetEventCallback(nil)
+		return
+	}
+	fn := (*[0]byte)(cb)
+	rpc.SetEventCallback(func(event []byte) { invokeEventCallback(fn, event) })
 }
 
 // RHGMainCLI handles the command-line invocations (--version,

@@ -48,8 +48,8 @@ func formatKeyResult(result keyCheckResult) KeyCheck {
 		case core.HwErrHardware:
 			status = "Please plug in your YubiKey and try again"
 		default:
-			// HwErrPIN cannot occur here: the key check reads the slot-9c public
-			// key/cert, which requires no PIN (readPin is a no-op).
+			// Reading the slot-9c key needs no PIN; an unexpected PIN prompt
+			// fails with errNoPINForKeyRead (see noPIN) and lands here.
 			status = "Failed to read YubiKey"
 		}
 		return KeyCheck{Result: KeyCheckFailed, Status: status}
@@ -66,7 +66,7 @@ func formatKeyResult(result keyCheckResult) KeyCheck {
 		} else {
 			details = append(details, "Valid to: (no expiry)")
 		}
-		details = append(details, "Fingerprint: "+result.Fingerprint)
+		details = append(details, "Restrictions: "+restrictionsText(*result.Entry), "Fingerprint: "+result.Fingerprint)
 		if note := strings.TrimSpace(result.Entry.Note); note != "" {
 			details = append(details, "Note: "+result.Entry.Note)
 		}

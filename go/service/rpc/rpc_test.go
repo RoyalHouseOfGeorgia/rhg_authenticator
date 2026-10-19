@@ -41,21 +41,13 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// gatePrompter answers PIN requests with "" (cancel). With a gate set it
-// signals entered and waits for the gate or ctx before answering.
-type gatePrompter struct {
-	gate    chan struct{}
-	entered chan struct{}
-}
+// cancelPrompter answers PIN requests with a cancel. Outside the rhgfake
+// build no rpc test signs a new credential online (sign tests use an
+// unreadable log, a logged credential or no registry), so neither the card
+// nor this prompter is ever reached.
+type cancelPrompter struct{}
 
-func (p *gatePrompter) RequestPIN(ctx context.Context, _ bool) (string, bool, error) {
-	if p.gate != nil {
-		p.entered <- struct{}{}
-		select {
-		case <-p.gate:
-		case <-ctx.Done():
-		}
-	}
+func (p *cancelPrompter) RequestPIN(context.Context, bool) (string, bool, error) {
 	return "", false, nil
 }
 
@@ -86,7 +78,7 @@ type harness struct {
 	app      *service.App
 	events   *jsonEvents
 	sink     *sinkRecorder
-	prompter *gatePrompter
+	prompter *cancelPrompter
 	dir      string // the App's data dir
 	out      string // a folder to save to
 }
@@ -123,13 +115,26 @@ func newHarnessWith(t testing.TB, kr ghapi.Keyring, revocations string) *harness
 		_, _ = w.Write([]byte(data))
 	}))
 	t.Cleanup(ts.Close)
+	return newHarnessAt(t, kr, ts.URL+"/registry", ts.URL+"/revocations")
+}
 
+// newOfflineHarness is newHarness with an unreachable registry: the App
+// starts offline.
+func newOfflineHarness(t testing.TB) *harness {
+	t.Helper()
+	const dead = "http://127.0.0.1:1"
+	return newHarnessAt(t, nil, dead, dead)
+}
+
+// newHarnessAt is newHarness with the given registry and revocation URLs.
+func newHarnessAt(t testing.TB, kr ghapi.Keyring, registryURL, revocationURL string) *harness {
+	t.Helper()
 	dir := t.TempDir()
 	logger := debuglog.New(filepath.Join(dir, debuglog.FileName))
 	h := &harness{
 		events:   newJSONEvents(logger),
 		sink:     &sinkRecorder{},
-		prompter: &gatePrompter{},
+		prompter: &cancelPrompter{},
 		dir:      dir,
 		out:      t.TempDir(),
 	}
@@ -137,8 +142,8 @@ func newHarnessWith(t testing.TB, kr ghapi.Keyring, revocations string) *harness
 	app, err := service.New(service.Config{
 		DataDir:       dir,
 		Logger:        logger,
-		RegistryURL:   ts.URL + "/registry",
-		RevocationURL: ts.URL + "/revocations",
+		RegistryURL:   registryURL,
+		RevocationURL: revocationURL,
 		Keyring:       kr,
 		Prompter:      h.prompter,
 		Events:        h.events,
@@ -380,8 +385,14 @@ func TestDispatch_PanicIsInternal(t *testing.T) {
 	}
 }
 
+// msgLogUnreadable is Sign's message for an unreadable issuance log.
+const msgLogUnreadable = "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable."
+
 func TestDispatch_ParamsNeverLogged(t *testing.T) {
 	h := newHarness(t, nil)
+	// An unreadable issuance log makes sign.sign fail after decoding its
+	// params but before any card access.
+	writeFile(t, filepath.Join(h.dir, "issuances.json"), "{corrupt")
 	const marker = "MARKER-7f3a"
 	for _, c := range []struct{ method, params string }{
 		{"history.list", `{"query":"` + marker + `","x":1}`},
@@ -393,8 +404,13 @@ func TestDispatch_ParamsNeverLogged(t *testing.T) {
 		{"registry.addEntry", `{"form":{"authority":"` + marker + `"},"publicKey":"` + marker + `"}`},
 		{"registry.updateEntry", `{"index":9,"publicKey":"` + marker + `","form":{"authority":"` + marker + `","from":"2026-01-01","noExpiry":true}}`},
 	} {
-		if env := h.call(t, c.method, c.params); env.OK {
+		env := h.call(t, c.method, c.params)
+		if env.OK {
 			t.Fatalf("%s succeeded: %s", c.method, env.raw)
+		}
+		// sign.sign must stop at the unreadable log, never at a card.
+		if c.method == "sign.sign" && env.Error.Message != msgLogUnreadable {
+			t.Fatalf("sign.sign failed elsewhere: %s", env.raw)
 		}
 	}
 	if log := h.debugLog(t); strings.Contains(log, marker) {
@@ -409,8 +425,8 @@ func TestSign(t *testing.T) {
 	h.call(t, "sign.validate", `{"recipient":"x","honor":"Ennoblement","detail":"d","date":"2026-02-30"}`).
 		fails(t, CodeFailed, "Date must be in YYYY-MM-DD format and be a valid calendar date.")
 
-	// The prompter cancels: CodeCancelled with the cancel text, not a SignError.
-	h.call(t, "sign.sign", validSign).fails(t, CodeCancelled, "Signing cancelled.")
+	// A cancelled PIN prompt needs a card: see TestFakeSign_PINCancelled
+	// (rhgfake build).
 
 	// An unreadable issuance log fails before any PIN prompt or card access,
 	// with a report offer.
@@ -470,10 +486,40 @@ func TestSign_Existing(t *testing.T) {
 	}
 }
 
-func TestBulk_BusyAndCancel(t *testing.T) {
+// TestSign_Offline: with no registry, sign.sign and bulk.run fail with
+// CodeFailed and no report offer, before any PIN prompt; bulk.load still
+// plans the file.
+func TestSign_Offline(t *testing.T) {
+	h := newOfflineHarness(t)
+	for _, method := range []string{"sign.sign", "bulk.run"} {
+		params := validSign
+		if method == "bulk.run" {
+			csv := filepath.Join(h.out, "in.csv")
+			writeFile(t, csv, "name,honor,detail,date\nJane Doe,Ennoblement,For service,2026-01-02\n")
+			var plan service.BulkPlan
+			h.call(t, "bulk.load", `{"path":`+jsonString(csv)+`}`).ok(t, &plan)
+			if plan.ToSign != 1 {
+				t.Fatalf("offline plan = %+v", plan)
+			}
+			params = ``
+		}
+		env := h.call(t, method, params)
+		env.fails(t, CodeFailed, service.ErrOffline.Error())
+		if env.Error.OfferReport || env.Error.ReportID != "" {
+			t.Errorf("%s offers a report: %s", method, env.raw)
+		}
+	}
+	for _, e := range h.sink.all() {
+		if strings.Contains(e, EventPINRequest) {
+			t.Errorf("offline signing prompted: %s", e)
+		}
+	}
+}
+
+// TestBulk_LoadAndExport covers bulk without a card; a run waiting at the PIN
+// prompt is TestFakeBulk_BusyAndCancel (rhgfake build).
+func TestBulk_LoadAndExport(t *testing.T) {
 	h := newHarness(t, nil)
-	h.prompter.gate = make(chan struct{})
-	h.prompter.entered = make(chan struct{}, 1)
 
 	h.call(t, "bulk.run", ``).fails(t, CodeFailed, "No bulk file loaded.")
 	h.call(t, "bulk.exportResults", `{"path":`+jsonString(filepath.Join(h.out, "r.csv"))+`}`).
@@ -489,26 +535,7 @@ func TestBulk_BusyAndCancel(t *testing.T) {
 		t.Fatalf("plan = %+v", plan)
 	}
 
-	done := make(chan []byte, 1)
-	go func() { done <- h.srv.Dispatch("bulk.run", nil) }()
-	waitFor(t, h.prompter.entered, "the PIN prompt")
-	h.call(t, "yubikey.check", ``).fails(t, CodeBusy, service.ErrBusy.Error())
-	h.call(t, "bulk.load", `{"path":`+jsonString(csv)+`}`).fails(t, CodeBusy, "")
-	h.call(t, "registry.importFromYubiKey", ``).fails(t, CodeBusy, "")
-	h.call(t, "bulk.cancel", ``).ok(t, nil)
-
-	var outcome service.BulkOutcome
-	select {
-	case out := <-done:
-		if err := json.Unmarshal(out, &struct{ Result *service.BulkOutcome }{&outcome}); err != nil || !strings.HasPrefix(string(out), `{"ok":true,`) {
-			t.Fatalf("bulk.run = %s, %v", out, err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("bulk.run did not return after bulk.cancel")
-	}
-	if outcome.Stopped != service.BulkCancelled || outcome.StopMessage != "Cancelled." {
-		t.Errorf("outcome = %+v", outcome)
-	}
+	h.call(t, "bulk.cancel", ``).ok(t, nil) // nothing running: a no-op
 
 	out := filepath.Join(h.out, "r.csv")
 	h.call(t, "bulk.exportResults", `{"path":`+jsonString(out)+`}`).ok(t, nil)
@@ -527,25 +554,6 @@ func TestBulk_BusyAndCancel(t *testing.T) {
 		if !strings.Contains(string(env.Result), c.want) {
 			t.Errorf("result %s lacks %s", env.Result, c.want)
 		}
-	}
-}
-
-func TestYubiKey(t *testing.T) {
-	// Whether a key is plugged in varies; reading it needs no PIN.
-	h := newHarness(t, nil)
-	env := h.call(t, "yubikey.check", ``)
-	env.ok(t, nil)
-	if !strings.Contains(string(env.Result), `"details":[`) {
-		t.Errorf("details not an array: %s", env.Result)
-	}
-	if env := h.call(t, "registry.importFromYubiKey", ``); env.OK {
-		var r struct{ PublicKey string }
-		env.ok(t, &r)
-		if r.PublicKey == "" {
-			t.Errorf("empty key: %s", env.raw)
-		}
-	} else {
-		env.fails(t, CodeFailed, "")
 	}
 }
 
@@ -635,7 +643,7 @@ func TestRegistry(t *testing.T) {
 		t.Errorf("edited snapshot = %+v", snap)
 	}
 
-	h.call(t, "registry.submit", ``).fails(t, CodeUnauthorized, service.ErrNotLoggedIn.Error())
+	h.call(t, "registry.submit", ``).fails(t, CodeNotLoggedIn, service.ErrNotLoggedIn.Error())
 }
 
 func TestHistory(t *testing.T) {
@@ -674,7 +682,7 @@ func TestHistory(t *testing.T) {
 	}
 
 	h.call(t, "history.revoke", `{"payloadSha256":`+jsonString(rec.PayloadSHA256)+`}`).
-		fails(t, CodeUnauthorized, service.ErrNotLoggedIn.Error())
+		fails(t, CodeNotLoggedIn, service.ErrNotLoggedIn.Error())
 
 	var count struct{ Count int }
 	h.call(t, "history.duplicatePreview", ``).ok(t, &count)
@@ -745,7 +753,7 @@ func TestClassify(t *testing.T) {
 		{"login unavailable", service.ErrLoginUnavailable, errorInfo{Code: CodeLoginUnavailable, Message: service.ErrLoginUnavailable.Error()}},
 		{"busy", service.ErrBusy, errorInfo{Code: CodeBusy, Message: service.ErrBusy.Error()}},
 		{"wrapped busy", fmt.Errorf("x: %w", service.ErrBusy), errorInfo{Code: CodeBusy, Message: "x: " + service.ErrBusy.Error()}},
-		{"unauthorized", service.ErrNotLoggedIn, errorInfo{Code: CodeUnauthorized, Message: service.ErrNotLoggedIn.Error()}},
+		{"not logged in", service.ErrNotLoggedIn, errorInfo{Code: CodeNotLoggedIn, Message: service.ErrNotLoggedIn.Error()}},
 		{"session expired", &multiErr{"Log in again.", []error{service.ErrSessionExpired, cause}}, errorInfo{Code: CodeSessionExpired, Message: "Log in again."}},
 		{"session expired joined", errors.Join(cause, service.ErrSessionExpired), errorInfo{Code: CodeSessionExpired, Message: "cause\n" + service.ErrSessionExpired.Error()}},
 		{"registry changed", service.ErrRegistryChanged, errorInfo{Code: CodeRegistryChanged, Message: service.ErrRegistryChanged.Error()}},

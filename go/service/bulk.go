@@ -49,19 +49,41 @@ func loadBulkPlan(r io.Reader, logPath string, logger *debuglog.Logger) ([]bulk.
 
 // runBulkFlow signs every to_sign row in results, updating them in place.
 //
-// The PIN is resolved once per batch, before any card access. Each row still
-// opens a fresh adapter (see signAndLog), so no exclusive PCSC transaction is
-// held across rows. Every early return marks leftover rows not_attempted.
+// First the card's key is read once (no PIN) and checked against every
+// to_sign row with checkKey; a refused row fails with checkKey's message and
+// the batch goes on without it. The PIN is then resolved once per batch, and
+// not at all when no row is left. Each row still opens a fresh adapter (see
+// signAndLog), so no exclusive PCSC transaction is held across rows. Every
+// early return marks leftover rows not_attempted.
 func runBulkFlow(
 	ctx context.Context,
 	results []bulk.Result,
 	logPath string,
 	openAdapter adapterOpener,
+	checkKey keyChecker,
 	readPin func() (string, error),
 	onConnecting func(),
 	onProgress func(done, total int, name string),
 	logger *debuglog.Logger,
 ) error {
+	if bulk.Summarize(results).ToSign == 0 {
+		return nil
+	}
+	pub, err := readCardKey(openAdapter, logger)
+	if err != nil {
+		bulk.MarkNotAttempted(results)
+		return err
+	}
+	for i := range results {
+		r := &results[i]
+		if r.Status != bulk.StatusToSign {
+			continue
+		}
+		if err := checkKey(pub, r.Req); err != nil {
+			logKeyRejected(logger, fmt.Sprintf("bulk key check: line %d: ", r.Line), err)
+			r.Status, r.Err = bulk.StatusFailed, signFlowErrorMessage(err, logger)
+		}
+	}
 	if bulk.Summarize(results).ToSign == 0 {
 		return nil
 	}
@@ -75,7 +97,7 @@ func runBulkFlow(
 	}
 	return bulk.Run(ctx, results,
 		func(req core.SignRequest) (core.SignResponse, error) {
-			return signAndLog(req, logPath, openAdapter, pin, logger)
+			return signAndLog(req, logPath, openAdapter, checkKey, pin, logger)
 		},
 		func(e error) string { return signFlowErrorMessage(e, logger) },
 		onProgress,
@@ -139,6 +161,17 @@ func bulkConfirmText(results []bulk.Result) (counts string, preview []string, in
 		}
 	}
 	return counts, preview, invalid
+}
+
+// bulkFailedLines returns one "line N: <error>" entry per failed row.
+func bulkFailedLines(results []bulk.Result) []string {
+	var failed []string
+	for _, r := range results {
+		if r.Status == bulk.StatusFailed {
+			failed = append(failed, fmt.Sprintf("line %d: %s", r.Line, r.Err))
+		}
+	}
+	return failed
 }
 
 // bulkResultsFilename returns the default export name for a results CSV,

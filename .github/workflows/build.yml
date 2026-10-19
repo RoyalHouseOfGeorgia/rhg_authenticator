@@ -112,12 +112,16 @@ jobs:
           fi
       - working-directory: go
         run: go test -race ./... -count=1
+      # The PIN-cancel, shutdown-during-PIN and busy-during-bulk flows need the
+      # software card, so their tests exist only in the rhgfake build.
+      - working-directory: go
+        run: go test -race -tags rhgfake ./buildinfo/... ./service/... ./host/... ./cmd/... -count=1
 
   # The rhgcore C library (release and rhgfake variants) built and smoke-tested
   # through its C ABI on each release OS. Interim and never a required check:
   # no job needs it and it uploads nothing, so release assets are unchanged.
-  # The required jobs never compile the rhgfake-tagged files, so it also vets
-  # and tests them.
+  # test-race runs the rhgfake tests on macOS; this job vets the rhgfake build
+  # and runs its tests on Windows.
   native-lib:
     name: native-lib (${{ matrix.suffix }})
     timeout-minutes: 30
@@ -142,14 +146,12 @@ jobs:
       - name: Toolchain versions
         run: uname -a && go version && cc --version
       - working-directory: go
-        run: go vet -tags rhgfake ./...
-      - working-directory: go
-        run: go test -tags rhgfake -count=1 ./service/... ./host/... ./cmd/...
+        run: go vet -tags rhgfake ./buildinfo/... ./service/... ./host/... ./cmd/...  # the packages the tag changes; build vets the rest
+      - if: runner.os == 'Windows'
+        working-directory: go
+        run: go test -tags rhgfake -count=1 ./buildinfo/... ./service/... ./host/... ./cmd/...
       - name: Build both library variants and run the C smoke test
         run: bash scripts/rhgcore-smoke.sh
-      - name: Link list (macOS)
-        if: runner.os == 'macOS'
-        run: cat go/release/rhgcore/release/librhgcore.link
 
   build:
     # Explicit name → stable check contexts "build (darwin-arm64)" /

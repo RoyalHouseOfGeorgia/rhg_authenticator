@@ -97,18 +97,13 @@ func tapOverlayButton(t *testing.T, w fyne.Window, text string) {
 	test.Tap(b)
 }
 
-// cancelPrompter answers every PIN request with a cancel, unless onRequest
-// is set, in which case it runs first with the request's ctx.
+// cancelPrompter answers every PIN request with a cancel.
 type cancelPrompter struct {
-	calls     int
-	onRequest func(ctx context.Context)
+	calls int
 }
 
-func (p *cancelPrompter) RequestPIN(ctx context.Context, rememberDefault bool) (string, bool, error) {
+func (p *cancelPrompter) RequestPIN(context.Context, bool) (string, bool, error) {
 	p.calls++
-	if p.onRequest != nil {
-		p.onRequest(ctx)
-	}
 	return "", false, nil
 }
 

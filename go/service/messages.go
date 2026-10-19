@@ -18,6 +18,10 @@ import (
 // could not be written.
 const msgNotLogged = "Credential signed but NOT recorded in the issuance log — check disk space/permissions."
 
+// msgRegistryUnavailable is CheckYubiKey's status when New could not fetch
+// the registry.
+const msgRegistryUnavailable = "Registry unavailable — connect to internet to check key"
+
 // sanitizeError returns a generic description for hardware-related errors,
 // stripping implementation details that could leak hardware configuration.
 func sanitizeError(prefix string, err error) string {
@@ -59,11 +63,17 @@ func isOperatorInputError(err error) bool {
 }
 
 // offerIssueReport reports whether a sign-flow error warrants a "Report Issue"
-// button. Benign PIN-entry timeouts and operator input errors are not bugs
-// (Sign handles a cancel before asking).
+// button. Benign PIN-entry timeouts, a wrong or blocked PIN, operator input
+// errors, an offline start and a key the registry does not accept are not
+// bugs (Sign handles a cancel before asking).
 func offerIssueReport(err error) bool {
+	var kr *keyRejectedError
+	_, wrongPIN := yubikey.PINRetries(err)
 	return !errors.Is(err, errPINEntryTimedOut) &&
-		!isOperatorInputError(err)
+		!errors.Is(err, ErrOffline) &&
+		!wrongPIN &&
+		!isOperatorInputError(err) &&
+		!errors.As(err, &kr)
 }
 
 // signIssueBody builds the GitHub issue body for a sign-flow error. It carries
@@ -79,7 +89,7 @@ func signIssueBody(err error, msg string) string {
 	if cat := core.ClassifyHardwareError(err); cat != "" {
 		detail += " (hardware: " + cat + ")"
 	}
-	return errorreport.BuildIssueBody(buildinfo.Version, "signing", detail)
+	return errorreport.BuildIssueBody(buildinfo.Display(), "signing", detail)
 }
 
 // capitalize upper-cases the first letter of s.
@@ -114,6 +124,15 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	var invalid *core.InvalidCredentialError
 	if errors.As(err, &invalid) {
 		return capitalize(core.SanitizeForError(invalid.Error())) + "."
+	}
+	if errors.Is(err, ErrOffline) {
+		return ErrOffline.Error()
+	}
+	// A key the registry does not accept: its text names the YubiKey, so it
+	// must not reach the hardware classifier below.
+	var rejected *keyRejectedError
+	if errors.As(err, &rejected) {
+		return rejected.msg
 	}
 	// PIN-flow sentinels are returned bare from readPin (executeSignFlow resolves
 	// the PIN before openAdapter, so piv-go never %v-wraps them), matched via

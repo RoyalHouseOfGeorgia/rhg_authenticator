@@ -48,7 +48,7 @@ var appMethods = map[string]string{
 // excludedAppMethods are the *service.App methods deliberately not exposed:
 // they serve the Fyne UI's in-memory save flow or are covered by another
 // method.
-var excludedAppMethods = []string{"IssuanceLogExport", "ErrorLogExport", "LogPath"}
+var excludedAppMethods = []string{"IssuanceLogExport", "ErrorLogExport"}
 
 // nonAppMethods are rpc methods backed by package-level service functions,
 // SignFields or the server itself.

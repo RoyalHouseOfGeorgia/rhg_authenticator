@@ -69,41 +69,52 @@ func submitIfUnchanged(ctx context.Context, client *ghapi.Client, base, content 
 	return client.CreateRegistryPR(ctx, content, title)
 }
 
-// restrictionsText renders a key's allowed_honors using the same rules as
-// the verify page (src/registry.ts): "(none)" when unrestricted (absent,
-// null, [] or all blank), "(invalid)" when the verify page would reject it,
-// otherwise the non-blank honors joined by ", ".
-func restrictionsText(entry core.KeyEntry) string {
+// allowedHonors reads a key's allowed_honors with the same rules as the
+// verify page (src/registry.ts). Unrestricted (absent, null, [] or all
+// blank) is (nil, true); a value the verify page rejects is (nil, false);
+// otherwise it returns the non-blank honors and true.
+func allowedHonors(entry core.KeyEntry) (honors []string, valid bool) {
 	raw, ok := entry.Extra["allowed_honors"]
 	if !ok {
-		return "(none)"
+		return nil, true
 	}
 	var items []any
 	if err := json.Unmarshal(raw, &items); err != nil {
-		return "(invalid)"
+		return nil, false
 	}
-	kept := make([]string, 0, len(items))
 	for _, item := range items {
 		h, isString := item.(string)
 		if !isString {
-			return "(invalid)"
+			return nil, false
 		}
 		if core.StripControlChars(h) != h {
-			return "(invalid)"
+			return nil, false
 		}
 		trimmed := core.TrimJS(h)
 		if trimmed == "" {
 			continue
 		}
 		if h != trimmed {
-			return "(invalid)"
+			return nil, false
 		}
-		kept = append(kept, h)
+		honors = append(honors, h)
 	}
-	if len(kept) == 0 {
+	return honors, true
+}
+
+// restrictionsText renders a key's allowed_honors (see allowedHonors):
+// "(none)" when unrestricted, "(invalid)" when the verify page would reject
+// it, otherwise the honors joined by ", ".
+func restrictionsText(entry core.KeyEntry) string {
+	honors, valid := allowedHonors(entry)
+	switch {
+	case !valid:
+		return "(invalid)"
+	case len(honors) == 0:
 		return "(none)"
+	default:
+		return strings.Join(honors, ", ")
 	}
-	return strings.Join(kept, ", ")
 }
 
 // entryCellText returns the display text for column col of entry, the
@@ -390,7 +401,7 @@ func (a *App) ImportFromYubiKey() (string, error) {
 // readPublicKey reads the inserted YubiKey's slot-9c public key; no PIN is
 // needed, as reading it does not log in.
 func (a *App) readPublicKey() ([32]byte, error) {
-	adapter, closer, err := a.openAdapter(func() (string, error) { return "", nil })
+	adapter, closer, err := a.openAdapter(noPIN)
 	if err != nil {
 		return [32]byte{}, err
 	}

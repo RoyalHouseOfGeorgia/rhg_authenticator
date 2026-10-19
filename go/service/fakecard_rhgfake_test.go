@@ -84,8 +84,9 @@ func TestFakeCard_ReadPinErrorPropagates(t *testing.T) {
 	}
 }
 
-// newFakeCardApp returns an App made by New (so with the default opener) and
-// prompter answering pin.
+// newFakeCardApp returns an App made by New (so with the default opener),
+// online with a registry holding the fake card's key, and a prompter
+// answering pin.
 func newFakeCardApp(t *testing.T, pin string) *App {
 	t.Helper()
 	dir := t.TempDir()
@@ -101,6 +102,8 @@ func newFakeCardApp(t *testing.T, pin string) *App {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(app.Close)
+	pub := FakeCardPublicKey()
+	app.reg, app.registryFetched = registryWith(core.KeyEntry{Authority: "RHG Test Card", From: "2000-01-01", PublicKey: base64.StdEncoding.EncodeToString(pub[:])}), true
 	return app
 }
 
@@ -110,7 +113,7 @@ func TestFakeCard_AppSignsAndLogs(t *testing.T) {
 	if _, err := app.Sign(context.Background(), fields); err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
-	recs, err := issuancelog.ReadLog(app.LogPath())
+	recs, err := issuancelog.ReadLog(app.logPath)
 	if err != nil || len(recs) != 1 {
 		t.Fatalf("log = %v, %v; want one record", recs, err)
 	}
@@ -150,5 +153,13 @@ func TestSetPINTimeoutForTest(t *testing.T) {
 	SetPINTimeoutForTest(app, time.Second)
 	if app.pinTimeout != time.Second {
 		t.Fatalf("pinTimeout = %v, want 1s", app.pinTimeout)
+	}
+}
+
+// TestFakeBuild_InfoVersionMarked: the version a front end shows marks the
+// test build, as --version does.
+func TestFakeBuild_InfoVersionMarked(t *testing.T) {
+	if v := newFakeCardApp(t, FakeCardPIN).Info().Version; !strings.HasSuffix(v, " (rhgfake)") {
+		t.Errorf("Info().Version = %q, want the rhgfake marker", v)
 	}
 }

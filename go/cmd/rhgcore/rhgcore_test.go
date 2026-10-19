@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"unsafe"
 
@@ -13,26 +12,24 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service/rpc"
 )
 
-// Test files can't import "C", so these helpers build and read C strings
-// through the types the exported functions use, inferred from a zero value.
-
-// cstr returns s as a NUL-terminated string of pointer type P (*C.char).
-func cstr[P ~*E, E any](s string) P {
+// cstr returns s as a NUL-terminated C string (Go memory, valid for the
+// call it is passed to).
+func cstr(s string) *cChar {
 	b := append([]byte(s), 0)
-	return P(unsafe.Pointer(&b[0]))
+	return (*cChar)(unsafe.Pointer(&b[0]))
 }
 
-// cargv returns args as C strings of like's type.
-func cargv[P ~*E, E any](like P, args ...string) []P {
-	ptrs := make([]P, len(args))
+// cargv returns args as C strings.
+func cargv(args ...string) []*cChar {
+	ptrs := make([]*cChar, len(args))
 	for i, a := range args {
-		ptrs[i] = cstrLike(like, a)
+		ptrs[i] = cstr(a)
 	}
 	return ptrs
 }
 
 // readC returns the NUL-terminated string at p.
-func readC[P ~*E, E any](p P) string {
+func readC(p *cChar) string {
 	base := unsafe.Pointer(p)
 	n := 0
 	for *(*byte)(unsafe.Add(base, n)) != 0 {
@@ -44,12 +41,12 @@ func readC[P ~*E, E any](p P) string {
 // rhgCall runs RHGCall through the C ABI types and frees the result.
 func rhgCall(t *testing.T, method, params string, nilMethod, nilParams bool) string {
 	t.Helper()
-	var m, p = nilOf(RHGCall), nilOf(RHGCall)
+	var m, p *cChar
 	if !nilMethod {
-		m = cstrLike(m, method)
+		m = cstr(method)
 	}
 	if !nilParams {
-		p = cstrLike(p, params)
+		p = cstr(params)
 	}
 	res := RHGCall(m, p)
 	if res == nil {
@@ -58,12 +55,6 @@ func rhgCall(t *testing.T, method, params string, nilMethod, nilParams bool) str
 	defer RHGFree(res)
 	return readC(res)
 }
-
-// cstrLike is cstr with P inferred from like.
-func cstrLike[P ~*E, E any](_ P, s string) P { return cstr[P](s) }
-
-// nilOf returns a nil P, inferred from f's signature.
-func nilOf[P any](func(P, P) P) (p P) { return p }
 
 // unknownMethod is Dispatch's response to an unknown method.
 const unknownMethod = `{"ok":false,"error":{"code":"input","message":"Unknown method.","offerReport":false}}`
@@ -141,78 +132,11 @@ func TestCall_RecoversPanics(t *testing.T) {
 	}
 }
 
-// fakeTrampoline records the events an eventCallback invokes, by function.
-type fakeTrampoline struct {
-	mu    sync.Mutex
-	calls map[*[0]byte][]string
-}
-
-func (f *fakeTrampoline) invoke(fn *[0]byte, event []byte) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls[fn] = append(f.calls[fn], string(event))
-}
-
-// fnPtr returns a distinct non-nil stand-in for a C function pointer
-// (new([0]byte) would not be distinct: zero-size values share an address).
-func fnPtr() *[0]byte { return (*[0]byte)(unsafe.Pointer(new(int64))) }
-
-func TestEventCallback(t *testing.T) {
-	tr := &fakeTrampoline{calls: map[*[0]byte][]string{}}
-	var sink func([]byte)
-	sinkSet := 0
-	e := &eventCallback{invoke: tr.invoke, setSink: func(f func([]byte)) { sink = f; sinkSet++ }}
-	a, b := fnPtr(), fnPtr()
-
-	e.emit([]byte("dropped")) // nothing attached
-	e.set(a)
-	if sink == nil {
-		t.Fatal("set did not attach a sink")
-	}
-	sink([]byte("one"))
-	e.set(b)
-	sink([]byte("two"))
-	e.set(nil)
-	if sink != nil || sinkSet != 3 {
-		t.Fatalf("set(nil) left the sink attached (set %d times)", sinkSet)
-	}
-	e.emit([]byte("late")) // an Emit racing the detach is dropped
-
-	if got := tr.calls[a]; len(got) != 1 || got[0] != "one" {
-		t.Errorf("first callback got %q", got)
-	}
-	if got := tr.calls[b]; len(got) != 1 || got[0] != "two" {
-		t.Errorf("second callback got %q", got)
-	}
-	if len(tr.calls) != 2 {
-		t.Errorf("calls = %v", tr.calls)
-	}
-}
-
-func TestEventCallback_Concurrent(t *testing.T) {
-	tr := &fakeTrampoline{calls: map[*[0]byte][]string{}}
-	e := &eventCallback{invoke: tr.invoke, setSink: func(func([]byte)) {}}
-	fn := fnPtr()
-	var wg sync.WaitGroup
-	for range 4 {
-		wg.Go(func() {
-			for range 100 {
-				e.set(fn)
-				e.emit([]byte("x"))
-				e.set(nil)
-			}
-		})
-	}
-	wg.Wait()
-}
-
+// TestRHGSetEventCallback_NULLDetaches: with the callback detached, app.init
+// is refused. (Attaching needs a real C function; the C smoke test covers it.)
 func TestRHGSetEventCallback_NULLDetaches(t *testing.T) {
-	events.fn.Store(fnPtr())
+	rpc.SetEventCallback(func([]byte) {})
 	RHGSetEventCallback(nil)
-	if events.fn.Load() != nil {
-		t.Fatal("RHGSetEventCallback(NULL) left the callback attached")
-	}
-	// With no callback, app.init is refused.
 	params, _ := json.Marshal(map[string]string{"dataDir": filepath.Join(t.TempDir(), "d")})
 	got := rhgCall(t, "app.init", string(params), false, false)
 	want := `{"ok":false,"error":{"code":"input","message":"Set the event callback before initializing the app.","offerReport":false}}`
@@ -231,7 +155,7 @@ func TestMainCLI(t *testing.T) {
 		{"empty argv", nil, -1, ""},
 		{"program name only", []string{"rhgcore"}, -1, ""},
 		{"ui args", []string{"rhgcore", "-psn_0_1"}, -1, ""},
-		{"version", []string{"rhgcore", "--version"}, 0, version() + "\n"},
+		{"version", []string{"rhgcore", "--version"}, 0, buildinfo.Display() + "\n"},
 		{"version is not argv[0]", []string{"--version"}, -1, ""},
 		{"verify usage", []string{"rhgcore", "--verify-update-zip"}, 2, ""},
 	} {
@@ -241,12 +165,6 @@ func TestMainCLI(t *testing.T) {
 				t.Fatalf("mainCLI = %d, stdout %q; want %d, %q", code, stdout.String(), tc.code, tc.stdout)
 			}
 		})
-	}
-}
-
-func TestVersion(t *testing.T) {
-	if got, want := version(), buildinfo.Version+wantVersionSuffix; got != want {
-		t.Fatalf("version() = %q, want %q", got, want)
 	}
 }
 
@@ -286,21 +204,21 @@ func TestRHGMainCLI(t *testing.T) {
 		}
 	}
 
-	argv := cargv(nilOf(RHGCall), "rhgcore", "--version")
+	argv := cargv("rhgcore", "--version")
 	var code int32
 	out := captureStdout(t, func() { code = int32(RHGMainCLI(2, &argv[0])) })
-	if code != 0 || out != version()+"\n" {
+	if code != 0 || out != buildinfo.Display()+"\n" {
 		t.Fatalf("RHGMainCLI --version = %d, %q", code, out)
 	}
 	if code := RHGMainCLI(1, &argv[0]); code != -1 {
 		t.Fatalf("RHGMainCLI with argc 1 = %d, want -1", code)
 	}
-	other := cargv(nilOf(RHGCall), "rhgcore", "--other")
+	other := cargv("rhgcore", "--other")
 	if code := RHGMainCLI(2, &other[0]); code != -1 {
 		t.Fatalf("RHGMainCLI --other = %d, want -1", code)
 	}
 	// A NULL entry reads as "".
-	withNULL := append(argv[:1:1], nilOf(RHGCall))
+	withNULL := append(argv[:1:1], nil)
 	if code := RHGMainCLI(2, &withNULL[0]); code != -1 {
 		t.Fatalf("RHGMainCLI with a NULL argument = %d, want -1", code)
 	}

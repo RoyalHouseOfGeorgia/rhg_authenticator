@@ -19,7 +19,7 @@ import (
 )
 
 // bulkUIHarness wires bulkSignDeps to a test window, a synchronous launcher
-// and a service.App whose PIN prompt always cancels, so no card is touched.
+// and an offline service.App, so RunBulk never reaches the card.
 type bulkUIHarness struct {
 	w        fyne.Window
 	busy     []bool
@@ -103,22 +103,49 @@ func TestBulkSign_ConfirmCancelClearsBusy(t *testing.T) {
 	}
 }
 
-// TestBulkSign_ConfirmSignRunsBatch drives confirm → worker → summary; the
-// PIN prompt is cancelled, so the summary reports the cancellation. Closing
-// the summary clears busy.
+// scriptedRun is a bulkService whose RunBulk stands in for a run on a card:
+// it emits the service's connecting and first progress events, runs during
+// (if set), and returns outcome; CancelBulk is recorded. LoadBulk and
+// ExportBulkResults are the embedded real App's.
+type scriptedRun struct {
+	bulkService
+	events    *Events
+	during    func()
+	outcome   service.BulkOutcome
+	runs      int
+	cancelled bool
+}
+
+func (s *scriptedRun) RunBulk(context.Context) (service.BulkOutcome, error) {
+	s.runs++
+	s.events.Emit(service.EventBulkConnecting, nil)
+	s.events.Emit(service.EventBulkProgress, service.BulkProgress{Done: 0, Total: 3, Name: "Alice"})
+	if s.during != nil {
+		s.during()
+	}
+	return s.outcome, nil
+}
+
+func (s *scriptedRun) CancelBulk() { s.cancelled = true }
+
+// TestBulkSign_ConfirmSignRunsBatch drives confirm → worker → summary.
+// Closing the summary clears busy.
 func TestBulkSign_ConfirmSignRunsBatch(t *testing.T) {
 	h := newBulkUIHarness(t)
 	plan := h.load(t, threeRowCSV)
+	run := &scriptedRun{bulkService: h.deps.app, events: h.deps.events,
+		outcome: service.BulkOutcome{SummaryLine: "Processed 3 rows: 3 successful (3 newly signed, 0 already issued), 0 invalid, 0 failed/not attempted.", Stopped: service.BulkCompleted}}
+	h.deps.app = run
 
 	confirmBulkSign(h.deps, plan)
 	tapOverlayButton(t, h.w, "Sign")
 
-	if h.prompter.calls != 1 {
-		t.Errorf("prompts = %d, want 1", h.prompter.calls)
+	if run.runs != 1 {
+		t.Errorf("runs = %d, want 1", run.runs)
 	}
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
-	if !strings.Contains(texts, "Processed 3 rows: 0 successful") || !strings.Contains(texts, "Cancelled.") {
-		t.Errorf("unexpected summary:\n%s", texts)
+	if !strings.Contains(texts, "Processed 3 rows: 3 successful") || strings.Contains(texts, "Signing 1 of 3") {
+		t.Errorf("unexpected summary, or the progress dialog left open:\n%s", texts)
 	}
 	if findButton(t, topOverlay(t, h.w), "Export Results CSV…") == nil {
 		t.Error("summary has no export button")
@@ -142,10 +169,11 @@ func TestBulkSign_ConfirmSignRunsBatch(t *testing.T) {
 func TestBulkSign_CancelDuringBatch(t *testing.T) {
 	h := newBulkUIHarness(t)
 	h.load(t, threeRowCSV)
+	run := &scriptedRun{bulkService: h.deps.app, events: h.deps.events,
+		outcome: service.BulkOutcome{SummaryLine: "Processed 3 rows: 0 successful", StopMessage: "Cancelled.", Stopped: service.BulkCancelled}}
+	h.deps.app = run
 
-	h.prompter.onRequest = func(ctx context.Context) {
-		h.deps.events.Emit(service.EventBulkConnecting, nil)
-		h.deps.events.Emit(service.EventBulkProgress, service.BulkProgress{Done: 0, Total: 3, Name: "Alice"})
+	run.during = func() {
 		top := topOverlay(t, h.w)
 		if !strings.Contains(strings.Join(labelTexts(t, top), "\n"), "Signing 1 of 3: Alice") {
 			t.Errorf("progress label not updated: %v", labelTexts(t, top))
@@ -158,10 +186,8 @@ func TestBulkSign_CancelDuringBatch(t *testing.T) {
 		if !b.Disabled() {
 			t.Error("Cancel button not disabled after tap")
 		}
-		// The PIN request's ctx derives from the bulk run's, so this proves the
-		// button cancelled the service run.
-		if !errors.Is(ctx.Err(), context.Canceled) {
-			t.Errorf("Cancel did not cancel the run: ctx.Err() = %v", ctx.Err())
+		if !run.cancelled {
+			t.Error("Cancel did not cancel the run")
 		}
 		h.deps.events.Emit(service.EventBulkProgress, service.BulkProgress{Done: 1, Total: 3, Name: "Bob"})
 		texts := strings.Join(labelTexts(t, top), "\n")
@@ -179,7 +205,8 @@ func TestBulkSign_CancelDuringBatch(t *testing.T) {
 }
 
 // TestBulkSign_NothingToSignGoesToSummary: with no to_sign rows there is no
-// confirm step and no PIN prompt; the summary is shown directly.
+// confirm step and no PIN prompt; the real service run's summary (offline is
+// fine with nothing to sign) is shown directly, and closing it clears busy.
 func TestBulkSign_NothingToSignGoesToSummary(t *testing.T) {
 	h := newBulkUIHarness(t)
 	plan := h.load(t, "name,honor,detail,date\nBad,Nope,X,2026-03-14\n")
@@ -197,15 +224,26 @@ func TestBulkSign_NothingToSignGoesToSummary(t *testing.T) {
 	if h.prompter.calls != 0 {
 		t.Errorf("prompts = %d, want 0", h.prompter.calls)
 	}
+	if len(h.busy) != 0 {
+		t.Errorf("setBusy called before summary was closed: %v", h.busy)
+	}
+	tapOverlayButton(t, h.w, "Close")
+	if h.lastBusy(t) {
+		t.Error("expected setBusy(false) after closing summary")
+	}
 }
 
 // TestBulkSign_StopErrorShownInSummary: the summary carries the stop reason.
 func TestBulkSign_StopErrorShownInSummary(t *testing.T) {
 	h := newBulkUIHarness(t)
-	showBulkSummary(h.deps, service.BulkPlan{}, service.BulkOutcome{SummaryLine: "Processed 3 rows", StopMessage: "Batch stopped: Incorrect PIN"})
+	showBulkSummary(h.deps, service.BulkPlan{}, service.BulkOutcome{SummaryLine: "Processed 3 rows", StopMessage: "Batch stopped: Incorrect PIN",
+		FailedLines: []string{"line 3: This YubiKey's key is not in the registry"}})
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
 	if !strings.Contains(texts, "Batch stopped: Incorrect PIN") {
 		t.Errorf("summary missing stop reason:\n%s", texts)
+	}
+	if !strings.Contains(texts, "Failed rows:") || !strings.Contains(texts, "line 3: This YubiKey's key is not in the registry") {
+		t.Errorf("summary missing the failed rows:\n%s", texts)
 	}
 }
 
@@ -220,6 +258,26 @@ func TestBulkSign_RunErrorShownAndClearsBusy(t *testing.T) {
 	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
 	if !strings.Contains(texts, service.ErrNoBulkPlan.Error()) {
 		t.Errorf("error dialog not shown:\n%s", texts)
+	}
+}
+
+// TestBulkSign_OfflineConfirmThenRunRefused: offline, the file still loads
+// and the confirm shows the plan, but Sign shows the service's offline error
+// without a PIN prompt and re-enables the tab.
+func TestBulkSign_OfflineConfirmThenRunRefused(t *testing.T) {
+	h := newBulkUIHarness(t) // its registry is unreachable
+	plan := h.load(t, threeRowCSV)
+	confirmBulkSign(h.deps, plan)
+	tapOverlayButton(t, h.w, "Sign")
+	if h.prompter.calls != 0 {
+		t.Errorf("prompts = %d, want 0", h.prompter.calls)
+	}
+	if h.lastBusy(t) {
+		t.Error("expected setBusy(false) after the refusal")
+	}
+	texts := strings.Join(labelTexts(t, topOverlay(t, h.w)), "\n")
+	if !strings.Contains(texts, service.ErrOffline.Error()) {
+		t.Errorf("offline error not shown:\n%s", texts)
 	}
 }
 

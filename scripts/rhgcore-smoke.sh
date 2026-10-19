@@ -76,34 +76,44 @@ build_variant() {
 	fi
 }
 
-# check_exports checks the archive of variant $1 defines the four exports.
+# check_exports checks the library of variant $1 defines the four exports:
+# the archive's symbols (nm), or the DLL's export table (objdump, MinGW).
 check_exports() {
-	local out="$OUT_BASE/$1" sym syms
-	[ "$OS" = windows ] && return 0
+	local out="$OUT_BASE/$1" sym syms pattern
 	# Captured and fed as a here-string: grep -q closing a pipe early would
 	# fail the writer with SIGPIPE under pipefail.
-	syms="$(nm "$out/librhgcore.a" 2>/dev/null || true)"
+	if [ "$OS" = windows ]; then
+		syms="$(objdump -p "$out/rhgcore.dll")" || die "$1: objdump failed"
+		pattern='[[:space:]]%s$'
+	else
+		syms="$(nm "$out/librhgcore.a")" || die "$1: nm failed"
+		pattern=' T _?%s$'
+	fi
 	for sym in RHGCall RHGFree RHGSetEventCallback RHGMainCLI; do
-		grep -Eq " T _?$sym\$" <<<"$syms" || die "$1: $sym is not defined"
+		# shellcheck disable=SC2059 # the pattern is the format on purpose
+		grep -Eq "$(printf "$pattern" "$sym")" <<<"$syms" || die "$1: $sym is not exported"
 	done
 	echo "exports: RHGCall RHGFree RHGSetEventCallback RHGMainCLI"
 }
 
 # compile_smoke builds the smoke binary for variant $1 and prints its path.
+# It runs in a command substitution, where bash ignores set -e, so each
+# failure exits explicitly.
 compile_smoke() {
 	local out="$OUT_BASE/$1"
 	if [ "$OS" = windows ]; then
-		gcc -I"$out" "$SMOKE_SRC" "$out/rhgcore.dll" -o "$out/smoke.exe" >&2
+		gcc -I"$out" "$SMOKE_SRC" "$out/rhgcore.dll" -o "$out/smoke.exe" >&2 || die "$1: compiling smoke.c failed"
 		echo "$out/smoke.exe"
 	else
 		# shellcheck disable=SC2046 # the link flags are word-split on purpose
-		cc -I"$out" "$SMOKE_SRC" "$out/librhgcore.a" $(cat "$out/librhgcore.link") -o "$out/smoke" >&2
+		cc -I"$out" "$SMOKE_SRC" "$out/librhgcore.a" $(cat "$out/librhgcore.link") -o "$out/smoke" >&2 ||
+			die "$1: compiling smoke.c failed"
 		echo "$out/smoke"
 	fi
 }
 
-# smoke_variant runs the smoke checks for variant $1; $2 is "fake" or
-# "release" (smoke.c's mode).
+# smoke_variant runs the smoke checks for variant $1 in a fresh data dir; $2
+# is smoke.c's mode: "release", "fake-offline" or "fake-online".
 smoke_variant() {
 	local name="$1" mode="$2" bin version_out tmp_dir data_dir
 	bin="$(compile_smoke "$name")"
@@ -115,18 +125,20 @@ smoke_variant() {
 	*) die "$name: --version output lacks $VERSION" ;;
 	esac
 	case "$mode:$version_out" in
-	fake:*rhgfake*) ;;
-	fake:*) die "$name: --version output lacks rhgfake" ;;
+	fake-*:*rhgfake*) ;;
+	fake-*:*) die "$name: --version output lacks rhgfake" ;;
 	release:*rhgfake*) die "$name: release --version output contains rhgfake" ;;
 	esac
 
 	tmp_dir="$(mktemp -d)"
+	trap 'rm -rf "$tmp_dir"' EXIT # die exits from here
 	data_dir="$tmp_dir"
 	if command -v cygpath >/dev/null 2>&1; then
 		data_dir="$(cygpath -w "$tmp_dir")" # a native Windows path, backslashes and all
 	fi
-	"$bin" "$data_dir" "$mode" || die "$name: smoke checks failed"
+	"$bin" "$data_dir" "$mode" || die "$name: $mode smoke checks failed"
 	rm -rf "$tmp_dir"
+	trap - EXIT
 }
 
 build_variant release ""
@@ -134,5 +146,6 @@ build_variant rhgfake rhgfake
 check_exports release
 check_exports rhgfake
 smoke_variant release release
-smoke_variant rhgfake fake
+smoke_variant rhgfake fake-offline
+smoke_variant rhgfake fake-online
 echo "rhgcore smoke: all checks passed"

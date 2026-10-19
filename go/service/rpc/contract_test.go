@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
@@ -237,6 +238,14 @@ func (c *contract) encoded(name string, p, result any) {
 	c.method(name, mustMarshal(p), mustMarshal(successBody{OK: true, Result: result}), "encoded")
 }
 
+// variant records another success result of method, one per value of an
+// enum clients decode, as methods/<method>/result.<value>.json, through the
+// success encoder.
+func (c *contract) variant(method, value string, result any) {
+	c.t.Helper()
+	c.add("methods/"+method+"/result."+value+".json", mustMarshal(successBody{OK: true, Result: result}))
+}
+
 func (c *contract) errorFile(name string, envelope []byte) {
 	c.t.Helper()
 	if !bytes.HasPrefix(envelope, []byte(`{"ok":false,`)) {
@@ -343,28 +352,44 @@ func buildContract(t *testing.T) *contract {
 	c.dispatch(h.srv, "app.info", empty)
 	c.dispatch(h.srv, "app.exportErrorLog", pathParams{Path: filepath.Join(h.out, "error-log.txt")})
 
-	// Errors reachable without a card or GitHub.
-	c.errorFile(CodeCancelled, h.srv.Dispatch("sign.sign", mustMarshal(service.SignFields{Recipient: "New Person", Honor: "Ennoblement", Detail: "For service", Date: "2026-01-02"})))
+	// Errors reachable without a card or GitHub. A cancelled PIN prompt
+	// needs a card (the key is read first), so cancelled goes through the
+	// error encoder.
+	c.errorFile(CodeCancelled, errorEnvelope(signCancelled{}))
 	c.errorFile(CodeFailed, h.srv.Dispatch("sign.validate", []byte(`{}`)))
 	c.errorFile(CodeNotFound, h.srv.Dispatch("sign.reportError", mustMarshal(reportParams{ReportID: "1"})))
-	c.errorFile(CodeUnauthorized, h.srv.Dispatch("registry.submit", nil))
+	c.errorFile(CodeNotLoggedIn, h.srv.Dispatch("registry.submit", nil))
 	c.errorFile(CodeInput, h.srv.Dispatch("no.such", []byte(`{}`)))
 	h.srv.methods["contract.panic"] = func(*server, []byte) (any, error) { panic("contract") }
 	c.errorFile(CodeInternal, h.srv.Dispatch("contract.panic", nil))
 	delete(h.srv.methods, "contract.panic")
 
-	// Bulk: a run waits at the PIN prompt, where another card call is busy,
-	// until bulk.cancel.
+	// Bulk. Signing a row needs a card, so the run is of a file with nothing
+	// to sign (already issued and invalid rows); busy, which needs a run
+	// holding the card, goes through the error encoder.
 	csv := filepath.Join(h.out, "bulk.csv")
 	writeFile(t, csv, "name,honor,detail,date\nJane Doe,Ennoblement,For service,2026-01-02\nCarol White,Ennoblement,For service,2026-01-05\nBob,Bogus,x,2026-01-02\n")
 	c.dispatch(h.srv, "bulk.load", pathParams{Path: csv})
-	h.prompter.gate, h.prompter.entered = make(chan struct{}), make(chan struct{}, 1)
-	done := make(chan []byte, 1)
-	go func() { done <- h.srv.Dispatch("bulk.run", mustMarshal(empty)) }()
-	waitFor(t, h.prompter.entered, "the bulk PIN prompt")
-	c.errorFile(CodeBusy, h.srv.Dispatch("yubikey.check", nil))
+	c.errorFile(CodeBusy, errorEnvelope(service.ErrBusy))
+	writeFile(t, csv, "name,honor,detail,date\nJane Doe,Ennoblement,For service,2026-01-02\nBob,Bogus,x,2026-01-02\n")
+	if env := h.srv.Dispatch("bulk.load", mustMarshal(pathParams{Path: csv})); !bytes.Contains(env, []byte(`"toSign":0`)) {
+		t.Fatalf("bulk.load of the nothing-to-sign file = %s", env)
+	}
+	// This bulk.run is of the second, nothing-to-sign load above, not of the
+	// recorded bulk.load plan. A run that stops early needs a card, so those
+	// outcomes go through the success encoder, one file per stopped value.
+	c.dispatch(h.srv, "bulk.run", empty)
+	for _, o := range []service.BulkOutcome{
+		{Stopped: service.BulkCancelled, StopMessage: "Cancelled.", FailedLines: []string{},
+			SummaryLine: "Processed 3 rows: 1 successful (1 newly signed, 0 already issued), 0 invalid, 2 failed/not attempted."},
+		{Stopped: service.BulkFailed, StopMessage: "Batch stopped: Incorrect PIN — 2 attempt(s) left before the YubiKey locks.",
+			FailedLines: []string{"line 2: Incorrect PIN — 2 attempt(s) left before the YubiKey locks."},
+			SummaryLine: "Processed 3 rows: 0 successful (0 newly signed, 0 already issued), 0 invalid, 3 failed/not attempted."},
+	} {
+		o.ResultsFilename = "rhg-bulk-results-2026-01-02-030405.csv"
+		c.variant("bulk.run", string(o.Stopped), o)
+	}
 	c.dispatch(h.srv, "bulk.cancel", empty)
-	c.method("bulk.run", mustMarshal(empty), waitFor(t, done, "bulk.run returning"), "dispatch")
 	c.dispatch(h.srv, "bulk.exportResults", pathParams{Path: filepath.Join(h.out, "bulk-results.csv")})
 
 	c.dispatch(h.srv, "auth.state", empty)
@@ -467,9 +492,18 @@ func buildContract(t *testing.T) *contract {
 			"Authority: A",
 			"Valid from: 2025-Jan-01",
 			"Valid to: (no expiry)",
+			"Restrictions: (none)",
 			"Fingerprint: " + hex.EncodeToString(fp[:]),
 		},
 	})
+	c.variant("yubikey.check", string(service.KeyCheckNotFound), service.KeyCheck{
+		Result:  service.KeyCheckNotFound,
+		Status:  "Key NOT found in registry",
+		Details: []string{"Fingerprint: " + hex.EncodeToString(fp[:])},
+	})
+	// Offline the check fails without reading a card, so this one is real.
+	c.add("methods/yubikey.check/result."+string(service.KeyCheckFailed)+".json",
+		newOfflineHarness(t).srv.Dispatch("yubikey.check", nil))
 	c.encoded("registry.importFromYubiKey", empty, publicKeyResult{PublicKey: testKeyB64(1)})
 	c.encoded("auth.login", empty, service.AuthState{LoggedIn: true, User: "octocat"})
 	c.encoded("registry.submit", empty, service.SubmitResult{PRNumber: 42, URL: repoURL + "/pull/42"})
@@ -479,6 +513,12 @@ func buildContract(t *testing.T) *contract {
 		URL:      repoURL + "/pull/43",
 		Title:    "Revocation Submitted",
 		Message:  "Pull request #43 created:\n" + repoURL + "/pull/43\n\nIf several revocation PRs are open, merge them one at a time.",
+	})
+	c.variant("history.revoke", string(service.RevokeAlreadyRevoked), service.RevokeResult{
+		Status: service.RevokeAlreadyRevoked, Title: "Already Revoked", Message: ghapi.UserMessage(ghapi.ErrAlreadyRevoked),
+	})
+	c.variant("history.revoke", string(service.RevokePending), service.RevokeResult{
+		Status: service.RevokePending, Title: "Revocation Pending", Message: ghapi.UserMessage(ghapi.ErrRevocationPending),
 	})
 	c.encoded("audit.commits", empty, service.AuditResult{
 		Rows: []service.AuditRow{{
@@ -517,6 +557,13 @@ func buildContract(t *testing.T) *contract {
 	c.files["README.md"] = []byte(contractReadme(c.kinds))
 	return c
 }
+
+// signCancelled stands in for Sign's cancelled-PIN error: the cancel text,
+// matching context.Canceled.
+type signCancelled struct{}
+
+func (signCancelled) Error() string { return "Signing cancelled." }
+func (signCancelled) Unwrap() error { return context.Canceled }
 
 type truncationCase struct {
 	Input    string `json:"input"`
@@ -583,10 +630,17 @@ Without -update the test fails on any missing, extra or changed file.
   type went through Dispatch's success encoder. Encoded: ` + strings.Join(encoded, ", ") + `.
 - errors/<code>.json: one error envelope per error code.
   errors/failed-with-report.json is a "failed" error offering a report
-  (offerReport true, with reportId); reportId is absent otherwise.
+  (offerReport true, with reportId); reportId is absent otherwise. busy,
+  cancelled, sessionExpired and registryChanged need a card or GitHub, so
+  their files went through Dispatch's error encoder.
 - events/<event>.json: one event, {"event":...,"data":...}, as delivered to
   the event callback. update.status has one file per state:
   events/update.status.<state>.json.
+- methods/<method>/result.<value>.json: for a result enum clients decode
+  (bulk.run stopped, yubikey.check result, history.revoke status), result.json
+  holds the first value and one file per other value holds the rest, through
+  the success encoder. bulk.run/result.json is a run of a second,
+  nothing-to-sign load, not of the recorded bulk.load plan.
 - pin-truncation.json: [{"input","maxBytes","output"}] cases from
   service.TruncatePINToBytes. Clients cap a PIN to maxBytes bytes of its
   UTF-8 encoding, cutting only between Unicode scalar values; never count
@@ -738,6 +792,26 @@ func checkCompleteness(t *testing.T, c *contract) {
 			t.Errorf("error code %s has no errors/%s.json", code, code)
 		}
 	}
+	// Every value of a result enum clients decode has an example: the first
+	// in result.json, the others in result.<value>.json.
+	for _, e := range []struct {
+		method, field string
+		values        []string
+	}{
+		{"bulk.run", "stopped", []string{string(service.BulkCompleted), string(service.BulkCancelled), string(service.BulkFailed)}},
+		{"yubikey.check", "result", []string{string(service.KeyCheckFound), string(service.KeyCheckNotFound), string(service.KeyCheckFailed)}},
+		{"history.revoke", "status", []string{string(service.RevokeSubmitted), string(service.RevokeAlreadyRevoked), string(service.RevokePending)}},
+	} {
+		dir := "methods/" + e.method + "/"
+		if !bytes.Contains(c.files[dir+"result.json"], []byte(`"`+e.field+`":"`+e.values[0]+`"`)) {
+			t.Errorf("%sresult.json is not %s %q", dir, e.field, e.values[0])
+		}
+		for _, v := range e.values[1:] {
+			if !bytes.Contains(c.files[dir+"result."+v+".json"], []byte(`"`+e.field+`":"`+v+`"`)) {
+				t.Errorf("%s %s %q has no example", e.method, e.field, v)
+			}
+		}
+	}
 }
 
 // readContract returns the files under contractDir, keyed by slash path.
@@ -781,6 +855,9 @@ func writeContract(t *testing.T, files map[string][]byte) {
 // TestContract generates the cross-language contract files and compares them
 // with testdata/contract, or rewrites it with -update.
 func TestContract(t *testing.T) {
+	if buildinfo.FakeBuild {
+		t.Skip("the contract files are the release build's output (app.info marks the rhgfake version)")
+	}
 	c := buildContract(t)
 	checkCompleteness(t, c)
 	if *updateContract {

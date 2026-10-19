@@ -191,8 +191,24 @@ func newAppHarness(t *testing.T, kr ghapi.Keyring) *appHarness {
 	}
 	t.Cleanup(app.Close)
 	app.openAdapter = h.openAdapter
+	// Online with the in-test signer's key, as if New had fetched it.
+	app.reg, app.registryFetched = registryWith(core.KeyEntry{Authority: "Harness", From: "2025-01-01", PublicKey: pubKeyB64(priv)}), true
 	h.app = app
 	return h
+}
+
+// pubKeyB64 is priv's raw public key in base64, as a registry holds it.
+func pubKeyB64(priv ed25519.PrivateKey) string {
+	return base64.StdEncoding.EncodeToString(priv.Public().(ed25519.PublicKey))
+}
+
+// registryWith returns a registry of entries, each completed with the
+// algorithm.
+func registryWith(entries ...core.KeyEntry) core.Registry {
+	for i := range entries {
+		entries[i].Algorithm = core.SupportedAlgorithm
+	}
+	return core.Registry{Keys: entries}
 }
 
 func (h *appHarness) openAdapter(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
@@ -261,12 +277,9 @@ func TestNew_OnlineRegistryStats(t *testing.T) {
 	}
 	defer app.Close()
 	got := app.Info()
-	want := Info{Version: buildinfo.Version, Online: true, ActiveKeys: 1, RecentlyExpired: 1}
+	want := Info{Version: buildinfo.Display(), Online: true, ActiveKeys: 1, RecentlyExpired: 1}
 	if got != want {
 		t.Errorf("Info = %+v, want %+v", got, want)
-	}
-	if app.LogPath() != filepath.Join(dir, "issuances.json") {
-		t.Errorf("LogPath = %q", app.LogPath())
 	}
 }
 
@@ -779,7 +792,8 @@ func TestApp_BusyMethodsReturnErrBusyWithoutTouchingState(t *testing.T) {
 	if _, err := h.app.CheckYubiKey(); err != ErrBusy {
 		t.Errorf("CheckYubiKey err = %v", err)
 	}
-	if h.opens != 1 || h.prompter.callCount() != 1 {
+	// The first Sign's key read and signing open.
+	if h.opens != 2 || h.prompter.callCount() != 1 {
 		t.Errorf("a refused call reached the card or the PIN prompt (opens=%d, prompts=%d)", h.opens, h.prompter.callCount())
 	}
 }
@@ -848,7 +862,7 @@ func TestApp_InfoWhileSignBlocked(t *testing.T) {
 	waitEntered(t, h.prompter)
 	// Regression guard: Info must not wait on anything held across the PIN
 	// prompt; a deadlock fails this test by timeout.
-	if got := h.app.Info(); got.Version != buildinfo.Version {
+	if got := h.app.Info(); got.Version != buildinfo.Display() {
 		t.Errorf("Info().Version = %q", got.Version)
 	}
 	h.prompter.release <- struct{}{}
@@ -944,6 +958,10 @@ func TestBulk_AuthErrorClearsCacheAndStops(t *testing.T) {
 	if err != nil || !strings.HasPrefix(out.StopMessage, "Batch stopped: Incorrect PIN") || out.Stopped != BulkFailed {
 		t.Errorf("RunBulk = %+v, %v", out, err)
 	}
+	// The row that stopped the batch is listed too (bulk.run's failed example).
+	if len(out.FailedLines) != 1 || !strings.HasPrefix(out.FailedLines[0], "line 2: Incorrect PIN") {
+		t.Errorf("FailedLines = %q", out.FailedLines)
+	}
 	if _, ok := h.app.pinCache.Get(); ok {
 		t.Error("PIN cache not cleared after a PIV auth error")
 	}
@@ -974,6 +992,15 @@ func TestApp_CheckYubiKey(t *testing.T) {
 	}
 	if !strings.Contains(h.debugLog(t), "yubikey check: yubikey: no YubiKey found") {
 		t.Error("key check failure not logged")
+	}
+
+	// Offline the registry is empty, so a registered key must not be shown
+	// as missing: the check reports the registry and reads no card.
+	h.app.reg, h.app.registryFetched, h.openErr = core.Registry{}, false, nil
+	opens := h.opens
+	kc, err := h.app.CheckYubiKey()
+	if err != nil || kc.Result != KeyCheckFailed || kc.Status != msgRegistryUnavailable || h.opens != opens {
+		t.Errorf("offline CheckYubiKey = %+v, %v (opens %d→%d)", kc, err, opens, h.opens)
 	}
 }
 

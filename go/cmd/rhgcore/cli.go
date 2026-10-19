@@ -3,7 +3,6 @@ package main
 import (
 	"io"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/host"
 )
 
@@ -14,9 +13,5 @@ func mainCLI(argv []string, stdout, stderr io.Writer) int {
 	if len(argv) == 0 {
 		return -1
 	}
-	return host.RunCLI(argv[1:], version(), stdout, stderr)
+	return host.RunCLI(argv[1:], stdout, stderr)
 }
-
-// version is the version --version prints: the build's, marked in the
-// rhgfake build.
-func version() string { return buildinfo.Version + versionSuffix }

@@ -124,17 +124,21 @@ func findExistingIssuance(payload []byte, logPath string) (core.SignResponse, bo
 }
 
 // signAndLog opens the adapter with a pre-resolved PIN, exports the public
-// key, signs, and appends an NFC-normalized issuance record to logPath.
+// key, checks it with checkKey, signs, and appends an NFC-normalized issuance
+// record to logPath. The callers checked the card's key before resolving the
+// PIN; checking again here refuses a card swapped since.
 //
-// Adapter-open failures are returned unwrapped; export-key and sign failures
-// are wrapped in a *signFlowError with phaseExportKey / phaseSign. If the
-// record append fails, the successful SignResponse is returned TOGETHER WITH a
-// *signFlowError{Phase: phaseLog} wrapping core.ErrNotLogged and the underlying
-// append error — callers decide whether an unlogged signature is fatal.
+// Adapter-open failures and checkKey errors are returned unwrapped; export-key
+// and sign failures are wrapped in a *signFlowError with phaseExportKey /
+// phaseSign. If the record append fails, the successful SignResponse is
+// returned TOGETHER WITH a *signFlowError{Phase: phaseLog} wrapping
+// core.ErrNotLogged and the underlying append error — callers decide whether
+// an unlogged signature is fatal.
 func signAndLog(
 	req core.SignRequest,
 	logPath string,
 	openAdapter adapterOpener,
+	checkKey keyChecker,
 	pin string,
 	logger *debuglog.Logger,
 ) (core.SignResponse, error) {
@@ -153,6 +157,10 @@ func signAndLog(
 	if err != nil {
 		logger.Log(sanitizeError("ExportPublicKey", err))
 		return core.SignResponse{}, &signFlowError{Phase: phaseExportKey, Err: err}
+	}
+	if err := checkKey(pubKey, req); err != nil {
+		logKeyRejected(logger, "key check: ", err)
+		return core.SignResponse{}, err
 	}
 
 	resp, err := core.HandleSign(req, adapter, pubKey)
@@ -182,17 +190,23 @@ func signAndLog(
 }
 
 // executeSignFlow runs the signing workflow: check the issuance log for an
-// identical prior issuance, resolve PIN, open adapter, export key, sign, log,
-// generate QR, compute hash8.
+// identical prior issuance, read the card's key (no PIN) and check it with
+// checkKey, resolve PIN, open adapter, export key, sign, log, generate QR,
+// compute hash8.
 //
-// If the request was already issued, the PIN prompt, card access, signing and
-// log append are all skipped; the response is rebuilt from the logged
-// signature and returned with Existing set. An unreadable log blocks signing
-// (errIssuanceLogUnreadable) since duplicates cannot be ruled out.
+// If the request was already issued, the key check, PIN prompt, card access,
+// signing and log append are all skipped; the response is rebuilt from the
+// logged signature and returned with Existing set. An unreadable log blocks
+// signing (errIssuanceLogUnreadable) since duplicates cannot be ruled out.
+// Otherwise, offline (online false) it returns ErrOffline before any card
+// access, and a key checkKey refuses is reported (its error unwrapped)
+// before the PIN prompt.
 func executeSignFlow(
 	req core.SignRequest,
 	logPath string,
+	online bool,
 	openAdapter adapterOpener,
+	checkKey keyChecker,
 	readPin func() (string, error),
 	onConnecting func(),
 	logger *debuglog.Logger,
@@ -215,7 +229,24 @@ func executeSignFlow(
 
 	var notLogged bool
 	if !existing {
-		// 1. Resolve the PIN up-front, BEFORE opening the card. piv-go holds an
+		// 1. Offline (no registry) nothing new is signed: the key could not
+		//    be checked against the registry.
+		if !online {
+			return signFlowResult{}, ErrOffline
+		}
+		// 1b. Refuse, before asking for the PIN, a card whose key would not
+		//     verify this credential. Reading the key needs no PIN; the card
+		//     is closed again before the prompt.
+		pub, err := readCardKey(openAdapter, logger)
+		if err != nil {
+			return signFlowResult{}, err
+		}
+		if err := checkKey(pub, req); err != nil {
+			logKeyRejected(logger, "key check: ", err)
+			return signFlowResult{}, err
+		}
+
+		// 2. Resolve the PIN up-front, BEFORE opening the card. piv-go holds an
 		//    exclusive PCSC transaction (SCARD_SHARE_EXCLUSIVE + an open
 		//    transaction) for the whole connection lifetime, and its lazy
 		//    PINPrompt fires inside that transaction. Prompting for the PIN after
@@ -225,8 +256,9 @@ func executeSignFlow(
 		//    cert-read + login + sign.
 		pin, err := readPin()
 		if err != nil {
-			// errSigningCancelled / errPINEntryTimedOut / errPINCacheUnavailable
-			// are surfaced as-is; signFlowErrorMessage maps them via errors.Is.
+			// Surfaced as-is: Sign and bulkStop handle errSigningCancelled;
+			// signFlowErrorMessage maps errPINEntryTimedOut and
+			// errPINCacheUnavailable via errors.Is.
 			return signFlowResult{}, err
 		}
 
@@ -234,9 +266,9 @@ func executeSignFlow(
 			onConnecting()
 		}
 
-		// 2. Open (fresh per sign, with the pre-resolved PIN), export key, sign,
+		// 3. Open (fresh per sign, with the pre-resolved PIN), export key, sign,
 		//    and append the issuance record.
-		resp, err = signAndLog(req, logPath, openAdapter, pin, logger)
+		resp, err = signAndLog(req, logPath, openAdapter, checkKey, pin, logger)
 		if err != nil && !errors.Is(err, core.ErrNotLogged) {
 			return signFlowResult{}, err
 		}
@@ -246,14 +278,14 @@ func executeSignFlow(
 		notLogged = err != nil
 	}
 
-	// 3. Generate QR preview.
+	// 4. Generate QR preview.
 	pngData, err := generatePreviewPNG(resp.URL, qrPreviewPx)
 	if err != nil {
 		logger.Log(sanitizeError("QR", err))
 		return signFlowResult{}, &signFlowError{Phase: phaseQR, Err: err}
 	}
 
-	// 4. First 8 hex chars of the SHA-256 hash, used as a short identifier in filenames.
+	// 5. First 8 hex chars of the SHA-256 hash, used as a short identifier in filenames.
 	hash8 := resp.PayloadSHA256[:8]
 
 	return signFlowResult{

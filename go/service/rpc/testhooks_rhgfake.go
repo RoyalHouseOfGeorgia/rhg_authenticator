@@ -10,16 +10,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/host"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/update"
 )
 
-// The rhgfake test build runs real flows with no YubiKey, network or GitHub:
-// the App signs with service's fake card (PIN service.FakeCardPIN), the
-// keyring is in memory, the update manager does nothing, and the registry is
-// unreachable unless test.configure serves one on loopback. It adds two
+// The rhgfake test build runs real flows with no YubiKey and never writes to
+// GitHub: the App signs with service's fake card (PIN service.FakeCardPIN),
+// host.NewService drops its keyring (so no GitHub login, submit or revoke, and
+// Report Issue opens the browser form), the update manager does nothing, and the registry
+// is unreachable unless test.configure serves one on loopback. It adds two
 // methods, outside methodTable and allowed in every state:
 //
 //	test.configure {online, pinTimeoutMs} — only before app.init. online
@@ -52,12 +52,10 @@ func init() {
 }
 
 // addTestMethods adds test.configure and test.panic to s and replaces its
-// keyring, update manager and service constructor with the test build's.
+// update manager and service constructor with the test build's.
 func addTestMethods(s *server) {
 	s.methods["test.configure"] = method((*server).configureTest)
 	s.methods["test.panic"] = noParams(func(*server) (any, error) { panic(testPanicValue) })
-	kr := ghapi.NewFakeKeyring()
-	s.newKeyring = func() ghapi.Keyring { return kr }
 	s.newManager = func(update.Config) updateManager { return idleManager{} }
 	s.newService = testService(deadURL, deadURL, 0)
 }

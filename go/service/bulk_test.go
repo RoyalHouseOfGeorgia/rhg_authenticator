@@ -36,15 +36,21 @@ func (a *authErrSignAdapter) SignBytes(data []byte) ([]byte, error) {
 }
 
 // bulkHarness bundles a temp issuance log, debug logger, and call-counting
-// openAdapter/readPin fakes backed by an in-test ed25519 key.
+// openAdapter/readPin fakes backed by an in-test ed25519 key. opens counts
+// the signing opens (given the PIN), keyReads the PIN-free key reads, and
+// keyReadsOpen the key reads not yet closed: readPin fails while one is open,
+// since no card handle may be held across PIN entry.
 type bulkHarness struct {
-	logPath   string
-	logger    *debuglog.Logger
-	priv      ed25519.PrivateKey
-	opens     int
-	pinReads  int
-	pinErr    error
-	newSigner func(ed25519.PrivateKey) core.SigningAdapter
+	logPath  string
+	logger   *debuglog.Logger
+	priv     ed25519.PrivateKey
+	opens    int
+	keyReads int
+	pinReads int
+
+	keyReadsOpen int
+	pinErr       error
+	newSigner    func(ed25519.PrivateKey) core.SigningAdapter
 }
 
 func newBulkHarness(t *testing.T) *bulkHarness {
@@ -65,12 +71,20 @@ func newBulkHarness(t *testing.T) *bulkHarness {
 }
 
 func (h *bulkHarness) openAdapter(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+	if pin, _ := rp(); pin == "" {
+		h.keyReads++
+		h.keyReadsOpen++
+		return h.newSigner(h.priv), closeFunc(func() { h.keyReadsOpen-- }), nil
+	}
 	h.opens++
 	return h.newSigner(h.priv), nopCloser{}, nil
 }
 
 func (h *bulkHarness) readPin() (string, error) {
 	h.pinReads++
+	if h.keyReadsOpen != 0 {
+		return "", errors.New("PIN asked while a key-read handle is open")
+	}
 	if h.pinErr != nil {
 		return "", h.pinErr
 	}
@@ -82,7 +96,7 @@ func (h *bulkHarness) run(t *testing.T, ctx context.Context, results []bulk.Resu
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
-	return runBulkFlow(ctx, results, h.logPath, h.openAdapter, h.readPin, nil, onProgress, h.logger)
+	return runBulkFlow(ctx, results, h.logPath, h.openAdapter, acceptAnyKey, h.readPin, nil, onProgress, h.logger)
 }
 
 func (h *bulkHarness) plan(t *testing.T, csvText string) []bulk.Result {
@@ -166,11 +180,11 @@ func TestBulkFlow_EndToEndReRunIsIdempotent(t *testing.T) {
 	if n := h.logCount(t); n != 3 {
 		t.Errorf("log records = %d, want 3", n)
 	}
-	if h.pinReads != 1 || h.opens != 3 {
-		t.Errorf("pinReads=%d opens=%d, want 1 and 3", h.pinReads, h.opens)
+	if h.pinReads != 1 || h.opens != 3 || h.keyReads != 1 {
+		t.Errorf("pinReads=%d opens=%d keyReads=%d, want 1, 3 and 1", h.pinReads, h.opens, h.keyReads)
 	}
 
-	h.pinReads, h.opens = 0, 0
+	h.pinReads, h.opens, h.keyReads = 0, 0, 0
 	second := h.plan(t, csvText)
 	if err := h.run(t, context.Background(), second, nil); err != nil {
 		t.Fatalf("second run: %v", err)
@@ -185,8 +199,8 @@ func TestBulkFlow_EndToEndReRunIsIdempotent(t *testing.T) {
 	if n := h.logCount(t); n != 3 {
 		t.Errorf("log records after re-run = %d, want 3", n)
 	}
-	if h.pinReads != 0 || h.opens != 0 {
-		t.Errorf("re-run touched the card: pinReads=%d opens=%d", h.pinReads, h.opens)
+	if h.pinReads != 0 || h.opens != 0 || h.keyReads != 0 {
+		t.Errorf("re-run touched the card: pinReads=%d opens=%d keyReads=%d", h.pinReads, h.opens, h.keyReads)
 	}
 }
 
@@ -198,7 +212,7 @@ func TestBulkFlow_SingleSignInterop(t *testing.T) {
 		Detail:    "Café service",
 		Date:      "2026-03-14",
 	}
-	single, err := executeSignFlow(req, h.logPath, h.openAdapter, h.readPin, nil, h.logger)
+	single, err := executeSignFlow(req, h.logPath, true, h.openAdapter, acceptAnyKey, h.readPin, nil, h.logger)
 	if err != nil {
 		t.Fatalf("executeSignFlow: %v", err)
 	}
@@ -218,7 +232,7 @@ func TestBulkFlow_ReadPinCalledOncePerBatch(t *testing.T) {
 	connecting := 0
 	var progress []int
 	results := h.plan(t, threeRowCSV)
-	err := runBulkFlow(context.Background(), results, h.logPath, h.openAdapter, h.readPin,
+	err := runBulkFlow(context.Background(), results, h.logPath, h.openAdapter, acceptAnyKey, h.readPin,
 		func() { connecting++ },
 		func(done, total int, name string) {
 			if total != 3 {

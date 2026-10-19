@@ -233,7 +233,7 @@ func (a *App) History(query string) HistorySnapshot {
 		LoadFailed:             h.loadFailed,
 		RevocationsUnavailable: h.revocationsUnavailable,
 		RevocationsLoaded:      h.revocationsLoaded,
-		RevokeAvailable:        a.loggedIn && !a.offline && h.revocationsLoaded,
+		RevokeAvailable:        a.loggedIn && !a.githubOffline && h.revocationsLoaded,
 	}
 }
 

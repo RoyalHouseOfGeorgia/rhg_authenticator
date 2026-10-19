@@ -15,7 +15,6 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/gui"
@@ -48,7 +47,7 @@ func main() {
 
 	// Command-line invocations (--version, --verify-update-zip) run before
 	// any GUI initialization.
-	if code := host.RunCLI(os.Args[1:], buildinfo.Version, os.Stdout, os.Stderr); code >= 0 {
+	if code := host.RunCLI(os.Args[1:], os.Stdout, os.Stderr); code >= 0 {
 		os.Exit(code)
 	}
 
