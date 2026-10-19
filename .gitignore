@@ -30,6 +30,9 @@ dist/
 go/release/
 go/rsrc_windows_*.syso
 build/
+macos/.build/
+macos/.swiftpm/
+/release/
 
 # OS artifacts
 .DS_Store

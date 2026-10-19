@@ -118,10 +118,10 @@ jobs:
         run: go test -race -tags rhgfake ./buildinfo/... ./service/... ./host/... ./cmd/... -count=1
 
   # The rhgcore C library (release and rhgfake variants) built and smoke-tested
-  # through its C ABI on each release OS. Interim and never a required check:
-  # no job needs it and it uploads nothing, so release assets are unchanged.
-  # test-race runs the rhgfake tests on macOS; this job vets the rhgfake build
-  # and runs its tests on Windows.
+  # through its C ABI on Windows. Interim and never a required check: no job
+  # needs it and it uploads nothing, so release assets are unchanged. test-race
+  # runs the rhgfake tests on macOS and macos-app builds the library there;
+  # this job vets the rhgfake build and runs its tests on Windows.
   native-lib:
     name: native-lib (${{ matrix.suffix }})
     timeout-minutes: 30
@@ -129,8 +129,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-26
-            suffix: darwin-arm64
           - os: windows-latest
             suffix: windows-amd64
     runs-on: ${{ matrix.os }}
@@ -152,6 +150,49 @@ jobs:
         run: go test -tags rhgfake -count=1 ./buildinfo/... ./service/... ./host/... ./cmd/...
       - name: Build both library variants and run the C smoke test
         run: bash scripts/rhgcore-smoke.sh
+
+  # The native macOS app (SwiftUI over the rhgcore C library): the library
+  # built and smoke-tested, the Swift package tested against its rhgfake
+  # variant, then the app bundle built against the release variant, ad-hoc
+  # signed and zipped. Interim and never a required check: no job needs it and
+  # its zip is a 7-day workflow artifact only, so release assets are unchanged.
+  # Swift comes from the runner's default Xcode (printed below).
+  macos-app:
+    name: macos-app
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Toolchain versions
+        run: |
+          uname -a
+          go version
+          cc --version
+          swift --version
+          xcodebuild -version
+          ls /Applications | grep -i xcode
+      - working-directory: go
+        run: go vet -tags rhgfake ./buildinfo/... ./service/... ./host/... ./cmd/...  # the packages the tag changes; build vets the rest
+      - name: Build both library variants and run the C smoke test
+        run: RHGCORE_VERSION="$GITHUB_REF_NAME" bash scripts/rhgcore-smoke.sh
+      - name: Swift tests (rhgfake library)
+        run: |
+          RHGCORE_LIB_DIR="$GITHUB_WORKSPACE/go/release/rhgcore/rhgfake" \
+            swift test --package-path macos --scratch-path macos/.build/lib-rhgfake
+      - name: Build the app (release library)
+        run: |
+          VERSION=0.0.0
+          if [ "$GITHUB_REF_TYPE" = tag ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          RHGCORE_LIB_DIR="$GITHUB_WORKSPACE/go/release/rhgcore/release" bash scripts/build-macos-app.sh "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: macos-app
+          path: release/macos-app/rhg-authenticator-darwin-arm64.zip
+          retention-days: 7
 
   build:
     # Explicit name → stable check contexts "build (darwin-arm64)" /

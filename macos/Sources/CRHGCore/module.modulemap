@@ -1,0 +1,4 @@
+module CRHGCore [system] {
+    header "shim.h"
+    export *
+}

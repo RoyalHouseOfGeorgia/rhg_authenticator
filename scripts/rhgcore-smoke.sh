@@ -57,10 +57,12 @@ link_flags() {
 }
 
 # build_variant builds variant $1 ("release" or "rhgfake") with tags $2 into
-# $OUT_BASE/$1.
+# $OUT_BASE/$1. It also deletes the Swift package's scratch path for the
+# variant, macos/.build/lib-$1: SwiftPM does not relink when only the archive
+# changes.
 build_variant() {
 	local name="$1" tags="$2" out="$OUT_BASE/$1"
-	rm -rf "$out"
+	rm -rf "$out" "$ROOT/macos/.build/lib-$1"
 	mkdir -p "$out"
 	echo "== build $name ($OS)"
 	if [ "$OS" = windows ]; then
