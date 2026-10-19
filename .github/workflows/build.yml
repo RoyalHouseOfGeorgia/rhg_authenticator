@@ -167,6 +167,10 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
+      # Pinned so a runner image's default-Xcode change cannot change the
+      # Swift compiler or SDK under us; bump deliberately.
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
       - name: Toolchain versions
         run: |
           uname -a
@@ -174,7 +178,6 @@ jobs:
           cc --version
           swift --version
           xcodebuild -version
-          ls /Applications | grep -i xcode
       - working-directory: go
         run: go vet -tags rhgfake ./buildinfo/... ./service/... ./host/... ./cmd/...  # the packages the tag changes; build vets the rest
       - name: Build both library variants and run the C smoke test
