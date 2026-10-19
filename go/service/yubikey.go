@@ -52,7 +52,7 @@ func formatKeyResult(result keyCheckResult) KeyCheck {
 			// fails with errNoPINForKeyRead (see noPIN) and lands here.
 			status = "Failed to read YubiKey"
 		}
-		return KeyCheck{Result: KeyCheckFailed, Status: status}
+		return KeyCheck{Outcome: KeyCheckFailed, Status: status}
 	}
 
 	if result.Found && result.Entry != nil {
@@ -70,11 +70,11 @@ func formatKeyResult(result keyCheckResult) KeyCheck {
 		if note := strings.TrimSpace(result.Entry.Note); note != "" {
 			details = append(details, "Note: "+result.Entry.Note)
 		}
-		return KeyCheck{Result: KeyCheckFound, Status: status, Details: details}
+		return KeyCheck{Outcome: KeyCheckFound, Status: status, Details: details}
 	}
 
 	return KeyCheck{
-		Result:  KeyCheckNotFound,
+		Outcome: KeyCheckNotFound,
 		Status:  "Key NOT found in registry",
 		Details: []string{"Fingerprint: " + result.Fingerprint},
 	}

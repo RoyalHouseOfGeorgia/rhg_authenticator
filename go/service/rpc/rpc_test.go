@@ -475,11 +475,11 @@ func TestSign_Existing(t *testing.T) {
 	env := h.call(t, "sign.sign", validSign)
 	var res service.SignResult
 	env.ok(t, &res)
-	if !res.Existing || res.Recipient != "Jane Doe" || res.Hash8 != rec.PayloadSHA256[:8] ||
-		!strings.HasPrefix(string(res.PNGPreview), "\x89PNG") || res.SVGFilename == "" || res.PNGFilename == "" || res.URL == "" {
+	if !res.Existing || res.Recipient != "Jane Doe" || !strings.Contains(res.SVGFilename, "-"+rec.PayloadSHA256[:8]+"-") ||
+		!strings.HasPrefix(string(res.PNGPreview), "\x89PNG") || res.PNGFilename == "" || res.URL == "" {
 		t.Errorf("result = %+v", res)
 	}
-	for _, key := range []string{`"url":`, `"hash8":`, `"pngPreview":"`, `"svgFilename":`, `"pngFilename":`} {
+	for _, key := range []string{`"url":`, `"pngPreview":"`, `"svgFilename":`, `"pngFilename":`} {
 		if !strings.Contains(string(env.Result), key) {
 			t.Errorf("result lacks %s: %.200s", key, env.Result)
 		}

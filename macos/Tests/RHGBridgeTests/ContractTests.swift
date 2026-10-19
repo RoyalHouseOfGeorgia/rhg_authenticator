@@ -73,7 +73,7 @@ struct MethodContract {
             }
         case .yubikeyCheck:
             MethodContract(Empty.self, KeyCheck.self) {
-                ($0.result.rawValue, KeyCheckResult.known.contains($0.result))
+                ($0.outcome.rawValue, KeyCheckResult.known.contains($0.outcome))
             }
         }
     }

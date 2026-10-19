@@ -168,7 +168,7 @@ func signResult(
 ) -> SignResult {
     SignResult(
         recipient: recipient, honor: honor, detail: detail, date: date,
-        url: "https://verify.royalhouseofgeorgia.ge/?p=abc", hash8: "0123abcd", existing: existing,
+        url: "https://verify.royalhouseofgeorgia.ge/?p=abc", existing: existing,
         pngPreview: Data([0x89, 0x50, 0x4E, 0x47]), warning: warning,
         svgFilename: "rhg-0123abcd.svg", pngFilename: "rhg-0123abcd.png")
 }

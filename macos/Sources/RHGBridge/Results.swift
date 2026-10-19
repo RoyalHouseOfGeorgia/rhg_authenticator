@@ -48,7 +48,6 @@ public struct SignResult: Codable, Sendable, Equatable {
     public var date: String
     /// The verification URL the QR code encodes.
     public var url: String
-    public var hash8: String
     /// The credential was already in the issuance log; nothing was signed.
     public var existing: Bool
     /// PNG of the QR code (base64 in JSON).
@@ -60,15 +59,14 @@ public struct SignResult: Codable, Sendable, Equatable {
     public var pngFilename: String
 
     public init(
-        recipient: String, honor: String, detail: String, date: String, url: String, hash8: String,
-        existing: Bool, pngPreview: Data, warning: String, svgFilename: String, pngFilename: String
+        recipient: String, honor: String, detail: String, date: String, url: String, existing: Bool,
+        pngPreview: Data, warning: String, svgFilename: String, pngFilename: String
     ) {
         self.recipient = recipient
         self.honor = honor
         self.detail = detail
         self.date = date
         self.url = url
-        self.hash8 = hash8
         self.existing = existing
         self.pngPreview = pngPreview
         self.warning = warning
@@ -504,14 +502,14 @@ public enum KeyCheckResult: RawRepresentable, Codable, Sendable, Hashable {
 
 /// yubikey.check.
 public struct KeyCheck: Codable, Sendable, Equatable {
-    public var result: KeyCheckResult
+    public var outcome: KeyCheckResult
     /// Display only.
     public var status: String
     /// Display only.
     public var details: [String]
 
-    public init(result: KeyCheckResult, status: String, details: [String]) {
-        self.result = result
+    public init(outcome: KeyCheckResult, status: String, details: [String]) {
+        self.outcome = outcome
         self.status = status
         self.details = details
     }

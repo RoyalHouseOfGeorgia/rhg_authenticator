@@ -207,7 +207,7 @@ func TestConfigure_OnlineSignRoundTrip(t *testing.T) {
 	// The fake card's key is the registry's active key.
 	var check service.KeyCheck
 	h.call(t, "yubikey.check", ``).ok(t, &check)
-	if check.Result != service.KeyCheckFound {
+	if check.Outcome != service.KeyCheckFound {
 		t.Errorf("yubikey.check = %+v, want found", check)
 	}
 
@@ -383,7 +383,7 @@ func TestYubiKey(t *testing.T) {
 	h := newHarness(t, nil)
 	var kc service.KeyCheck
 	h.call(t, "yubikey.check", ``).ok(t, &kc)
-	if kc.Result != service.KeyCheckNotFound || len(kc.Details) != 1 {
+	if kc.Outcome != service.KeyCheckNotFound || len(kc.Details) != 1 {
 		t.Errorf("yubikey.check = %+v, want notFound with the fingerprint", kc)
 	}
 	var r struct{ PublicKey string }

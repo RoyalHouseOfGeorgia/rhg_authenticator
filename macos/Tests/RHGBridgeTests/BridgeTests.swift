@@ -272,7 +272,7 @@ struct InitializerTests {
             signed
                 == SignResult(
                     recipient: "Jane Doe", honor: "Ennoblement", detail: "For service", date: "2026-01-02", url: signed.url,
-                    hash8: "da93dff4", existing: true, pngPreview: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+                    existing: true, pngPreview: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
                     warning: "", svgFilename: "rhg-credential-2026-01-02-da93dff4-min3cm.svg",
                     pngFilename: "rhg-credential-2026-01-02-da93dff4-2048px.png"))
         let report: ReportResult = try result("sign.reportError/result.json")
@@ -328,6 +328,6 @@ struct InitializerTests {
         let submit: SubmitResult = try result("registry.submit/result.json")
         #expect(submit == SubmitResult(prNumber: 42, url: submit.url))
         let check: KeyCheck = try result("yubikey.check/result.notFound.json")
-        #expect(check == KeyCheck(result: .notFound, status: "Key NOT found in registry", details: check.details))
+        #expect(check == KeyCheck(outcome: .notFound, status: "Key NOT found in registry", details: check.details))
     }
 }

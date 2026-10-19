@@ -486,8 +486,8 @@ func buildContract(t *testing.T) *contract {
 	}
 	fp := sha256.Sum256(key)
 	c.encoded("yubikey.check", empty, service.KeyCheck{
-		Result: service.KeyCheckFound,
-		Status: "Key found in registry",
+		Outcome: service.KeyCheckFound,
+		Status:  "Key found in registry",
 		Details: []string{
 			"Authority: A",
 			"Valid from: 2025-Jan-01",
@@ -497,7 +497,7 @@ func buildContract(t *testing.T) *contract {
 		},
 	})
 	c.variant("yubikey.check", string(service.KeyCheckNotFound), service.KeyCheck{
-		Result:  service.KeyCheckNotFound,
+		Outcome: service.KeyCheckNotFound,
 		Status:  "Key NOT found in registry",
 		Details: []string{"Fingerprint: " + hex.EncodeToString(fp[:])},
 	})
@@ -799,7 +799,7 @@ func checkCompleteness(t *testing.T, c *contract) {
 		values        []string
 	}{
 		{"bulk.run", "stopped", []string{string(service.BulkCompleted), string(service.BulkCancelled), string(service.BulkFailed)}},
-		{"yubikey.check", "result", []string{string(service.KeyCheckFound), string(service.KeyCheckNotFound), string(service.KeyCheckFailed)}},
+		{"yubikey.check", "outcome", []string{string(service.KeyCheckFound), string(service.KeyCheckNotFound), string(service.KeyCheckFailed)}},
 		{"history.revoke", "status", []string{string(service.RevokeSubmitted), string(service.RevokeAlreadyRevoked), string(service.RevokePending)}},
 	} {
 		dir := "methods/" + e.method + "/"

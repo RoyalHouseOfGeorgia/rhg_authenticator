@@ -1,1 +1,1 @@
-{"ok":true,"result":{"details":["Fingerprint: ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9"],"result":"notFound","status":"Key NOT found in registry"}}
+{"ok":true,"result":{"details":["Fingerprint: ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9"],"outcome":"notFound","status":"Key NOT found in registry"}}

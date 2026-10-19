@@ -27,7 +27,7 @@ func TestFormatKeyResult_Found(t *testing.T) {
 		Entry:       entry,
 	}
 	kc := formatKeyResult(result)
-	outcome, status, details := kc.Result, kc.Status, kc.Details
+	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFound {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFound)
 	}
@@ -74,7 +74,7 @@ func TestFormatKeyResult_NotFound(t *testing.T) {
 		Fingerprint: "deadbeef" + strings.Repeat("00", 28),
 	}
 	kc := formatKeyResult(result)
-	outcome, status, details := kc.Result, kc.Status, kc.Details
+	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckNotFound {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckNotFound)
 	}
@@ -92,7 +92,7 @@ func TestFormatKeyResult_NotFound(t *testing.T) {
 func TestFormatKeyResult_Error_PCSC(t *testing.T) {
 	result := keyCheckResult{Error: fmt.Errorf("yubikey: pcsc daemon not running")}
 	kc := formatKeyResult(result)
-	outcome, status, details := kc.Result, kc.Status, kc.Details
+	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFailed {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFailed)
 	}
@@ -107,7 +107,7 @@ func TestFormatKeyResult_Error_PCSC(t *testing.T) {
 func TestFormatKeyResult_Error_NoYubiKey(t *testing.T) {
 	result := keyCheckResult{Error: fmt.Errorf("yubikey: no YubiKey detected")}
 	kc := formatKeyResult(result)
-	outcome, status, details := kc.Result, kc.Status, kc.Details
+	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFailed {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFailed)
 	}
@@ -124,7 +124,7 @@ func TestFormatKeyResult_Error_Transient(t *testing.T) {
 	// "verify pin" appears in the wrapped error chain.
 	result := keyCheckResult{Error: errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid")}
 	kc := formatKeyResult(result)
-	outcome, status, details := kc.Result, kc.Status, kc.Details
+	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFailed {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFailed)
 	}
@@ -149,7 +149,7 @@ func TestFormatKeyResult_NoExpiry(t *testing.T) {
 		Entry:       entry,
 	}
 	kc := formatKeyResult(result)
-	outcome, status, details := kc.Result, kc.Status, kc.Details
+	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFound {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFound)
 	}

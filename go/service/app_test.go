@@ -470,13 +470,15 @@ func TestSign_SuccessReturnsCanonicalFields(t *testing.T) {
 	if res.Recipient != "Jos\u00e9" || res.Honor != "Other" || res.Detail != "Service" || res.Date != "2026-03-14" {
 		t.Errorf("canonical fields = %q %q %q %q", res.Recipient, res.Honor, res.Detail, res.Date)
 	}
-	if !strings.HasPrefix(res.URL, "https://") || len(res.Hash8) != 8 || res.Existing || len(res.PNGPreview) == 0 {
-		t.Errorf("unexpected result: URL=%q Hash8=%q Existing=%v png=%d", res.URL, res.Hash8, res.Existing, len(res.PNGPreview))
+	if !strings.HasPrefix(res.URL, "https://") || res.Existing || len(res.PNGPreview) == 0 {
+		t.Errorf("unexpected result: URL=%q Existing=%v png=%d", res.URL, res.Existing, len(res.PNGPreview))
 	}
-	if want := "rhg-credential-2026-03-14-" + res.Hash8 + "-min3cm.svg"; res.SVGFilename != want {
-		t.Errorf("SVGFilename = %q, want %q", res.SVGFilename, want)
+	// The file names carry the first 8 hex digits of the payload hash.
+	hash8 := strings.TrimSuffix(strings.TrimPrefix(res.SVGFilename, "rhg-credential-2026-03-14-"), "-min3cm.svg")
+	if len(hash8) != 8 || strings.Trim(hash8, "0123456789abcdef") != "" {
+		t.Errorf("SVGFilename = %q, want rhg-credential-2026-03-14-<8 hex>-min3cm.svg", res.SVGFilename)
 	}
-	if want := "rhg-credential-2026-03-14-" + res.Hash8 + "-2048px.png"; res.PNGFilename != want {
+	if want := "rhg-credential-2026-03-14-" + hash8 + "-2048px.png"; res.PNGFilename != want {
 		t.Errorf("PNGFilename = %q, want %q", res.PNGFilename, want)
 	}
 	names, _ := h.events.snapshot()
@@ -986,7 +988,7 @@ func TestApp_CheckYubiKey(t *testing.T) {
 	} {
 		h.app.reg, h.openErr = tc.reg, tc.openErr
 		kc, err := h.app.CheckYubiKey()
-		if err != nil || kc.Result != tc.result || kc.Status != tc.want {
+		if err != nil || kc.Outcome != tc.result || kc.Status != tc.want {
 			t.Errorf("%s: CheckYubiKey = %+v, %v; want %q with status %q", tc.name, kc, err, tc.result, tc.want)
 		}
 	}
@@ -999,7 +1001,7 @@ func TestApp_CheckYubiKey(t *testing.T) {
 	h.app.reg, h.app.registryFetched, h.openErr = core.Registry{}, false, nil
 	opens := h.opens
 	kc, err := h.app.CheckYubiKey()
-	if err != nil || kc.Result != KeyCheckFailed || kc.Status != msgRegistryUnavailable || h.opens != opens {
+	if err != nil || kc.Outcome != KeyCheckFailed || kc.Status != msgRegistryUnavailable || h.opens != opens {
 		t.Errorf("offline CheckYubiKey = %+v, %v (opens %d→%d)", kc, err, opens, h.opens)
 	}
 }

@@ -161,7 +161,6 @@ type SignResult struct {
 	Detail      string `json:"detail"`
 	Date        string `json:"date"`
 	URL         string `json:"url"`
-	Hash8       string `json:"hash8"`
 	Existing    bool   `json:"existing"`
 	PNGPreview  []byte `json:"pngPreview"` // base64 in JSON
 	Warning     string `json:"warning"`
@@ -242,9 +241,9 @@ const (
 )
 
 // KeyCheck is the result of a YubiKey registry check. Status and Details are
-// the user-facing text for Result.
+// the user-facing text for Outcome.
 type KeyCheck struct {
-	Result  KeyCheckResult `json:"result"`
+	Outcome KeyCheckResult `json:"outcome"`
 	Status  string         `json:"status"`
 	Details []string       `json:"details"`
 }
@@ -474,7 +473,6 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 		Detail:      norm.NFC.String(req.Detail),
 		Date:        req.Date,
 		URL:         res.Response.URL,
-		Hash8:       res.Hash8,
 		Existing:    res.Existing,
 		PNGPreview:  res.PNGPreview,
 		Warning:     warning,
@@ -714,7 +712,7 @@ func (a *App) CheckYubiKey() (KeyCheck, error) {
 	defer a.busy.Store(false)
 
 	if !a.registryFetched {
-		return KeyCheck{Result: KeyCheckFailed, Status: msgRegistryUnavailable}, nil
+		return KeyCheck{Outcome: KeyCheckFailed, Status: msgRegistryUnavailable}, nil
 	}
 
 	var res keyCheckResult
