@@ -118,7 +118,7 @@ public final class AppModel {
         let events = bridge.events
         eventTask = Task { [weak self] in
             for await event in events {
-                await self?.handle(event)
+                self?.handle(event)
             }
         }
         do {
@@ -134,10 +134,11 @@ public final class AppModel {
         phase = .ready
     }
 
-    /// Handles one event; the next waits for it, so events apply in order.
-    /// Handlers may await only fast local core calls (registry.snapshot): a
-    /// slow one delays every later event, pin.request included.
-    private func handle(_ event: BridgeEvent) async {
+    /// Handles one event, synchronously, so events apply in order and none
+    /// waits behind a core call (pin.request least of all). registry.changed
+    /// re-reads the snapshot in its own task; RegistryModel applies only the
+    /// latest read.
+    private func handle(_ event: BridgeEvent) {
         switch event {
         case .pinRequest(let request): pinPrompt.present(request)
         case .pinDismiss(let dismiss): pinPrompt.dismiss(requestId: dismiss.requestId)
@@ -151,7 +152,7 @@ public final class AppModel {
         case .updateUpdated(let notice): updatedNotice = notice
         case .authChanged(let state): login.authChanged(state)
         case .authDeviceCode(let code): login.showDeviceCode(code)
-        case .registryChanged: await registry.registryChanged()
+        case .registryChanged: Task { await registry.registryChanged() }
         default: break
         }
     }

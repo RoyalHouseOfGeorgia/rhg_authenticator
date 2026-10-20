@@ -124,7 +124,7 @@ struct AppModelTests {
         #expect(app.registry.status == "Logged in as @octocat")
     }
 
-    @Test("auth and registry events reach the login and the Registry tab, in order")
+    @Test("auth and registry events reach the login and the Registry tab")
     func authAndRegistryEvents() async {
         let fake = FakeBridge()
         let app = await startedApp(fake)
@@ -139,8 +139,7 @@ struct AppModelTests {
         fake.emit(.registryChanged)
         fake.emit(.authChanged(loggedIn))
         #expect(await settle { app.login.authState == loggedIn })
-        // registry.changed was handled before the auth.changed that followed it.
-        #expect(app.registry.snapshot == registrySnapshot(count: 3))
+        #expect(await settle { app.registry.snapshot == registrySnapshot(count: 3) })
         #expect(app.registry.selection == nil)
         #expect(app.login.deviceCode?.userCode == "ABCD-1234")
         held.release(loggedIn)

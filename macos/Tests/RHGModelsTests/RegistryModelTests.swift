@@ -116,7 +116,7 @@ struct RegistryModelTests {
         #expect(registry.status == "Loaded from registry server")
     }
 
-    @Test("an older snapshot read finishing last is dropped")
+    @Test("an older snapshot read finishing last is dropped, status included")
     func staleSnapshot() async throws {
         let fake = FakeBridge()
         let registry = try await loaded(fake)
@@ -126,9 +126,13 @@ struct RegistryModelTests {
         #expect(await settle { fake.count(.registrySnapshot) == 2 })
         await registry.registryChanged()
         #expect(registry.snapshot == registrySnapshot(count: 4))
+        // A status set after the newer read stays when the older one lands.
+        registry.select(row: 3, column: 1)
+        #expect(registry.status == "Authority 4")
         first.release(registrySnapshot(count: 1))
         await older.value
         #expect(registry.snapshot == registrySnapshot(count: 4))
+        #expect(registry.status == "Authority 4")
     }
 
     // MARK: Fetch

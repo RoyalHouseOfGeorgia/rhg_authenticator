@@ -84,20 +84,26 @@ public final class RegistryModel {
     /// registry.changed: a fetch (or the startup load) replaced the registry.
     func registryChanged() async {
         selection = nil
-        await refresh()
+        guard await refresh() else { return }
         status = snapshot.loaded ? Self.loadedStatus : Self.loadFailedStatus
     }
 
     /// Re-reads the snapshot, keeping the selection while its row exists. A
-    /// failed read keeps the current table.
-    private func refresh() async {
+    /// failed read keeps the current table. Returns false when a newer read
+    /// started meanwhile; its result is then dropped.
+    @discardableResult
+    private func refresh() async -> Bool {
         snapshotReads += 1
         let read = snapshotReads
-        guard let latest = try? await bridge.registrySnapshot(), read == snapshotReads else { return }
-        snapshot = latest
-        if let selection, selection.row >= snapshot.rows.count {
-            self.selection = nil
+        let latest = try? await bridge.registrySnapshot()
+        guard read == snapshotReads else { return false }
+        if let latest {
+            snapshot = latest
+            if let selection, selection.row >= snapshot.rows.count {
+                self.selection = nil
+            }
         }
+        return true
     }
 
     /// The operator selected a table cell: its text, if any, goes to the
