@@ -115,7 +115,7 @@ struct MainCLITests {
     // calls runMainCLI first as the app does.
     @Test("--version prints the core's version and exits 0", .timeLimit(.minutes(1)))
     func version() async throws {
-        let (status, lines) = try await runFlow(["--version"])
+        let (status, lines) = try await runFlow(["--version"], timeout: 50)
         #expect(status == 0)
         #expect(lines.count == 1)
         #expect(lines.first?.hasSuffix("(rhgfake)") == true, "\(lines)")
@@ -123,7 +123,7 @@ struct MainCLITests {
 
     @Test("--verify-update-zip without a zip is a usage error", .timeLimit(.minutes(1)))
     func verifyUsage() async throws {
-        let (status, lines) = try await runFlow(["--verify-update-zip"])
+        let (status, lines) = try await runFlow(["--verify-update-zip"], timeout: 50)
         #expect(status > 0)
         #expect(!lines.isEmpty)
         #expect(!lines.contains { $0.hasPrefix("usage: RHGFlowRunner") })
@@ -136,7 +136,7 @@ struct LiveBridgeFlowTests {
         "each scenario passes against the rhgfake library",
         .timeLimit(.minutes(2)),
         arguments: [
-            ("offline", ["no pin.request when offline", "test.panic is an internal error", "app.canQuit after a panic"]),
+            ("offline", ["sign.sign offline is refused", "test.panic is an internal error", "app.canQuit after a panic"]),
             ("online", [
                 "sign.sign with the PIN submitted", "sign.connecting", "pin.submit with a stale requestId",
                 "Georgian recipient round-trips byte for byte", "NFD recipient is signed as NFC bytes",
@@ -145,6 +145,14 @@ struct LiveBridgeFlowTests {
             ("pinCancel", ["pin.cancel", "sign.sign with the PIN cancelled"]),
             ("pinTimeout", [
                 "sign.sign fails when the PIN prompt times out", "pin.dismiss withdraws the timed-out request",
+            ]),
+            ("bulk", [
+                "bulk.load plans 2 rows to sign and 1 invalid row", "bulk.cancel",
+                "bulk.cancel at the PIN prompt stops the run as cancelled",
+                "pin.dismiss withdraws the cancelled run's request", "no bulk.connecting without a PIN",
+                "the cancelled run signed nothing", "pin.submit", "bulk.run with the PIN submitted", "bulk.run completes",
+                "one PIN covers the whole run", "bulk.connecting before the first bulk.progress",
+                "bulk.progress counts the rows in order", "bulk.exportResults wrote the file",
             ]),
         ])
     func scenario(_ name: String, _ expected: [String]) async throws {
@@ -160,7 +168,7 @@ struct LiveBridgeFlowTests {
 
     @Test("an unknown scenario prints usage and exits 2", .timeLimit(.minutes(1)))
     func usage() async throws {
-        let (status, lines) = try await runFlow(["nope"])
+        let (status, lines) = try await runFlow(["nope"], timeout: 50)
         #expect(status == 2)
         #expect(lines.first?.hasPrefix("usage:") == true)
     }

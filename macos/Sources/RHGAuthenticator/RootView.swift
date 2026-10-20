@@ -47,12 +47,12 @@ struct FatalErrorView: View {
 /// The tabs, in the Fyne app's order, over the status bar.
 @MainActor
 struct ReadyView: View {
-    @Bindable var model: AppModel
+    let model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
             TabView {
-                SignView(sign: model.sign)
+                SignView(sign: model.sign, bulk: model.bulk, isSigningBusy: model.isSigningBusy)
                     .tabItem { Text("Sign") }
                 PlaceholderView()
                     .tabItem { Text("History") }
@@ -60,17 +60,20 @@ struct ReadyView: View {
                     .tabItem { Text("Registry") }
                 PlaceholderView()
                     .tabItem { Text("Audit") }
-                PlaceholderView()
+                YubiKeyView(model: model.yubiKey)
                     .tabItem { Text("YubiKey") }
             }
             .padding([.top, .horizontal])
             Divider()
             StatusBar(items: model.statusItems)
         }
-        .alert("Error", isPresented: $model.isShowingInternalError) {
-            Button("OK") {}
-        } message: {
-            Text(model.internalErrorMessage ?? "")
+        // An AppKit alert, so an internal error shows over a bulk sheet too.
+        .onChange(of: model.internalErrorMessage, initial: true) { _, message in
+            guard let message else { return }
+            Task {
+                await FilePanel.alert(AlertState(title: "Error", message: message))
+                model.internalErrorMessage = nil
+            }
         }
     }
 }
@@ -107,14 +110,26 @@ struct StatusBar: View {
     }
 }
 
-extension AppModel {
-    /// The internal-error alert's presentation; dismissing it clears the message.
-    var isShowingInternalError: Bool {
-        get { internalErrorMessage != nil }
-        set {
-            if !newValue {
-                internalErrorMessage = nil
-            }
+extension View {
+    /// Shows `state` as an alert with an OK button while it is non-nil and
+    /// `visible`; closing it calls `onDismiss`, which clears the state. One
+    /// alert per view: put a second one on a different view.
+    func alert(
+        _ state: AlertState?, when visible: Bool = true, onDismiss: @escaping @MainActor () -> Void
+    ) -> some View {
+        alert(
+            state?.title ?? "",
+            isPresented: Binding(
+                get: { state != nil && visible },
+                set: { presented in
+                    if !presented {
+                        MainActor.assumeIsolated { onDismiss() }
+                    }
+                })
+        ) {
+            Button("OK") {}
+        } message: {
+            Text(state?.message ?? "")
         }
     }
 }

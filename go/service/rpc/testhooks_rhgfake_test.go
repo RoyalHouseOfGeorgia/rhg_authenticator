@@ -364,7 +364,15 @@ func TestFakeBulk_BusyAndCancel(t *testing.T) {
 
 	done := goDispatch(h.srv, "bulk.run", ``)
 	h.sink.wait(t, EventPINRequest, 1)
-	h.call(t, "yubikey.check", ``).fails(t, CodeBusy, service.ErrBusy.Error())
+	busy := h.call(t, "yubikey.check", ``)
+	busy.fails(t, CodeBusy, service.ErrBusy.Error())
+	// errors/busy.json goes through the error encoder; pin it to this real
+	// envelope as errors/cancelled.json is pinned in TestFakeSign_PINCancelled.
+	var got, want any
+	if json.Unmarshal([]byte(busy.raw), &got) != nil || json.Unmarshal(readContract(t)["errors/busy.json"], &want) != nil ||
+		!reflect.DeepEqual(got, want) {
+		t.Errorf("yubikey.check busy = %s, want errors/busy.json", busy.raw)
+	}
 	h.call(t, "bulk.load", `{"path":`+jsonString(csv)+`}`).fails(t, CodeBusy, "")
 	h.call(t, "registry.importFromYubiKey", ``).fails(t, CodeBusy, "")
 	h.call(t, "bulk.cancel", ``).ok(t, nil)

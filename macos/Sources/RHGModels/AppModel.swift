@@ -15,6 +15,9 @@ public final class AppModel {
         case fatal(message: String)
     }
 
+    /// The Help menu's one item.
+    nonisolated public static let exportErrorLogTitle = "Export Error Log\u{2026}"
+
     /// Appended to a startup failure's message.
     nonisolated public static let reportSuffix =
         "\n\nPlease report this error at https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/issues"
@@ -30,6 +33,8 @@ public final class AppModel {
     public private(set) var updatedNotice: UpdatedNotice?
 
     public let sign: SignModel
+    public let bulk: BulkModel
+    public let yubiKey: YubiKeyModel
     public let pinPrompt: PINPromptModel
 
     /// Asked before quitting with unsubmitted registry edits; false keeps the
@@ -37,16 +42,49 @@ public final class AppModel {
     @ObservationIgnored public var confirmDiscard: @MainActor () async -> Bool = { true }
 
     @ObservationIgnored private let bridge: any Bridge
+    @ObservationIgnored private let clock: () -> Date
+    @ObservationIgnored private let timeZone: TimeZone
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var quitTask: Task<Bool, Never>?
 
+    /// `clock` is now and `timeZone` the machine's zone; tests inject both.
     public init(
-        bridge: any Bridge, clock: () -> Date = Date.init,
+        bridge: any Bridge, clock: @escaping () -> Date = Date.init, timeZone: TimeZone = .current,
         openURL: @escaping @MainActor (URL) -> Void = { _ in }
     ) {
         self.bridge = bridge
+        self.clock = clock
+        self.timeZone = timeZone
         sign = SignModel(bridge: bridge, clock: clock, openURL: openURL)
+        bulk = BulkModel(bridge: bridge)
+        yubiKey = YubiKeyModel(bridge: bridge)
         pinPrompt = PINPromptModel(bridge: bridge)
+    }
+
+    /// A signing or a bulk flow is under way: Sign Credential and Bulk Sign
+    /// are both disabled. The core's busy flag is the real guard.
+    public var isSigningBusy: Bool { sign.isBusy || bulk.isActive }
+
+    /// The error log's suggested file name, rhg-error-log-YYYY-MM-DD.log, by
+    /// today's date in the machine's time zone.
+    public var suggestedErrorLogFilename: String {
+        "rhg-error-log-\(DisplayDate.ymd(clock(), in: timeZone)).log"
+    }
+
+    /// Export Error Log…: writes the diagnostic log to `path`, the file the
+    /// operator chose (app.exportErrorLog), and returns the alert saying where
+    /// it went or why it failed. The caller shows it over whatever window is
+    /// on top, so it appears even while a sheet is up.
+    public func exportErrorLog(path: String) async -> AlertState {
+        do {
+            try await bridge.exportErrorLog(path: path)
+        } catch {
+            return .error(error)
+        }
+        return AlertState(
+            title: "Error Log Exported",
+            message: "Saved to:\n\(path)\n\nYou can attach this file to an email. It contains app diagnostics"
+                + " (may include your GitHub username and file paths) \u{2014} no PINs or keys.")
     }
 
     /// The status bar: "Active keys: N", "Expired (30d): N" and "Version X"
@@ -87,6 +125,10 @@ public final class AppModel {
         case .pinRequest(let request): pinPrompt.present(request)
         case .pinDismiss(let dismiss): pinPrompt.dismiss(requestId: dismiss.requestId)
         case .signConnecting: sign.signConnecting()
+        case .bulkProgress(let progress): bulk.bulkProgress(progress)
+        // The bulk sheet is up from confirm on, so the PIN being resolved
+        // changes nothing on screen.
+        case .bulkConnecting: break
         case .appInternalError: internalErrorMessage = RPCError.badResponse.message
         case .updateStatus(let status): updateStatus = status
         case .updateUpdated(let notice): updatedNotice = notice

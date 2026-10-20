@@ -11,6 +11,11 @@ public struct AlertState: Sendable, Equatable {
         self.title = title
         self.message = message
     }
+
+    /// A core error, shown as-is under the title "Error".
+    public static func error(_ error: RPCError) -> AlertState {
+        AlertState(title: "Error", message: error.message)
+    }
 }
 
 /// The "Report Issue" button of a failed signing.
@@ -147,11 +152,13 @@ public final class SignModel {
     }
 
     /// Report Issue: files the failure (sign.reportError), opening the URL
-    /// the core returns, if any.
+    /// the core returns, if any. A failure shows the core's message and
+    /// leaves the button enabled.
     public func reportIssue() async {
         guard case .available(let reportId) = report else { return }
         report = .reporting(reportId: reportId)
         let filed: Bool
+        var failure: RPCError?
         do {
             let outcome = try await bridge.reportError(reportId: reportId)
             if !outcome.url.isEmpty, let url = URL(string: outcome.url) {
@@ -159,11 +166,15 @@ public final class SignModel {
             }
             filed = outcome.filed
         } catch {
+            failure = error
             filed = false
         }
-        // A new signing meanwhile replaced the report state.
+        // A new signing meanwhile replaced the report state (and its alert).
         guard report == .reporting(reportId: reportId) else { return }
         report = filed ? .reported : .available(reportId: reportId)
+        if let failure {
+            alert = .error(failure)
+        }
     }
 
     /// The suggested file name for saving the result's QR code as `format`.
@@ -181,7 +192,7 @@ public final class SignModel {
         do {
             try await bridge.saveQR(url: result.url, format: format, path: path)
         } catch {
-            alert = AlertState(title: "Error", message: error.message)
+            alert = .error(error)
         }
     }
 }

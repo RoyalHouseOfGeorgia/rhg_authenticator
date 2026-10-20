@@ -23,9 +23,11 @@ public enum DisplayDate {
         return "\(parts[0])-\(months[month - 1])-\(parts[2])"
     }
 
-    /// The UTC calendar date of `date` as YYYY-MM-DD.
-    public static func ymd(_ date: Date) -> String {
-        let c = utcCalendar.dateComponents([.year, .month, .day], from: date)
+    /// The calendar date of `date` in `timeZone` (UTC by default) as YYYY-MM-DD.
+    public static func ymd(_ date: Date, in timeZone: TimeZone = utcCalendar.timeZone) -> String {
+        var calendar = utcCalendar
+        calendar.timeZone = timeZone
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
     }
 }

@@ -637,7 +637,7 @@ Without -update the test fails on any missing, extra or changed file.
   the event callback. update.status has one file per state:
   events/update.status.<state>.json.
 - methods/<method>/result.<value>.json: for a result enum clients decode
-  (bulk.run stopped, yubikey.check result, history.revoke status), result.json
+  (bulk.run stopped, yubikey.check outcome, history.revoke status), result.json
   holds the first value and one file per other value holds the rest, through
   the success encoder. bulk.run/result.json is a run of a second,
   nothing-to-sign load, not of the recorded bulk.load plan.
@@ -650,7 +650,7 @@ Without -update the test fails on any missing, extra or changed file.
 ## What clients may branch on
 
 Clients branch only on ok, the error code and offerReport, and on typed
-fields: booleans, enums (update state, bulk stopped, key-check result, revoke
+fields: booleans, enums (update state, bulk stopped, key-check outcome, revoke
 status), numbers and ids. CodeFailed means "show the message"; "input" always
 means a host programming error.
 

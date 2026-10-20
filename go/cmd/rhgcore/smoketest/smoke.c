@@ -134,9 +134,11 @@ int main(int argc, char **argv) {
 	pass("RHGFree(NULL)");
 
 	if (!fake) {
-		/* The test build's methods must not exist in a release library. */
-		expect("no test.configure in a release build", "test.configure", "{}", "\"code\":\"input\"", "Unknown method.");
-		expect("no test.panic in a release build", "test.panic", "{}", "\"code\":\"input\"", "Unknown method.");
+		/* The test build's methods must not exist in a release library: with
+		   valid params, input can only mean an unknown method. Messages are
+		   render-only, so only the code is checked. */
+		expect("no test.configure in a release build", "test.configure", "{}", "\"ok\":false", "\"code\":\"input\"");
+		expect("no test.panic in a release build", "test.panic", "{}", "\"ok\":false", "\"code\":\"input\"");
 	}
 
 	if (fake) {
@@ -158,8 +160,7 @@ int main(int argc, char **argv) {
 		} else {
 			expect("test.configure offline", "test.configure", "{\"online\":false}", "\"ok\":true", NULL);
 			expect("app.init offline", "app.init", params, "\"ok\":true", "\"online\":false");
-			expect("sign.sign offline fails", "sign.sign", sign_params, "\"code\":\"failed\"",
-			       "the key registry could not be downloaded");
+			expect("sign.sign offline fails", "sign.sign", sign_params, "\"ok\":false", "\"code\":\"failed\"");
 			if (pins_requested != 0) {
 				fail("no pin.request when offline", "a pin.request");
 			}

@@ -102,25 +102,17 @@ func findExistingIssuance(payload []byte, logPath string) (core.SignResponse, bo
 		return core.SignResponse{}, false, fmt.Errorf("%w: %w", errIssuanceLogUnreadable, err)
 	}
 
-	for _, rec := range records {
-		if !strings.EqualFold(rec.PayloadSHA256, hash) {
-			continue
-		}
-		// A malformed stored signature is never reused; a later valid match
-		// or a fresh signature takes its place.
-		if !issuancelog.SignatureWellFormed(rec.SignatureB64URL) {
-			continue
-		}
-		payloadB64 := core.Encode(payload)
-		return core.SignResponse{
-			Signature:     rec.SignatureB64URL,
-			Payload:       payloadB64,
-			URL:           core.BuildVerifyURL(payloadB64, rec.SignatureB64URL),
-			PayloadSHA256: hash,
-		}, true, nil
+	sig, ok := issuedSignatures(records)[hash]
+	if !ok {
+		return core.SignResponse{}, false, nil
 	}
-
-	return core.SignResponse{}, false, nil
+	payloadB64 := core.Encode(payload)
+	return core.SignResponse{
+		Signature:     sig,
+		Payload:       payloadB64,
+		URL:           core.BuildVerifyURL(payloadB64, sig),
+		PayloadSHA256: hash,
+	}, true, nil
 }
 
 // signAndLog opens the adapter with a pre-resolved PIN, exports the public
@@ -331,11 +323,11 @@ func validateSignForm(recipient, honor, detail, date string) error {
 
 // buildFilename constructs a default filename for saving QR code output.
 // Format: rhg-credential-<date>-<hash8>-<suffix>.<ext>
-// where suffix is "min3cm" for SVG and "2048px" for PNG.
+// where suffix is "min3cm" for SVG and the saved size ("2048px") for PNG.
 func buildFilename(date, hash8, ext string) string {
 	suffix := "min3cm"
 	if ext == "png" {
-		suffix = "2048px"
+		suffix = fmt.Sprintf("%dpx", qrSavePx)
 	}
 	return fmt.Sprintf("rhg-credential-%s-%s-%s.%s", date, hash8, suffix, ext)
 }

@@ -209,7 +209,7 @@ func TestExecuteSignFlow_PINSentinelsSurviveAndClassify(t *testing.T) {
 			if keyReads != 1 || signOpens != 0 {
 				t.Errorf("keyReads=%d signOpens=%d, want 1 and 0: the signing open must not follow a readPin error", keyReads, signOpens)
 			}
-			if got := signFlowErrorMessage(err, logger); tc.wantMsgPart != "" && !strings.Contains(got, tc.wantMsgPart) {
+			if got := signFlowErrorMessage(err); tc.wantMsgPart != "" && !strings.Contains(got, tc.wantMsgPart) {
 				t.Errorf("signFlowErrorMessage = %q, want substring %q", got, tc.wantMsgPart)
 			}
 		})

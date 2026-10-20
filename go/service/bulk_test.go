@@ -1,11 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,12 +43,13 @@ func (a *authErrSignAdapter) SignBytes(data []byte) ([]byte, error) {
 // keyReadsOpen the key reads not yet closed: readPin fails while one is open,
 // since no card handle may be held across PIN entry.
 type bulkHarness struct {
-	logPath  string
-	logger   *debuglog.Logger
-	priv     ed25519.PrivateKey
-	opens    int
-	keyReads int
-	pinReads int
+	logPath      string
+	debugLogPath string
+	logger       *debuglog.Logger
+	priv         ed25519.PrivateKey
+	opens        int
+	keyReads     int
+	pinReads     int
 
 	keyReadsOpen int
 	pinErr       error
@@ -60,14 +63,23 @@ func newBulkHarness(t *testing.T) *bulkHarness {
 		t.Fatalf("GenerateKey: %v", err)
 	}
 	dir := t.TempDir()
+	debugLogPath := filepath.Join(dir, "debug.log")
 	return &bulkHarness{
-		logPath: filepath.Join(dir, "issuances.json"),
-		logger:  debuglog.New(filepath.Join(dir, "debug.log")),
-		priv:    priv,
+		logPath:      filepath.Join(dir, "issuances.json"),
+		debugLogPath: debugLogPath,
+		logger:       debuglog.New(debugLogPath),
+		priv:         priv,
 		newSigner: func(k ed25519.PrivateKey) core.SigningAdapter {
 			return &mockSignAdapter{secretKey: k}
 		},
 	}
+}
+
+// debugLog returns the debug log's contents ("" if nothing was logged).
+func (h *bulkHarness) debugLog(t *testing.T) string {
+	t.Helper()
+	data, _ := os.ReadFile(h.debugLogPath)
+	return string(data)
 }
 
 func (h *bulkHarness) openAdapter(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
@@ -277,6 +289,57 @@ func TestBulkFlow_WrongPINStops(t *testing.T) {
 	if h.opens != 1 {
 		t.Errorf("openAdapter called %d times, want 1", h.opens)
 	}
+	// The failure is logged once, where it happened, though it is described
+	// for its row and again for the stop message.
+	log := h.debugLog(t)
+	if n := strings.Count(log, "\n"); n != 1 || !strings.Contains(log, "HandleSign") {
+		t.Errorf("debug log has %d lines, want 1 (the HandleSign failure):\n%s", n, log)
+	}
+}
+
+// A logged record counts as the issued credential only with a well-formed
+// signature, its hash matched case-insensitively and the first such record
+// winning, as in Sign's duplicate check.
+func TestLoadBulkPlan_IssuedSignatureRules(t *testing.T) {
+	sig := func(b byte) string { return core.Encode(bytes.Repeat([]byte{b}, ed25519.SignatureSize)) }
+	const malformed = "not-a-signature"
+	cases := []struct {
+		name    string
+		logged  []string // signatures logged for row 0's hash, in order
+		upper   bool     // log the hash in upper case
+		wantSig string   // "" when row 0 is still to sign
+	}{
+		{"malformed only", []string{malformed}, false, ""},
+		{"malformed then valid", []string{malformed, sig(1)}, false, sig(1)},
+		{"valid then malformed", []string{sig(1), malformed}, false, sig(1)},
+		{"first valid wins", []string{sig(1), sig(2)}, false, sig(1)},
+		{"upper-case hash", []string{sig(3)}, true, sig(3)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newBulkHarness(t)
+			hash := h.plan(t, threeRowCSV)[0].Hash
+			if tc.upper {
+				hash = strings.ToUpper(hash)
+			}
+			for _, s := range tc.logged {
+				rec := issuancelog.IssuanceRecord{Timestamp: "2026-03-14T00:00:00Z", PayloadSHA256: hash, SignatureB64URL: s}
+				if err := issuancelog.AppendRecord(h.logPath, rec); err != nil {
+					t.Fatalf("AppendRecord: %v", err)
+				}
+			}
+			row := h.plan(t, threeRowCSV)[0]
+			if tc.wantSig == "" {
+				if row.Status != bulk.StatusToSign {
+					t.Errorf("Status = %q, want to_sign", row.Status)
+				}
+				return
+			}
+			if row.Status != bulk.StatusAlreadyIssued || !strings.HasSuffix(row.URL, tc.wantSig) {
+				t.Errorf("Status = %q, URL = %q, want already_issued ending in %q", row.Status, row.URL, tc.wantSig)
+			}
+		})
+	}
 }
 
 func TestLoadBulkPlan_UnreadableLogRefuses(t *testing.T) {
@@ -330,7 +393,7 @@ func TestBulkFlow_LogAppendFailureStopsBatch(t *testing.T) {
 		t.Errorf("row 0 Err = %q", results[0].Err)
 	}
 	assertCountsInvariant(t, results)
-	if msg := bulkStopMessage(bulkStop(err), err, h.logger); !strings.HasPrefix(msg, "Batch stopped: Credential signed but NOT recorded") {
+	if msg := bulkStopMessage(bulkStop(err), err); !strings.HasPrefix(msg, "Batch stopped: Credential signed but NOT recorded") {
 		t.Errorf("bulkStopMessage = %q", msg)
 	}
 }
@@ -377,7 +440,7 @@ func TestBulkFlow_CancelDuringProgress(t *testing.T) {
 	}
 	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusSigned, bulk.StatusNotAttempted)
 	assertCountsInvariant(t, results)
-	if msg := bulkStopMessage(bulkStop(err), err, h.logger); msg != "Cancelled." {
+	if msg := bulkStopMessage(bulkStop(err), err); msg != "Cancelled." {
 		t.Errorf("bulkStopMessage = %q, want Cancelled.", msg)
 	}
 	if n := h.logCount(t); n != 2 {
@@ -386,17 +449,16 @@ func TestBulkFlow_CancelDuringProgress(t *testing.T) {
 }
 
 func TestBulkStopMessage(t *testing.T) {
-	logger := debuglog.New(filepath.Join(t.TempDir(), "debug.log"))
-	if got := bulkStopMessage(bulkStop(nil), nil, logger); got != "" {
+	if got := bulkStopMessage(bulkStop(nil), nil); got != "" {
 		t.Errorf("nil: got %q, want empty", got)
 	}
-	if got := bulkStopMessage(BulkCancelled, context.Canceled, logger); got != "Cancelled." {
+	if got := bulkStopMessage(BulkCancelled, context.Canceled); got != "Cancelled." {
 		t.Errorf("context.Canceled: got %q", got)
 	}
-	if got := bulkStopMessage(BulkCancelled, errSigningCancelled, logger); got != "Cancelled." {
+	if got := bulkStopMessage(BulkCancelled, errSigningCancelled); got != "Cancelled." {
 		t.Errorf("errSigningCancelled: got %q", got)
 	}
-	if got := bulkStopMessage(BulkFailed, errors.New("something odd"), logger); !strings.HasPrefix(got, "Batch stopped: ") {
+	if got := bulkStopMessage(BulkFailed, errors.New("something odd")); !strings.HasPrefix(got, "Batch stopped: ") {
 		t.Errorf("generic: got %q, want 'Batch stopped: ' prefix", got)
 	}
 }

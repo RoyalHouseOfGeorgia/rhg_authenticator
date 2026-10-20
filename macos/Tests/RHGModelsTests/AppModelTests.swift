@@ -139,6 +139,64 @@ struct AppModelTests {
         #expect(await settle { app.pinPrompt.request == nil })
     }
 
+    @Test("a pin.request while bulk.run runs shows the PIN prompt")
+    func pinDuringBulk() async {
+        let fake = FakeBridge()
+        fake.respond(.bulkLoad, BulkLoadResult(toSign: 1, countsLine: "", previewNames: ["A"], invalidLines: []))
+        let held = fake.hold(.bulkRun)
+        let app = await startedApp(fake)
+        app.bulk.begin()
+        await app.bulk.fileChosen(path: "/in/x.csv")
+        let running = Task { await app.bulk.confirm() }
+        #expect(await settle { fake.count(.bulkRun) == 1 })
+        fake.emit(.pinRequest(PINRequest(requestId: 11, rememberDefault: false, maxBytes: 8)))
+        #expect(await settle { app.pinPrompt.request?.requestId == 11 })
+        // The progress sheet stays up under the prompt.
+        #expect(app.bulk.phase == .running(BulkModel.Run()) && app.bulk.isShowingSheet)
+        app.pinPrompt.pin = "123456"
+        await app.pinPrompt.submit()
+        #expect(fake.params(.pinSubmit) == [#"{"pin":"123456","remember":false,"requestId":11}"#])
+        #expect(app.pinPrompt.request == nil)
+        let outcome = BulkRunResult(stopped: .completed, summaryLine: "", stopMessage: "", failedLines: [], resultsFilename: "")
+        held.release(outcome)
+        await running.value
+        #expect(app.bulk.phase == .results(plan: BulkLoadResult(toSign: 1, countsLine: "", previewNames: ["A"], invalidLines: []), outcome: outcome))
+    }
+
+    // MARK: Error log
+
+    @Test(
+        "the error log name is today's date in the machine's time zone",
+        arguments: [("UTC", "rhg-error-log-2026-01-01.log"), ("Asia/Tbilisi", "rhg-error-log-2026-01-02.log"),
+            ("America/Los_Angeles", "rhg-error-log-2026-01-01.log")])
+    func errorLogFilename(_ zone: String, _ name: String) throws {
+        let app = AppModel(bridge: FakeBridge(), clock: { lateNewYearsDay }, timeZone: try #require(TimeZone(identifier: zone)))
+        #expect(app.suggestedErrorLogFilename == name)
+    }
+
+    @Test("error log export: saved-to alert with the path")
+    func errorLogExport() async {
+        let fake = FakeBridge()
+        let app = AppModel(bridge: fake)
+        let alert = await app.exportErrorLog(path: "/out/rhg-error-log-2026-01-01.log")
+        #expect(fake.params(.appExportErrorLog) == [#"{"path":"/out/rhg-error-log-2026-01-01.log"}"#])
+        #expect(
+            alert
+                == AlertState(
+                    title: "Error Log Exported",
+                    message: "Saved to:\n/out/rhg-error-log-2026-01-01.log\n\nYou can attach this file to an email. "
+                        + "It contains app diagnostics (may include your GitHub username and file paths) — no PINs or keys."))
+    }
+
+    @Test("error log export failure shows the core's message")
+    func errorLogExportFailure() async {
+        let fake = FakeBridge()
+        fake.fail(.appExportErrorLog, RPCError(code: .failed, message: "Choose a folder outside the app's data folder."))
+        let app = AppModel(bridge: fake)
+        let alert = await app.exportErrorLog(path: "/data/x.log")
+        #expect(alert == AlertState(title: "Error", message: "Choose a folder outside the app's data folder."))
+    }
+
     // MARK: Quit
 
     @Test("quit: canQuit, then shutdown with relaunch passed through", arguments: [false, true])

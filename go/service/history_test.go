@@ -261,6 +261,23 @@ func TestHistory_Filter(t *testing.T) {
 	}
 }
 
+// A decomposed (NFD) query, e.g. pasted from a macOS file name, matches an
+// NFC record, and an NFD record matches an NFC query.
+func TestHistory_FilterNFC(t *testing.T) {
+	h := newAppHarness(t, nil)
+	writeIssuanceLog(t, h,
+		rec("Jos\u00e9 Ruiz", "2026-01-01", hashA),
+		rec("Zoe\u0308 Hart", "2026-02-01", hashB))
+	h.app.RefreshHistory()
+
+	for query, want := range map[string]string{"jose\u0301": "Jos\u00e9 Ruiz", "zo\u00eb": "Zoe\u0308 Hart"} {
+		rows := h.app.History(query).Rows
+		if len(rows) != 1 || rows[0].Record.Recipient != want {
+			t.Errorf("History(%+q) = %d rows, want only %+q", query, len(rows), want)
+		}
+	}
+}
+
 func TestHistory_EmptyBeforeLoad(t *testing.T) {
 	h := newAppHarness(t, nil)
 	snap := h.app.History("")

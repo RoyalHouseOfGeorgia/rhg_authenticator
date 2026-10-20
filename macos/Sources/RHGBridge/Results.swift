@@ -474,7 +474,7 @@ public struct SubmitResult: Codable, Sendable, Equatable {
     }
 }
 
-/// The outcome of yubikey.check: KeyCheck `result`.
+/// The outcome of yubikey.check: KeyCheck `outcome`.
 public enum KeyCheckResult: RawRepresentable, Codable, Sendable, Hashable {
     /// The key matches a registry entry valid today.
     case found

@@ -445,7 +445,7 @@ func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 			a.loadHistory()
 		}
 		se := &SignError{
-			Message:     signFlowErrorMessage(err, a.logger),
+			Message:     signFlowErrorMessage(err),
 			OfferReport: offerIssueReport(err),
 			Err:         err,
 		}
@@ -502,12 +502,20 @@ func (a *App) readPIN(ctx context.Context) (string, error) {
 	case pctx.Err() != nil:
 		return "", errPINEntryTimedOut
 	case err != nil:
+		// The only place this failure is logged: the user is told to export
+		// the error log.
+		a.logger.Log("pin prompt: " + core.SanitizeForLog(err.Error()))
 		return "", err
 	case pin == "":
 		return "", errSigningCancelled
 	}
 	a.pinCache.SetEnabled(remember)
-	return processPINResult(pin, a.pinCache)
+	pin, err = processPINResult(pin, a.pinCache)
+	if err != nil {
+		// As above: "restart the app" is all the user sees.
+		a.logger.Log("pin cache: " + core.SanitizeForLog(err.Error()))
+	}
+	return pin, err
 }
 
 // SaveQR writes the QR code for url (a SignResult.URL) to path as "svg" or "png".
@@ -663,7 +671,7 @@ func (a *App) RunBulk(ctx context.Context) (BulkOutcome, error) {
 	stop := bulkStop(err)
 	return BulkOutcome{
 		SummaryLine:     bulkSummaryLine(bulk.Summarize(results)),
-		StopMessage:     bulkStopMessage(stop, err, a.logger),
+		StopMessage:     bulkStopMessage(stop, err),
 		Stopped:         stop,
 		FailedLines:     bulkFailedLines(results),
 		ResultsFilename: bulkResultsFilename(time.Now()),

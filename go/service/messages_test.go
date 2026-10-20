@@ -4,14 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-piv/piv-go/v2/piv"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 )
 
 // resetErr is the real wrapped error chain seen when a PC/SC card reset
@@ -306,7 +304,7 @@ func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
 
 func TestSignFlowErrorMessage_ExportPublicKey(t *testing.T) {
 	err := &signFlowError{Phase: phaseExportKey, Err: fmt.Errorf("hardware failure")}
-	got := signFlowErrorMessage(err, nil)
+	got := signFlowErrorMessage(err)
 	if !strings.Contains(got, "Failed to read YubiKey") {
 		t.Errorf("expected YubiKey read failure message, got: %q", got)
 	}
@@ -314,57 +312,31 @@ func TestSignFlowErrorMessage_ExportPublicKey(t *testing.T) {
 
 func TestSignFlowErrorMessage_QRGeneration(t *testing.T) {
 	err := &signFlowError{Phase: phaseQR, Err: fmt.Errorf("encode failed")}
-	got := signFlowErrorMessage(err, nil)
+	got := signFlowErrorMessage(err)
 	if !strings.Contains(got, "QR generation failed") {
 		t.Errorf("expected QR failure message, got: %q", got)
 	}
 }
 
 func TestSignFlowErrorMessage_YubiKeyAdapter(t *testing.T) {
-	got := signFlowErrorMessage(fmt.Errorf("pcsc daemon not running"), nil)
+	got := signFlowErrorMessage(fmt.Errorf("pcsc daemon not running"))
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected smart card service message, got: %q", got)
 	}
 }
 
 func TestSignFlowErrorMessage_SignError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	sfe := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("hardware fault")}
-	got := signFlowErrorMessage(sfe, logger)
+	got := signFlowErrorMessage(sfe)
 	if !strings.Contains(got, "Signing failed") {
 		t.Errorf("expected 'Signing failed' message, got: %q", got)
-	}
-	// Verify the raw error is logged.
-	data, err := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
-	if err != nil {
-		t.Fatalf("debug log not created: %v", err)
-	}
-	if !strings.Contains(string(data), "sign: hardware fault") {
-		t.Errorf("debug log should contain raw error, got: %q", string(data))
-	}
-}
-
-func TestSignFlowErrorMessage_SignError_NoDoublePrefix(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	sfe := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("some error")}
-	signFlowErrorMessage(sfe, logger)
-	data, err := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
-	if err != nil {
-		t.Fatalf("debug log not created: %v", err)
-	}
-	content := string(data)
-	// Should NOT have "sign flow:" prefix for typed sign errors.
-	if strings.Contains(content, "sign flow:") {
-		t.Errorf("should not have 'sign flow:' prefix for sign errors, got: %q", content)
 	}
 }
 
 func TestSignFlowErrorMessage_Timeout(t *testing.T) {
 	// The timeout sentinel must yield a timeout message, NOT a hardware message
 	// (the literal "PIN entry timed out" matches the \bpin\b classifier).
-	got := signFlowErrorMessage(errPINEntryTimedOut, nil)
+	got := signFlowErrorMessage(errPINEntryTimedOut)
 	if !strings.Contains(got, "timed out") {
 		t.Errorf("expected timeout message, got: %q", got)
 	}
@@ -374,7 +346,7 @@ func TestSignFlowErrorMessage_MlockFailure(t *testing.T) {
 	// The %w-wrapped mlock sentinel must yield the restart message, not a
 	// misclassified hardware PIN error.
 	err := fmt.Errorf("%w: mlock failed", errPINCacheUnavailable)
-	got := signFlowErrorMessage(err, nil)
+	got := signFlowErrorMessage(err)
 	if !strings.Contains(got, "secure the PIN") {
 		t.Errorf("expected mlock/restart message, got: %q", got)
 	}
@@ -383,7 +355,7 @@ func TestSignFlowErrorMessage_MlockFailure(t *testing.T) {
 func TestSignFlowErrorMessage_IssuanceLogUnreadable(t *testing.T) {
 	// The wrapped parse error must not be classified as a hardware fault.
 	err := fmt.Errorf("%w: %w", errIssuanceLogUnreadable, fmt.Errorf("parsing log file: unexpected end of JSON input"))
-	got := signFlowErrorMessage(err, nil)
+	got := signFlowErrorMessage(err)
 	want := "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable."
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -391,22 +363,18 @@ func TestSignFlowErrorMessage_IssuanceLogUnreadable(t *testing.T) {
 }
 
 func TestSignFlowErrorMessage_WrongPINWithRetries(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	err := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2})}
-	got := signFlowErrorMessage(err, logger)
+	got := signFlowErrorMessage(err)
 	if !strings.Contains(got, "2 attempt") {
 		t.Errorf("expected remaining-attempts count in message, got: %q", got)
 	}
 }
 
 func TestSignFlowErrorMessage_WrongPINBlocked(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	// Retries == 0 must NOT claim "blocked" outright — it means blocked OR count
 	// unavailable.
 	err := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 0})}
-	got := signFlowErrorMessage(err, logger)
+	got := signFlowErrorMessage(err)
 	if !strings.Contains(got, "locked") || strings.Contains(got, "attempt(s) left") {
 		t.Errorf("expected ambiguous locked message without a positive count, got: %q", got)
 	}
@@ -416,18 +384,14 @@ func TestSignFlowErrorMessage_TransientWinsOverPINRetries(t *testing.T) {
 	// A transient reset never carries piv.AuthErr, so PINRetries can't fire; the
 	// reset must map to MsgYubiKeyReset even though resetErr()'s text contains
 	// "verify pin".
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := signFlowErrorMessage(resetErr(), logger)
+	got := signFlowErrorMessage(resetErr())
 	if got != core.MsgYubiKeyReset {
 		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
 	}
 }
 
 func TestSignFlowErrorMessage_GenericError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := signFlowErrorMessage(fmt.Errorf("something unexpected"), logger)
+	got := signFlowErrorMessage(fmt.Errorf("something unexpected"))
 	if !strings.Contains(got, "Signing failed") {
 		t.Errorf("expected signing failed message, got: %q", got)
 	}
@@ -436,10 +400,8 @@ func TestSignFlowErrorMessage_GenericError(t *testing.T) {
 func TestSignFlowErrorMessage_Transient_WrappedInSignFlowError(t *testing.T) {
 	// A reset during the sign phase must yield the canonical reset message,
 	// not the generic "Signing failed" message.
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	sfe := &signFlowError{Phase: phaseSign, Err: resetErr()}
-	got := signFlowErrorMessage(sfe, logger)
+	got := signFlowErrorMessage(sfe)
 	if got != core.MsgYubiKeyReset {
 		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
 	}
@@ -448,18 +410,14 @@ func TestSignFlowErrorMessage_Transient_WrappedInSignFlowError(t *testing.T) {
 func TestSignFlowErrorMessage_Transient_RawAdapterOpen(t *testing.T) {
 	// The raw adapter-open path (not wrapped in signFlowError) must also route
 	// a reset to the canonical message.
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := signFlowErrorMessage(resetErr(), logger)
+	got := signFlowErrorMessage(resetErr())
 	if got != core.MsgYubiKeyReset {
 		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
 	}
 }
 
 func TestSignFlowErrorMessage_CertificateError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: object not found"), logger)
+	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: object not found"))
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
 	}
@@ -468,40 +426,27 @@ func TestSignFlowErrorMessage_CertificateError(t *testing.T) {
 func TestSignFlowErrorMessage_CertificateWithSmartCardInError(t *testing.T) {
 	// piv-go may include "smart card" in the error when slot 9c is empty.
 	// This must NOT be misclassified as "YubiKey not detected".
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: smart card error: data object not found"), logger)
+	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: smart card error: data object not found"))
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
 	}
 }
 
 func TestSignFlowErrorMessage_NotEd25519Error(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	got := signFlowErrorMessage(fmt.Errorf("certificate does not contain an Ed25519 public key"), logger)
+	got := signFlowErrorMessage(fmt.Errorf("certificate does not contain an Ed25519 public key"))
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
 	}
 }
 
 func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
 	pathErr := &os.PathError{Op: "open", Path: "/nonexistent/dir/log.json.tmp", Err: errors.New("no such file or directory")}
 	err := &signFlowError{Phase: phaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, pathErr)}
 
-	got := signFlowErrorMessage(err, logger)
+	got := signFlowErrorMessage(err)
 	want := "Credential signed but NOT recorded in the issuance log — check disk space/permissions."
 	if got != want {
 		t.Errorf("signFlowErrorMessage = %q, want %q", got, want)
-	}
-	data, readErr := os.ReadFile(filepath.Join(tmpDir, "debug.log"))
-	if readErr != nil {
-		t.Fatalf("debug log not created: %v", readErr)
-	}
-	if !strings.Contains(string(data), "signed but not recorded in issuance log") {
-		t.Errorf("debug log should contain the wrapped error, got: %q", string(data))
 	}
 }
 
@@ -518,7 +463,7 @@ func TestSignFlowErrorMessage_DetailsPointToExportErrorLog(t *testing.T) {
 	}
 	for name, err := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := signFlowErrorMessage(err, nil)
+			got := signFlowErrorMessage(err)
 			if !strings.HasSuffix(got, want) {
 				t.Errorf("got %q, want suffix %q", got, want)
 			}

@@ -156,7 +156,7 @@ jobs:
   # variant, then the app bundle built against the release variant, ad-hoc
   # signed and zipped. Interim and never a required check: no job needs it and
   # its zip is a 7-day workflow artifact only, so release assets are unchanged.
-  # Swift comes from the runner's default Xcode (printed below).
+  # Swift comes from the Xcode pinned below (printed in Toolchain versions).
   macos-app:
     name: macos-app
     runs-on: macos-26

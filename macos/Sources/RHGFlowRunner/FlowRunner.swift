@@ -2,7 +2,7 @@
 // rhgfake build of librhgcore, one scenario per process (the core can be
 // configured and initialized only once per process). RHGBridgeTests spawns it.
 //
-//   RHGFlowRunner <scenario>   scenario: offline | online | pinCancel | pinTimeout
+//   RHGFlowRunner <scenario>   scenario: offline | online | pinCancel | pinTimeout | bulk
 //   RHGFlowRunner --version    the core's CLI, handled first as the app does
 //
 // Prints "ok: <check>" per passed check, then "PASS: <scenario>" and exits 0;
@@ -42,6 +42,10 @@ enum Scenario: String, CaseIterable {
     /// Registry served, 300 ms PIN timeout: an unanswered prompt is
     /// dismissed and the Sign fails.
     case pinTimeout
+    /// Registry served: Bulk Sign of a CSV with two rows to sign and one
+    /// invalid row, cancelled at the PIN prompt, then run with one PIN for
+    /// the whole batch, and its results exported.
+    case bulk
 }
 
 /// A failed check.
@@ -65,11 +69,13 @@ struct TestConfigureParams: Encodable, Sendable {
     var pinTimeoutMs: Int = 0
 }
 
-/// How signAnswering answers the Sign's pin.request.
+/// How runAnswering answers the call's pin.request.
 enum PINAnswer {
     case submit
     case cancel
     case ignore
+    /// bulk.cancel, leaving the prompt to be withdrawn by the core.
+    case cancelBulk
 }
 
 /// Records every event from the bridge's stream, in order.
@@ -83,6 +89,16 @@ actor EventRecorder {
     /// The first event at or after index `start` that `match` maps to a value.
     func first<T: Sendable>(from start: Int, _ match: @Sendable (BridgeEvent) -> T?) -> T? {
         events.dropFirst(start).lazy.compactMap(match).first
+    }
+
+    /// The events at or after index `start` that `match` maps to a value, in order.
+    func all<T: Sendable>(from start: Int, _ match: @Sendable (BridgeEvent) -> T?) -> [T] {
+        events.dropFirst(start).compactMap(match)
+    }
+
+    /// The index of the first event at or after `start` matching `match`.
+    func index(from start: Int, _ match: @Sendable (BridgeEvent) -> Bool) -> Int? {
+        events.indices.dropFirst(start).first { match(events[$0]) }
     }
 }
 
@@ -128,6 +144,7 @@ final class Flow {
             case .online: try await online(dataDir: dataDir)
             case .pinCancel: try await pinCancel(dataDir: dataDir)
             case .pinTimeout: try await pinTimeout(dataDir: dataDir)
+            case .bulk: try await bulk(dataDir: dataDir)
             }
         } catch let notFake as NotRHGFake {
             emit(
@@ -151,14 +168,10 @@ final class Flow {
         let info = try await configureAndInit(online: false, dataDir: dataDir)
         try check(!info.online, "app.init offline", "online \(info.online)")
 
-        let start = await recorder.events.count
+        // No pin.request is asked for: Go's TestSign_Offline and the C smoke
+        // test check that synchronously.
         let refused = await signResult(Self.credential("Jane Doe"))
         try expectError(refused, .failed, "sign.sign offline is refused")
-        // A pin.request would have been emitted before sign.sign returned;
-        // give the consumer task time to record it if there was one.
-        try await Task.sleep(for: .milliseconds(300))
-        let request = await recorder.first(from: start) { if case .pinRequest(let r) = $0 { r } else { nil } }
-        try check(request == nil, "no pin.request when offline", "got one")
 
         try await expectError(.internal, "test.panic is an internal error") {
             let _: Empty = try await self.bridge.call("test.panic", Empty())
@@ -187,7 +200,7 @@ final class Flow {
         // Sign with the PIN submitted from the event stream.
         let start = await recorder.events.count
         let (signed, request) = try await signAnswering(Self.credential("Jane Doe"), .submit)
-        let result = try signedResult(signed, "sign.sign with the PIN submitted")
+        let result = try succeeded(signed, "sign.sign with the PIN submitted")
         try check(request != nil, "one pin.request", "none")
         try check(result.url.hasPrefix("https://verify.royalhouseofgeorgia.ge/") && !result.existing,
                   "sign.sign returns a new credential's verification URL", "existing \(result.existing)")
@@ -221,17 +234,17 @@ final class Flow {
         let nfd = "Jose\u{301}"
         try check(Array(nfc.utf8) != Array(nfd.utf8), "NFC and NFD inputs differ in bytes", "same bytes")
 
-        let signedGeorgian = try signedResult(
+        let signedGeorgian = try succeeded(
             try await signAnswering(Self.credential(georgian), .submit).0, "sign.sign a Georgian name")
         try check(Array(signedGeorgian.recipient.utf8) == Array(georgian.utf8),
                   "Georgian recipient round-trips byte for byte", "bytes differ")
 
-        let signedNFD = try signedResult(try await signAnswering(Self.credential(nfd), .submit).0, "sign.sign an NFD name")
+        let signedNFD = try succeeded(try await signAnswering(Self.credential(nfd), .submit).0, "sign.sign an NFD name")
         try check(Array(signedNFD.recipient.utf8) == Array(nfc.utf8), "NFD recipient is signed as NFC bytes",
                   "bytes \(Array(signedNFD.recipient.utf8))")
         try check(!signedNFD.existing, "NFD name is a new credential", "existing")
 
-        let signedNFC = try signedResult(try await signAnswering(Self.credential(nfc), .submit).0, "sign.sign an NFC name")
+        let signedNFC = try succeeded(try await signAnswering(Self.credential(nfc), .submit).0, "sign.sign an NFC name")
         try check(Array(signedNFC.recipient.utf8) == Array(nfc.utf8), "NFC recipient is signed as NFC bytes",
                   "bytes \(Array(signedNFC.recipient.utf8))")
         try check(signedNFC.existing && signedNFC.url == signedNFD.url,
@@ -262,6 +275,84 @@ final class Flow {
             }
         }
         try await shutdownAndCheckClosed()
+    }
+
+    /// The bulk CSV: two rows to sign (distinct recipients, dates within the
+    /// fake key's validity and not in the future) and one invalid honor.
+    static let bulkCSV = """
+        name,honor,detail,date
+        Jane Doe,Ennoblement,For service,2026-01-02
+        Carol White,Ennoblement,For service,2026-01-05
+        Bob,Bogus,x,2026-01-02
+
+        """
+
+    func bulk(dataDir: URL) async throws {
+        _ = try await configureAndInit(online: true, dataDir: dataDir)
+        try await step("app.start") { try await self.bridge.startApp() }
+        // Saves are refused inside the data folder: the CSV and the export go next to it.
+        let root = dataDir.deletingLastPathComponent()
+        let csv = root.appendingPathComponent("bulk.csv")
+        try Data(Self.bulkCSV.utf8).write(to: csv)
+
+        // Cancelled at the PIN prompt first: a completed run would leave both
+        // rows already issued, with nothing left to sign.
+        let plan = try await step("bulk.load") { try await self.bridge.loadBulk(path: csv.path) }
+        try check(plan.toSign == 2 && plan.invalidLines.count == 1 && plan.previewNames == ["Jane Doe", "Carol White"],
+                  "bulk.load plans 2 rows to sign and 1 invalid row",
+                  "toSign \(plan.toSign), invalid \(plan.invalidLines.count), preview \(plan.previewNames.count)")
+        var start = await recorder.events.count
+        let (cancelled, cancelRequest) = try await runAnswering("bulk.run", .cancelBulk) { bridge in
+            await Self.bulkResult(bridge)
+        }
+        guard let cancelRequest else { throw Failure(check: "bulk.run asks for the PIN", detail: "no pin.request") }
+        let stopped = try succeeded(cancelled, "bulk.run cancelled at the PIN prompt")
+        try check(stopped.stopped == .cancelled,
+                  "bulk.cancel at the PIN prompt stops the run as cancelled", stopped.stopped.rawValue)
+        try await waitFor("pin.dismiss withdraws the cancelled run's request") {
+            await self.recorder.first(from: start) {
+                if case .pinDismiss(let d) = $0, d.requestId == cancelRequest.requestId { true } else { nil }
+            }
+        }
+        let early = await recorder.first(from: start) { $0 == .bulkConnecting ? true : nil }
+        try check(early == nil, "no bulk.connecting without a PIN", "got one")
+
+        let again = try await step("bulk.load again") { try await self.bridge.loadBulk(path: csv.path) }
+        try check(again.toSign == 2, "the cancelled run signed nothing", "toSign \(again.toSign)")
+        start = await recorder.events.count
+        let (ran, request) = try await runAnswering("bulk.run", .submit) { bridge in await Self.bulkResult(bridge) }
+        try check(request != nil, "bulk.run asks for the PIN", "no pin.request")
+        let outcome = try succeeded(ran, "bulk.run with the PIN submitted")
+        try check(outcome.stopped == .completed && outcome.stopMessage.isEmpty && outcome.failedLines.isEmpty,
+                  "bulk.run completes", "stopped \(outcome.stopped.rawValue), \(outcome.failedLines.count) failed")
+        try check(outcome.resultsFilename.hasSuffix(".csv"), "bulk.run suggests a CSV results file name", "not a .csv")
+        try await waitFor("two bulk.progress events") {
+            await self.recorder.all(from: start) { if case .bulkProgress(let p) = $0 { p } else { nil } }.count == 2
+        }
+        let requests = await recorder.all(from: start) { if case .pinRequest(let r) = $0 { r } else { nil } }
+        try check(requests.count == 1, "one PIN covers the whole run", "\(requests.count) pin.request events")
+        let connecting = await recorder.index(from: start) { $0 == .bulkConnecting }
+        let firstProgress = await recorder.index(from: start) { if case .bulkProgress = $0 { true } else { false } }
+        try check(connecting != nil && firstProgress != nil && connecting! < firstProgress!,
+                  "bulk.connecting before the first bulk.progress", "connecting \(String(describing: connecting))")
+        let progress = await recorder.all(from: start) { if case .bulkProgress(let p) = $0 { p } else { nil } }
+        try check(progress.map(\.done) == [0, 1] && progress.allSatisfy { $0.total == 2 }
+                  && progress.map(\.name) == ["Jane Doe", "Carol White"],
+                  "bulk.progress counts the rows in order", "done \(progress.map(\.done))")
+
+        let export = root.appendingPathComponent("bulk-results.csv")
+        try await step("bulk.exportResults") { try await self.bridge.exportBulkResults(path: export.path) }
+        let written = (try? Data(contentsOf: export)) ?? Data()
+        try check(!written.isEmpty, "bulk.exportResults wrote the file", "missing or empty")
+        try await shutdownAndCheckClosed()
+    }
+
+    static func bulkResult(_ bridge: LiveBridge) async -> Result<BulkRunResult, RPCError> {
+        do throws(RPCError) {
+            return .success(try await bridge.runBulk())
+        } catch {
+            return .failure(error)
+        }
     }
 
     // MARK: Steps
@@ -296,9 +387,17 @@ final class Flow {
     func signAnswering(
         _ credential: CredentialParams, _ answer: PINAnswer
     ) async throws -> (Result<SignResult, RPCError>, PINRequest?) {
+        try await runAnswering("sign.sign", answer) { bridge in await Self.signResult(bridge, credential) }
+    }
+
+    /// Runs `body` (a call that may prompt for the PIN) in its own task and
+    /// answers its first pin.request, if one comes.
+    func runAnswering<T: Sendable>(
+        _ what: String, _ answer: PINAnswer, _ body: @escaping @Sendable (LiveBridge) async -> Result<T, RPCError>
+    ) async throws -> (Result<T, RPCError>, PINRequest?) {
         let start = await recorder.events.count
-        let done = Completion<Result<SignResult, RPCError>>()
-        Task { [bridge] in await done.set(await Self.signResult(bridge, credential)) }
+        let done = Completion<Result<T, RPCError>>()
+        Task { [bridge] in await done.set(await body(bridge)) }
         let deadline = ContinuousClock.now + .seconds(30)
         var request: PINRequest?
         while ContinuousClock.now < deadline {
@@ -316,11 +415,13 @@ final class Flow {
                     try await step("pin.cancel") { try await self.bridge.cancelPIN(requestId: r.requestId) }
                 case .ignore:
                     break
+                case .cancelBulk:
+                    try await step("bulk.cancel") { try await self.bridge.cancelBulk() }
                 }
             }
             try await Task.sleep(for: .milliseconds(10))
         }
-        throw Failure(check: "sign.sign", detail: "no result within 30 s")
+        throw Failure(check: what, detail: "no result within 30 s")
     }
 
     func signResult(_ credential: CredentialParams) async -> Result<SignResult, RPCError> {
@@ -335,7 +436,8 @@ final class Flow {
         }
     }
 
-    func signedResult(_ result: Result<SignResult, RPCError>, _ what: String) throws -> SignResult {
+    /// The value of a call that must succeed, passing `what`.
+    func succeeded<T>(_ result: Result<T, RPCError>, _ what: String) throws -> T {
         switch result {
         case .success(let value):
             pass(what)

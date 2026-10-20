@@ -135,10 +135,9 @@ func TestLogKeyRejected(t *testing.T) {
 }
 
 func TestKeyRejected_MessagesAndNoReport(t *testing.T) {
-	logger := debuglog.New(filepath.Join(t.TempDir(), "debug.log"))
 	for _, reason := range []error{ErrKeyNotRegistered, ErrKeyExpired, ErrHonorNotAllowed} {
 		err := &keyRejectedError{msg: "YubiKey text " + reason.Error(), reason: reason}
-		if got := signFlowErrorMessage(err, logger); got != err.msg {
+		if got := signFlowErrorMessage(err); got != err.msg {
 			t.Errorf("signFlowErrorMessage = %q, want %q (not a hardware message)", got, err.msg)
 		}
 		if offerIssueReport(err) {

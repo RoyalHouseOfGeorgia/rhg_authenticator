@@ -80,11 +80,11 @@ func TestSignFlowErrorMessage_TooLongForQR(t *testing.T) {
 	}
 	for _, tc := range cases {
 		err := error(&core.TooLongForQRError{OverBytes: tc.over})
-		if got := signFlowErrorMessage(err, nil); got != tc.want {
+		if got := signFlowErrorMessage(err); got != tc.want {
 			t.Errorf("bare OverBytes=%d: got %q, want %q", tc.over, got, tc.want)
 		}
 		wrapped := &signFlowError{Phase: phaseSign, Err: err}
-		if got := signFlowErrorMessage(wrapped, nil); got != tc.want {
+		if got := signFlowErrorMessage(wrapped); got != tc.want {
 			t.Errorf("wrapped OverBytes=%d: got %q, want %q", tc.over, got, tc.want)
 		}
 	}
@@ -95,7 +95,7 @@ func TestSignFlowErrorMessage_TooLongForQR(t *testing.T) {
 // Sign does (the core message), capitalized with a full stop.
 func TestSignFlowErrorMessage_TooLongFromBuildPayload(t *testing.T) {
 	_, err := core.BuildPayload(inputReq(strings.Repeat("x", 600)))
-	got := signFlowErrorMessage(err, nil)
+	got := signFlowErrorMessage(err)
 	if !strings.HasSuffix(got, " — shorten the detail or recipient.") || strings.Contains(got, "..") {
 		t.Errorf("unexpected message: %q", got)
 	}
@@ -116,7 +116,7 @@ func TestSignFlowErrorMessage_InvalidCredential(t *testing.T) {
 		"double":  fmt.Errorf("outer: %w", &signFlowError{Phase: phaseSign, Err: bare}),
 	}
 	for name, err := range cases {
-		if got := signFlowErrorMessage(err, nil); got != want {
+		if got := signFlowErrorMessage(err); got != want {
 			t.Errorf("%s: got %q, want %q", name, got, want)
 		}
 	}
@@ -126,7 +126,7 @@ func TestSignFlowErrorMessage_InvalidCredential(t *testing.T) {
 // characters in the reason are stripped from the status text.
 func TestSignFlowErrorMessage_InvalidCredentialSanitized(t *testing.T) {
 	err := &core.InvalidCredentialError{Reason: errors.New("bad\x07 field\x1b")}
-	if got, want := signFlowErrorMessage(err, nil), "Invalid credential data: bad field."; got != want {
+	if got, want := signFlowErrorMessage(err), "Invalid credential data: bad field."; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

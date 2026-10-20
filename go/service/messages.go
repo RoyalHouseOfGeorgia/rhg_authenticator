@@ -9,7 +9,6 @@ import (
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/buildinfo"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/errorreport"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
@@ -44,7 +43,7 @@ func sanitizeError(prefix string, err error) string {
 
 // friendlyYubiKeyError returns a user-friendly message for a classified
 // YubiKey connection failure. signFlowErrorMessage, its only caller, has
-// already logged err and handled transient card resets.
+// already handled transient card resets.
 func friendlyYubiKeyError(err error) string {
 	switch core.ClassifyHardwareError(err) {
 	case core.HwErrSmartcard:
@@ -112,8 +111,12 @@ func sentence(s string) string {
 }
 
 // signFlowErrorMessage maps an error from executeSignFlow to a user-friendly
-// status message.
-func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
+// status message. It never logs: every fault is logged once where it is
+// produced (readCardKey, signAndLog, executeSignFlow, App.readPIN), and a
+// bulk failure is described twice (its row and the stop message). Neutral
+// outcomes with self-explanatory messages (offline, PIN timeout, cancel) are
+// not logged.
+func signFlowErrorMessage(err error) string {
 	// Operator input errors from BuildPayload come first so their reason text
 	// is never misread by the hardware classifier below. The core error text
 	// is the message (shared with Bulk Sign), capitalized for the status line.
@@ -154,7 +157,6 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	// Checked before ClassifyHardwareError, whose regex could misread the
 	// wrapped OS file error (e.g. a path or errno text) as a hardware fault.
 	if errors.Is(err, core.ErrNotLogged) {
-		logger.Log(core.SanitizeForLog(err.Error()))
 		return msgNotLogged
 	}
 	// Transient PC/SC contention (card reset) can surface in any phase and via
@@ -162,14 +164,12 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	// misclassification even when "verify pin" appears in the wrapped chain.
 	cat := core.ClassifyHardwareError(err)
 	if cat == core.HwErrTransient {
-		logger.Log(core.SanitizeForLog(err.Error()))
 		return core.MsgYubiKeyReset
 	}
 	// Wrong or blocked PIN: give an actionable retry count so the operator does
 	// not drain the PIV counter by re-entering the same wrong PIN. Typed check
 	// (errors.As on piv.AuthErr), so a transient reset can never reach it.
 	if retries, ok := yubikey.PINRetries(err); ok {
-		logger.Log(core.SanitizeForLog(err.Error()))
 		if retries > 0 {
 			return fmt.Sprintf("Incorrect PIN — %d attempt(s) left before the YubiKey locks.", retries)
 		}
@@ -183,10 +183,8 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 		case phaseQR:
 			return "QR generation failed. Export the error log for details."
 		case phaseSign:
-			logger.Log(core.SanitizeForLog(sfe.Error()))
 			return "Signing failed. Export the error log for details."
 		default:
-			logger.Log(core.SanitizeForLog(sfe.Error()))
 			return "Unexpected error. Export the error log for details."
 		}
 	}
@@ -196,7 +194,6 @@ func signFlowErrorMessage(err error, logger *debuglog.Logger) string {
 	// contain "smart card" from piv-go, which would misclassify as
 	// HwErrHardware ("YubiKey not detected") if checked later.
 	errMsg := err.Error()
-	logger.Log("sign flow: " + core.SanitizeForLog(errMsg))
 	if strings.Contains(errMsg, "certificate") || strings.Contains(errMsg, "slot 9c") {
 		return "No signing certificate found on YubiKey (PIV slot 9c). Generate an Ed25519 key first."
 	}

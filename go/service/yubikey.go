@@ -68,7 +68,7 @@ func formatKeyResult(result keyCheckResult) KeyCheck {
 		}
 		details = append(details, "Restrictions: "+restrictionsText(*result.Entry), "Fingerprint: "+result.Fingerprint)
 		if note := strings.TrimSpace(result.Entry.Note); note != "" {
-			details = append(details, "Note: "+result.Entry.Note)
+			details = append(details, "Note: "+note)
 		}
 		return KeyCheck{Outcome: KeyCheckFound, Status: status, Details: details}
 	}

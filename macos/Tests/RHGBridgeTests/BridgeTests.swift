@@ -203,10 +203,17 @@ struct HelperTests {
         try await bridge.submitPIN(requestId: 1, pin: "123456", remember: true)
         try await bridge.cancelPIN(requestId: 2)
         #expect(try await bridge.currentUpdate().status.state == .ready)
+        #expect(try await bridge.loadBulk(path: "/OUT/bulk.csv").toSign == 1)
+        #expect(try await bridge.runBulk().stopped == .completed)
+        try await bridge.cancelBulk()
+        try await bridge.exportBulkResults(path: "/OUT/bulk-results.csv")
+        #expect(try await bridge.checkYubiKey().outcome == .found)
+        try await bridge.exportErrorLog(path: "/OUT/error-log.txt")
 
         let expected: [RPCMethod] = [
             .appInit, .appStart, .appInfo, .appCanQuit, .appShutdown, .signHonors, .signValidate, .signSign,
-            .signSaveQR, .signReportError, .pinSubmit, .pinCancel, .updateCurrent,
+            .signSaveQR, .signReportError, .pinSubmit, .pinCancel, .updateCurrent, .bulkLoad, .bulkRun, .bulkCancel,
+            .bulkExportResults, .yubikeyCheck, .appExportErrorLog,
         ]
         let calls = bridge.calls
         #expect(calls.map(\.method) == expected.map(\.rawValue))

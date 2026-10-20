@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/bulk"
@@ -40,11 +41,25 @@ func loadBulkPlan(r io.Reader, logPath string, logger *debuglog.Logger) ([]bulk.
 	if err != nil {
 		return nil, fail("Cannot read the issuance log; bulk signing needs it to avoid duplicates.", err)
 	}
+	return bulk.Plan(rows, honorTitles, issuedSignatures(records)), nil
+}
+
+// issuedSignatures maps each logged payload hash (lower-case, as
+// core.PayloadSHA256Hex returns it) to the stored signature a duplicate
+// reuses: a malformed signature never counts, and the first well-formed
+// record wins. Sign (findExistingIssuance) and Bulk Sign both use it.
+func issuedSignatures(records []issuancelog.IssuanceRecord) map[string]string {
 	issued := make(map[string]string, len(records))
 	for _, rec := range records {
-		issued[rec.PayloadSHA256] = rec.SignatureB64URL
+		if !issuancelog.SignatureWellFormed(rec.SignatureB64URL) {
+			continue
+		}
+		hash := strings.ToLower(rec.PayloadSHA256)
+		if _, ok := issued[hash]; !ok {
+			issued[hash] = rec.SignatureB64URL
+		}
 	}
-	return bulk.Plan(rows, honorTitles, issued), nil
+	return issued
 }
 
 // runBulkFlow signs every to_sign row in results, updating them in place.
@@ -81,7 +96,7 @@ func runBulkFlow(
 		}
 		if err := checkKey(pub, r.Req); err != nil {
 			logKeyRejected(logger, fmt.Sprintf("bulk key check: line %d: ", r.Line), err)
-			r.Status, r.Err = bulk.StatusFailed, signFlowErrorMessage(err, logger)
+			r.Status, r.Err = bulk.StatusFailed, signFlowErrorMessage(err)
 		}
 	}
 	if bulk.Summarize(results).ToSign == 0 {
@@ -99,7 +114,7 @@ func runBulkFlow(
 		func(req core.SignRequest) (core.SignResponse, error) {
 			return signAndLog(req, logPath, openAdapter, checkKey, pin, logger)
 		},
-		func(e error) string { return signFlowErrorMessage(e, logger) },
+		signFlowErrorMessage,
 		onProgress,
 	)
 }
@@ -118,14 +133,14 @@ func bulkStop(err error) BulkStop {
 
 // bulkStopMessage returns the user-facing reason a batch stopped early, or ""
 // when it completed; stop is bulkStop(err).
-func bulkStopMessage(stop BulkStop, err error, logger *debuglog.Logger) string {
+func bulkStopMessage(stop BulkStop, err error) string {
 	switch stop {
 	case BulkCompleted:
 		return ""
 	case BulkCancelled:
 		return "Cancelled."
 	default:
-		return "Batch stopped: " + signFlowErrorMessage(err, logger)
+		return "Batch stopped: " + signFlowErrorMessage(err)
 	}
 }
 

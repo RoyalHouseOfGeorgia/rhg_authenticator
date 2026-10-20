@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
@@ -197,7 +199,7 @@ func (a *App) readHistory() {
 		lower = make([]string, len(records))
 		summaries = make([]string, len(records))
 		for i, rec := range records {
-			lower[i] = strings.ToLower(rec.Recipient)
+			lower[i] = strings.ToLower(norm.NFC.String(rec.Recipient))
 			summaries[i] = formatRecordSummary(rec)
 		}
 	}
@@ -210,9 +212,10 @@ func (a *App) readHistory() {
 }
 
 // History returns the loaded records whose recipient contains query
-// (case-insensitive, trimmed; empty matches all), newest first.
+// (case-insensitive, trimmed, both NFC-normalized so a decomposed accent
+// matches; empty matches all), newest first.
 func (a *App) History(query string) HistorySnapshot {
-	q := strings.ToLower(strings.TrimSpace(query))
+	q := strings.ToLower(norm.NFC.String(strings.TrimSpace(query)))
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	h := &a.history

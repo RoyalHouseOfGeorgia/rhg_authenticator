@@ -171,7 +171,7 @@ struct SignModelTests {
         #expect(model.report == .available(reportId: "r5"))
     }
 
-    @Test("Report Issue failure re-enables without opening anything")
+    @Test("Report Issue failure shows the core's message and re-enables without opening anything")
     func reportFailure() async {
         let fake = FakeBridge()
         let urls = URLRecorder()
@@ -182,23 +182,27 @@ struct SignModelTests {
         await model.reportIssue()
         #expect(urls.opened.isEmpty)
         #expect(model.report == .available(reportId: "r3"))
+        #expect(model.alert == AlertState(title: "Error", message: "offline"))
     }
 
     @Test("a new signing during a report keeps its own report state")
     func reportOverlappedBySign() async {
         let fake = FakeBridge()
         fake.fail(.signSign, RPCError(code: .failed, message: "m", offerReport: true, reportId: "r4"))
+        fake.respond(.signSign, signResult(existing: true))  // the second signing
         let held = fake.hold(.signReportError)
         let model = filledModel(fake)
         await model.sign()
         let reporting = Task { await model.reportIssue() }
         #expect(await settle { fake.count(.signReportError) == 1 })
-        fake.fail(.signValidate, RPCError(code: .failed, message: "invalid"))
         await model.sign()
         #expect(model.report == .unavailable)
-        held.release(ReportResult(filed: false, url: ""))
+        let alreadyIssued = model.alert
+        #expect(alreadyIssued?.title == "Already Issued")
+        held.release(failing: RPCError(code: .failed, message: "offline"))
         await reporting.value
         #expect(model.report == .unavailable)
+        #expect(model.alert == alreadyIssued)  // the stale report failure doesn't replace it
     }
 
     @Test("busy: a second sign is ignored; connecting shows only while busy")

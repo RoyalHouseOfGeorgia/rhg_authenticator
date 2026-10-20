@@ -413,6 +413,9 @@ func TestReadPIN_PrompterError(t *testing.T) {
 	if _, err := h.app.readPIN(context.Background()); !errors.Is(err, boom) {
 		t.Errorf("err = %v, want %v", err, boom)
 	}
+	if log := h.debugLog(t); !strings.Contains(log, "pin prompt: boom") {
+		t.Errorf("debug log = %q, want the prompter error", log)
+	}
 }
 
 func TestReadPIN_Timeout(t *testing.T) {

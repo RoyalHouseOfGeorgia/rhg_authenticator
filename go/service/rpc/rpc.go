@@ -27,7 +27,7 @@
 // columns, recordText's detail and revokeConfirm, and every *Filename are
 // render-only text that may change in any release. Hosts show them as given
 // and never compare or parse them; they branch only on ok, code, offerReport,
-// and the typed fields (booleans, enums such as state, stopped, result and
+// and the typed fields (booleans, enums such as state, stopped, outcome and
 // status, numbers and ids).
 package rpc
 

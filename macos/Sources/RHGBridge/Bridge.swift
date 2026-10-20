@@ -126,4 +126,38 @@ extension Bridge {
     public func currentUpdate() async throws(RPCError) -> UpdateCurrentResult {
         try await call(.updateCurrent, Empty())
     }
+
+    /// bulk.load: reads and plans the bulk CSV at `path` for `runBulk`.
+    public func loadBulk(path: String) async throws(RPCError) -> BulkLoadResult {
+        try await call(.bulkLoad, PathParams(path: path))
+    }
+
+    /// bulk.run: signs the loaded plan. With rows to sign it emits pin.request
+    /// (answer with `submitPIN` or `cancelPIN`), then bulk.connecting and one
+    /// bulk.progress per row; with nothing to sign it returns at once, with no
+    /// prompt or events. A cancelled run (`cancelBulk` or the PIN prompt)
+    /// succeeds with `stopped` `.cancelled`.
+    public func runBulk() async throws(RPCError) -> BulkRunResult {
+        try await call(.bulkRun, Empty())
+    }
+
+    /// bulk.cancel: stops a running bulk.run after its current row.
+    public func cancelBulk() async throws(RPCError) {
+        try await callVoid(.bulkCancel, Empty())
+    }
+
+    /// bulk.exportResults: writes the last plan's per-row results as CSV to `path`.
+    public func exportBulkResults(path: String) async throws(RPCError) {
+        try await callVoid(.bulkExportResults, PathParams(path: path))
+    }
+
+    /// yubikey.check: reads the inserted key and looks it up in the registry.
+    public func checkYubiKey() async throws(RPCError) -> KeyCheck {
+        try await call(.yubikeyCheck, Empty())
+    }
+
+    /// app.exportErrorLog: writes the diagnostic log to `path`.
+    public func exportErrorLog(path: String) async throws(RPCError) {
+        try await callVoid(.appExportErrorLog, PathParams(path: path))
+    }
 }

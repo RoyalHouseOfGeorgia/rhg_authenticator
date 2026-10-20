@@ -2,6 +2,7 @@ import AppKit
 import RHGBridge
 import RHGModels
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The process's one AppModel, over the Go core linked into it. Created on
 /// first use (by the delegate at launch or the window, whichever comes
@@ -24,6 +25,29 @@ struct RHGApp: App {
                 .frame(minWidth: 600, minHeight: 450)
         }
         .defaultSize(width: 800, height: 600)
+        .commands {
+            // The Help menu holds only Export Error Log…, as in the Fyne app.
+            // Always enabled (menu items need not track the phase): its
+            // result is an AppKit alert, shown over any window or sheet.
+            CommandGroup(replacing: .help) {
+                Button(AppModel.exportErrorLogTitle) {
+                    ErrorLogPanel.present(for: Shared.model)
+                }
+            }
+        }
+    }
+}
+
+/// Help → Export Error Log…: asks where to save, writes the core's
+/// diagnostic log there, then says where it went (or why it failed) in an
+/// AppKit alert on the topmost window, so it shows over a bulk sheet too.
+@MainActor
+enum ErrorLogPanel {
+    static func present(for model: AppModel) {
+        let type = UTType(filenameExtension: "log") ?? UTType.plainText
+        FilePanel.save(name: model.suggestedErrorLogFilename, type: type) { path in
+            await FilePanel.alert(await model.exportErrorLog(path: path))
+        }
     }
 }
 
