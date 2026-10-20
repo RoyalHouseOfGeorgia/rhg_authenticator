@@ -40,6 +40,11 @@ final class FakeBridge: Bridge, @unchecked Sendable {
         return hold
     }
 
+    /// Drops the rest of `method`'s script (its sticky last response too).
+    func reset(_ method: RPCMethod) {
+        lock.withLock { scripts[method.rawValue] = nil }
+    }
+
     func emit(_ event: BridgeEvent) {
         sink.yield(event)
     }
@@ -150,6 +155,37 @@ final class URLRecorder {
 
 let onlineInfo = AppInfo(activeKeys: 3, online: true, recentlyExpired: 1, version: "v1.2.3")
 
+let loggedOut = AuthState(loggedIn: false, offline: false, user: "", statusText: "Not logged in")
+let loggedIn = AuthState(loggedIn: true, offline: false, user: "octocat", statusText: "Logged in as @octocat")
+let loggedInOffline = AuthState(loggedIn: true, offline: true, user: "octocat", statusText: "Offline")
+
+let registryColumns = ["#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"]
+
+/// A registry entry and its table row (the cell texts are the core's).
+func registryEntry(_ n: Int, noExpiry: Bool = false, note: String = "") -> (RegistryEntry, [String]) {
+    let entry = RegistryEntry(
+        authority: "Authority \(n)", from: "2025-01-0\(n)", to: noExpiry ? "" : "2030-12-2\(n)", noExpiry: noExpiry,
+        publicKey: "KEY\(n)=", note: note)
+    let row = ["\(n)", entry.authority, "2025-Jan-0\(n)", noExpiry ? "(none)" : "2030-Dec-2\(n)", "(none)", note, "fp\(n)"]
+    return (entry, row)
+}
+
+/// A loaded snapshot of entries 1...count.
+func registrySnapshot(count: Int, dirty: Bool = false, loaded: Bool = true) -> RegistrySnapshot {
+    let made = (0..<count).map { registryEntry($0 + 1) }
+    return RegistrySnapshot(entries: made.map { $0.0 }, rows: made.map { $0.1 }, dirty: dirty, loaded: loaded)
+}
+
+/// Scripts the startup reads after sign.honors: auth.state, registry.columns
+/// and registry.snapshot.
+func scriptStartupRegistry(
+    _ fake: FakeBridge, auth: AuthState = loggedOut, snapshot: RegistrySnapshot = registrySnapshot(count: 2)
+) {
+    fake.respond(.authState, auth)
+    fake.respond(.registryColumns, ColumnsResult(columns: registryColumns))
+    fake.respond(.registrySnapshot, snapshot)
+}
+
 /// An AppModel whose startup succeeded, so its events are being drained.
 @MainActor
 func startedApp(
@@ -157,6 +193,7 @@ func startedApp(
 ) async -> AppModel {
     fake.respond(.appInit, onlineInfo)
     fake.respond(.signHonors, HonorsResult(honors: ["Order of Queen Tamar", "Order of the Eagle"]))
+    scriptStartupRegistry(fake)
     let app = AppModel(bridge: fake, clock: clock, openURL: openURL)
     await app.start()
     return app

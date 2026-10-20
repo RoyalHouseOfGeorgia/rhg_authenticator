@@ -99,7 +99,7 @@ func (s *server) initApp(p initParams) (any, error) {
 		return nil, err
 	}
 	logs = host.OpenLogs(dir, func() { s.events.Emit(EventInternalError, nil) })
-	s.setLogger(logs)
+	s.setLogs(dir, logs)
 	svc, err := s.newService(service.Config{
 		DataDir:  dir,
 		Logger:   logs.Logger,
@@ -117,22 +117,28 @@ func (s *server) initApp(p initParams) (any, error) {
 		svc.Close()
 		return nil, errShutDown
 	}
-	s.app, s.logs, s.dataDir, s.state = svc, logs, dir, stateReady
+	s.app, s.logs, s.state = svc, logs, stateReady
 	s.mu.Unlock()
 	settled = true
 	return svc.Info(), nil
 }
 
-// setLogger makes logs' logger the server's and its jsonEvents' diagnostic log.
-func (s *server) setLogger(logs *host.Logs) {
+// setLogs records dir as the data folder and makes logs' logger the server's
+// and its jsonEvents' diagnostic log, together under mu so app.exportErrorLog
+// never pairs one init's folder with another's log.
+func (s *server) setLogs(dir string, logs *host.Logs) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dataDir = dir
 	s.logger.Store(logs.Logger)
 	s.events.logger.Store(logs.Logger)
 }
 
 // initFailed returns a failed init to stateNew, unless a shutdown happened
-// meanwhile. The logger stays set (it writes by path, so it still works after
-// Logs.Close) and a retry replaces it, so a panic that failed the init is
-// still logged by Dispatch.
+// meanwhile. The logger and data folder stay set (the logger writes by path,
+// so it still works after Logs.Close) and a retry replaces them, so a panic
+// that failed the init is still logged by Dispatch and the error log can
+// still be exported.
 func (s *server) initFailed() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -175,6 +181,22 @@ func (s *server) canQuit() (any, error) {
 	}
 	s.mu.Unlock()
 	return canQuitResult{Dirty: app != nil && app.Dirty()}, nil
+}
+
+// exportErrorLog saves the diagnostic log to p.Path in any state once an
+// app.init has opened it: while that init still runs (it can wait long on the
+// registry fetch), after it failed, and after app.shutdown, which leaves the
+// log open. It never touches the App, which may not exist. Before any init
+// got that far it returns errNotReady.
+func (s *server) exportErrorLog(p pathParams) (any, error) {
+	s.mu.Lock()
+	dir := s.dataDir
+	logger := s.logger.Load()
+	s.mu.Unlock()
+	if dir == "" || logger == nil {
+		return nil, errNotReady
+	}
+	return void(service.ExportErrorLog(dir, logger, p.Path))
 }
 
 // shutdown moves to stateShutDown from any state, once: it cancels a pending

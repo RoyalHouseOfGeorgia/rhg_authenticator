@@ -23,6 +23,19 @@ public enum DisplayDate {
         return "\(parts[0])-\(months[month - 1])-\(parts[2])"
     }
 
+    /// `ymd` ("YYYY-MM-DD", a real calendar date) as midnight UTC; nil for
+    /// any other text.
+    public static func date(fromYMD ymd: String) -> Date? {
+        let parts = ymd.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0].count == 4, parts[1].count == 2, parts[2].count == 2,
+            parts.allSatisfy({ $0.allSatisfy { ("0"..."9").contains($0) } }),
+            let date = utcCalendar.date(
+                from: DateComponents(year: Int(parts[0]), month: Int(parts[1]), day: Int(parts[2]))),
+            self.ymd(date) == ymd
+        else { return nil }
+        return date
+    }
+
     /// The calendar date of `date` in `timeZone` (UTC by default) as YYYY-MM-DD.
     public static func ymd(_ date: Date, in timeZone: TimeZone = utcCalendar.timeZone) -> String {
         var calendar = utcCalendar

@@ -68,18 +68,6 @@ func TestExportIssuanceLog_OverwritesTarget(t *testing.T) {
 	noTempFiles(t, out)
 }
 
-func TestExportErrorLog_NewTarget(t *testing.T) {
-	h := newAppHarness(t, nil)
-	h.app.logger.Log("hello diagnostics")
-	target := filepath.Join(t.TempDir(), "errors.log")
-	if err := h.app.ExportErrorLog(target); err != nil {
-		t.Fatalf("ExportErrorLog: %v", err)
-	}
-	if got := readFile(t, target); !strings.Contains(got, "hello diagnostics") {
-		t.Errorf("target = %q", got)
-	}
-}
-
 func TestExportIssuanceLog_NothingToExport(t *testing.T) {
 	for _, content := range []string{"", "[]\n"} { // "" = no log file
 		t.Run(fmt.Sprintf("%q", content), func(t *testing.T) {
@@ -95,18 +83,6 @@ func TestExportIssuanceLog_NothingToExport(t *testing.T) {
 				t.Errorf("target created: %v", err)
 			}
 		})
-	}
-}
-
-func TestExportErrorLog_ReadError(t *testing.T) {
-	h := newAppHarness(t, nil)
-	h.app.logger = debuglog.New(filepath.Join(h.dir, "absent.log"))
-	target := filepath.Join(t.TempDir(), "errors.log")
-	if err := h.app.ExportErrorLog(target); err == nil || err.Error() != "Could not read the error log." {
-		t.Fatalf("err = %v", err)
-	}
-	if _, err := os.Stat(target); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("target created: %v", err)
 	}
 }
 
@@ -208,7 +184,7 @@ func TestSave_RefusesDataFolder(t *testing.T) {
 
 	saves := map[string]func(string) error{
 		"issuance": h.app.ExportIssuanceLog,
-		"error":    h.app.ExportErrorLog,
+		"error":    func(p string) error { return ExportErrorLog(h.dir, h.app.logger, p) },
 		"qr":       func(p string) error { return h.app.SaveQR("https://example.org/v", "svg", p) },
 	}
 	// A new file in the data folder is refused as well as the logs.
@@ -270,7 +246,7 @@ func TestSave_SymlinkToLogReplacesLink(t *testing.T) {
 		mustCover(t, runtime.GOOS != "windows", "symlink")
 		t.Skip("symlinks unavailable")
 	}
-	if err := h.app.ExportErrorLog(link); err != nil {
+	if err := ExportErrorLog(h.dir, h.app.logger, link); err != nil {
 		t.Fatalf("ExportErrorLog: %v", err)
 	}
 	if got := readFile(t, h.app.logPath); got != exportRecords {
@@ -327,5 +303,68 @@ func TestSaveErrorMessage(t *testing.T) {
 				t.Errorf("saveErrorMessage(%v) = %q, want %q", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+// newErrorLog returns a data dir and a logger for the diagnostic log in it,
+// holding line unless line is "" (then the log file does not exist).
+func newErrorLog(t *testing.T, line string) (string, *debuglog.Logger) {
+	t.Helper()
+	dir := t.TempDir()
+	logger := debuglog.New(filepath.Join(dir, debuglog.FileName))
+	if line != "" {
+		logger.Log(line)
+	}
+	return dir, logger
+}
+
+func TestExportErrorLogFunc_Saves(t *testing.T) {
+	dir, logger := newErrorLog(t, "hello diagnostics")
+	out := t.TempDir()
+	target := filepath.Join(out, "errors.log")
+	if err := ExportErrorLog(dir, logger, target); err != nil {
+		t.Fatalf("ExportErrorLog: %v", err)
+	}
+	if got := readFile(t, target); !strings.Contains(got, "hello diagnostics") {
+		t.Errorf("target = %q", got)
+	}
+	noTempFiles(t, out)
+}
+
+func TestExportErrorLogFunc_RelativePathRefused(t *testing.T) {
+	// An unreadable log too: the path is checked before the log is read.
+	for _, line := range []string{"diagnostics", ""} {
+		dir, logger := newErrorLog(t, line)
+		for _, p := range []string{"", "errors.log", filepath.Join("sub", "errors.log")} {
+			if err := ExportErrorLog(dir, logger, p); !errors.Is(err, errNotAbsolute) || err.Error() != "Choose a file to save to." {
+				t.Errorf("ExportErrorLog(%q) with log %q = %v", p, line, err)
+			}
+		}
+	}
+}
+
+func TestExportErrorLogFunc_UnreadableLog(t *testing.T) {
+	dir, logger := newErrorLog(t, "")
+	target := filepath.Join(t.TempDir(), "errors.log")
+	if err := ExportErrorLog(dir, logger, target); err == nil || err.Error() != "Could not read the error log." || !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want the unreadable-log text wrapping fs.ErrNotExist", err)
+	}
+	if _, err := os.Stat(target); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("target created: %v", err)
+	}
+	if !strings.Contains(readFile(t, logger.Path()), "errorlog: failed to read log for export: ") {
+		t.Error("read failure not logged")
+	}
+}
+
+func TestExportErrorLogFunc_SaveFailure(t *testing.T) {
+	dir, logger := newErrorLog(t, "diagnostics")
+	target := filepath.Join(t.TempDir(), "absent", "errors.log")
+	err := ExportErrorLog(dir, logger, target)
+	if err == nil || err.Error() != msgSaveNoFolder || !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want %q wrapping fs.ErrNotExist", err, msgSaveNoFolder)
+	}
+	if !strings.Contains(readFile(t, logger.Path()), "save failed: ") {
+		t.Error("save failure not logged")
 	}
 }

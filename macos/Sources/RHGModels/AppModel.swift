@@ -18,6 +18,11 @@ public final class AppModel {
     /// The Help menu's one item.
     nonisolated public static let exportErrorLogTitle = "Export Error Log\u{2026}"
 
+    /// The quit confirmation with unsubmitted registry edits (`confirmDiscard`).
+    nonisolated public static let quitConfirmation = Confirmation(
+        title: "Unsubmitted Changes", message: "The registry has unsubmitted changes. Exit anyway?",
+        confirmTitle: "Exit", isDestructive: true)
+
     /// Appended to a startup failure's message.
     nonisolated public static let reportSuffix =
         "\n\nPlease report this error at https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/issues"
@@ -36,6 +41,8 @@ public final class AppModel {
     public let bulk: BulkModel
     public let yubiKey: YubiKeyModel
     public let pinPrompt: PINPromptModel
+    public let registry: RegistryModel
+    public let login: LoginModel
 
     /// Asked before quitting with unsubmitted registry edits; false keeps the
     /// app running.
@@ -59,6 +66,10 @@ public final class AppModel {
         bulk = BulkModel(bridge: bridge)
         yubiKey = YubiKeyModel(bridge: bridge)
         pinPrompt = PINPromptModel(bridge: bridge)
+        let login = LoginModel(bridge: bridge)
+        let registry = RegistryModel(bridge: bridge, login: login, clock: clock, openURL: openURL)
+        self.login = login
+        self.registry = registry
     }
 
     /// A signing or a bulk flow is under way: Sign Credential and Bulk Sign
@@ -99,19 +110,22 @@ public final class AppModel {
     }
 
     /// Starts the core: listens for its events (buffered since the bridge was
-    /// installed), then app.init, sign.honors and app.start. Ends in `.ready`
+    /// installed), then app.init, sign.honors, auth.state, the registry
+    /// (registry.columns, registry.snapshot) and app.start. Ends in `.ready`
     /// or `.fatal`. Call once.
     public func start(dataDir: String? = nil) async {
         guard eventTask == nil else { return }
         let events = bridge.events
         eventTask = Task { [weak self] in
             for await event in events {
-                self?.handle(event)
+                await self?.handle(event)
             }
         }
         do {
             info = try await bridge.initApp(dataDir: dataDir)
             try await sign.loadHonors()
+            try await login.loadState()
+            try await registry.load()
             try await bridge.startApp()
         } catch {
             phase = .fatal(message: error.message + Self.reportSuffix)
@@ -120,7 +134,10 @@ public final class AppModel {
         phase = .ready
     }
 
-    private func handle(_ event: BridgeEvent) {
+    /// Handles one event; the next waits for it, so events apply in order.
+    /// Handlers may await only fast local core calls (registry.snapshot): a
+    /// slow one delays every later event, pin.request included.
+    private func handle(_ event: BridgeEvent) async {
         switch event {
         case .pinRequest(let request): pinPrompt.present(request)
         case .pinDismiss(let dismiss): pinPrompt.dismiss(requestId: dismiss.requestId)
@@ -132,6 +149,9 @@ public final class AppModel {
         case .appInternalError: internalErrorMessage = RPCError.badResponse.message
         case .updateStatus(let status): updateStatus = status
         case .updateUpdated(let notice): updatedNotice = notice
+        case .authChanged(let state): login.authChanged(state)
+        case .authDeviceCode(let code): login.showDeviceCode(code)
+        case .registryChanged: await registry.registryChanged()
         default: break
         }
     }

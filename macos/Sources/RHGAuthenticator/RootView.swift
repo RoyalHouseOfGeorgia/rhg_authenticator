@@ -7,10 +7,18 @@ import SwiftUI
 @MainActor
 struct RootView: View {
     let model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         content
+            // Runs again when the window is reopened; start() then returns
+            // at once.
             .task { await model.start() }
+            // The delegate reopens the window when a quit from closing it is
+            // called off.
+            .onAppear {
+                Shared.openMainWindow = { [openWindow] in openWindow(id: "main") }
+            }
     }
 
     @ViewBuilder
@@ -56,7 +64,7 @@ struct ReadyView: View {
                     .tabItem { Text("Sign") }
                 PlaceholderView()
                     .tabItem { Text("History") }
-                PlaceholderView()
+                RegistryView(registry: model.registry, login: model.login)
                     .tabItem { Text("Registry") }
                 PlaceholderView()
                     .tabItem { Text("Audit") }
@@ -71,11 +79,47 @@ struct ReadyView: View {
         .onChange(of: model.internalErrorMessage, initial: true) { _, message in
             guard let message else { return }
             Task {
-                await FilePanel.alert(AlertState(title: "Error", message: message))
+                _ = await FilePanel.alert(AlertState(title: "Error", message: message))
                 model.internalErrorMessage = nil
             }
         }
+        // The registry's and the login's alerts and questions, here so they
+        // show whichever tab started them, over any sheet.
+        .appKitConfirmation(registry.pendingConfirmation, current: { registry.pendingConfirmation }) {
+            [registry] confirmed in
+            if confirmed {
+                await registry.confirm()
+            } else {
+                registry.dismissConfirmation()
+            }
+        }
+        .appKitAlert(registry.alert, current: { registry.alert }) { [registry] in
+            await registry.alertDismissed()
+        }
+        .appKitConfirmation(login.pendingConfirmation, current: { login.pendingConfirmation }) {
+            [login] confirmed in
+            if confirmed {
+                await login.confirmLogout()
+            } else {
+                login.dismissConfirmation()
+            }
+        }
+        .appKitAlert(login.alert, current: { login.alert }) { [login] in
+            login.alertDismissed()
+        }
+        // Here rather than on the Registry tab, so switching tabs mid-login
+        // keeps it up. Only the model closes it (its Cancel button calls
+        // cancelLogin), so a login that just ended can't cancel the next.
+        .sheet(isPresented: .constant(login.deviceCode != nil)) {
+            if let prompt = login.deviceCode {
+                DeviceCodeSheet(login: login, prompt: prompt)
+                    .interactiveDismissDisabled()
+            }
+        }
     }
+
+    private var registry: RegistryModel { model.registry }
+    private var login: LoginModel { model.login }
 }
 
 /// A tab not yet ported from the Fyne app.

@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 )
 
 // exportFileMode is the mode of a saved file: what a Fyne save dialog's
@@ -30,32 +31,57 @@ const (
 	msgSaveFailed     = "Could not save the file."
 )
 
+// saver saves files the operator chose, refusing the data folder dataDir and
+// logging to logger. It needs no App, so the error log can be exported before
+// one exists.
+type saver struct {
+	dataDir string
+	logger  *debuglog.Logger
+}
+
+// saver returns the App's saver.
+func (a *App) saver() saver { return saver{dataDir: a.dataDir, logger: a.logger} }
+
 // ExportIssuanceLog saves the raw issuance log to path, for a native save
 // panel that leaves the target untouched until the save. It returns
 // ErrNothingToExport when no credential has been logged; other errors are
 // as for every save (see saveUserFile).
 func (a *App) ExportIssuanceLog(path string) error {
-	return a.exportTo(path, a.IssuanceLogExport)
+	return a.saver().exportTo(path, a.IssuanceLogExport)
 }
 
-// ExportErrorLog saves the diagnostic log to path, for a native save panel
-// that leaves the target untouched until the save. Errors are as for every
-// save (see saveUserFile).
-func (a *App) ExportErrorLog(path string) error {
-	return a.exportTo(path, a.ErrorLogExport)
+// ExportErrorLog saves logger's diagnostic log to path, for a native save
+// panel that leaves the target untouched until the save. It needs no App, so
+// a host can export while its App is still being created or after it failed
+// to start. dataDir is the data folder the log lives in, which path may not
+// be in. Errors are as for every save (see saveUserFile).
+func ExportErrorLog(dataDir string, logger *debuglog.Logger, path string) error {
+	s := saver{dataDir: dataDir, logger: logger}
+	return s.exportTo(path, s.errorLog)
+}
+
+// errorLog returns the diagnostic log. Errors are logged and their text is
+// user-facing.
+func (s saver) errorLog() ([]byte, error) {
+	data, err := os.ReadFile(s.logger.Path())
+	if err != nil {
+		s.logger.Logf("errorlog: failed to read log for export: %s", core.SanitizeForLog(err.Error()))
+		return nil, userErr("Could not read the error log.", err)
+	}
+	return data, nil
 }
 
 // exportTo checks path, reads the export with read and saves it to path. The
 // path is checked first, so a refused target never sees a read error.
-func (a *App) exportTo(path string, read func() ([]byte, error)) error {
-	if err := a.checkSavePath(path); err != nil {
+func (s saver) exportTo(path string, read func() ([]byte, error)) error {
+	if err := s.checkSavePath(path); err != nil {
 		return err
 	}
 	data, err := read()
 	if err != nil {
 		return err
 	}
-	return a.saveUserFile(path, data)
+	return s.saveUserFile(path, data)
 }
 
 // saveUserFile writes data to path, a file the operator chose, through a
@@ -63,24 +89,24 @@ func (a *App) exportTo(path string, read func() ([]byte, error)) error {
 // file. It returns errNotAbsolute for a relative path, ErrProtectedPath for a
 // file whose folder is the data folder, and otherwise a logged error with a
 // fixed user-facing text.
-func (a *App) saveUserFile(path string, data []byte) error {
-	if err := a.checkSavePath(path); err != nil {
+func (s saver) saveUserFile(path string, data []byte) error {
+	if err := s.checkSavePath(path); err != nil {
 		return err
 	}
 	if err := writeFileAtomic(path, data); err != nil {
-		a.logger.Logf("save failed: %s", core.SanitizeForLog(err.Error()))
+		s.logger.Logf("save failed: %s", core.SanitizeForLog(err.Error()))
 		return userErr(saveErrorMessage(err), err)
 	}
 	return nil
 }
 
 // checkSavePath refuses a relative path and, logging it, a protected one.
-func (a *App) checkSavePath(path string) error {
+func (s saver) checkSavePath(path string) error {
 	if !filepath.IsAbs(path) {
 		return errNotAbsolute
 	}
-	if a.isProtected(path) {
-		a.logger.Logf("save refused in the data folder: %s", core.SanitizeForLog(path))
+	if s.isProtected(path) {
+		s.logger.Logf("save refused in the data folder: %s", core.SanitizeForLog(path))
 		return ErrProtectedPath
 	}
 	return nil
@@ -91,12 +117,12 @@ func (a *App) checkSavePath(path string) error {
 // exists yet. Comparing with os.SameFile catches case variants, symlinked
 // folders and ".." components. A symlink elsewhere that points at a log is
 // not protected: the save's rename replaces the link, never the log.
-func (a *App) isProtected(path string) bool {
+func (s saver) isProtected(path string) bool {
 	dir, err := os.Stat(filepath.Dir(path))
 	if err != nil {
 		return false
 	}
-	data, err := os.Stat(a.dataDir)
+	data, err := os.Stat(s.dataDir)
 	return err == nil && os.SameFile(dir, data)
 }
 

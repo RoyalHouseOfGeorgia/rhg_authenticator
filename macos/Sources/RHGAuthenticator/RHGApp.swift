@@ -12,6 +12,10 @@ enum Shared {
     static let model = AppModel(
         bridge: LiveBridge.install(),
         openURL: { url in _ = NSWorkspace.shared.open(url) })
+
+    /// Opens the main window (SwiftUI's openWindow, set by RootView on
+    /// appear); nil until the window first shows.
+    static var openMainWindow: (@MainActor () -> Void)?
 }
 
 /// The app: one window, as the Fyne app had. Started from main.swift.
@@ -46,7 +50,7 @@ enum ErrorLogPanel {
     static func present(for model: AppModel) {
         let type = UTType(filenameExtension: "log") ?? UTType.plainText
         FilePanel.save(name: model.suggestedErrorLogFilename, type: type) { path in
-            await FilePanel.alert(await model.exportErrorLog(path: path))
+            _ = await FilePanel.alert(await model.exportErrorLog(path: path))
         }
     }
 }
@@ -58,6 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         pinSheet = PINSheetController(prompt: Shared.model.pinPrompt)
+        // An AppKit alert: standalone when the quit came from closing the
+        // window, which is gone by then.
+        Shared.model.confirmDiscard = { await FilePanel.confirm(AppModel.quitConfirmation) }
     }
 
     /// Closing the window quits, as in the Fyne app.
@@ -74,8 +81,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // A plain quit never relaunches; only the update banner's
             // "Restart now" will quit with relaunch: true.
             let terminate = await model.prepareToQuit(relaunch: false)
+            if !terminate {
+                Self.showMainWindow()
+            }
             NSApp.reply(toApplicationShouldTerminate: terminate)
         }
         return .terminateLater
+    }
+
+    /// Brings the main window back after a called-off quit, which may have
+    /// come from closing it. Opening a single-window scene that is still open
+    /// brings that window forward instead.
+    private static func showMainWindow() {
+        Shared.openMainWindow?()
+        NSApp.activate()
     }
 }

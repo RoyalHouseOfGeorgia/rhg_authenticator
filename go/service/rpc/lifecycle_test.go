@@ -616,3 +616,123 @@ func TestInit_PanicReturnsToNew(t *testing.T) {
 	h.srv.newService = h.localService
 	h.init(t)
 }
+
+// exportErrorLog runs app.exportErrorLog to path.
+func (h *lcHarness) exportErrorLog(t testing.TB, path string) envelope {
+	t.Helper()
+	return h.call(t, "app.exportErrorLog", `{"path":`+jsonString(path)+`}`)
+}
+
+// wantExported asserts that app.exportErrorLog saves the diagnostic log,
+// which app.init opened in dir, to a new file outside it.
+func (h *lcHarness) wantExported(t testing.TB, dir string) {
+	t.Helper()
+	target := filepath.Join(t.TempDir(), "error-log.txt")
+	h.exportErrorLog(t, target).ok(t, nil)
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "RHG Authenticator starting") || !strings.HasPrefix(readLogIn(t, dir), string(data)) {
+		t.Errorf("exported %q, not the diagnostic log in %s", data, dir)
+	}
+}
+
+// wantNotExported asserts that app.exportErrorLog is refused as not
+// initialized and writes nothing.
+func (h *lcHarness) wantNotExported(t testing.TB) {
+	t.Helper()
+	target := filepath.Join(h.tmp, "error-log.txt")
+	h.exportErrorLog(t, target).fails(t, CodeInput, errNotReady.msg)
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("target written: %v", err)
+	}
+}
+
+func TestExportErrorLog_BeforeInit(t *testing.T) {
+	h := newLC(t)
+	h.wantNotExported(t)
+	h.call(t, "app.exportErrorLog", `{"path":"/x","y":1}`).fails(t, CodeInput, msgBadParams)
+	h.call(t, "app.shutdown", ``).ok(t, nil)
+	h.wantNotExported(t) // shut down before any init: still no data folder
+}
+
+func TestExportErrorLog_DataDirFailed(t *testing.T) {
+	h := newLC(t)
+	file := filepath.Join(h.tmp, "file")
+	writeFile(t, file, "x")
+	h.call(t, "app.init", h.initParams(filepath.Join(file, "sub"))).fails(t, CodeFailed, "")
+	h.wantNotExported(t)
+}
+
+func TestExportErrorLog_DuringInit(t *testing.T) {
+	h := newLC(t)
+	h.gate, h.entered = make(chan struct{}), make(chan struct{}, 1)
+	release := sync.OnceFunc(func() { close(h.gate) })
+	t.Cleanup(release) // a failed assertion must not leave the fetch blocked
+	dir := filepath.Join(h.tmp, "data")
+	initDone := goDispatch(h.srv, "app.init", h.initParams(dir))
+	waitFor(t, h.entered, "registry fetch")
+	if h.state() != stateInitializing {
+		t.Fatalf("state = %v, want initializing", h.state())
+	}
+	h.wantExported(t, dir)
+	h.exportErrorLog(t, filepath.Join(dir, "x.txt")).fails(t, CodeFailed, service.ErrProtectedPath.Error())
+	release()
+	decodeEnvelope(t, "app.init", waitFor(t, initDone, "app.init returning")).ok(t, nil)
+	h.wantExported(t, dir)
+}
+
+func TestExportErrorLog_AfterFailedInit(t *testing.T) {
+	h := newLC(t)
+	h.srv.newService = func(service.Config) (*service.App, error) {
+		return nil, errors.New("Cannot start signing service: boom")
+	}
+	bad := filepath.Join(h.tmp, "bad")
+	h.call(t, "app.init", h.initParams(bad)).fails(t, CodeFailed, "Cannot start signing service: boom")
+	if h.state() != stateNew {
+		t.Fatalf("state = %v after failed init", h.state())
+	}
+	h.wantExported(t, bad)
+
+	for _, target := range []string{filepath.Join(bad, debuglog.FileName), filepath.Join(bad, "x.txt")} {
+		h.exportErrorLog(t, target).fails(t, CodeFailed, service.ErrProtectedPath.Error())
+	}
+	if _, err := os.Stat(filepath.Join(bad, "x.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("protected target written: %v", err)
+	}
+	h.exportErrorLog(t, "error-log.txt").fails(t, CodeFailed, "Choose a file to save to.")
+
+	// A retry replaces the data folder: the old one is no longer protected.
+	h.srv.newService = h.localService
+	dir := h.init(t)
+	h.wantExported(t, dir)
+	h.exportErrorLog(t, filepath.Join(dir, "x.txt")).fails(t, CodeFailed, service.ErrProtectedPath.Error())
+	h.exportErrorLog(t, filepath.Join(bad, "x.txt")).ok(t, nil)
+}
+
+func TestExportErrorLog_AfterShutdown(t *testing.T) {
+	h := newLC(t)
+	dir := h.init(t)
+	h.startAndSettle(t)
+	h.call(t, "app.shutdown", ``).ok(t, nil)
+	h.wantExported(t, dir)
+	h.exportErrorLog(t, filepath.Join(dir, "x.txt")).fails(t, CodeFailed, service.ErrProtectedPath.Error())
+}
+
+func TestExportErrorLog_AfterShutdownDuringFailingInit(t *testing.T) {
+	h := newLC(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	h.srv.newService = func(service.Config) (*service.App, error) {
+		close(entered)
+		<-release
+		return nil, errors.New("Cannot start signing service: boom")
+	}
+	dir := filepath.Join(h.tmp, "data")
+	initDone := goDispatch(h.srv, "app.init", h.initParams(dir))
+	waitFor(t, entered, "service creation")
+	h.call(t, "app.shutdown", ``).ok(t, nil)
+	close(release)
+	decodeEnvelope(t, "app.init", waitFor(t, initDone, "app.init returning")).fails(t, CodeFailed, "")
+	h.wantExported(t, dir)
+}

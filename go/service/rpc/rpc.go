@@ -6,9 +6,12 @@
 //
 // The host sets the event callback, calls app.init (which opens the
 // diagnostic log and creates the App) and then app.start once its UI listens.
-// Every method except app.init, app.canQuit and app.shutdown needs a
-// successful app.init; after app.shutdown only app.canQuit and app.shutdown
-// are accepted. Rejected calls fail with CodeInput.
+// Every method except app.init, app.canQuit, app.shutdown and
+// app.exportErrorLog needs a successful app.init; after app.shutdown only
+// app.canQuit, app.shutdown and app.exportErrorLog are accepted.
+// app.exportErrorLog works in any state once an app.init has opened the
+// diagnostic log, including while that init still runs and after it failed.
+// Rejected calls fail with CodeInput.
 //
 // Every response is an envelope:
 //
@@ -137,8 +140,11 @@ const (
 	stateShutDown
 )
 
-// anyStateMethods may be called in every state; the rest need stateReady.
-var anyStateMethods = map[string]bool{"app.init": true, "app.canQuit": true, "app.shutdown": true}
+// anyStateMethods may be called in every state, checking it themselves; the
+// rest need stateReady.
+var anyStateMethods = map[string]bool{
+	"app.init": true, "app.canQuit": true, "app.shutdown": true, "app.exportErrorLog": true,
+}
 
 // updateManager is the part of *update.Manager the server uses.
 type updateManager interface {
@@ -152,17 +158,22 @@ type server struct {
 	methods map[string]handler
 	events  *jsonEvents
 	pins    *pinBridge
-	logger  atomic.Pointer[debuglog.Logger] // the open diagnostic log; nil before app.init
+	// logger is the diagnostic log: nil until an app.init opens it, then kept
+	// (a failed init leaves it set, a retry replaces it).
+	logger atomic.Pointer[debuglog.Logger]
 
 	// Start-up dependencies, replaceable in tests.
 	newKeyring func() ghapi.Keyring
 	newService func(service.Config) (*service.App, error)
 	newManager func(update.Config) updateManager
 
-	mu      sync.Mutex // guards the fields below; never held across I/O or Emit
-	state   lifecycle
-	app     *service.App // set on entering stateReady, never cleared
-	logs    *host.Logs
+	mu    sync.Mutex // guards the fields below; never held across I/O or Emit
+	state lifecycle
+	app   *service.App // set on entering stateReady, never cleared
+	logs  *host.Logs
+	// dataDir is the data folder, written together with logger under mu
+	// (logger is also atomic so Dispatch's panic handler reads it without
+	// the lock); kept and replaced like it.
 	dataDir string
 	started bool
 	manager updateManager

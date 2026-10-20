@@ -209,11 +209,30 @@ struct HelperTests {
         try await bridge.exportBulkResults(path: "/OUT/bulk-results.csv")
         #expect(try await bridge.checkYubiKey().outcome == .found)
         try await bridge.exportErrorLog(path: "/OUT/error-log.txt")
+        #expect(try await bridge.registryColumns() == ["#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"])
+        let snapshot = try await bridge.registrySnapshot()
+        #expect(snapshot.entries.count == 2 && snapshot.rows.count == 2 && snapshot.dirty && snapshot.loaded)
+        try await bridge.fetchRegistry()
+        try await bridge.addEntry(
+            form: EntryForm(authority: "New Authority", from: "2026-01-01", to: "", note: "Second key", noExpiry: true),
+            publicKey: "JUO5L/EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0=")
+        try await bridge.updateEntry(
+            index: 0, publicKey: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+            form: EntryForm(authority: "A", from: "2025-01-01", to: "2030-12-31", note: "", noExpiry: false))
+        #expect(try await bridge.importCertificate(path: "/OUT/certificate.pem") == "JUO5L/EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0=")
+        #expect(try await bridge.importFromYubiKey() == "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=")
+        #expect(try await bridge.submitRegistry().prNumber == 42)
+        #expect(try await bridge.authState() == AuthState(loggedIn: false, offline: false, user: "", statusText: "Not logged in"))
+        #expect(try await bridge.login().user == "octocat")
+        try await bridge.cancelLogin()
+        try await bridge.logout()
 
         let expected: [RPCMethod] = [
             .appInit, .appStart, .appInfo, .appCanQuit, .appShutdown, .signHonors, .signValidate, .signSign,
             .signSaveQR, .signReportError, .pinSubmit, .pinCancel, .updateCurrent, .bulkLoad, .bulkRun, .bulkCancel,
-            .bulkExportResults, .yubikeyCheck, .appExportErrorLog,
+            .bulkExportResults, .yubikeyCheck, .appExportErrorLog, .registryColumns, .registrySnapshot, .registryFetch,
+            .registryAddEntry, .registryUpdateEntry, .registryImportCertificate, .registryImportFromYubiKey,
+            .registrySubmit, .authState, .authLogin, .authCancelLogin, .authLogout,
         ]
         let calls = bridge.calls
         #expect(calls.map(\.method) == expected.map(\.rawValue))

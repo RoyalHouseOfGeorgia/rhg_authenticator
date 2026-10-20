@@ -6,10 +6,13 @@ import RHGBridge
 public struct AlertState: Sendable, Equatable {
     public var title: String
     public var message: String
+    /// The alert also offers "Export Error Log…" (`AppModel.exportErrorLogTitle`).
+    public var offersErrorLogExport: Bool
 
-    public init(title: String, message: String) {
+    public init(title: String, message: String, offersErrorLogExport: Bool = false) {
         self.title = title
         self.message = message
+        self.offersErrorLogExport = offersErrorLogExport
     }
 
     /// A core error, shown as-is under the title "Error".

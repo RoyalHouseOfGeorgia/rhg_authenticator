@@ -7,7 +7,7 @@ import Testing
 @Suite("AppModel")
 @MainActor
 struct AppModelTests {
-    @Test("startup online: init, honors, start in order; ready; status bar")
+    @Test("startup online: init, honors, login state, registry, start in order; ready; status bar")
     func startOnline() async {
         let fake = FakeBridge()
         let app = AppModel(bridge: fake)
@@ -15,12 +15,20 @@ struct AppModelTests {
         #expect(app.statusItems.isEmpty)
         fake.respond(.appInit, onlineInfo)
         fake.respond(.signHonors, HonorsResult(honors: ["A", "B"]))
+        scriptStartupRegistry(fake, auth: loggedIn, snapshot: registrySnapshot(count: 1))
         await app.start(dataDir: "/data")
         #expect(app.phase == .ready)
         #expect(app.info == onlineInfo)
         #expect(app.statusItems == ["Active keys: 3", "Expired (30d): 1", "Version 1.2.3"])
         #expect(app.sign.honors == ["A", "B"])
-        #expect(fake.methods == ["app.init", "sign.honors", "app.start"])
+        #expect(app.login.authState == loggedIn)
+        #expect(app.registry.columns == registryColumns)
+        #expect(app.registry.snapshot == registrySnapshot(count: 1))
+        #expect(app.registry.status == "Loaded from registry server")
+        #expect(
+            fake.methods == [
+                "app.init", "sign.honors", "auth.state", "registry.columns", "registry.snapshot", "app.start",
+            ])
         #expect(fake.params(.appInit) == [#"{"dataDir":"/data"}"#])
     }
 
@@ -29,10 +37,12 @@ struct AppModelTests {
         let fake = FakeBridge()
         fake.respond(.appInit, AppInfo(activeKeys: 0, online: false, recentlyExpired: 0, version: "2.0"))
         fake.respond(.signHonors, HonorsResult(honors: []))
+        scriptStartupRegistry(fake, snapshot: registrySnapshot(count: 0, loaded: false))
         let app = AppModel(bridge: fake)
         await app.start()
         #expect(app.phase == .ready)
         #expect(app.statusItems == ["No internet", "Version 2.0"])
+        #expect(app.registry.status == "Fetching...")
         #expect(fake.params(.appInit) == ["{}"])
     }
 
@@ -41,6 +51,7 @@ struct AppModelTests {
         let fake = FakeBridge()
         fake.respond(.appInit, AppInfo(activeKeys: 1, online: true, recentlyExpired: 0, version: "vv1"))
         fake.respond(.signHonors, HonorsResult(honors: []))
+        scriptStartupRegistry(fake)
         let app = AppModel(bridge: fake)
         await app.start()
         #expect(app.statusItems.last == "Version v1")
@@ -77,10 +88,63 @@ struct AppModelTests {
         let fake = FakeBridge()
         fake.respond(.appInit, onlineInfo)
         fake.respond(.signHonors, HonorsResult(honors: []))
+        scriptStartupRegistry(fake)
         fake.fail(.appStart, RPCError(code: .input, message: "not initialized"))
         let app = AppModel(bridge: fake)
         await app.start()
         #expect(app.phase == .fatal(message: "not initialized" + AppModel.reportSuffix))
+    }
+
+    @Test(
+        "auth.state, registry.columns or registry.snapshot failing is fatal; app.start is not called",
+        arguments: [RPCMethod.authState, .registryColumns, .registrySnapshot])
+    func startupReadFailure(_ failing: RPCMethod) async {
+        let fake = FakeBridge()
+        fake.respond(.appInit, onlineInfo)
+        fake.respond(.signHonors, HonorsResult(honors: []))
+        scriptStartupRegistry(fake)
+        fake.reset(failing)
+        fake.fail(failing, RPCError(code: .internal, message: "read broke"))
+        let app = AppModel(bridge: fake)
+        await app.start()
+        #expect(app.phase == .fatal(message: "read broke" + AppModel.reportSuffix))
+        #expect(fake.methods.last == failing.rawValue)
+        #expect(fake.count(.appStart) == 0)
+    }
+
+    @Test("login status texts land on the Registry tab's status line")
+    func loginStatusSink() async {
+        let fake = FakeBridge()
+        let held = fake.hold(.authLogin)
+        let app = await startedApp(fake)
+        let login = Task { await app.login.start() }
+        #expect(await settle { app.registry.status == "Requesting device code..." })
+        held.release(loggedIn)
+        await login.value
+        #expect(app.registry.status == "Logged in as @octocat")
+    }
+
+    @Test("auth and registry events reach the login and the Registry tab, in order")
+    func authAndRegistryEvents() async {
+        let fake = FakeBridge()
+        let app = await startedApp(fake)
+        app.registry.select(row: 0, column: 1)
+        #expect(app.registry.selection != nil)
+        fake.reset(.registrySnapshot)
+        fake.respond(.registrySnapshot, registrySnapshot(count: 3))
+        let held = fake.hold(.authLogin)
+        let login = Task { await app.login.start() }
+        #expect(await settle { fake.count(.authLogin) == 1 })
+        fake.emit(.authDeviceCode(DeviceCode(userCode: "ABCD-1234", verificationUri: "https://github.com/login/device")))
+        fake.emit(.registryChanged)
+        fake.emit(.authChanged(loggedIn))
+        #expect(await settle { app.login.authState == loggedIn })
+        // registry.changed was handled before the auth.changed that followed it.
+        #expect(app.registry.snapshot == registrySnapshot(count: 3))
+        #expect(app.registry.selection == nil)
+        #expect(app.login.deviceCode?.userCode == "ABCD-1234")
+        held.release(loggedIn)
+        await login.value
     }
 
     @Test("a second start does nothing")
@@ -255,6 +319,29 @@ struct AppModelTests {
         #expect(await app.prepareToQuit(relaunch: false))
         #expect(asked == 2)
         #expect(fake.count(.appShutdown) == 1)
+    }
+
+    @Test("Restart now declined, then a plain quit: shutdown once, without relaunch")
+    func restartDeclinedThenQuit() async {
+        let fake = FakeBridge()
+        fake.respond(.appCanQuit, CanQuitResult(dirty: true))
+        let app = AppModel(bridge: fake)
+        var answers = [false, true]
+        app.confirmDiscard = { answers.removeFirst() }
+        #expect(await app.prepareToQuit(relaunch: true) == false)
+        #expect(fake.count(.appShutdown) == 0)
+        #expect(await app.prepareToQuit(relaunch: false))
+        #expect(fake.params(.appShutdown) == [#"{"relaunch":false}"#])
+        #expect(answers.isEmpty)
+    }
+
+    @Test("quit confirmation copy matches the Fyne app")
+    func quitCopy() {
+        #expect(
+            AppModel.quitConfirmation
+                == Confirmation(
+                    title: "Unsubmitted Changes", message: "The registry has unsubmitted changes. Exit anyway?",
+                    confirmTitle: "Exit", cancelTitle: "Cancel", isDestructive: true))
     }
 
     @Test("dirty edits: the default confirmDiscard discards")

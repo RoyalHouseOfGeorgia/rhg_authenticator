@@ -158,10 +158,11 @@ func newHarnessAt(t testing.TB, kr ghapi.Keyring, registryURL, revocationURL str
 }
 
 // readyServer returns a server in stateReady around app, as app.init leaves
-// it, without opening the process-wide logs.
+// it, without opening the process-wide logs. The data dir is the logger's
+// folder, where app.init opens it.
 func readyServer(app *service.App, logger *debuglog.Logger) *server {
 	s := newServer()
-	s.app, s.state = app, stateReady
+	s.app, s.state, s.dataDir = app, stateReady, filepath.Dir(logger.Path())
 	s.logger.Store(logger)
 	return s
 }

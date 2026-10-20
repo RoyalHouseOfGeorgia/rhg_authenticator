@@ -160,4 +160,71 @@ extension Bridge {
     public func exportErrorLog(path: String) async throws(RPCError) {
         try await callVoid(.appExportErrorLog, PathParams(path: path))
     }
+
+    /// registry.columns: the registry table's column headings; display only.
+    public func registryColumns() async throws(RPCError) -> [String] {
+        let result: ColumnsResult = try await call(.registryColumns, Empty())
+        return result.columns
+    }
+
+    /// registry.snapshot: the registry as edited, with its table cells.
+    public func registrySnapshot() async throws(RPCError) -> RegistrySnapshot {
+        try await call(.registrySnapshot, Empty())
+    }
+
+    /// registry.fetch: re-fetches the live registry, discarding local edits.
+    /// Success arrives as the registry.changed event.
+    public func fetchRegistry() async throws(RPCError) {
+        try await callVoid(.registryFetch, Empty())
+    }
+
+    /// registry.addEntry: appends an entry for `publicKey` (base64 Ed25519).
+    public func addEntry(form: EntryForm, publicKey: String) async throws(RPCError) {
+        try await callVoid(.registryAddEntry, AddEntryParams(form: form, publicKey: publicKey))
+    }
+
+    /// registry.updateEntry: replaces the entry at `index` of the snapshot,
+    /// which must still hold `publicKey`.
+    public func updateEntry(index: Int, publicKey: String, form: EntryForm) async throws(RPCError) {
+        try await callVoid(.registryUpdateEntry, UpdateEntryParams(index: index, publicKey: publicKey, form: form))
+    }
+
+    /// registry.importCertificate: the public key of the certificate at `path`.
+    public func importCertificate(path: String) async throws(RPCError) -> String {
+        let result: PublicKeyResult = try await call(.registryImportCertificate, PathParams(path: path))
+        return result.publicKey
+    }
+
+    /// registry.importFromYubiKey: the inserted YubiKey's public key.
+    public func importFromYubiKey() async throws(RPCError) -> String {
+        let result: PublicKeyResult = try await call(.registryImportFromYubiKey, Empty())
+        return result.publicKey
+    }
+
+    /// registry.submit: opens a pull request with the edited registry.
+    public func submitRegistry() async throws(RPCError) -> SubmitResult {
+        try await call(.registrySubmit, Empty())
+    }
+
+    /// auth.state: the GitHub login state.
+    public func authState() async throws(RPCError) -> AuthState {
+        try await call(.authState, Empty())
+    }
+
+    /// auth.login: reconnects an offline session or runs the GitHub device
+    /// flow, emitting auth.deviceCode, and returns once a token arrives or the
+    /// login is cancelled (`cancelLogin`).
+    public func login() async throws(RPCError) -> AuthState {
+        try await call(.authLogin, Empty())
+    }
+
+    /// auth.cancelLogin: stops a running auth.login, which fails `cancelled`.
+    public func cancelLogin() async throws(RPCError) {
+        try await callVoid(.authCancelLogin, Empty())
+    }
+
+    /// auth.logout: clears the saved session.
+    public func logout() async throws(RPCError) {
+        try await callVoid(.authLogout, Empty())
+    }
 }

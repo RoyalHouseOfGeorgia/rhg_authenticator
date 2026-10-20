@@ -252,7 +252,7 @@ type KeyCheck struct {
 // revocation and audit state and rules behind the user interface. Info,
 // Honors, CancelBulk, AuthState, CancelLogin, Registry, AddEntry,
 // UpdateEntry, Dirty, History, Start and Close never block, and SaveQR,
-// Logout, ImportCertificate and ExportErrorLog do only short local work
+// Logout and ImportCertificate do only short local work
 // (file or keyring I/O; SaveQR renders a PNG in about 0.1 s), so these may be
 // called on a UI thread. IssuanceLogExport, ExportIssuanceLog,
 // DuplicatePreview and RemoveDuplicates read (and RemoveDuplicates rewrites)
@@ -534,7 +534,7 @@ func (a *App) SaveQR(url, format, path string) error {
 		a.logger.Log(strings.ToUpper(format) + " generation failed: " + core.SanitizeForLog(err.Error()))
 		return userErr("Could not create the "+strings.ToUpper(format)+" file.", err)
 	}
-	return a.saveUserFile(path, data)
+	return a.saver().saveUserFile(path, data)
 }
 
 // ReportSignError files a GitHub issue for the Sign failure whose
@@ -707,7 +707,7 @@ func (a *App) ExportBulkResults(path string) error {
 		a.logger.Log("bulk results CSV failed: " + core.SanitizeForLog(err.Error()))
 		return userErr("Could not create the results file.", err)
 	}
-	return a.saveUserFile(path, data)
+	return a.saver().saveUserFile(path, data)
 }
 
 // CheckYubiKey reads the inserted key and looks it up in the registry.

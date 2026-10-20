@@ -12,7 +12,6 @@ import (
 // appMethods maps each exposed *service.App method to its rpc method.
 var appMethods = map[string]string{
 	"Info":              "app.info",
-	"ExportErrorLog":    "app.exportErrorLog",
 	"Honors":            "sign.honors",
 	"Sign":              "sign.sign",
 	"SaveQR":            "sign.saveQR",
@@ -46,15 +45,14 @@ var appMethods = map[string]string{
 }
 
 // excludedAppMethods are the *service.App methods deliberately not exposed:
-// they serve the Fyne UI's in-memory save flow or are covered by another
-// method.
+// they serve the Fyne UI's in-memory save flow.
 var excludedAppMethods = []string{"IssuanceLogExport", "ErrorLogExport"}
 
 // nonAppMethods are rpc methods backed by package-level service functions,
 // SignFields or the server itself.
 var nonAppMethods = []string{
 	"sign.validate", "registry.columns", "history.recordText",
-	"app.init", "pin.submit", "pin.cancel", "update.current",
+	"app.init", "app.exportErrorLog", "pin.submit", "pin.cancel", "update.current",
 }
 
 // TestMethodTable_CoversApp fails when an exported *service.App method is

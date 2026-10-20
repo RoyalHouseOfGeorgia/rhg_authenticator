@@ -104,14 +104,12 @@ type (
 func methodTable() map[string]handler {
 	bg := context.Background()
 	return map[string]handler{
-		"app.init":     method((*server).initApp),
-		"app.start":    noParams((*server).start),
-		"app.canQuit":  noParams((*server).canQuit),
-		"app.shutdown": method((*server).shutdown),
-		"app.info":     noParams(func(s *server) (any, error) { return s.app.Info(), nil }),
-		"app.exportErrorLog": method(func(s *server, p pathParams) (any, error) {
-			return void(s.app.ExportErrorLog(p.Path))
-		}),
+		"app.init":           method((*server).initApp),
+		"app.start":          noParams((*server).start),
+		"app.canQuit":        noParams((*server).canQuit),
+		"app.shutdown":       method((*server).shutdown),
+		"app.info":           noParams(func(s *server) (any, error) { return s.app.Info(), nil }),
+		"app.exportErrorLog": method((*server).exportErrorLog),
 
 		"sign.honors": noParams(func(s *server) (any, error) {
 			return honorsResult{Honors: orEmpty(s.app.Honors())}, nil

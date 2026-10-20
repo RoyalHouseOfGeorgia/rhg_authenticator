@@ -338,12 +338,7 @@ func (a *App) IssuanceLogExport() ([]byte, error) {
 // ErrorLogExport returns the diagnostic log for the operator to save. Errors
 // are logged and their text is user-facing.
 func (a *App) ErrorLogExport() ([]byte, error) {
-	data, err := os.ReadFile(a.logger.Path())
-	if err != nil {
-		a.logger.Logf("errorlog: failed to read log for export: %s", core.SanitizeForLog(err.Error()))
-		return nil, userErr("Could not read the error log.", err)
-	}
-	return data, nil
+	return a.saver().errorLog()
 }
 
 // DuplicatePreview returns how many duplicate entries RemoveDuplicates would
