@@ -61,7 +61,14 @@ let package = Package(
         ),
         // The view models: Foundation + Observation only, built and tested on
         // Linux. The SwiftUI views bind to them.
-        .target(name: "RHGModels", dependencies: ["RHGBridge"], swiftSettings: coreHeaderSettings),
+        .target(
+            name: "RHGModels", dependencies: ["RHGBridge"],
+            // Unoptimized in release too: Xcode 26.6's swift-frontend crashes
+            // optimizing this module (LLVM verifier, "Instruction does not
+            // dominate all uses" in AppModel.swift.o); debug builds are fine.
+            // View models gain nothing from -O. Retry without it when the
+            // Xcode pin in build.yml moves.
+            swiftSettings: coreHeaderSettings + [.unsafeFlags(["-Onone"], .when(configuration: .release))]),
         // Test support, never shipped: runs one LiveBridge scenario per process.
         .executableTarget(name: "RHGFlowRunner", dependencies: ["RHGBridge"], swiftSettings: coreHeaderSettings),
         .testTarget(
