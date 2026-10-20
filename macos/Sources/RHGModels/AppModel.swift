@@ -55,6 +55,7 @@ public final class AppModel {
     @ObservationIgnored private let timeZone: TimeZone
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var quitTask: Task<Bool, Never>?
+    @ObservationIgnored private var restartRequested = false
 
     /// `clock` is now and `timeZone` the machine's zone; tests inject both.
     public init(
@@ -111,6 +112,26 @@ public final class AppModel {
             return ["No internet", version]
         }
         return ["Active keys: \(info.activeKeys)", "Expired (30d): \(info.recentlyExpired)", version]
+    }
+
+    /// The update banner's status slot, from the latest update.status; nil
+    /// shows nothing.
+    public var updateBanner: UpdateBanner? { updateStatus.flatMap(UpdateBanner.init) }
+
+    /// The "Updated to" notice, from the latest update.updated until the
+    /// operator closes it; nil shows nothing.
+    public var updatedBanner: UpdatedBanner? { updatedNotice.map(UpdatedBanner.init) }
+
+    /// Closes the "Updated to" notice.
+    public func dismissUpdatedNotice() {
+        updatedNotice = nil
+    }
+
+    /// Restart now: the next quit relaunches the app after the update
+    /// installs. The caller then quits; keeping unsubmitted edits at the
+    /// discard confirm calls the restart off.
+    public func requestRestart() {
+        restartRequested = true
     }
 
     /// Starts the core: listens for its events (buffered since the bridge was
@@ -175,25 +196,28 @@ public final class AppModel {
     /// The quit sequence: app.canQuit (confirming the discard of unsubmitted
     /// edits), then app.shutdown. Returns whether to terminate: false only
     /// when the operator keeps the edits. Core errors never block quitting.
-    /// Concurrent and later calls share the first sequence; shutdown runs once.
-    public func prepareToQuit(relaunch: Bool) async -> Bool {
+    /// Concurrent and later calls share the first sequence; shutdown runs once,
+    /// relaunching only after `requestRestart()`.
+    public func prepareToQuit() async -> Bool {
         if let quitTask {
             return await quitTask.value
         }
-        let task = Task { await self.quit(relaunch: relaunch) }
+        let task = Task { await self.quit() }
         quitTask = task
         let terminate = await task.value
         if !terminate {
             quitTask = nil
+            restartRequested = false
         }
         return terminate
     }
 
-    private func quit(relaunch: Bool) async -> Bool {
+    private func quit() async -> Bool {
         if let canQuit = try? await bridge.canQuit(), canQuit.dirty, await !confirmDiscard() {
             return false
         }
-        try? await bridge.shutdown(relaunch: relaunch)
+        // Read only now, so a Restart now pressed while canQuit ran counts.
+        try? await bridge.shutdown(relaunch: restartRequested)
         return true
     }
 }

@@ -52,13 +52,15 @@ struct FatalErrorView: View {
     }
 }
 
-/// The tabs, in the Fyne app's order, over the status bar.
+/// The update banner, then the tabs in the Fyne app's order, over the status
+/// bar.
 @MainActor
 struct ReadyView: View {
     let model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
+            UpdateBannerView(model: model)
             TabView {
                 SignView(sign: model.sign, bulk: model.bulk, isSigningBusy: model.isSigningBusy)
                     .tabItem { Text("Sign") }

@@ -156,8 +156,9 @@ jobs:
   # The native macOS app (SwiftUI over the rhgcore C library): the library
   # built and smoke-tested, the Swift package tested against its rhgfake
   # variant, then the app bundle built against the release variant, ad-hoc
-  # signed and zipped. Interim and never a required check: no job needs it and
-  # its zip is a 7-day workflow artifact only, so release assets are unchanged.
+  # signed and zipped. Its zip is a 7-day workflow artifact that
+  # sign-macos-dryrun signs and verifies; release assets are unchanged (the
+  # release still ships the Fyne build from `build`).
   # Swift comes from the Xcode pinned below (printed in Toolchain versions).
   macos-app:
     name: macos-app
@@ -389,19 +390,20 @@ jobs:
         run: bash scripts/verify-macos.sh out/rhg-authenticator-darwin-arm64.zip "$GITHUB_REF_NAME"
 
   # Same signing + verification path as sign-macos, with a throwaway cert, on
-  # every non-tag build so a broken script surfaces before a release tag.
-  # No environment, no repository signing material. Required on main (ruleset):
-  # it is skipped on tags, which counts as passing.
+  # every non-tag build so a broken script surfaces before a release tag. It
+  # signs and verifies the native app's zip (macos-app) and checks that the
+  # v1.5.x updaters accept it. No environment, no repository signing material.
+  # Required on main (ruleset): it is skipped on tags, which counts as passing.
   sign-macos-dryrun:
     if: github.ref_type != 'tag'
-    needs: build
+    needs: macos-app
     runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          name: rhg-authenticator-darwin-arm64  # ad-hoc build, Info.plist version 0.0.0
+          name: macos-app  # native app, ad-hoc build, Info.plist version 0.0.0
           path: in
       # /usr/bin/openssl is LibreSSL; the cert recipe needs OpenSSL 3.
       - name: Sign with a throwaway certificate
@@ -416,6 +418,9 @@ jobs:
           bash scripts/sign-macos.sh in/rhg-authenticator-darwin-arm64.zip out/rhg-authenticator-darwin-arm64.zip
       - name: Verify signed zip with the app's update check
         run: bash scripts/verify-macos.sh out/rhg-authenticator-darwin-arm64.zip v0.0.0 "$(cat gen/requirement.txt)"
+      # Installed old releases' own update checks, against the same zip.
+      - name: Verify old releases' updaters accept the signed zip
+        run: bash scripts/verify-macos-compat.sh out/rhg-authenticator-darwin-arm64.zip v0.0.0 "$(cat gen/requirement.txt)"
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

@@ -78,9 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let model = Shared.model
         Task { @MainActor in
-            // A plain quit never relaunches; only the update banner's
-            // "Restart now" will quit with relaunch: true.
-            let terminate = await model.prepareToQuit(relaunch: false)
+            // Relaunches only when the update banner's Restart now asked.
+            let terminate = await model.prepareToQuit()
             if !terminate {
                 Self.showMainWindow()
             }

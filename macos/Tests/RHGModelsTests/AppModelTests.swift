@@ -266,6 +266,47 @@ struct AppModelTests {
         #expect(app.internalErrorMessage == nil)
     }
 
+    @Test("the banner follows update events: none, then each latest status and notice")
+    func updateBanners() async throws {
+        let fake = FakeBridge()
+        let app = await startedApp(fake)
+        #expect(app.updateBanner == nil)
+        #expect(app.updatedBanner == nil)
+        let url = "https://github.com/o/r/releases/tag/v1.3.0"
+        let ready = UpdateStatus(state: .ready, version: "1.3.0", releaseUrl: url, moveToApplications: false)
+        let notice = UpdatedNotice(version: "1.2.3", releaseUrl: "")
+        fake.emit(.updateStatus(ready))
+        fake.emit(.updateUpdated(notice))
+        #expect(await settle { app.updatedBanner != nil })
+        #expect(app.updateBanner == (try #require(UpdateBanner(ready))))
+        #expect(app.updatedBanner == UpdatedBanner(notice))
+        // A later notice replaces the earlier one.
+        let later = UpdatedNotice(version: "1.3.0", releaseUrl: url)
+        fake.emit(.updateUpdated(later))
+        #expect(await settle { app.updatedBanner == UpdatedBanner(later) })
+        // A later status replaces the offer; idle clears it.
+        let manual = UpdateStatus(state: .manualOnly, version: "1.4.0", releaseUrl: url, moveToApplications: true)
+        fake.emit(.updateStatus(manual))
+        let manualBanner = try #require(UpdateBanner(manual))
+        #expect(await settle { app.updateBanner == manualBanner })
+        fake.emit(.updateStatus(UpdateStatus(state: .idle, version: "", releaseUrl: "", moveToApplications: false)))
+        #expect(await settle { app.updateStatus?.state == .idle })
+        #expect(app.updateBanner == nil)
+    }
+
+    @Test("closing the Updated notice clears it and leaves the offer")
+    func dismissUpdated() async {
+        let fake = FakeBridge()
+        let app = await startedApp(fake)
+        fake.emit(.updateStatus(UpdateStatus(state: .ready, version: "1.3.0", releaseUrl: "", moveToApplications: false)))
+        fake.emit(.updateUpdated(UpdatedNotice(version: "1.2.3", releaseUrl: "")))
+        #expect(await settle { app.updatedBanner != nil })
+        app.dismissUpdatedNotice()
+        #expect(app.updatedNotice == nil)
+        #expect(app.updatedBanner == nil)
+        #expect(app.updateBanner != nil)
+    }
+
     @Test("pin events reach the PIN prompt")
     func pinEvents() async {
         let fake = FakeBridge()
@@ -341,12 +382,15 @@ struct AppModelTests {
 
     // MARK: Quit
 
-    @Test("quit: canQuit, then shutdown with relaunch passed through", arguments: [false, true])
+    @Test("quit: canQuit, then shutdown, relaunching only after Restart now", arguments: [false, true])
     func quit(relaunch: Bool) async {
         let fake = FakeBridge()
         fake.respond(.appCanQuit, CanQuitResult(dirty: false))
         let app = AppModel(bridge: fake)
-        #expect(await app.prepareToQuit(relaunch: relaunch))
+        if relaunch {
+            app.requestRestart()
+        }
+        #expect(await app.prepareToQuit())
         #expect(fake.methods == ["app.canQuit", "app.shutdown"])
         #expect(fake.params(.appShutdown) == [#"{"relaunch":\#(relaunch)}"#])
     }
@@ -361,7 +405,7 @@ struct AppModelTests {
             Issue.record("confirmDiscard asked without dirty edits")
             return false
         }
-        #expect(await app.prepareToQuit(relaunch: false))
+        #expect(await app.prepareToQuit())
         #expect(fake.methods == ["app.canQuit", "app.shutdown"])
     }
 
@@ -371,13 +415,14 @@ struct AppModelTests {
         fake.respond(.appCanQuit, CanQuitResult(dirty: false))
         let held = fake.hold(.appShutdown)
         let app = AppModel(bridge: fake)
-        let first = Task { await app.prepareToQuit(relaunch: true) }
+        app.requestRestart()
+        let first = Task { await app.prepareToQuit() }
         #expect(await settle { fake.count(.appShutdown) == 1 })
-        let second = Task { await app.prepareToQuit(relaunch: false) }
+        let second = Task { await app.prepareToQuit() }
         held.release(Empty())
         #expect(await first.value)
         #expect(await second.value)
-        #expect(await app.prepareToQuit(relaunch: false))
+        #expect(await app.prepareToQuit())
         #expect(fake.params(.appShutdown) == [#"{"relaunch":true}"#])
         #expect(fake.count(.appCanQuit) == 1)
     }
@@ -392,11 +437,24 @@ struct AppModelTests {
             asked += 1
             return asked > 1
         }
-        #expect(await app.prepareToQuit(relaunch: false) == false)
+        #expect(await app.prepareToQuit() == false)
         #expect(fake.count(.appShutdown) == 0)
-        #expect(await app.prepareToQuit(relaunch: false))
+        #expect(await app.prepareToQuit())
         #expect(asked == 2)
         #expect(fake.count(.appShutdown) == 1)
+    }
+
+    @Test("Restart now pressed while a plain quit checks for edits: that quit relaunches")
+    func restartDuringQuit() async {
+        let fake = FakeBridge()
+        let held = fake.hold(.appCanQuit)
+        let app = AppModel(bridge: fake)
+        let quit = Task { await app.prepareToQuit() }
+        #expect(await settle { fake.count(.appCanQuit) == 1 })
+        app.requestRestart()
+        held.release(CanQuitResult(dirty: false))
+        #expect(await quit.value)
+        #expect(fake.params(.appShutdown) == [#"{"relaunch":true}"#])
     }
 
     @Test("Restart now declined, then a plain quit: shutdown once, without relaunch")
@@ -406,9 +464,10 @@ struct AppModelTests {
         let app = AppModel(bridge: fake)
         var answers = [false, true]
         app.confirmDiscard = { answers.removeFirst() }
-        #expect(await app.prepareToQuit(relaunch: true) == false)
+        app.requestRestart()
+        #expect(await app.prepareToQuit() == false)
         #expect(fake.count(.appShutdown) == 0)
-        #expect(await app.prepareToQuit(relaunch: false))
+        #expect(await app.prepareToQuit())
         #expect(fake.params(.appShutdown) == [#"{"relaunch":false}"#])
         #expect(answers.isEmpty)
     }
@@ -427,7 +486,7 @@ struct AppModelTests {
         let fake = FakeBridge()
         fake.respond(.appCanQuit, CanQuitResult(dirty: true))
         let app = AppModel(bridge: fake)
-        #expect(await app.prepareToQuit(relaunch: false))
+        #expect(await app.prepareToQuit())
         #expect(fake.count(.appShutdown) == 1)
     }
 }
