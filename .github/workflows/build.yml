@@ -36,6 +36,8 @@ permissions:
 
 env:
   NODE_VERSION: '24'
+  # The packages with rhgfake-tagged files; every -tags rhgfake vet/test uses it.
+  RHGFAKE_PKGS: ./buildinfo/... ./service/... ./host/... ./cmd/...
 
 jobs:
   test-typescript:
@@ -115,7 +117,7 @@ jobs:
       # The PIN-cancel, shutdown-during-PIN and busy-during-bulk flows need the
       # software card, so their tests exist only in the rhgfake build.
       - working-directory: go
-        run: go test -race -tags rhgfake ./buildinfo/... ./service/... ./host/... ./cmd/... -count=1
+        run: go test -race -tags rhgfake $RHGFAKE_PKGS -count=1
 
   # The rhgcore C library (release and rhgfake variants) built and smoke-tested
   # through its C ABI on Windows. Interim and never a required check: no job
@@ -144,10 +146,10 @@ jobs:
       - name: Toolchain versions
         run: uname -a && go version && cc --version
       - working-directory: go
-        run: go vet -tags rhgfake ./buildinfo/... ./service/... ./host/... ./cmd/...  # the packages the tag changes; build vets the rest
+        run: go vet -tags rhgfake $RHGFAKE_PKGS  # the packages the tag changes; build vets the rest
       - if: runner.os == 'Windows'
         working-directory: go
-        run: go test -tags rhgfake -count=1 ./buildinfo/... ./service/... ./host/... ./cmd/...
+        run: go test -tags rhgfake -count=1 $RHGFAKE_PKGS
       - name: Build both library variants and run the C smoke test
         run: bash scripts/rhgcore-smoke.sh
 
@@ -179,7 +181,7 @@ jobs:
           swift --version
           xcodebuild -version
       - working-directory: go
-        run: go vet -tags rhgfake ./buildinfo/... ./service/... ./host/... ./cmd/...  # the packages the tag changes; build vets the rest
+        run: go vet -tags rhgfake $RHGFAKE_PKGS  # the packages the tag changes; build vets the rest
       - name: Build both library variants and run the C smoke test
         run: RHGCORE_VERSION="$GITHUB_REF_NAME" bash scripts/rhgcore-smoke.sh
       - name: Swift tests (rhgfake library)

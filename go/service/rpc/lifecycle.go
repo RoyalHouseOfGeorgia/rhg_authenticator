@@ -203,7 +203,9 @@ func (s *server) exportErrorLog(p pathParams) (any, error) {
 // PIN prompt (emitting pin.dismiss), detaches the event callback, closes the
 // App, stops the update manager and installs a Ready update (relaunching if
 // asked). It does not wait for an app.init in progress, and leaves the
-// diagnostic log open for the rest of the process.
+// diagnostic log open for the rest of the process; an app.init it outran
+// closes the logs it opened (crash output, stdlib capture) when it returns,
+// while app.exportErrorLog still reads the log by path.
 func (s *server) shutdown(p shutdownParams) (any, error) {
 	s.mu.Lock()
 	if s.state == stateShutDown {

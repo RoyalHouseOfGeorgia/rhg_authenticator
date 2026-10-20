@@ -63,15 +63,12 @@ final class PINSheetController: NSObject, NSTextFieldDelegate {
         rememberBox.state = prompt.remember ? .on : .off
     }
 
-    /// Attaches the sheet to the topmost window: the deepest sheet of the
-    /// main window, so it stacks over any sheet already shown. Without a
-    /// window it shows as a standalone panel.
+    /// Attaches the sheet to the window panels and alerts attach to
+    /// (`FilePanel.parentWindow`: the main window's deepest sheet), so it
+    /// stacks over any sheet already shown. Without a window it shows as a
+    /// standalone panel.
     private func show() {
-        var parent = NSApp.mainWindow ?? NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible }
-        while let sheet = parent?.attachedSheet {
-            parent = sheet
-        }
-        if let parent {
+        if let parent = FilePanel.parentWindow {
             if parent.isMiniaturized {
                 parent.deminiaturize(nil)
             }

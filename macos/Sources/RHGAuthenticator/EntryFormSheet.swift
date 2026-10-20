@@ -31,8 +31,7 @@ struct EntryFormSheet: View {
             HStack {
                 DatePicker(EntryFormModel.fromLabel, selection: $form.from, displayedComponents: .date)
                     .labelsHidden()
-                    .environment(\.timeZone, DisplayDate.utcCalendar.timeZone)
-                    .environment(\.calendar, DisplayDate.utcCalendar)
+                    .utcCalendar()
                 Text(form.displayFrom)
                     .monospacedDigit()
             }
@@ -40,8 +39,7 @@ struct EntryFormSheet: View {
             HStack {
                 DatePicker(EntryFormModel.toLabel, selection: $form.to, displayedComponents: .date)
                     .labelsHidden()
-                    .environment(\.timeZone, DisplayDate.utcCalendar.timeZone)
-                    .environment(\.calendar, DisplayDate.utcCalendar)
+                    .utcCalendar()
                     .disabled(form.noExpiry)
                 Text(form.displayTo)
                     .monospacedDigit()

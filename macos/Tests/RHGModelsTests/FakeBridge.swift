@@ -1,6 +1,8 @@
 import Foundation
 import RHGBridge
-import RHGModels
+import Testing
+
+@testable import RHGModels
 
 /// A scriptable Bridge: each method answers from its script (a queue of
 /// response envelopes, the last one sticky; unscripted methods answer `{}`),
@@ -176,26 +178,73 @@ func registrySnapshot(count: Int, dirty: Bool = false, loaded: Bool = true) -> R
     return RegistrySnapshot(entries: made.map { $0.0 }, rows: made.map { $0.1 }, dirty: dirty, loaded: loaded)
 }
 
-/// Scripts the startup reads after sign.honors: auth.state, registry.columns
-/// and registry.snapshot.
-func scriptStartupRegistry(
-    _ fake: FakeBridge, auth: AuthState = loggedOut, snapshot: RegistrySnapshot = registrySnapshot(count: 2)
+/// An issuance-log record; `n` sets its recipient and payload hash.
+func historyRecord(_ n: Int) -> HistoryRecord {
+    // One digit: the date and hash below are built by appending it.
+    precondition((1...9).contains(n))
+    return HistoryRecord(
+        timestamp: "2026-01-0\(n)T03:04:05Z", recipient: "Recipient \(n)", honor: "Ennoblement", detail: "For service",
+        date: "2026-01-0\(n)", payloadSha256: String(repeating: "0", count: 63) + "\(n)",
+        signatureB64url: String(repeating: "A", count: 86))
+}
+
+/// A history row for `historyRecord(n)` (the summary is the core's).
+func historyRow(_ n: Int, revoked: Bool = false) -> HistoryRow {
+    HistoryRow(
+        record: historyRecord(n), summary: (revoked ? "[REVOKED] " : "") + "2026-Jan-0\(n) | Recipient \(n) | Ennoblement",
+        revoked: revoked)
+}
+
+/// A history.list result of rows 1...count, row n revoked for n in `revoked`.
+func historyList(
+    count: Int, revoked: Set<Int> = [], loadFailed: Bool = false, revocationsUnavailable: Bool = false,
+    revokeAvailable: Bool = true
+) -> HistoryListResult {
+    HistoryListResult(
+        rows: (0..<count).map { historyRow($0 + 1, revoked: revoked.contains($0 + 1)) }, loadFailed: loadFailed,
+        revocationsUnavailable: revocationsUnavailable, revocationsLoaded: !revocationsUnavailable,
+        revokeAvailable: revokeAvailable)
+}
+
+/// Scripts the startup reads after sign.honors (auth.state, registry.columns,
+/// registry.snapshot) and the history.list that history.changed then reads.
+func scriptStartupReads(
+    _ fake: FakeBridge, auth: AuthState = loggedOut, snapshot: RegistrySnapshot = registrySnapshot(count: 2),
+    history: HistoryListResult = historyList(count: 2)
 ) {
     fake.respond(.authState, auth)
     fake.respond(.registryColumns, ColumnsResult(columns: registryColumns))
     fake.respond(.registrySnapshot, snapshot)
+    fake.respond(.historyList, history)
 }
 
-/// An AppModel whose startup succeeded, so its events are being drained.
+/// Gives `login` the login state `state`, as an auth.changed does (auth.state).
+@MainActor
+func setAuth(_ login: LoginModel, _ state: AuthState, _ fake: FakeBridge) async {
+    fake.reset(.authState)
+    fake.respond(.authState, state)
+    await login.authChanged()
+}
+
+/// The audit.commits result the started app's first fetch gets.
+let startupAudit = AuditResult(rows: [], status: "Loaded 0 commits")
+
+/// An AppModel whose startup succeeded, so its events are being drained, and
+/// whose Audit tab's first fetch has been sent.
 @MainActor
 func startedApp(
     _ fake: FakeBridge, clock: @escaping () -> Date = Date.init, openURL: @escaping @MainActor (URL) -> Void = { _ in }
 ) async -> AppModel {
     fake.respond(.appInit, onlineInfo)
     fake.respond(.signHonors, HonorsResult(honors: ["Order of Queen Tamar", "Order of the Eagle"]))
-    scriptStartupRegistry(fake)
+    scriptStartupReads(fake)
+    fake.respond(.auditCommits, startupAudit)
     let app = AppModel(bridge: fake, clock: clock, openURL: openURL)
     await app.start()
+    #expect(await settle { fake.count(.auditCommits) == 1 })
+    // app.start loads the history, ending in history.changed.
+    fake.emit(.historyChanged)
+    #expect(await settle { fake.count(.historyList) == 1 && app.history.snapshot == historyList(count: 2) })
     return app
 }
 

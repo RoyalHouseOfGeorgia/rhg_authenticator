@@ -101,7 +101,8 @@ const (
 	EventBulkProgress = "bulk.progress"
 	// EventAuthChanged fires after every login-state change. Payload: the
 	// AuthState at emit time; overlapping changes can arrive out of order, so a
-	// handler that needs the current state calls App.AuthState.
+	// handler that needs the current state calls App.AuthState. History's
+	// RevokeAvailable follows the login, so a host also re-reads History.
 	EventAuthChanged = "auth.changed"
 	// EventAuthDeviceCode fires when Login has a code for the user to enter. Payload: DeviceCode.
 	EventAuthDeviceCode = "auth.deviceCode"
@@ -723,16 +724,13 @@ func (a *App) CheckYubiKey() (KeyCheck, error) {
 		return KeyCheck{Outcome: KeyCheckFailed, Status: msgRegistryUnavailable}, nil
 	}
 
-	var res keyCheckResult
-	if pub, err := a.readPublicKey(); err != nil {
-		res = keyCheckResult{Error: fmt.Errorf("yubikey: %w", err)}
-	} else {
-		res = checkYubiKey(a.reg, pub)
+	pub, err := a.readPublicKey()
+	if err != nil {
+		err = fmt.Errorf("yubikey: %w", err)
+		a.logger.Log("yubikey check: " + core.SanitizeForLog(err.Error()))
+		return keyReadFailure(err), nil
 	}
-	if res.Error != nil {
-		a.logger.Log("yubikey check: " + core.SanitizeForLog(res.Error.Error()))
-	}
-	return formatKeyResult(res), nil
+	return checkYubiKey(a.reg, pub), nil
 }
 
 // Close cancels a running bulk batch and login and wipes the PIN cache.

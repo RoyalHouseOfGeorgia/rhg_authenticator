@@ -660,6 +660,13 @@ countsLine, stopMessage, title, the key-check status and details, the
 registry rows and columns, recordText's detail and revokeConfirm, and every
 *Filename.
 
+## When to re-read
+
+history.list's revokeAvailable follows the GitHub login, so re-read
+history.list on auth.changed as well as on history.changed and
+history.revocationsChanged. auth.changed payloads can arrive out of order:
+call auth.state for the current login state.
+
 ## Canonical encoding
 
 Each file is its JSON value re-encoded as: compact (no whitespace between

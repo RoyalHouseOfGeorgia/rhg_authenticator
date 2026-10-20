@@ -49,6 +49,9 @@ public final class LoginModel {
     /// The alert to show; `alertDismissed()` when the operator closes it.
     public private(set) var alert: AlertState?
 
+    /// Counts auth.state reads, so only the latest one is applied.
+    @ObservationIgnored private var stateReads = 0
+
     /// Receives the login status texts: the Registry tab's status line.
     @ObservationIgnored var onStatus: @MainActor (String) -> Void = { _ in }
 
@@ -57,6 +60,9 @@ public final class LoginModel {
     public init(bridge: any Bridge) {
         self.bridge = bridge
     }
+
+    /// Logged in and online: GitHub calls can go ahead.
+    public var hasUsableSession: Bool { authState.loggedIn && !authState.offline }
 
     /// auth.login is running.
     public var isLoggingIn: Bool { loginCalls > 0 }
@@ -75,13 +81,16 @@ public final class LoginModel {
 
     /// Reads the login state (auth.state).
     func loadState() async throws(RPCError) {
-        authState = try await bridge.authState()
+        let state = try await bridge.authState()
+        // Newer than any auth.state read still running.
+        stateReads += 1
+        authState = state
     }
 
     /// The login button: logs in (or reconnects an offline session), or,
     /// when logged in and online, asks to log out.
     public func buttonTapped() async {
-        if !authState.loggedIn || authState.offline {
+        if !hasUsableSession {
             await start()
         } else {
             pendingConfirmation = Self.logoutConfirmation
@@ -131,6 +140,8 @@ public final class LoginModel {
             return
         }
         finished()
+        // Newer than any auth.state read still running.
+        stateReads += 1
         authState = state
         if state.offline {
             onStatus("")
@@ -171,8 +182,13 @@ public final class LoginModel {
         alert = nil
     }
 
-    /// auth.changed.
-    func authChanged(_ state: AuthState) {
+    /// auth.changed: re-reads the login state (auth.state). The core's
+    /// payloads can arrive out of order, so the event is only a signal; only
+    /// the latest read is applied, and a failed one keeps the current state.
+    func authChanged() async {
+        stateReads += 1
+        let read = stateReads
+        guard let state = try? await bridge.authState(), read == stateReads else { return }
         authState = state
     }
 }

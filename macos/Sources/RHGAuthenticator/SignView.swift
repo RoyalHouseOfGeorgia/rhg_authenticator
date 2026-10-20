@@ -86,8 +86,7 @@ struct SignView: View {
         HStack {
             DatePicker(SignModel.dateLabel, selection: $sign.date, displayedComponents: .date)
                 .labelsHidden()
-                .environment(\.timeZone, DisplayDate.utcCalendar.timeZone)
-                .environment(\.calendar, DisplayDate.utcCalendar)
+                .utcCalendar()
             Text(sign.displayDate)
                 .monospacedDigit()
         }
@@ -150,5 +149,14 @@ enum QRSavePanel {
         FilePanel.save(name: sign.suggestedFilename(for: format), type: type) { path in
             await sign.saveQR(format: format, path: path)
         }
+    }
+}
+
+extension View {
+    /// Shows and edits dates in the UTC calendar: the core signs and stores
+    /// UTC calendar dates, so every date picker goes through this.
+    func utcCalendar() -> some View {
+        environment(\.timeZone, DisplayDate.utcCalendar.timeZone)
+            .environment(\.calendar, DisplayDate.utcCalendar)
     }
 }

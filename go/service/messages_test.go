@@ -336,8 +336,9 @@ func TestSignFlowErrorMessage_SignError(t *testing.T) {
 func TestSignFlowErrorMessage_Timeout(t *testing.T) {
 	// The timeout sentinel must yield a timeout message, NOT a hardware message
 	// (the literal "PIN entry timed out" matches the \bpin\b classifier).
+	// The text names no control: a bulk run (no Sign button) shows it too.
 	got := signFlowErrorMessage(errPINEntryTimedOut)
-	if !strings.Contains(got, "timed out") {
+	if got != "PIN entry timed out. Try again." {
 		t.Errorf("expected timeout message, got: %q", got)
 	}
 }

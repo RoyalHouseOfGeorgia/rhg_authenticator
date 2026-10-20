@@ -11,9 +11,9 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
-// --- formatKeyResult tests ---
+// --- keyCheck and keyReadFailure tests ---
 
-func TestFormatKeyResult_Found(t *testing.T) {
+func TestKeyCheck_Found(t *testing.T) {
 	to := "2027-12-31"
 	entry := &core.KeyEntry{
 		Authority: "HRH Prince Davit",
@@ -21,12 +21,7 @@ func TestFormatKeyResult_Found(t *testing.T) {
 		To:        &to,
 		Note:      "",
 	}
-	result := keyCheckResult{
-		Found:       true,
-		Fingerprint: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-		Entry:       entry,
-	}
-	kc := formatKeyResult(result)
+	kc := keyCheck(entry, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
 	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFound {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFound)
@@ -57,23 +52,19 @@ func TestFormatKeyResult_Found(t *testing.T) {
 	}
 }
 
-// TestFormatKeyResult_Restricted: a key limited to some honors lists them, so
+// TestKeyCheck_Restricted: a key limited to some honors lists them, so
 // a check that says "found" explains a later honor refusal.
-func TestFormatKeyResult_Restricted(t *testing.T) {
+func TestKeyCheck_Restricted(t *testing.T) {
 	entry := &core.KeyEntry{Authority: "A", From: "2026-01-01",
 		Extra: map[string]json.RawMessage{"allowed_honors": json.RawMessage(`["Appointment"]`)}}
-	kc := formatKeyResult(keyCheckResult{Found: true, Fingerprint: "ab", Entry: entry})
+	kc := keyCheck(entry, "ab")
 	if !slices.Contains(kc.Details, "Restrictions: Appointment") {
 		t.Errorf("details = %q, want the allowed honors", kc.Details)
 	}
 }
 
-func TestFormatKeyResult_NotFound(t *testing.T) {
-	result := keyCheckResult{
-		Found:       false,
-		Fingerprint: "deadbeef" + strings.Repeat("00", 28),
-	}
-	kc := formatKeyResult(result)
+func TestKeyCheck_NotFound(t *testing.T) {
+	kc := keyCheck(nil, "deadbeef"+strings.Repeat("00", 28))
 	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckNotFound {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckNotFound)
@@ -89,9 +80,8 @@ func TestFormatKeyResult_NotFound(t *testing.T) {
 	}
 }
 
-func TestFormatKeyResult_Error_PCSC(t *testing.T) {
-	result := keyCheckResult{Error: fmt.Errorf("yubikey: pcsc daemon not running")}
-	kc := formatKeyResult(result)
+func TestKeyCheck_Error_PCSC(t *testing.T) {
+	kc := keyReadFailure(fmt.Errorf("yubikey: pcsc daemon not running"))
 	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFailed {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFailed)
@@ -104,9 +94,8 @@ func TestFormatKeyResult_Error_PCSC(t *testing.T) {
 	}
 }
 
-func TestFormatKeyResult_Error_NoYubiKey(t *testing.T) {
-	result := keyCheckResult{Error: fmt.Errorf("yubikey: no YubiKey detected")}
-	kc := formatKeyResult(result)
+func TestKeyCheck_Error_NoYubiKey(t *testing.T) {
+	kc := keyReadFailure(fmt.Errorf("yubikey: no YubiKey detected"))
 	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFailed {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFailed)
@@ -119,11 +108,10 @@ func TestFormatKeyResult_Error_NoYubiKey(t *testing.T) {
 	}
 }
 
-func TestFormatKeyResult_Error_Transient(t *testing.T) {
+func TestKeyCheck_Error_Transient(t *testing.T) {
 	// A card reset must surface the canonical reset message, even though
 	// "verify pin" appears in the wrapped error chain.
-	result := keyCheckResult{Error: errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid")}
-	kc := formatKeyResult(result)
+	kc := keyReadFailure(errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid"))
 	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFailed {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFailed)
@@ -136,19 +124,14 @@ func TestFormatKeyResult_Error_Transient(t *testing.T) {
 	}
 }
 
-func TestFormatKeyResult_NoExpiry(t *testing.T) {
+func TestKeyCheck_NoExpiry(t *testing.T) {
 	entry := &core.KeyEntry{
 		Authority: "Test Authority",
 		From:      "2026-01-01",
 		To:        nil,
 		Note:      "",
 	}
-	result := keyCheckResult{
-		Found:       true,
-		Fingerprint: strings.Repeat("aa", 32),
-		Entry:       entry,
-	}
-	kc := formatKeyResult(result)
+	kc := keyCheck(entry, strings.Repeat("aa", 32))
 	outcome, status, details := kc.Outcome, kc.Status, kc.Details
 	if outcome != KeyCheckFound {
 		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFound)
@@ -167,7 +150,7 @@ func TestFormatKeyResult_NoExpiry(t *testing.T) {
 	}
 }
 
-func TestFormatKeyResult_WithNote(t *testing.T) {
+func TestKeyCheck_WithNote(t *testing.T) {
 	to := "2027-12-31"
 	entry := &core.KeyEntry{
 		Authority: "Test Authority",
@@ -175,12 +158,8 @@ func TestFormatKeyResult_WithNote(t *testing.T) {
 		To:        &to,
 		Note:      "Backup key for ceremonies",
 	}
-	result := keyCheckResult{
-		Found:       true,
-		Fingerprint: strings.Repeat("bb", 32),
-		Entry:       entry,
-	}
-	details := formatKeyResult(result).Details
+	kc := keyCheck(entry, strings.Repeat("bb", 32))
+	details := kc.Details
 	foundNote := false
 	for _, d := range details {
 		if strings.HasPrefix(d, "Note: ") {
@@ -195,7 +174,7 @@ func TestFormatKeyResult_WithNote(t *testing.T) {
 	}
 }
 
-func TestFormatKeyResult_EmptyNote(t *testing.T) {
+func TestKeyCheck_EmptyNote(t *testing.T) {
 	to := "2027-12-31"
 	entry := &core.KeyEntry{
 		Authority: "Test Authority",
@@ -203,12 +182,8 @@ func TestFormatKeyResult_EmptyNote(t *testing.T) {
 		To:        &to,
 		Note:      "   ",
 	}
-	result := keyCheckResult{
-		Found:       true,
-		Fingerprint: strings.Repeat("cc", 32),
-		Entry:       entry,
-	}
-	details := formatKeyResult(result).Details
+	kc := keyCheck(entry, strings.Repeat("cc", 32))
+	details := kc.Details
 	for _, d := range details {
 		if strings.HasPrefix(d, "Note: ") {
 			t.Errorf("whitespace-only note should be omitted, but found: %q", d)

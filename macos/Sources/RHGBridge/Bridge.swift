@@ -206,6 +206,50 @@ extension Bridge {
         try await call(.registrySubmit, Empty())
     }
 
+    /// history.refresh: re-reads the issuance log (history.changed) and
+    /// refetches the revocation list (history.revocationsChanged).
+    public func refreshHistory() async throws(RPCError) {
+        try await callVoid(.historyRefresh, Empty())
+    }
+
+    /// history.list: the issuance log, newest first, filtered by `query`.
+    public func listHistory(query: String) async throws(RPCError) -> HistoryListResult {
+        try await call(.historyList, HistoryListParams(query: query))
+    }
+
+    /// history.recordText: `record`'s detail text and revoke question.
+    public func recordText(_ record: HistoryRecord) async throws(RPCError) -> RecordTextResult {
+        try await call(.historyRecordText, RecordParams(record: record))
+    }
+
+    /// history.revoke: opens a revocation pull request for the credential.
+    public func revoke(payloadSha256: String) async throws(RPCError) -> RevokeResult {
+        try await call(.historyRevoke, RevokeParams(payloadSha256: payloadSha256))
+    }
+
+    /// history.exportIssuanceLog: copies the issuance log to `path`.
+    public func exportIssuanceLog(path: String) async throws(RPCError) {
+        try await callVoid(.historyExportIssuanceLog, PathParams(path: path))
+    }
+
+    /// history.duplicatePreview: how many duplicate entries removeDuplicates
+    /// would remove.
+    public func duplicatePreview() async throws(RPCError) -> Int {
+        let result: DuplicatePreviewResult = try await call(.historyDuplicatePreview, Empty())
+        return result.count
+    }
+
+    /// history.removeDuplicates: backs up the issuance log, then removes its
+    /// duplicate entries; emits history.changed.
+    public func removeDuplicates() async throws(RPCError) -> RemoveDuplicatesResult {
+        try await call(.historyRemoveDuplicates, Empty())
+    }
+
+    /// audit.commits: the registry's GitHub commit history.
+    public func auditCommits() async throws(RPCError) -> AuditResult {
+        try await call(.auditCommits, Empty())
+    }
+
     /// auth.state: the GitHub login state.
     public func authState() async throws(RPCError) -> AuthState {
         try await call(.authState, Empty())

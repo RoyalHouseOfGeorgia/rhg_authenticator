@@ -236,7 +236,7 @@ func TestConfigure_PINTimeout(t *testing.T) {
 	h.init(t)
 	env := h.call(t, "sign.sign", validSign) // nobody answers
 	if env.OK || env.Error.Code != CodeFailed || env.Error.OfferReport ||
-		env.Error.Message != "PIN entry timed out. Click Sign to try again." {
+		env.Error.Message != "PIN entry timed out. Try again." {
 		t.Fatalf("sign.sign without a PIN = %s", env.raw)
 	}
 	req := h.sink.wait(t, EventPINRequest, 1)

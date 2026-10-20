@@ -26,7 +26,7 @@ struct LoginModelTests {
         let status = StatusRecorder()
         status.attach(login)
         if let state {
-            login.authChanged(state)
+            await setAuth(login, state, fake)
         }
         return (login, status)
     }
@@ -57,15 +57,50 @@ struct LoginModelTests {
 
     @Test("the button title follows the login state")
     func buttonTitle() async {
-        let (login, _) = await model(FakeBridge())
+        let fake = FakeBridge()
+        let (login, _) = await model(fake)
         #expect(login.authState == AuthState(loggedIn: false, offline: false, user: "", statusText: ""))
         #expect(login.buttonTitle == "Login to GitHub")
-        login.authChanged(loggedInOffline)
+        await setAuth(login, loggedInOffline, fake)
         #expect(login.buttonTitle == "Offline \u{2014} Reconnect")
-        login.authChanged(loggedIn)
+        await setAuth(login, loggedIn, fake)
         #expect(Array(login.buttonTitle.utf8) == Array("@octocat ".utf8) + [0xE2, 0x96, 0xBE])
-        login.authChanged(loggedOut)
+        await setAuth(login, loggedOut, fake)
         #expect(login.buttonTitle == "Login to GitHub")
+    }
+
+    @Test("auth.changed is a signal: the latest auth.state read wins, whatever the payload or the order")
+    func authChangedRereads() async {
+        let fake = FakeBridge()
+        let (login, _) = await model(fake)
+        let older = fake.hold(.authState)
+        fake.respond(.authState, loggedIn)
+        let first = Task { await login.authChanged() }
+        #expect(await settle { fake.count(.authState) == 1 })
+        await login.authChanged()
+        #expect(login.authState == loggedIn)
+        older.release(loggedOut)
+        await first.value
+        #expect(login.authState == loggedIn)
+        // A failed read keeps the state.
+        fake.reset(.authState)
+        fake.fail(.authState, RPCError(code: .internal, message: "x"))
+        await login.authChanged()
+        #expect(login.authState == loggedIn)
+    }
+
+    @Test("a login's own result is newer than an auth.state read still running")
+    func loginBeatsRunningRead() async {
+        let fake = FakeBridge()
+        let (login, _) = await model(fake)
+        let read = fake.hold(.authState)
+        let pending = Task { await login.authChanged() }
+        #expect(await settle { fake.count(.authState) == 1 })
+        fake.respond(.authLogin, loggedIn)
+        await login.start()
+        read.release(loggedOut)
+        await pending.value
+        #expect(login.authState == loggedIn)
     }
 
     @Test("loadState reads auth.state")
@@ -76,6 +111,20 @@ struct LoginModelTests {
         try await login.loadState()
         #expect(login.authState == loggedIn)
         #expect(fake.params(.authState) == ["{}"])
+    }
+
+    @Test("loadState is newer than an auth.state read still running")
+    func loadStateBeatsRunningRead() async throws {
+        let fake = FakeBridge()
+        let (login, _) = await model(fake)
+        let older = fake.hold(.authState)
+        fake.respond(.authState, loggedIn)
+        let pending = Task { await login.authChanged() }
+        #expect(await settle { fake.count(.authState) == 1 })
+        try await login.loadState()
+        older.release(loggedOut)
+        await pending.value
+        #expect(login.authState == loggedIn)
     }
 
     @Test("logged out: the button logs in; success shows the core's status text and state")

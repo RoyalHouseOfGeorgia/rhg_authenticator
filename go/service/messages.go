@@ -144,7 +144,7 @@ func signFlowErrorMessage(err error) string {
 	// This depends on the prompt-before-open ordering in executeSignFlow —
 	// reintroducing a lazy PINPrompt would break the errors.Is match.
 	if errors.Is(err, errPINEntryTimedOut) {
-		return "PIN entry timed out. Click Sign to try again."
+		return "PIN entry timed out. Try again."
 	}
 	if errors.Is(err, errPINCacheUnavailable) {
 		return "Could not secure the PIN in memory. Please restart the app."

@@ -42,6 +42,8 @@ public final class AppModel {
     public let yubiKey: YubiKeyModel
     public let pinPrompt: PINPromptModel
     public let registry: RegistryModel
+    public let history: HistoryModel
+    public let audit: AuditModel
     public let login: LoginModel
 
     /// Asked before quitting with unsubmitted registry edits; false keeps the
@@ -70,6 +72,8 @@ public final class AppModel {
         let registry = RegistryModel(bridge: bridge, login: login, clock: clock, openURL: openURL)
         self.login = login
         self.registry = registry
+        history = HistoryModel(bridge: bridge, login: login, clock: clock, timeZone: timeZone)
+        audit = AuditModel(bridge: bridge, openURL: openURL)
     }
 
     /// A signing or a bulk flow is under way: Sign Credential and Bulk Sign
@@ -111,8 +115,10 @@ public final class AppModel {
 
     /// Starts the core: listens for its events (buffered since the bridge was
     /// installed), then app.init, sign.honors, auth.state, the registry
-    /// (registry.columns, registry.snapshot) and app.start. Ends in `.ready`
-    /// or `.fatal`. Call once.
+    /// (registry.columns, registry.snapshot) and app.start, which loads the
+    /// history (history.changed). Ends in `.ready` or `.fatal`. Call once.
+    /// The Audit tab's first fetch then runs on its own, so a slow GitHub
+    /// never holds startup.
     public func start(dataDir: String? = nil) async {
         guard eventTask == nil else { return }
         let events = bridge.events
@@ -132,12 +138,14 @@ public final class AppModel {
             return
         }
         phase = .ready
+        Task { await audit.refresh() }
     }
 
     /// Handles one event, synchronously, so events apply in order and none
     /// waits behind a core call (pin.request least of all). registry.changed
-    /// re-reads the snapshot in its own task; RegistryModel applies only the
-    /// latest read.
+    /// and the history events re-read in their own tasks; each model applies
+    /// only its latest read. history.changed clears the selection here, so a
+    /// Revoke tapped before its re-read lands has no row to act on.
     private func handle(_ event: BridgeEvent) {
         switch event {
         case .pinRequest(let request): pinPrompt.present(request)
@@ -150,9 +158,16 @@ public final class AppModel {
         case .appInternalError: internalErrorMessage = RPCError.badResponse.message
         case .updateStatus(let status): updateStatus = status
         case .updateUpdated(let notice): updatedNotice = notice
-        case .authChanged(let state): login.authChanged(state)
+        case .authChanged:
+            Task { await login.authChanged() }
+            // Whether revoking is available follows the login.
+            Task { await history.reread() }
         case .authDeviceCode(let code): login.showDeviceCode(code)
         case .registryChanged: Task { await registry.registryChanged() }
+        case .historyChanged:
+            history.historyChanged()
+            Task { await history.reread() }
+        case .historyRevocationsChanged: Task { await history.reread() }
         default: break
         }
     }

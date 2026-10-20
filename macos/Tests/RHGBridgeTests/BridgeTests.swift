@@ -209,7 +209,8 @@ struct HelperTests {
         try await bridge.exportBulkResults(path: "/OUT/bulk-results.csv")
         #expect(try await bridge.checkYubiKey().outcome == .found)
         try await bridge.exportErrorLog(path: "/OUT/error-log.txt")
-        #expect(try await bridge.registryColumns() == ["#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"])
+        // Display strings are render-only (contract README): check shapes, not text.
+        #expect(try await bridge.registryColumns().count == 7)
         let snapshot = try await bridge.registrySnapshot()
         #expect(snapshot.entries.count == 2 && snapshot.rows.count == 2 && snapshot.dirty && snapshot.loaded)
         try await bridge.fetchRegistry()
@@ -226,13 +227,26 @@ struct HelperTests {
         #expect(try await bridge.login().user == "octocat")
         try await bridge.cancelLogin()
         try await bridge.logout()
+        try await bridge.refreshHistory()
+        #expect(try await bridge.listHistory(query: "").rows.count == 4)
+        let record = try JSONDecoder().decode(
+            RecordParams.self, from: contractFile("methods/history.recordText/params.json")
+        ).record
+        #expect(try await !bridge.recordText(record).revokeConfirm.isEmpty)
+        #expect(try await bridge.revoke(payloadSha256: String(repeating: "0", count: 63) + "2").status == .submitted)
+        try await bridge.exportIssuanceLog(path: "/OUT/issuances-export.json")
+        #expect(try await bridge.duplicatePreview() == 1)
+        #expect(try await bridge.removeDuplicates().removed == 1)
+        #expect(try await bridge.auditCommits().rows.count == 1)
 
         let expected: [RPCMethod] = [
             .appInit, .appStart, .appInfo, .appCanQuit, .appShutdown, .signHonors, .signValidate, .signSign,
             .signSaveQR, .signReportError, .pinSubmit, .pinCancel, .updateCurrent, .bulkLoad, .bulkRun, .bulkCancel,
             .bulkExportResults, .yubikeyCheck, .appExportErrorLog, .registryColumns, .registrySnapshot, .registryFetch,
             .registryAddEntry, .registryUpdateEntry, .registryImportCertificate, .registryImportFromYubiKey,
-            .registrySubmit, .authState, .authLogin, .authCancelLogin, .authLogout,
+            .registrySubmit, .authState, .authLogin, .authCancelLogin, .authLogout, .historyRefresh, .historyList,
+            .historyRecordText, .historyRevoke, .historyExportIssuanceLog, .historyDuplicatePreview,
+            .historyRemoveDuplicates, .auditCommits,
         ]
         let calls = bridge.calls
         #expect(calls.map(\.method) == expected.map(\.rawValue))
@@ -304,7 +318,7 @@ struct InitializerTests {
         let report: ReportResult = try result("sign.reportError/result.json")
         #expect(report == ReportResult(filed: true, url: report.url))
         let audit: AuditResult = try result("audit.commits/result.json")
-        #expect(audit == AuditResult(rows: [AuditRow(summary: audit.rows[0].summary, url: audit.rows[0].url)], status: "Loaded 1 commits"))
+        #expect(audit.rows.count == 1 && !audit.rows[0].summary.isEmpty && !audit.status.isEmpty)
         let load: BulkLoadResult = try result("bulk.load/result.json")
         #expect(load == BulkLoadResult(toSign: 1, countsLine: load.countsLine, previewNames: ["Carol White"], invalidLines: load.invalidLines))
         let run: BulkRunResult = try result("bulk.run/result.failed.json")
@@ -326,19 +340,19 @@ struct InitializerTests {
                 == HistoryListResult(
                     rows: list.rows, loadFailed: false, revocationsUnavailable: false, revocationsLoaded: true, revokeAvailable: false))
         let text: RecordTextResult = try result("history.recordText/result.json")
-        #expect(
-            text
-                == RecordTextResult(
-                    detail: "Timestamp: 2026-01-02T03:04:05Z\nRecipient: Alice Smith\nHonor: Ennoblement\nDetail: For service\n"
-                        + "Date: 2026-Jan-02\nPayload SHA-256: " + String(repeating: "0", count: 63) + "1\nSignature: "
-                        + String(repeating: "A", count: 86),
-                    revokeConfirm: "Revoke credential for Alice Smith dated 2026-Jan-02?\n\nThis cannot be undone."))
+        // Each field holds its own key's text, whatever the wording.
+        struct RawEnvelope: Decodable { let result: [String: String] }
+        let raw = try JSONDecoder().decode(
+            RawEnvelope.self, from: contractFile("methods/history.recordText/result.json")
+        ).result
+        #expect(!text.detail.isEmpty && text.detail == raw["detail"])
+        #expect(!text.revokeConfirm.isEmpty && text.revokeConfirm == raw["revokeConfirm"])
         #expect(try result("history.duplicatePreview/result.json") == DuplicatePreviewResult(count: 1))
         #expect(
             try result("history.removeDuplicates/result.json")
                 == RemoveDuplicatesResult(removed: 1, backup: "/DATA/issuances.json.bak-20260102T030405Z"))
         let revoke: RevokeResult = try result("history.revoke/result.json")
-        #expect(revoke == RevokeResult(status: .submitted, prNumber: 43, url: revoke.url, title: "Revocation Submitted", message: revoke.message))
+        #expect(revoke == RevokeResult(status: .submitted, prNumber: 43, url: revoke.url, title: revoke.title, message: revoke.message))
         let snapshot: RegistrySnapshot = try result("registry.snapshot/result.json")
         #expect(
             snapshot.entries[0]

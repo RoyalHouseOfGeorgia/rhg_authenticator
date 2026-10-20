@@ -7,7 +7,7 @@ import Testing
 @Suite("AppModel")
 @MainActor
 struct AppModelTests {
-    @Test("startup online: init, honors, login state, registry, start in order; ready; status bar")
+    @Test("startup online: init, honors, login state, registry, history, start in order; ready; status bar; audit")
     func startOnline() async {
         let fake = FakeBridge()
         let app = AppModel(bridge: fake)
@@ -15,7 +15,8 @@ struct AppModelTests {
         #expect(app.statusItems.isEmpty)
         fake.respond(.appInit, onlineInfo)
         fake.respond(.signHonors, HonorsResult(honors: ["A", "B"]))
-        scriptStartupRegistry(fake, auth: loggedIn, snapshot: registrySnapshot(count: 1))
+        scriptStartupReads(fake, auth: loggedIn, snapshot: registrySnapshot(count: 1))
+        fake.respond(.auditCommits, startupAudit)
         await app.start(dataDir: "/data")
         #expect(app.phase == .ready)
         #expect(app.info == onlineInfo)
@@ -25,9 +26,11 @@ struct AppModelTests {
         #expect(app.registry.columns == registryColumns)
         #expect(app.registry.snapshot == registrySnapshot(count: 1))
         #expect(app.registry.status == "Loaded from registry server")
+        #expect(await settle { app.audit.status == "Loaded 0 commits" })
         #expect(
             fake.methods == [
                 "app.init", "sign.honors", "auth.state", "registry.columns", "registry.snapshot", "app.start",
+                "audit.commits",
             ])
         #expect(fake.params(.appInit) == [#"{"dataDir":"/data"}"#])
     }
@@ -37,7 +40,7 @@ struct AppModelTests {
         let fake = FakeBridge()
         fake.respond(.appInit, AppInfo(activeKeys: 0, online: false, recentlyExpired: 0, version: "2.0"))
         fake.respond(.signHonors, HonorsResult(honors: []))
-        scriptStartupRegistry(fake, snapshot: registrySnapshot(count: 0, loaded: false))
+        scriptStartupReads(fake, snapshot: registrySnapshot(count: 0, loaded: false))
         let app = AppModel(bridge: fake)
         await app.start()
         #expect(app.phase == .ready)
@@ -51,7 +54,7 @@ struct AppModelTests {
         let fake = FakeBridge()
         fake.respond(.appInit, AppInfo(activeKeys: 1, online: true, recentlyExpired: 0, version: "vv1"))
         fake.respond(.signHonors, HonorsResult(honors: []))
-        scriptStartupRegistry(fake)
+        scriptStartupReads(fake)
         let app = AppModel(bridge: fake)
         await app.start()
         #expect(app.statusItems.last == "Version v1")
@@ -88,7 +91,7 @@ struct AppModelTests {
         let fake = FakeBridge()
         fake.respond(.appInit, onlineInfo)
         fake.respond(.signHonors, HonorsResult(honors: []))
-        scriptStartupRegistry(fake)
+        scriptStartupReads(fake)
         fake.fail(.appStart, RPCError(code: .input, message: "not initialized"))
         let app = AppModel(bridge: fake)
         await app.start()
@@ -102,7 +105,7 @@ struct AppModelTests {
         let fake = FakeBridge()
         fake.respond(.appInit, onlineInfo)
         fake.respond(.signHonors, HonorsResult(honors: []))
-        scriptStartupRegistry(fake)
+        scriptStartupReads(fake)
         fake.reset(failing)
         fake.fail(failing, RPCError(code: .internal, message: "read broke"))
         let app = AppModel(bridge: fake)
@@ -110,6 +113,75 @@ struct AppModelTests {
         #expect(app.phase == .fatal(message: "read broke" + AppModel.reportSuffix))
         #expect(fake.methods.last == failing.rawValue)
         #expect(fake.count(.appStart) == 0)
+    }
+
+    @Test("the Audit tab's first fetch runs after ready and does not hold startup; its rows open through the app's opener")
+    func auditFirstLoad() async throws {
+        let fake = FakeBridge()
+        let urls = URLRecorder()
+        let commit = "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/commit/0123456789012345678901234567890123456789"
+        fake.respond(.appInit, onlineInfo)
+        fake.respond(.signHonors, HonorsResult(honors: []))
+        scriptStartupReads(fake)
+        let held = fake.hold(.auditCommits)
+        let app = AppModel(bridge: fake, openURL: urls.open)
+        await app.start()
+        #expect(app.phase == .ready)
+        #expect(await settle { fake.count(.auditCommits) == 1 })
+        #expect(app.phase == .ready)
+        #expect(app.audit.isRefreshing && app.audit.status == "Fetching...")
+        held.release(AuditResult(rows: [AuditRow(summary: "c", url: commit)], status: "Loaded 1 commits"))
+        #expect(await settle { !app.audit.isRefreshing })
+        #expect(app.audit.rows == [AuditRow(summary: "c", url: commit)])
+        #expect(app.audit.status == "Loaded 1 commits")
+        app.audit.open(row: 0)
+        #expect(urls.opened == [try #require(URL(string: commit))])
+    }
+
+    @Test("history.changed clears the selection before its re-read lands, then applies it")
+    func historyChangedEvent() async {
+        let fake = FakeBridge()
+        let app = await startedApp(fake)
+        fake.respond(.historyRecordText, RecordTextResult(detail: "d", revokeConfirm: "q"))
+        await app.history.select(row: 1)
+        #expect(app.history.selection == 1)
+        fake.reset(.historyList)
+        let held = fake.hold(.historyList)
+        fake.emit(.historyChanged)
+        #expect(await settle { fake.count(.historyList) == 2 })
+        #expect(app.history.selection == nil)
+        held.release(historyList(count: 3))
+        #expect(await settle { app.history.snapshot == historyList(count: 3) })
+        #expect(app.history.selection == nil)
+    }
+
+    @Test("history.revocationsChanged re-reads the log keeping the selection")
+    func revocationsChangedEvent() async {
+        let fake = FakeBridge()
+        let app = await startedApp(fake)
+        fake.respond(.historyRecordText, RecordTextResult(detail: "d", revokeConfirm: "q"))
+        await app.history.select(row: 1)
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(count: 2, revoked: [1]))
+        fake.emit(.historyRevocationsChanged)
+        #expect(await settle { app.history.snapshot == historyList(count: 2, revoked: [1]) })
+        #expect(app.history.selection == 1)
+    }
+
+    @Test("auth.changed updates the login and re-reads the history, whose Revoke gate follows it")
+    func authChangedReloadsHistory() async {
+        let fake = FakeBridge()
+        let app = await startedApp(fake)
+        #expect(app.history.showsConnectButton)
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(count: 2, revokeAvailable: false))
+        fake.reset(.authState)
+        fake.respond(.authState, loggedIn)
+        fake.emit(.authChanged(loggedIn))
+        // Two tasks, the login's re-read and the history's: wait for both.
+        #expect(await settle { app.history.snapshot.revokeAvailable == false && app.login.authState == loggedIn })
+        #expect(!app.history.showsConnectButton)
+        #expect(fake.count(.historyList) == 2)
     }
 
     @Test("login status texts land on the Registry tab's status line")
@@ -137,7 +209,9 @@ struct AppModelTests {
         #expect(await settle { fake.count(.authLogin) == 1 })
         fake.emit(.authDeviceCode(DeviceCode(userCode: "ABCD-1234", verificationUri: "https://github.com/login/device")))
         fake.emit(.registryChanged)
-        fake.emit(.authChanged(loggedIn))
+        fake.reset(.authState)
+        fake.respond(.authState, loggedIn)
+        fake.emit(.authChanged(loggedOut))
         #expect(await settle { app.login.authState == loggedIn })
         #expect(await settle { app.registry.snapshot == registrySnapshot(count: 3) })
         #expect(app.registry.selection == nil)
@@ -181,7 +255,7 @@ struct AppModelTests {
             state: .ready, version: "1.3.0", releaseUrl: "https://github.com/o/r/releases/tag/v1.3.0",
             moveToApplications: false)
         let notice = UpdatedNotice(version: "1.2.3", releaseUrl: "")
-        fake.emit(.historyChanged)
+        fake.emit(.bulkConnecting)
         fake.emit(.unknown("future.event"))
         fake.emit(.updateStatus(status))
         fake.emit(.updateUpdated(notice))
@@ -229,12 +303,17 @@ struct AppModelTests {
     // MARK: Error log
 
     @Test(
-        "the error log name is today's date in the machine's time zone",
-        arguments: [("UTC", "rhg-error-log-2026-01-01.log"), ("Asia/Tbilisi", "rhg-error-log-2026-01-02.log"),
-            ("America/Los_Angeles", "rhg-error-log-2026-01-01.log")])
-    func errorLogFilename(_ zone: String, _ name: String) throws {
+        "the error log and issuance export names are today's date in the machine's time zone",
+        arguments: [
+            ("UTC", "rhg-error-log-2026-01-01.log", "rhg-issuances-2026-01-01.json"),
+            ("Asia/Tbilisi", "rhg-error-log-2026-01-02.log", "rhg-issuances-2026-01-02.json"),
+            ("America/Los_Angeles", "rhg-error-log-2026-01-01.log", "rhg-issuances-2026-01-01.json"),
+        ])
+    func errorLogFilename(_ zone: String, _ name: String, _ historyName: String) throws {
         let app = AppModel(bridge: FakeBridge(), clock: { lateNewYearsDay }, timeZone: try #require(TimeZone(identifier: zone)))
         #expect(app.suggestedErrorLogFilename == name)
+        // The History tab's export is named by the same clock and zone.
+        #expect(app.history.suggestedExportFilename == historyName)
     }
 
     @Test("error log export: saved-to alert with the path")

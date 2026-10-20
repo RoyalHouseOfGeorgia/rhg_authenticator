@@ -62,11 +62,11 @@ struct ReadyView: View {
             TabView {
                 SignView(sign: model.sign, bulk: model.bulk, isSigningBusy: model.isSigningBusy)
                     .tabItem { Text("Sign") }
-                PlaceholderView()
+                HistoryView(history: model.history)
                     .tabItem { Text("History") }
                 RegistryView(registry: model.registry, login: model.login)
                     .tabItem { Text("Registry") }
-                PlaceholderView()
+                AuditView(audit: model.audit)
                     .tabItem { Text("Audit") }
                 YubiKeyView(model: model.yubiKey)
                     .tabItem { Text("YubiKey") }
@@ -83,8 +83,8 @@ struct ReadyView: View {
                 model.internalErrorMessage = nil
             }
         }
-        // The registry's and the login's alerts and questions, here so they
-        // show whichever tab started them, over any sheet.
+        // The registry's, the history's and the login's alerts and questions,
+        // here so they show whichever tab started them, over any sheet.
         .appKitConfirmation(registry.pendingConfirmation, current: { registry.pendingConfirmation }) {
             [registry] confirmed in
             if confirmed {
@@ -95,6 +95,17 @@ struct ReadyView: View {
         }
         .appKitAlert(registry.alert, current: { registry.alert }) { [registry] in
             await registry.alertDismissed()
+        }
+        .appKitConfirmation(history.pendingConfirmation, current: { history.pendingConfirmation }) {
+            [history] confirmed in
+            if confirmed {
+                await history.confirm()
+            } else {
+                history.dismissConfirmation()
+            }
+        }
+        .appKitAlert(history.alert, current: { history.alert }) { [history] in
+            await history.alertDismissed()
         }
         .appKitConfirmation(login.pendingConfirmation, current: { login.pendingConfirmation }) {
             [login] confirmed in
@@ -119,17 +130,8 @@ struct ReadyView: View {
     }
 
     private var registry: RegistryModel { model.registry }
+    private var history: HistoryModel { model.history }
     private var login: LoginModel { model.login }
-}
-
-/// A tab not yet ported from the Fyne app.
-@MainActor
-struct PlaceholderView: View {
-    var body: some View {
-        Text("Not yet available")
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 }
 
 /// The status bar: the items spread across the window with flexible space
