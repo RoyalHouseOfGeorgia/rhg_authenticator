@@ -1,0 +1,22 @@
+<Application x:Class="RhgAuthenticator.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:RhgAuthenticator.App"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <local:NullToVisibilityConverter x:Key="NullToVisibility" />
+        <local:EmptyToVisibilityConverter x:Key="EmptyToVisibility" />
+        <local:DisplayDateConverter x:Key="DisplayDate" />
+        <local:HonorConverter x:Key="Honor" />
+        <local:PngImageConverter x:Key="PngImage" />
+        <!-- A field's placeholder, over the field while it is empty; clicks go through to the field. -->
+        <Style x:Key="Placeholder" TargetType="TextBlock">
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Setter Property="Margin" Value="12,6,32,6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+    </Application.Resources>
+</Application>

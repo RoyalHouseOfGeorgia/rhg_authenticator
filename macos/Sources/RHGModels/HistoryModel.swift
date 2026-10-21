@@ -228,10 +228,12 @@ public final class HistoryModel {
     }
 
     /// Export Issuance Log…: copies the log to `path`, the file the operator
-    /// chose (history.exportIssuanceLog), and says where it went.
+    /// chose (history.exportIssuanceLog), and shows the core's alert saying
+    /// where it went.
     public func exportIssuanceLog(path: String) async {
+        let result: ExportResult
         do {
-            try await bridge.exportIssuanceLog(path: path)
+            result = try await bridge.exportIssuanceLog(path: path)
         } catch {
             if error.code == .nothingToExport {
                 show(AlertState(title: "Nothing to Export", message: error.message))
@@ -240,35 +242,31 @@ public final class HistoryModel {
             }
             return
         }
-        show(
-            AlertState(
-                title: "Issuance Log Exported", message: "Saved to:\n\(path)\n\nYou can attach this file to an email."))
+        show(AlertState(title: result.title, message: result.message))
     }
 
     /// Remove Duplicates…: counts the duplicates (history.duplicatePreview)
-    /// and asks before removing them.
+    /// and asks the core's question before removing them.
     public func removeDuplicatesTapped() async {
-        let count: Int
+        let preview: DuplicatePreviewResult
         do {
-            count = try await bridge.duplicatePreview()
+            preview = try await bridge.duplicatePreview()
         } catch {
             showDedupeFailure(error)
             return
         }
-        guard count > 0 else {
+        guard preview.count > 0 else {
             showNoDuplicates()
             return
         }
         let question = Confirmation(
-            title: "Remove Duplicates",
-            message: "Found \(count) duplicate entries. The earliest valid entry of each credential is kept and later"
-                + " copies are removed. A backup of the current log is saved first. Continue?",
+            title: "Remove Duplicates", message: preview.confirmMessage,
             confirmTitle: "Remove Entries", cancelTitle: "Cancel", isDestructive: true)
         ask(question) { [weak self] in await self?.removeDuplicates() }
     }
 
-    /// Removes the duplicates (history.removeDuplicates); the list reloads on
-    /// history.changed.
+    /// Removes the duplicates (history.removeDuplicates) and shows the core's
+    /// report; the list reloads on history.changed.
     private func removeDuplicates() async {
         let result: RemoveDuplicatesResult
         do {
@@ -282,10 +280,7 @@ public final class HistoryModel {
             showNoDuplicates()
             return
         }
-        show(
-            AlertState(
-                title: "Duplicates Removed",
-                message: "Removed \(result.removed) entries. Backup saved to \(result.backup)."))
+        show(AlertState(title: "Duplicates Removed", message: result.message))
     }
 
     private func showDedupeFailure(_ error: RPCError) {

@@ -4,6 +4,11 @@
 #
 #   Linux, macOS: -buildmode=c-archive -> librhgcore.a + librhgcore.h, plus
 #                 librhgcore.link (the linker flags a host app needs)
+#   Linux also:   -buildmode=c-shared -> librhgcore.so (for the Windows app's
+#                 .NET tests run locally), built first; its header must match
+#                 the archive's, which is the librhgcore.h left behind. Its
+#                 exports (nm -D) and a smoke binary linked to it (smoke-shared)
+#                 are checked too.
 #   Windows (Git Bash): -buildmode=c-shared -> rhgcore.dll + rhgcore.h
 #
 # Outputs go to go/release/rhgcore/release/ and go/release/rhgcore/rhgfake/.
@@ -70,32 +75,71 @@ build_variant() {
 			-o "$out/rhgcore.dll" ./cmd/rhgcore)
 		[ -f "$out/rhgcore.h" ] || die "$name: rhgcore.h not generated"
 	else
+		if [ "$OS" = linux ]; then
+			(cd "$GO_DIR" && go build -trimpath -buildmode=c-shared -tags "$tags" -ldflags "$LDFLAGS" \
+				-o "$out/librhgcore.so" ./cmd/rhgcore)
+			[ -f "$out/librhgcore.h" ] || die "$name: librhgcore.h not generated for librhgcore.so"
+			mv "$out/librhgcore.h" "$out/librhgcore.so.h"
+		fi
 		(cd "$GO_DIR" && go build -trimpath -buildmode=c-archive -tags "$tags" -ldflags "$LDFLAGS" \
 			-o "$out/librhgcore.a" ./cmd/rhgcore)
 		[ -f "$out/librhgcore.h" ] || die "$name: librhgcore.h not generated"
+		if [ "$OS" = linux ]; then
+			cmp -s "$out/librhgcore.so.h" "$out/librhgcore.h" || die "$name: librhgcore.so's header differs from librhgcore.a's"
+			rm "$out/librhgcore.so.h"
+		fi
 		link_flags "$tags" >"$out/librhgcore.link"
 		echo "link flags: $(cat "$out/librhgcore.link")"
 	fi
 }
 
 # check_exports checks the library of variant $1 defines the four exports:
-# the archive's symbols (nm), or the DLL's export table (objdump, MinGW).
+# the archive's symbols (nm), or the DLL's export table (objdump, MinGW); on
+# Linux also the shared library's dynamic symbols (nm -D). On Windows it also
+# lists the DLL's imports and fails on a MinGW runtime DLL: one missing from
+# System32 would be looked up in the current directory, Downloads for an app
+# opened from there.
 check_exports() {
-	local out="$OUT_BASE/$1" sym syms pattern
-	# Captured and fed as a here-string: grep -q closing a pipe early would
-	# fail the writer with SIGPIPE under pipefail.
+	local out="$OUT_BASE/$1" syms
 	if [ "$OS" = windows ]; then
 		syms="$(objdump -p "$out/rhgcore.dll")" || die "$1: objdump failed"
-		pattern='[[:space:]]%s$'
+		check_symbols "$1" rhgcore.dll "$syms" '[[:space:]]%s$'
+		grep -E 'DLL Name:' <<<"$syms" || true
+		if grep -Eiq 'DLL Name: lib(gcc|winpthread|stdc\+\+)' <<<"$syms"; then
+			die "$1: rhgcore.dll imports a MinGW runtime DLL"
+		fi
 	else
 		syms="$(nm "$out/librhgcore.a")" || die "$1: nm failed"
-		pattern=' T _?%s$'
+		check_symbols "$1" librhgcore.a "$syms" ' T _?%s$'
 	fi
+	if [ "$OS" = linux ]; then
+		syms="$(nm -D "$out/librhgcore.so")" || die "$1: nm -D failed"
+		check_symbols "$1" librhgcore.so "$syms" ' T %s$'
+	fi
+}
+
+# check_symbols checks that the symbol listing $3 of library $2 (of variant
+# $1) has the four exports, each matching the printf pattern $4. The listing
+# is captured and fed as a here-string: grep -q closing a pipe early would
+# fail the writer with SIGPIPE under pipefail.
+check_symbols() {
+	local sym
 	for sym in RHGCall RHGFree RHGSetEventCallback RHGMainCLI; do
 		# shellcheck disable=SC2059 # the pattern is the format on purpose
-		grep -Eq "$(printf "$pattern" "$sym")" <<<"$syms" || die "$1: $sym is not exported"
+		grep -Eq "$(printf "$4" "$sym")" <<<"$3" || die "$1: $sym is not exported by $2"
 	done
-	echo "exports: RHGCall RHGFree RHGSetEventCallback RHGMainCLI"
+	echo "$2 exports: RHGCall RHGFree RHGSetEventCallback RHGMainCLI"
+}
+
+# compile_smoke_shared builds the smoke binary for variant $1 linked to
+# librhgcore.so (found through its rpath) and prints its path. Like
+# compile_smoke, each failure exits explicitly.
+compile_smoke_shared() {
+	local out="$OUT_BASE/$1"
+	# -lrhgcore picks librhgcore.so over librhgcore.a (the linker's default).
+	cc -I"$out" "$SMOKE_SRC" -L"$out" -lrhgcore -Wl,-rpath,"$out" -o "$out/smoke-shared" >&2 ||
+		die "$1: compiling smoke.c against librhgcore.so failed"
+	echo "$out/smoke-shared"
 }
 
 # compile_smoke builds the smoke binary for variant $1 and prints its path.
@@ -114,11 +158,27 @@ compile_smoke() {
 	fi
 }
 
-# smoke_variant runs the smoke checks for variant $1 in a fresh data dir; $2
-# is smoke.c's mode: "release", "fake-offline" or "fake-online".
+# smoke_variant runs the smoke checks for variant $1 with the smoke binary
+# (on Linux, also with the one linked to librhgcore.so); $2 is smoke.c's
+# mode: "release", "fake-offline" or "fake-online".
 smoke_variant() {
-	local name="$1" mode="$2" bin version_out tmp_dir data_dir
-	bin="$(compile_smoke "$name")"
+	local bin libs
+	bin="$(compile_smoke "$1")"
+	smoke_run "$1" "$2" "$bin"
+	if [ "$OS" = linux ]; then
+		bin="$(compile_smoke_shared "$1")"
+		libs="$(ldd "$bin")" || die "$1: ldd smoke-shared failed"
+		grep -Fq "librhgcore.so => $OUT_BASE/$1/librhgcore.so" <<<"$libs" ||
+			die "$1: smoke-shared does not load $OUT_BASE/$1/librhgcore.so"
+		smoke_run "$1" "$2" "$bin"
+	fi
+}
+
+# smoke_run runs smoke binary $3 for variant $1 in a fresh data dir; $2 is
+# smoke.c's mode.
+smoke_run() {
+	local name="$1" mode="$2" bin="$3" version_out tmp_dir data_dir
+	echo "== smoke $name $mode ($(basename "$bin"))"
 
 	version_out="$("$bin" --version)" || die "$name: --version exited non-zero"
 	echo "--version: $version_out"

@@ -156,9 +156,10 @@ extension Bridge {
         try await call(.yubikeyCheck, Empty())
     }
 
-    /// app.exportErrorLog: writes the diagnostic log to `path`.
-    public func exportErrorLog(path: String) async throws(RPCError) {
-        try await callVoid(.appExportErrorLog, PathParams(path: path))
+    /// app.exportErrorLog: writes the diagnostic log to `path` and returns
+    /// the alert saying where it went.
+    public func exportErrorLog(path: String) async throws(RPCError) -> ExportResult {
+        try await call(.appExportErrorLog, PathParams(path: path))
     }
 
     /// registry.columns: the registry table's column headings; display only.
@@ -227,16 +228,16 @@ extension Bridge {
         try await call(.historyRevoke, RevokeParams(payloadSha256: payloadSha256))
     }
 
-    /// history.exportIssuanceLog: copies the issuance log to `path`.
-    public func exportIssuanceLog(path: String) async throws(RPCError) {
-        try await callVoid(.historyExportIssuanceLog, PathParams(path: path))
+    /// history.exportIssuanceLog: copies the issuance log to `path` and
+    /// returns the alert saying where it went.
+    public func exportIssuanceLog(path: String) async throws(RPCError) -> ExportResult {
+        try await call(.historyExportIssuanceLog, PathParams(path: path))
     }
 
     /// history.duplicatePreview: how many duplicate entries removeDuplicates
-    /// would remove.
-    public func duplicatePreview() async throws(RPCError) -> Int {
-        let result: DuplicatePreviewResult = try await call(.historyDuplicatePreview, Empty())
-        return result.count
+    /// would remove, and the question to ask before removing them.
+    public func duplicatePreview() async throws(RPCError) -> DuplicatePreviewResult {
+        try await call(.historyDuplicatePreview, Empty())
     }
 
     /// history.removeDuplicates: backs up the issuance log, then removes its

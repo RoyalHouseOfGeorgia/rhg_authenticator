@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -277,8 +278,11 @@ func TestNew_OnlineRegistryStats(t *testing.T) {
 	}
 	defer app.Close()
 	got := app.Info()
-	want := Info{Version: buildinfo.Display(), Online: true, ActiveKeys: 1, RecentlyExpired: 1}
-	if got != want {
+	want := Info{
+		Version: buildinfo.Display(), Online: true, ActiveKeys: 1, RecentlyExpired: 1,
+		StatusItems: []string{"Active keys: 1", "Expired (30d): 1", "Version " + strings.TrimPrefix(buildinfo.Display(), "v")},
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Info = %+v, want %+v", got, want)
 	}
 }
@@ -296,6 +300,8 @@ func TestNew_RegistryOffline(t *testing.T) {
 		}
 		if info := app.Info(); info.Online || info.ActiveKeys != 0 {
 			t.Errorf("%s: Info = %+v, want offline with no keys", name, info)
+		} else if want := []string{"No internet", "Version " + strings.TrimPrefix(buildinfo.Display(), "v")}; !reflect.DeepEqual(info.StatusItems, want) {
+			t.Errorf("%s: StatusItems = %q, want %q", name, info.StatusItems, want)
 		}
 		data, _ := os.ReadFile(logger.Path())
 		if !strings.Contains(string(data), "warning: registry fetch failed") || !strings.Contains(string(data), "registry fetch: online=false") {

@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -338,6 +339,9 @@ func TestDispatch_Envelopes(t *testing.T) {
 	h.call(t, "app.info", ``).ok(t, &info)
 	if !info.Online || info.ActiveKeys != 1 || info.Version == "" {
 		t.Errorf("info = %+v", info)
+	}
+	if want := []string{"Active keys: 1", "Expired (30d): 0", "Version " + strings.TrimPrefix(info.Version, "v")}; !reflect.DeepEqual(info.StatusItems, want) {
+		t.Errorf("statusItems = %q, want %q", info.StatusItems, want)
 	}
 	if env := h.call(t, "bulk.cancel", ``); env.raw != `{"ok":true,"result":{}}` {
 		t.Errorf("void envelope = %s", env.raw)
@@ -685,24 +689,39 @@ func TestHistory(t *testing.T) {
 	h.call(t, "history.revoke", `{"payloadSha256":`+jsonString(rec.PayloadSHA256)+`}`).
 		fails(t, CodeNotLoggedIn, service.ErrNotLoggedIn.Error())
 
-	var count struct{ Count int }
+	var count struct {
+		Count          int
+		ConfirmMessage string
+	}
 	h.call(t, "history.duplicatePreview", ``).ok(t, &count)
-	if count.Count != 1 {
-		t.Errorf("duplicates = %d", count.Count)
+	if count.Count != 1 || count.ConfirmMessage != service.DuplicatesConfirmText(1) {
+		t.Errorf("duplicates = %+v", count)
 	}
 	var removed struct {
 		Removed int
 		Backup  string
+		Message string
 	}
 	h.call(t, "history.removeDuplicates", ``).ok(t, &removed)
-	if removed.Removed != 1 || removed.Backup == "" {
+	if removed.Removed != 1 || removed.Backup == "" || removed.Message != service.DuplicatesRemovedText(1, removed.Backup) {
 		t.Errorf("removed = %+v", removed)
+	}
+	// Nothing left to remove: the counts are 0 and the texts empty.
+	if env := h.call(t, "history.duplicatePreview", ``); env.raw != `{"ok":true,"result":{"count":0,"confirmMessage":""}}` {
+		t.Errorf("duplicatePreview with none = %s", env.raw)
+	}
+	if env := h.call(t, "history.removeDuplicates", ``); env.raw != `{"ok":true,"result":{"removed":0,"backup":"","message":""}}` {
+		t.Errorf("removeDuplicates with none = %s", env.raw)
 	}
 
 	export := filepath.Join(h.out, "log.json")
-	h.call(t, "history.exportIssuanceLog", `{"path":`+jsonString(export)+`}`).ok(t, nil)
+	var notice service.ExportResult
+	h.call(t, "history.exportIssuanceLog", `{"path":`+jsonString(export)+`}`).ok(t, &notice)
 	if _, err := os.Stat(export); err != nil {
 		t.Errorf("log not exported: %v", err)
+	}
+	if notice != service.IssuanceLogExported(export) {
+		t.Errorf("export notice = %+v", notice)
 	}
 	h.call(t, "history.exportIssuanceLog", `{"path":"relative.json"}`).fails(t, CodeFailed, "Choose a file to save to.")
 
@@ -714,9 +733,13 @@ func TestHistory(t *testing.T) {
 func TestAppExportErrorLog(t *testing.T) {
 	h := newHarness(t, nil)
 	out := filepath.Join(h.out, "debug.txt")
-	h.call(t, "app.exportErrorLog", `{"path":`+jsonString(out)+`}`).ok(t, nil)
+	var notice service.ExportResult
+	h.call(t, "app.exportErrorLog", `{"path":`+jsonString(out)+`}`).ok(t, &notice)
 	if _, err := os.Stat(out); err != nil {
 		t.Errorf("error log not exported: %v", err)
+	}
+	if notice != service.ErrorLogExported(out) {
+		t.Errorf("export notice = %+v", notice)
 	}
 	h.call(t, "app.exportErrorLog", `{"path":`+jsonString(filepath.Join(h.dir, "x.txt"))+`}`).
 		fails(t, CodeFailed, service.ErrProtectedPath.Error())

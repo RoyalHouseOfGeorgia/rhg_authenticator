@@ -155,7 +155,11 @@ final class URLRecorder {
     }
 }
 
-let onlineInfo = AppInfo(activeKeys: 3, online: true, recentlyExpired: 1, version: "v1.2.3")
+/// Its status items are not what the numbers would make, so a test that
+/// shows them proves they are the core's, rendered as given.
+let onlineInfo = AppInfo(
+    activeKeys: 3, online: true, recentlyExpired: 1, version: "v1.2.3",
+    statusItems: ["Core keys: three", "Core expired: one", "Core version 1.2.3"])
 
 let loggedOut = AuthState(loggedIn: false, offline: false, user: "", statusText: "Not logged in")
 let loggedIn = AuthState(loggedIn: true, offline: false, user: "octocat", statusText: "Logged in as @octocat")

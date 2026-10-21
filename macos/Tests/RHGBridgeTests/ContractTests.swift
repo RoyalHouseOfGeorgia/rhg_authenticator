@@ -25,7 +25,7 @@ struct MethodContract {
     static func of(_ method: RPCMethod) -> MethodContract {
         switch method {
         case .appCanQuit: MethodContract(Empty.self, CanQuitResult.self)
-        case .appExportErrorLog: MethodContract(PathParams.self, Empty.self)
+        case .appExportErrorLog: MethodContract(PathParams.self, ExportResult.self)
         case .appInfo: MethodContract(Empty.self, AppInfo.self)
         case .appInit: MethodContract(AppInitParams.self, AppInfo.self)
         case .appShutdown: MethodContract(ShutdownParams.self, Empty.self)
@@ -43,7 +43,7 @@ struct MethodContract {
                 ($0.stopped.rawValue, BulkStop.known.contains($0.stopped))
             }
         case .historyDuplicatePreview: MethodContract(Empty.self, DuplicatePreviewResult.self)
-        case .historyExportIssuanceLog: MethodContract(PathParams.self, Empty.self)
+        case .historyExportIssuanceLog: MethodContract(PathParams.self, ExportResult.self)
         case .historyList: MethodContract(HistoryListParams.self, HistoryListResult.self)
         case .historyRecordText: MethodContract(RecordParams.self, RecordTextResult.self)
         case .historyRefresh: MethodContract(Empty.self, Empty.self)

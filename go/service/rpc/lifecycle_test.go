@@ -197,7 +197,7 @@ func (h *lcHarness) init(t testing.TB) string {
 	dir := filepath.Join(h.tmp, "data")
 	var info service.Info
 	h.call(t, "app.init", h.initParams(dir)).ok(t, &info)
-	if !info.Online || info.ActiveKeys != 1 {
+	if !info.Online || info.ActiveKeys != 1 || len(info.StatusItems) != 3 || info.StatusItems[0] != "Active keys: 1" {
 		t.Fatalf("info = %+v", info)
 	}
 	return dir
@@ -293,7 +293,7 @@ func TestLifecycle_HappyPath(t *testing.T) {
 	h.wantCanQuit(t, false) // ready, clean
 	var info service.Info
 	h.call(t, "app.info", ``).ok(t, &info)
-	if !info.Online {
+	if !info.Online || len(info.StatusItems) != 3 {
 		t.Errorf("info = %+v", info)
 	}
 
@@ -628,7 +628,11 @@ func (h *lcHarness) exportErrorLog(t testing.TB, path string) envelope {
 func (h *lcHarness) wantExported(t testing.TB, dir string) {
 	t.Helper()
 	target := filepath.Join(t.TempDir(), "error-log.txt")
-	h.exportErrorLog(t, target).ok(t, nil)
+	var notice service.ExportResult
+	h.exportErrorLog(t, target).ok(t, &notice)
+	if notice != service.ErrorLogExported(target) {
+		t.Errorf("export notice = %+v", notice)
+	}
 	data, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatal(err)

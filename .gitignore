@@ -32,6 +32,10 @@ go/rsrc_windows_*.syso
 build/
 macos/.build/
 macos/.swiftpm/
+windows/**/bin/
+windows/**/obj/
+windows/**/TestResults/
+*.binlog
 /release/
 
 # OS artifacts
@@ -41,6 +45,9 @@ Desktop.ini
 ._*
 
 # IDE / editor state
+.vs/
+*.user
+*.suo
 .idea/
 .vscode/
 *.swp

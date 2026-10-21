@@ -1,6 +1,8 @@
 package service
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -39,4 +41,19 @@ func computeRegistryStats(reg core.Registry, today string) registryStats {
 	}
 
 	return stats
+}
+
+// statusItems returns the status bar's texts: the registry statistics (or
+// "No internet" when the registry was not fetched) and the version, shown
+// without its "v" prefix so local builds read "Version dev".
+func statusItems(version string, online bool, stats registryStats) []string {
+	v := "Version " + strings.TrimPrefix(version, "v")
+	if !online {
+		return []string{"No internet", v}
+	}
+	return []string{
+		fmt.Sprintf("Active keys: %d", stats.ActiveKeys),
+		fmt.Sprintf("Expired (30d): %d", stats.RecentlyExpired),
+		v,
+	}
 }

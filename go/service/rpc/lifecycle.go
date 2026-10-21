@@ -187,7 +187,7 @@ func (s *server) canQuit() (any, error) {
 // app.init has opened it: while that init still runs (it can wait long on the
 // registry fetch), after it failed, and after app.shutdown, which leaves the
 // log open. It never touches the App, which may not exist. Before any init
-// got that far it returns errNotReady.
+// got that far it returns errNotReady. Its result is the notice to show.
 func (s *server) exportErrorLog(p pathParams) (any, error) {
 	s.mu.Lock()
 	dir := s.dataDir
@@ -196,7 +196,10 @@ func (s *server) exportErrorLog(p pathParams) (any, error) {
 	if dir == "" || logger == nil {
 		return nil, errNotReady
 	}
-	return void(service.ExportErrorLog(dir, logger, p.Path))
+	if err := service.ExportErrorLog(dir, logger, p.Path); err != nil {
+		return nil, err
+	}
+	return service.ErrorLogExported(p.Path), nil
 }
 
 // shutdown moves to stateShutDown from any state, once: it cancels a pending

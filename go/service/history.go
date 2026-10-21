@@ -134,6 +134,32 @@ func RevokeConfirmText(rec HistoryRecord) string {
 	return fmt.Sprintf("Revoke credential for %s dated %s?\n\nThis cannot be undone.", rec.Recipient, core.FormatDateDisplay(rec.Date))
 }
 
+// DuplicatesConfirmText returns the question asked before removing n
+// duplicate entries, or "" when there are none.
+func DuplicatesConfirmText(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Found %d duplicate %s. The earliest valid entry of each credential is kept and later copies are removed. A backup of the current log is saved first. Continue?", n, entries(n))
+}
+
+// DuplicatesRemovedText reports how many entries were removed and where the
+// log was backed up, or returns "" when none were.
+func DuplicatesRemovedText(removed int, backup string) string {
+	if removed == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Removed %d %s. Backup saved to %s.", removed, entries(removed), backup)
+}
+
+// entries is "entry" or "entries" to follow the count n.
+func entries(n int) string {
+	if n == 1 {
+		return "entry"
+	}
+	return "entries"
+}
+
 // hasRecords reports whether a log file's contents hold at least one record.
 // Unparseable contents count as records so a corrupt log can still be
 // exported for inspection.

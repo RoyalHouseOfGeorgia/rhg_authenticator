@@ -20,7 +20,7 @@ struct AppModelTests {
         await app.start(dataDir: "/data")
         #expect(app.phase == .ready)
         #expect(app.info == onlineInfo)
-        #expect(app.statusItems == ["Active keys: 3", "Expired (30d): 1", "Version 1.2.3"])
+        #expect(app.statusItems == ["Core keys: three", "Core expired: one", "Core version 1.2.3"])
         #expect(app.sign.honors == ["A", "B"])
         #expect(app.login.authState == loggedIn)
         #expect(app.registry.columns == registryColumns)
@@ -35,29 +35,34 @@ struct AppModelTests {
         #expect(fake.params(.appInit) == [#"{"dataDir":"/data"}"#])
     }
 
-    @Test("startup offline: No internet and the version; no data dir sends {}")
+    @Test("startup offline: the core's offline status items; no data dir sends {}")
     func startOffline() async {
         let fake = FakeBridge()
-        fake.respond(.appInit, AppInfo(activeKeys: 0, online: false, recentlyExpired: 0, version: "2.0"))
+        fake.respond(
+            .appInit,
+            AppInfo(
+                activeKeys: 0, online: false, recentlyExpired: 0, version: "2.0",
+                statusItems: ["Core offline", "Core version 2.0"]))
         fake.respond(.signHonors, HonorsResult(honors: []))
         scriptStartupReads(fake, snapshot: registrySnapshot(count: 0, loaded: false))
         let app = AppModel(bridge: fake)
         await app.start()
         #expect(app.phase == .ready)
-        #expect(app.statusItems == ["No internet", "Version 2.0"])
+        #expect(app.statusItems == ["Core offline", "Core version 2.0"])
         #expect(app.registry.status == "Fetching...")
         #expect(fake.params(.appInit) == ["{}"])
     }
 
-    @Test("only a leading v is stripped from the version")
-    func versionPrefix() async {
+    @Test("the status items are the core's as given, whatever the numbers and version")
+    func statusItemsAsGiven() async {
         let fake = FakeBridge()
-        fake.respond(.appInit, AppInfo(activeKeys: 1, online: true, recentlyExpired: 0, version: "vv1"))
+        fake.respond(
+            .appInit, AppInfo(activeKeys: 1, online: true, recentlyExpired: 0, version: "vv1", statusItems: ["Only one"]))
         fake.respond(.signHonors, HonorsResult(honors: []))
         scriptStartupReads(fake)
         let app = AppModel(bridge: fake)
         await app.start()
-        #expect(app.statusItems.last == "Version v1")
+        #expect(app.statusItems == ["Only one"])
     }
 
     @Test("app.init failure is fatal with the report suffix; nothing else is called")
@@ -357,18 +362,14 @@ struct AppModelTests {
         #expect(app.history.suggestedExportFilename == historyName)
     }
 
-    @Test("error log export: saved-to alert with the path")
+    @Test("error log export: the core's alert, as given")
     func errorLogExport() async {
         let fake = FakeBridge()
+        fake.respond(.appExportErrorLog, ExportResult(title: "Core Export Title", message: "Core says: saved it."))
         let app = AppModel(bridge: fake)
         let alert = await app.exportErrorLog(path: "/out/rhg-error-log-2026-01-01.log")
         #expect(fake.params(.appExportErrorLog) == [#"{"path":"/out/rhg-error-log-2026-01-01.log"}"#])
-        #expect(
-            alert
-                == AlertState(
-                    title: "Error Log Exported",
-                    message: "Saved to:\n/out/rhg-error-log-2026-01-01.log\n\nYou can attach this file to an email. "
-                        + "It contains app diagnostics (may include your GitHub username and file paths) — no PINs or keys."))
+        #expect(alert == AlertState(title: "Core Export Title", message: "Core says: saved it."))
     }
 
     @Test("error log export failure shows the core's message")

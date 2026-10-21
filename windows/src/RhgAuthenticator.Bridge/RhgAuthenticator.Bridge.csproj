@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The .NET bridge to the Go core (rhgcore, a C shared library): P/Invoke,
+    library loading and extraction, the RPC contract's DTOs, events and errors.
+    Plain net10.0, so it builds and tests on Linux as well as Windows.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsTrimmable>false</IsTrimmable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RhgAuthenticator.Bridge.Tests" />
+  </ItemGroup>
+</Project>

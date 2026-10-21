@@ -31,6 +31,31 @@ const (
 	msgSaveFailed     = "Could not save the file."
 )
 
+// ExportResult is the title and message of the alert reporting a saved export.
+type ExportResult struct {
+	Title   string `json:"title"`
+	Message string `json:"message"`
+}
+
+// ErrorLogExported returns the ExportResult for an error log saved to path, which
+// it shows as given.
+func ErrorLogExported(path string) ExportResult {
+	return ExportResult{
+		Title: "Error Log Exported",
+		Message: "Saved to:\n" + path + "\n\nYou can attach this file to an email. It contains app diagnostics" +
+			" (may include your GitHub username and file paths) — no PINs or keys.",
+	}
+}
+
+// IssuanceLogExported returns the ExportResult for an issuance log saved to path,
+// which it shows as given.
+func IssuanceLogExported(path string) ExportResult {
+	return ExportResult{
+		Title:   "Issuance Log Exported",
+		Message: "Saved to:\n" + path + "\n\nYou can attach this file to an email.",
+	}
+}
+
 // saver saves files the operator chose, refusing the data folder dataDir and
 // logging to logger. It needs no App, so the error log can be exported before
 // one exists.

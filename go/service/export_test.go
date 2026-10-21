@@ -368,3 +368,26 @@ func TestExportErrorLogFunc_SaveFailure(t *testing.T) {
 		t.Error("save failure not logged")
 	}
 }
+
+func TestErrorLogExported(t *testing.T) {
+	got := ErrorLogExported(`C:\Users\op\rhg error log.txt`)
+	want := ExportResult{
+		Title: "Error Log Exported",
+		Message: "Saved to:\nC:\\Users\\op\\rhg error log.txt\n\nYou can attach this file to an email. It contains app diagnostics" +
+			" (may include your GitHub username and file paths) \u2014 no PINs or keys.",
+	}
+	if got != want {
+		t.Errorf("ErrorLogExported = %+v, want %+v", got, want)
+	}
+}
+
+func TestIssuanceLogExported(t *testing.T) {
+	got := IssuanceLogExported("/Users/op/rhg-issuances-2026-01-02.json")
+	want := ExportResult{
+		Title:   "Issuance Log Exported",
+		Message: "Saved to:\n/Users/op/rhg-issuances-2026-01-02.json\n\nYou can attach this file to an email.",
+	}
+	if got != want {
+		t.Errorf("IssuanceLogExported = %+v, want %+v", got, want)
+	}
+}

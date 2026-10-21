@@ -1,1 +1,1 @@
-{"ok":true,"result":{"backup":"/DATA/issuances.json.bak-20260102T030405Z","removed":1}}
+{"ok":true,"result":{"backup":"/DATA/issuances.json.bak-20260102T030405Z","message":"Removed 1 entry. Backup saved to /DATA/issuances.json.bak-20260102T030405Z.","removed":1}}

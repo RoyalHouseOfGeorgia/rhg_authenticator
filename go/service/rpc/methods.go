@@ -87,12 +87,14 @@ type (
 		Detail        string `json:"detail"`
 		RevokeConfirm string `json:"revokeConfirm"`
 	}
-	countResult struct {
-		Count int `json:"count"`
+	duplicatePreviewResult struct {
+		Count          int    `json:"count"`
+		ConfirmMessage string `json:"confirmMessage"`
 	}
 	removeDuplicatesResult struct {
 		Removed int    `json:"removed"`
 		Backup  string `json:"backup"`
+		Message string `json:"message"`
 	}
 )
 
@@ -202,21 +204,28 @@ func methodTable() map[string]handler {
 			return s.app.Revoke(bg, p.PayloadSHA256)
 		}),
 		"history.exportIssuanceLog": method(func(s *server, p pathParams) (any, error) {
-			return void(s.app.ExportIssuanceLog(p.Path))
+			if err := s.app.ExportIssuanceLog(p.Path); err != nil {
+				return nil, err
+			}
+			return service.IssuanceLogExported(p.Path), nil
 		}),
 		"history.duplicatePreview": noParams(func(s *server) (any, error) {
 			n, err := s.app.DuplicatePreview()
 			if err != nil {
 				return nil, err
 			}
-			return countResult{Count: n}, nil
+			return duplicatePreviewResult{Count: n, ConfirmMessage: service.DuplicatesConfirmText(n)}, nil
 		}),
 		"history.removeDuplicates": noParams(func(s *server) (any, error) {
 			removed, backup, err := s.app.RemoveDuplicates()
 			if err != nil {
 				return nil, err
 			}
-			return removeDuplicatesResult{Removed: removed, Backup: backup}, nil
+			return removeDuplicatesResult{
+				Removed: removed,
+				Backup:  backup,
+				Message: service.DuplicatesRemovedText(removed, backup),
+			}, nil
 		}),
 
 		"pin.submit": method(func(s *server, p pinSubmitParams) (any, error) {

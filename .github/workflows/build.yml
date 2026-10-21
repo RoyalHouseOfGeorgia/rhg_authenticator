@@ -119,39 +119,57 @@ jobs:
       - working-directory: go
         run: go test -race -tags rhgfake $RHGFAKE_PKGS -count=1
 
-  # The rhgcore C library (release and rhgfake variants) built and smoke-tested
-  # through its C ABI on Windows. Interim and never a required check: no job
-  # needs it and it uploads nothing, so release assets are unchanged. test-race
-  # runs the rhgfake tests on macOS and macos-app builds the library there;
-  # this job vets the rhgfake build and runs its tests on Windows.
-  native-lib:
-    name: native-lib (${{ matrix.suffix }})
+  # The native Windows app (WPF over the rhgcore DLL): the library built and
+  # smoke-tested, the Go rhgfake tests run on Windows, the .NET bridge and
+  # view models tested against the rhgfake DLL, then the app published as one
+  # self-contained exe embedding the release DLL. Not yet a required check;
+  # its exe is a 7-day workflow artifact only, so release assets are
+  # unchanged (the release still ships the Fyne build from `build`).
+  # The .NET SDK comes from windows/global.json (printed in Toolchain versions).
+  windows-app:
+    name: windows-app
+    runs-on: windows-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            suffix: windows-amd64
-    runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash  # Git Bash on Windows; the smoke script needs bash and the runner's MinGW gcc
+        shell: bash  # Git Bash; the smoke script needs bash and the runner's MinGW gcc
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6.0.0
+        with:
+          global-json-file: windows/global.json
       - name: Toolchain versions
-        run: uname -a && go version && cc --version
+        run: |
+          uname -a
+          go version
+          cc --version
+          dotnet --info
       - working-directory: go
         run: go vet -tags rhgfake $RHGFAKE_PKGS  # the packages the tag changes; build vets the rest
-      - if: runner.os == 'Windows'
-        working-directory: go
+      - working-directory: go
         run: go test -tags rhgfake -count=1 $RHGFAKE_PKGS
       - name: Build both library variants and run the C smoke test
-        run: bash scripts/rhgcore-smoke.sh
+        run: RHGCORE_VERSION="$GITHUB_REF_NAME" bash scripts/rhgcore-smoke.sh
+      # No RHGCORE_LIB_DIR: the defaults are under test too (tests/ take the
+      # rhgfake library, the app the release one).
+      - name: .NET tests (rhgfake library)
+        run: dotnet test windows/RhgAuthenticator.sln
+      - name: Build the app (release library)
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $version = '0.0.0'
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $version = $env:GITHUB_REF_NAME -replace '^v', '' }
+          ./scripts/build-windows-app.ps1 -Version $version
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: windows-app
+          path: release/windows-app/rhg-authenticator-windows-amd64.exe
+          retention-days: 7
 
   # The native macOS app (SwiftUI over the rhgcore C library): the library
   # built and smoke-tested, the Swift package tested against its rhgfake

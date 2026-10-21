@@ -1,6 +1,7 @@
 package service
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
@@ -128,5 +129,32 @@ func TestComputeRegistryStats_MixedKeys(t *testing.T) {
 	}
 	if stats.RecentlyExpired != 1 {
 		t.Errorf("RecentlyExpired = %d, want 1", stats.RecentlyExpired)
+	}
+}
+
+func TestStatusItems(t *testing.T) {
+	stats := registryStats{ActiveKeys: 3, RecentlyExpired: 2}
+	for _, tc := range []struct {
+		name    string
+		version string
+		online  bool
+		want    []string
+	}{
+		{"online", "v1.5.1", true, []string{"Active keys: 3", "Expired (30d): 2", "Version 1.5.1"}},
+		{"offline", "v1.5.1", false, []string{"No internet", "Version 1.5.1"}},
+		{"dev build", "dev", true, []string{"Active keys: 3", "Expired (30d): 2", "Version dev"}},
+		{"only the leading v", "vv2", false, []string{"No internet", "Version v2"}},
+	} {
+		if got := statusItems(tc.version, tc.online, stats); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: statusItems = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestStatusItems_NoKeys(t *testing.T) {
+	got := statusItems("v1.0.0", true, registryStats{})
+	want := []string{"Active keys: 0", "Expired (30d): 0", "Version 1.0.0"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("statusItems = %q, want %q", got, want)
 	}
 }

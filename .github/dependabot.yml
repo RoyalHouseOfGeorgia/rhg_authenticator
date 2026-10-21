@@ -36,3 +36,24 @@ updates:
         update-types:
           - minor
           - patch
+
+  - package-ecosystem: nuget
+    directory: /windows
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 5
+      semver-patch-days: 3
+    groups:
+      nuget:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: dotnet-sdk
+    directory: /windows
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 5
+      semver-patch-days: 3

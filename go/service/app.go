@@ -137,10 +137,11 @@ type Config struct {
 
 // Info is the registry and build information shown in the status bar.
 type Info struct {
-	Version         string `json:"version"`
-	Online          bool   `json:"online"`
-	ActiveKeys      int    `json:"activeKeys"`
-	RecentlyExpired int    `json:"recentlyExpired"`
+	Version         string   `json:"version"`
+	Online          bool     `json:"online"`
+	ActiveKeys      int      `json:"activeKeys"`
+	RecentlyExpired int      `json:"recentlyExpired"`
+	StatusItems     []string `json:"statusItems"` // the status bar's texts, in order; never nil
 }
 
 // SignFields are the operator's sign form inputs.
@@ -378,14 +379,16 @@ func (a *App) Start() {
 	safego.Go(a.RefreshHistory)
 }
 
-// Info returns the build version and registry statistics.
+// Info returns the build version, registry statistics and status bar texts.
 func (a *App) Info() Info {
 	stats := computeRegistryStats(a.reg, time.Now().UTC().Format("2006-01-02"))
+	version := buildinfo.Display()
 	return Info{
-		Version:         buildinfo.Display(),
+		Version:         version,
 		Online:          a.registryFetched,
 		ActiveKeys:      stats.ActiveKeys,
 		RecentlyExpired: stats.RecentlyExpired,
+		StatusItems:     statusItems(version, a.registryFetched, stats),
 	}
 }
 

@@ -47,10 +47,13 @@ let package = Package(
             dependencies: ["CRHGCore"],
             swiftSettings: coreHeaderSettings,
             // A copy of librhgcore.link (scripts/rhgcore-smoke.sh link_flags) per
-            // platform, which a manifest cannot read: keep the two in sync.
+            // platform, which a manifest cannot read: keep the two in sync. Linux
+            // names the archive (-l:librhgcore.a): librhgcore.so sits beside it,
+            // and -lrhgcore would pick that.
             linkerSettings: [
                 .unsafeFlags(["-L", libDir]),
-                .linkedLibrary("rhgcore"),
+                .linkedLibrary("rhgcore", .when(platforms: [.macOS])),
+                .unsafeFlags(["-l:librhgcore.a"], .when(platforms: [.linux])),
                 .linkedLibrary("pcsclite", .when(platforms: [.linux])),
                 .linkedLibrary("pthread", .when(platforms: [.linux])),
                 .linkedLibrary("resolv", .when(platforms: [.linux])),

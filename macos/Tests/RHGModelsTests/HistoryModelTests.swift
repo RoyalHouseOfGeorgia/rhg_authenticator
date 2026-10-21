@@ -543,17 +543,14 @@ struct HistoryModelTests {
         #expect(history.suggestedExportFilename == name)
     }
 
-    @Test("export: saved-to alert with the path")
+    @Test("export: the core's alert, as given")
     func export() async throws {
         let fake = FakeBridge()
+        fake.respond(.historyExportIssuanceLog, ExportResult(title: "Core Log Title", message: "Core says: copied."))
         let history = try await loaded(fake)
         await history.exportIssuanceLog(path: "/out/rhg-issuances-2026-01-01.json")
         #expect(fake.params(.historyExportIssuanceLog) == [#"{"path":"/out/rhg-issuances-2026-01-01.json"}"#])
-        #expect(
-            history.alert
-                == AlertState(
-                    title: "Issuance Log Exported",
-                    message: "Saved to:\n/out/rhg-issuances-2026-01-01.json\n\nYou can attach this file to an email."))
+        #expect(history.alert == AlertState(title: "Core Log Title", message: "Core says: copied."))
     }
 
     @Test("export with nothing signed: Nothing to Export with the core's message")
@@ -591,7 +588,7 @@ struct HistoryModelTests {
     @Test("no duplicates: No Duplicates, nothing asked")
     func dedupeNone() async throws {
         let fake = FakeBridge()
-        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 0))
+        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 0, confirmMessage: ""))
         let history = try await loaded(fake)
         await history.removeDuplicatesTapped()
         #expect(history.alert == AlertState(title: "No Duplicates", message: "The issuance log has no duplicate entries."))
@@ -599,33 +596,31 @@ struct HistoryModelTests {
         #expect(fake.count(.historyRemoveDuplicates) == 0)
     }
 
-    @Test("duplicates found: asks, then removes and reports the backup; the list waits for history.changed")
+    @Test("duplicates found: the core's question, then its report; the list waits for history.changed")
     func dedupeConfirmed() async throws {
         let fake = FakeBridge()
-        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 2))
-        fake.respond(.historyRemoveDuplicates, RemoveDuplicatesResult(removed: 2, backup: "/DATA/issuances.json.bak"))
+        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 2, confirmMessage: "Core asks: remove two?"))
+        fake.respond(
+            .historyRemoveDuplicates,
+            RemoveDuplicatesResult(removed: 2, backup: "/DATA/issuances.json.bak", message: "Core says: two gone."))
         let history = try await loaded(fake)
         await history.removeDuplicatesTapped()
         #expect(
             history.pendingConfirmation
                 == Confirmation(
-                    title: "Remove Duplicates",
-                    message: "Found 2 duplicate entries. The earliest valid entry of each credential is kept and later copies"
-                        + " are removed. A backup of the current log is saved first. Continue?",
+                    title: "Remove Duplicates", message: "Core asks: remove two?",
                     confirmTitle: "Remove Entries", cancelTitle: "Cancel", isDestructive: true))
         #expect(fake.count(.historyRemoveDuplicates) == 0)
         await history.confirm()
         #expect(fake.params(.historyRemoveDuplicates) == ["{}"])
-        #expect(
-            history.alert
-                == AlertState(title: "Duplicates Removed", message: "Removed 2 entries. Backup saved to /DATA/issuances.json.bak."))
+        #expect(history.alert == AlertState(title: "Duplicates Removed", message: "Core says: two gone."))
         #expect(fake.count(.historyList) == 1)
     }
 
     @Test("duplicates found, declined: nothing is removed")
     func dedupeDeclined() async throws {
         let fake = FakeBridge()
-        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1))
+        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1, confirmMessage: "Core asks: remove one?"))
         let history = try await loaded(fake)
         await history.removeDuplicatesTapped()
         history.dismissConfirmation()
@@ -637,8 +632,8 @@ struct HistoryModelTests {
     @Test("the log changed after the preview: removed 0 is No Duplicates")
     func dedupeRemovedNone() async throws {
         let fake = FakeBridge()
-        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1))
-        fake.respond(.historyRemoveDuplicates, RemoveDuplicatesResult(removed: 0, backup: ""))
+        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1, confirmMessage: "Core asks: remove one?"))
+        fake.respond(.historyRemoveDuplicates, RemoveDuplicatesResult(removed: 0, backup: "", message: ""))
         let history = try await loaded(fake)
         await history.removeDuplicatesTapped()
         await history.confirm()
@@ -648,7 +643,7 @@ struct HistoryModelTests {
     @Test("a failed removal: Remove Duplicates Failed offering the error log")
     func dedupeRemoveFailure() async throws {
         let fake = FakeBridge()
-        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1))
+        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1, confirmMessage: "Core asks: remove one?"))
         fake.fail(.historyRemoveDuplicates, RPCError(code: .failed, message: "backup failed"))
         let history = try await loaded(fake)
         await history.removeDuplicatesTapped()

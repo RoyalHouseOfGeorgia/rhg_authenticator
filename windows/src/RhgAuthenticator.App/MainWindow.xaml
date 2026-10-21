@@ -1,0 +1,41 @@
+<Window x:Class="RhgAuthenticator.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:RhgAuthenticator.App"
+        xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
+        Title="{x:Static vm:AppViewModel.WindowTitle}"
+        Width="800" Height="600" MinWidth="600" MinHeight="450"
+        WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <DataTemplate DataType="{x:Type vm:SignViewModel}">
+            <local:SignView />
+        </DataTemplate>
+    </Window.Resources>
+    <DockPanel>
+        <!-- The status bar: the core's items spread across the window (Fyne's HBox with spacers). -->
+        <StackPanel x:Name="StatusBarArea" DockPanel.Dock="Bottom" Visibility="Collapsed">
+            <Separator Margin="0" />
+            <Grid x:Name="StatusBar" Margin="16,6" />
+        </StackPanel>
+        <Grid>
+            <StackPanel x:Name="LoadingView" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressBar Width="240" IsIndeterminate="True" />
+                <TextBlock Margin="0,12,0,0" HorizontalAlignment="Center"
+                           Text="{x:Static vm:AppViewModel.LoadingText}" />
+            </StackPanel>
+            <TabControl x:Name="TabsView" Margin="12,12,12,0" Visibility="Collapsed"
+                        ItemsSource="{Binding Tabs}" DisplayMemberPath="Title" SelectedIndex="0">
+                <TabControl.ContentTemplate>
+                    <DataTemplate DataType="{x:Type vm:AppTab}">
+                        <Grid>
+                            <ContentControl Content="{Binding Content}" Focusable="False" />
+                            <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Text="{x:Static vm:AppTab.PlaceholderText}"
+                                       Visibility="{Binding IsPlaceholder, Converter={StaticResource BoolToVisibility}}" />
+                        </Grid>
+                    </DataTemplate>
+                </TabControl.ContentTemplate>
+            </TabControl>
+        </Grid>
+    </DockPanel>
+</Window>

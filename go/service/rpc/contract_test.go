@@ -99,9 +99,12 @@ type scrubber struct {
 	prefixes []prefixRule
 }
 
-// prefixRule replaces from, when it is a whole leading path or URL segment,
-// with to.
+// prefixRule replaces from, when it is a whole leading path or URL segment of
+// a value or of a word in it, with to.
 type prefixRule struct{ from, to string }
+
+// wordRe matches a word of a value, as when a message names a saved file.
+var wordRe = regexp.MustCompile(`[^ \n]+`)
 
 // clockRules fix the timestamps the service takes from the clock.
 var clockRules = []struct {
@@ -114,7 +117,7 @@ var clockRules = []struct {
 
 // scrubDocs lists every scrub rule for the README.
 var scrubDocs = []string{
-	"Paths under the test's temporary directories: the app data directory becomes `/DATA` and the folder files are saved to becomes `/OUT`, with `/` separators.",
+	"Paths under the test's temporary directories, as a whole value or a space- or newline-separated word in one: the app data directory becomes `/DATA` and the folder files are saved to becomes `/OUT`, with `/` separators.",
 	"The local test registry server's origin (`http://127.0.0.1:<port>`) becomes `" + registryOrigin + "`.",
 	"Every `pngPreview` value becomes `" + pngPlaceholder + "` (base64 of the PNG signature).",
 	"The clock time in a bulk results file name becomes `rhg-bulk-results-2026-01-02-030405.csv`, and in an issuance-log backup name `.bak-20260102T030405Z`.",
@@ -154,14 +157,20 @@ func (s *scrubber) value(key string, v any) any {
 }
 
 func (s *scrubber) str(v string) string {
-	for _, p := range s.prefixes {
-		if rest, ok := strings.CutPrefix(v, p.from); ok && (rest == "" || rest[0] == '/' || rest[0] == '\\') {
-			v = p.to + filepath.ToSlash(rest)
-			break
-		}
-	}
+	v = s.path(v)                              // the whole value first: a temporary path may contain spaces
+	v = wordRe.ReplaceAllStringFunc(v, s.path) // then each word, as when a message names a saved file
 	for _, r := range clockRules {
 		v = r.re.ReplaceAllString(v, r.fixed)
+	}
+	return v
+}
+
+// path scrubs v when it starts with a placeholder's path or URL.
+func (s *scrubber) path(v string) string {
+	for _, p := range s.prefixes {
+		if rest, ok := strings.CutPrefix(v, p.from); ok && (rest == "" || rest[0] == '/' || rest[0] == '\\') {
+			return p.to + filepath.ToSlash(rest)
+		}
 	}
 	return v
 }
@@ -657,8 +666,10 @@ means a host programming error.
 Display strings are render-only and may change in any release: never compare
 or parse them. They are every message, statusText, summary, summaryLine,
 countsLine, stopMessage, title, the key-check status and details, the
-registry rows and columns, recordText's detail and revokeConfirm, and every
-*Filename.
+registry rows and columns, recordText's detail and revokeConfirm, app.info's
+and app.init's statusItems, duplicatePreview's confirmMessage, and every
+*Filename. A message or confirmMessage is "" when there is nothing to say
+(no duplicates found or removed).
 
 ## When to re-read
 
@@ -926,7 +937,10 @@ func TestScrubber(t *testing.T) {
 		"/tmp/x/a/b":                             "/DATA/a/b",
 		"/tmp/x/sub/c":                           "/SUB/c",
 		"/tmp/xy":                                "/tmp/xy",
-		"a /tmp/x":                               "a /tmp/x",
+		"a /tmp/x":                               "a /DATA",
+		"a/tmp/x":                                "a/tmp/x",
+		"Saved to:\n/tmp/x/a.txt\n\nAttach it.":  "Saved to:\n/DATA/a.txt\n\nAttach it.",
+		"Backup saved to /tmp/x/sub/f.json.":     "Backup saved to /SUB/f.json.",
 		"rhg-bulk-results-2031-12-30-235959.csv": "rhg-bulk-results-2026-01-02-030405.csv",
 		"/tmp/x/issuances.json.bak-20311230T235959Z": "/DATA/issuances.json.bak-20260102T030405Z",
 	} {

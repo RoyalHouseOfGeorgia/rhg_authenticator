@@ -93,26 +93,16 @@ public final class AppModel {
     /// on top, so it appears even while a sheet is up.
     public func exportErrorLog(path: String) async -> AlertState {
         do {
-            try await bridge.exportErrorLog(path: path)
+            let result = try await bridge.exportErrorLog(path: path)
+            return AlertState(title: result.title, message: result.message)
         } catch {
             return .error(error)
         }
-        return AlertState(
-            title: "Error Log Exported",
-            message: "Saved to:\n\(path)\n\nYou can attach this file to an email. It contains app diagnostics"
-                + " (may include your GitHub username and file paths) \u{2014} no PINs or keys.")
     }
 
-    /// The status bar: "Active keys: N", "Expired (30d): N" and "Version X"
-    /// online, "No internet" and "Version X" offline; empty before startup.
-    public var statusItems: [String] {
-        guard let info else { return [] }
-        let version = "Version " + (info.version.hasPrefix("v") ? String(info.version.dropFirst()) : info.version)
-        if !info.online {
-            return ["No internet", version]
-        }
-        return ["Active keys: \(info.activeKeys)", "Expired (30d): \(info.recentlyExpired)", version]
-    }
+    /// The status bar's texts as the core words them (app.init); empty before
+    /// startup.
+    public var statusItems: [String] { info?.statusItems ?? [] }
 
     /// The update banner's status slot, from the latest update.status; nil
     /// shows nothing.

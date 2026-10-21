@@ -11,12 +11,29 @@ public struct AppInfo: Codable, Sendable, Equatable {
     public var online: Bool
     public var recentlyExpired: Int
     public var version: String
+    /// The status bar's texts, in order; display only.
+    public var statusItems: [String]
 
-    public init(activeKeys: Int, online: Bool, recentlyExpired: Int, version: String) {
+    public init(activeKeys: Int, online: Bool, recentlyExpired: Int, version: String, statusItems: [String]) {
         self.activeKeys = activeKeys
         self.online = online
         self.recentlyExpired = recentlyExpired
         self.version = version
+        self.statusItems = statusItems
+    }
+}
+
+/// app.exportErrorLog, history.exportIssuanceLog: the alert saying where the
+/// file went.
+public struct ExportResult: Codable, Sendable, Equatable {
+    /// Display only.
+    public var title: String
+    /// Display only.
+    public var message: String
+
+    public init(title: String, message: String) {
+        self.title = title
+        self.message = message
     }
 }
 
@@ -342,9 +359,12 @@ public struct RecordTextResult: Codable, Sendable, Equatable {
 /// history.duplicatePreview.
 public struct DuplicatePreviewResult: Codable, Sendable, Equatable {
     public var count: Int
+    /// The question to ask before removing them; display only, "" when count is 0.
+    public var confirmMessage: String
 
-    public init(count: Int) {
+    public init(count: Int, confirmMessage: String) {
         self.count = count
+        self.confirmMessage = confirmMessage
     }
 }
 
@@ -353,10 +373,13 @@ public struct RemoveDuplicatesResult: Codable, Sendable, Equatable {
     public var removed: Int
     /// Path of the backup of the log before removal.
     public var backup: String
+    /// Display only; "" when removed is 0.
+    public var message: String
 
-    public init(removed: Int, backup: String) {
+    public init(removed: Int, backup: String, message: String) {
         self.removed = removed
         self.backup = backup
+        self.message = message
     }
 }
 

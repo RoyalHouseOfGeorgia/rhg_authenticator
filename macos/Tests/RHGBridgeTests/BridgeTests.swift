@@ -208,8 +208,8 @@ struct HelperTests {
         try await bridge.cancelBulk()
         try await bridge.exportBulkResults(path: "/OUT/bulk-results.csv")
         #expect(try await bridge.checkYubiKey().outcome == .found)
-        try await bridge.exportErrorLog(path: "/OUT/error-log.txt")
         // Display strings are render-only (contract README): check shapes, not text.
+        #expect(try await !bridge.exportErrorLog(path: "/OUT/error-log.txt").message.isEmpty)
         #expect(try await bridge.registryColumns().count == 7)
         let snapshot = try await bridge.registrySnapshot()
         #expect(snapshot.entries.count == 2 && snapshot.rows.count == 2 && snapshot.dirty && snapshot.loaded)
@@ -234,8 +234,8 @@ struct HelperTests {
         ).record
         #expect(try await !bridge.recordText(record).revokeConfirm.isEmpty)
         #expect(try await bridge.revoke(payloadSha256: String(repeating: "0", count: 63) + "2").status == .submitted)
-        try await bridge.exportIssuanceLog(path: "/OUT/issuances-export.json")
-        #expect(try await bridge.duplicatePreview() == 1)
+        #expect(try await !bridge.exportIssuanceLog(path: "/OUT/issuances-export.json").title.isEmpty)
+        #expect(try await bridge.duplicatePreview().count == 1)
         #expect(try await bridge.removeDuplicates().removed == 1)
         #expect(try await bridge.auditCommits().rows.count == 1)
 
@@ -303,7 +303,14 @@ struct InitializerTests {
 
     @Test("result inits match the contract results")
     func resultInits() throws {
-        #expect(try result("app.info/result.json") == AppInfo(activeKeys: 1, online: true, recentlyExpired: 0, version: "dev"))
+        let info: AppInfo = try result("app.info/result.json")
+        #expect(info == AppInfo(activeKeys: 1, online: true, recentlyExpired: 0, version: "dev", statusItems: info.statusItems))
+        #expect(info.statusItems.count == 3)
+        for method in ["app.exportErrorLog", "history.exportIssuanceLog"] {
+            let export: ExportResult = try result("\(method)/result.json")
+            #expect(export == ExportResult(title: export.title, message: export.message))
+            #expect(!export.title.isEmpty && !export.message.isEmpty, "\(method)")
+        }
         #expect(try result("app.canQuit/result.json") == CanQuitResult(dirty: true))
         let honors: HonorsResult = try result("sign.honors/result.json")
         #expect(honors.honors.count == 7 && honors.honors.last == "Other")
@@ -347,10 +354,15 @@ struct InitializerTests {
         ).result
         #expect(!text.detail.isEmpty && text.detail == raw["detail"])
         #expect(!text.revokeConfirm.isEmpty && text.revokeConfirm == raw["revokeConfirm"])
-        #expect(try result("history.duplicatePreview/result.json") == DuplicatePreviewResult(count: 1))
+        let preview: DuplicatePreviewResult = try result("history.duplicatePreview/result.json")
+        #expect(preview == DuplicatePreviewResult(count: 1, confirmMessage: preview.confirmMessage))
+        #expect(!preview.confirmMessage.isEmpty)
+        let removed: RemoveDuplicatesResult = try result("history.removeDuplicates/result.json")
         #expect(
-            try result("history.removeDuplicates/result.json")
-                == RemoveDuplicatesResult(removed: 1, backup: "/DATA/issuances.json.bak-20260102T030405Z"))
+            removed
+                == RemoveDuplicatesResult(
+                    removed: 1, backup: "/DATA/issuances.json.bak-20260102T030405Z", message: removed.message))
+        #expect(!removed.message.isEmpty)
         let revoke: RevokeResult = try result("history.revoke/result.json")
         #expect(revoke == RevokeResult(status: .submitted, prNumber: 43, url: revoke.url, title: revoke.title, message: revoke.message))
         let snapshot: RegistrySnapshot = try result("registry.snapshot/result.json")

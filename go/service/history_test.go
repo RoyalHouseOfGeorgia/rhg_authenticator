@@ -88,6 +88,32 @@ func TestRevokeConfirmText(t *testing.T) {
 	}
 }
 
+func TestDuplicatesConfirmText(t *testing.T) {
+	if got := DuplicatesConfirmText(0); got != "" {
+		t.Errorf("DuplicatesConfirmText(0) = %q, want empty", got)
+	}
+	want := "Found 3 duplicate entries. The earliest valid entry of each credential is kept and later copies are removed. A backup of the current log is saved first. Continue?"
+	if got := DuplicatesConfirmText(3); got != want {
+		t.Errorf("DuplicatesConfirmText(3) = %q, want %q", got, want)
+	}
+	if got := DuplicatesConfirmText(1); !strings.HasPrefix(got, "Found 1 duplicate entry. ") {
+		t.Errorf("DuplicatesConfirmText(1) = %q, want the singular", got)
+	}
+}
+
+func TestDuplicatesRemovedText(t *testing.T) {
+	if got := DuplicatesRemovedText(0, ""); got != "" {
+		t.Errorf("DuplicatesRemovedText(0) = %q, want empty", got)
+	}
+	want := "Removed 2 entries. Backup saved to /data/issuances.json.bak-20260102T030405Z."
+	if got := DuplicatesRemovedText(2, "/data/issuances.json.bak-20260102T030405Z"); got != want {
+		t.Errorf("DuplicatesRemovedText = %q, want %q", got, want)
+	}
+	if got, want := DuplicatesRemovedText(1, "/b"), "Removed 1 entry. Backup saved to /b."; got != want {
+		t.Errorf("DuplicatesRemovedText(1) = %q, want %q", got, want)
+	}
+}
+
 func TestHasRecords(t *testing.T) {
 	tests := map[string]bool{
 		"":                       false,
