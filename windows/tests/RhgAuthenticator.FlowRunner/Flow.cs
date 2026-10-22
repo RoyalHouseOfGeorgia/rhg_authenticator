@@ -19,6 +19,9 @@ internal enum Scenario
 
     /// <summary>Registry served, 300 ms PIN timeout: an unanswered prompt is dismissed and the Sign fails.</summary>
     pinTimeout,
+
+    /// <summary>Registry served: Bulk Sign of a CSV with two rows to sign and one invalid row, cancelled at the PIN prompt, then run with one PIN for the whole batch, and its results exported.</summary>
+    bulk,
 }
 #pragma warning restore CA1707, IDE1006
 
@@ -39,6 +42,9 @@ internal enum PinAnswer
     Submit,
     Cancel,
     Ignore,
+
+    /// <summary>bulk.cancel, leaving the prompt to be withdrawn by the core.</summary>
+    CancelBulk,
 }
 
 /// <summary>One scenario's checks, in order; the bridge calls run on LiveBridge's threads.</summary>
@@ -90,6 +96,7 @@ internal sealed class Flow
                 Scenario.online => OnlineAsync(dataDir),
                 Scenario.pinCancel => PinCancelAsync(dataDir),
                 Scenario.pinTimeout => PinTimeoutAsync(dataDir),
+                Scenario.bulk => BulkAsync(dataDir),
                 _ => throw new ArgumentOutOfRangeException(nameof(scenario), scenario, null),
             }).ConfigureAwait(false);
         }
@@ -250,6 +257,87 @@ internal sealed class Flow
         await ShutdownAndCheckClosedAsync().ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The bulk CSV: two rows to sign (distinct recipients, dates within the
+    /// fake key's validity and not in the future) and one invalid honor.
+    /// </summary>
+    private static readonly string s_bulkCsv = """
+        name,honor,detail,date
+        Jane Doe,Ennoblement,For service,2026-01-02
+        Carol White,Ennoblement,For service,2026-01-05
+        Bob,Bogus,x,2026-01-02
+
+        """;
+
+    private async Task BulkAsync(string dataDir)
+    {
+        await ConfigureAndInitAsync(online: true, pinTimeoutMs: 0, dataDir).ConfigureAwait(false);
+        await StepAsync("app.start", () => _bridge.StartAppAsync()).ConfigureAwait(false);
+        // Saves are refused inside the data folder: the CSV and the export go next to it.
+        var root = Path.GetDirectoryName(dataDir)!;
+        var csv = Path.Combine(root, "bulk.csv");
+        await File.WriteAllTextAsync(csv, s_bulkCsv).ConfigureAwait(false);
+
+        // Cancelled at the PIN prompt first: a completed run would leave both
+        // rows already issued, with nothing left to sign.
+        var plan = await StepAsync("bulk.load", () => _bridge.LoadBulkAsync(csv)).ConfigureAwait(false);
+        Check(plan.ToSign == 2 && plan.InvalidLines.Count == 1 && plan.PreviewNames.SequenceEqual(["Jane Doe", "Carol White"]),
+            "bulk.load plans 2 rows to sign and 1 invalid row",
+            $"toSign {plan.ToSign}, invalid {plan.InvalidLines.Count}, preview {plan.PreviewNames.Count}");
+        var start = EventCount;
+        var (cancelled, cancelRequest) = await RunAnsweringAsync("bulk.run", PinAnswer.CancelBulk, BulkResultAsync).ConfigureAwait(false);
+        if (cancelRequest is null)
+        {
+            throw new CheckFailedException("bulk.run asks for the PIN", "no pin.request");
+        }
+        var stopped = Succeeded(cancelled, "bulk.run cancelled at the PIN prompt");
+        Check(stopped.Stopped == BulkStop.Cancelled, "bulk.cancel at the PIN prompt stops the run as cancelled",
+            stopped.Stopped.ToString());
+        await WaitForAsync("pin.dismiss withdraws the cancelled run's request",
+            () => First<BridgeEvent.PinDismissed>(start, d => d.Dismiss.RequestId == cancelRequest.RequestId) is not null)
+            .ConfigureAwait(false);
+        Check(First<BridgeEvent.BulkConnecting>(start) is null, "no bulk.connecting without a PIN", "got one");
+
+        var again = await StepAsync("bulk.load again", () => _bridge.LoadBulkAsync(csv)).ConfigureAwait(false);
+        Check(again.ToSign == 2, "the cancelled run signed nothing", $"toSign {again.ToSign}");
+        start = EventCount;
+        var (ran, request) = await RunAnsweringAsync("bulk.run", PinAnswer.Submit, BulkResultAsync).ConfigureAwait(false);
+        Check(request is not null, "bulk.run asks for the PIN", "no pin.request");
+        var outcome = Succeeded(ran, "bulk.run with the PIN submitted");
+        Check(outcome.Stopped == BulkStop.Completed && outcome.StopMessage.Length == 0 && outcome.FailedLines.Count == 0,
+            "bulk.run completes", $"stopped {outcome.Stopped}, {outcome.FailedLines.Count} failed");
+        Check(outcome.ResultsFilename.EndsWith(".csv", StringComparison.Ordinal), "bulk.run suggests a CSV results file name",
+            "not a .csv");
+        await WaitForAsync("two bulk.progress events", () => All<BridgeEvent.BulkProgressed>(start).Count == 2).ConfigureAwait(false);
+        var requests = All<BridgeEvent.PinRequested>(start);
+        Check(requests.Count == 1, "one PIN covers the whole run", $"{requests.Count} pin.request events");
+        var connecting = IndexOf<BridgeEvent.BulkConnecting>(start);
+        var firstProgress = IndexOf<BridgeEvent.BulkProgressed>(start);
+        Check(connecting >= 0 && firstProgress >= 0 && connecting < firstProgress,
+            "bulk.connecting before the first bulk.progress", $"connecting {connecting}, first progress {firstProgress}");
+        var progress = All<BridgeEvent.BulkProgressed>(start).Select(e => e.Progress).ToList();
+        Check(progress.Select(p => p.Done).SequenceEqual([0, 1]) && progress.All(p => p.Total == 2)
+            && progress.Select(p => p.Name).SequenceEqual(["Jane Doe", "Carol White"]),
+            "bulk.progress counts the rows in order", $"done {string.Join(", ", progress.Select(p => p.Done))}");
+
+        var export = Path.Combine(root, "bulk-results.csv");
+        await StepAsync("bulk.exportResults", () => _bridge.ExportBulkResultsAsync(export)).ConfigureAwait(false);
+        Check(File.Exists(export) && new FileInfo(export).Length > 0, "bulk.exportResults wrote the file", "missing or empty");
+        await ShutdownAndCheckClosedAsync().ConfigureAwait(false);
+    }
+
+    private async Task<Outcome<BulkRunResult>> BulkResultAsync()
+    {
+        try
+        {
+            return new Outcome<BulkRunResult>(await _bridge.RunBulkAsync().ConfigureAwait(false), null);
+        }
+        catch (RpcException e)
+        {
+            return new Outcome<BulkRunResult>(default, e);
+        }
+    }
+
     // Steps
 
     private static CredentialParams Credential(string recipient)
@@ -329,6 +417,9 @@ internal sealed class Flow
                         break;
                     case PinAnswer.Cancel:
                         await StepAsync("pin.cancel", () => _bridge.CancelPinAsync(id)).ConfigureAwait(false);
+                        break;
+                    case PinAnswer.CancelBulk:
+                        await StepAsync("bulk.cancel", () => _bridge.CancelBulkAsync()).ConfigureAwait(false);
                         break;
                     default:
                         break;
@@ -456,6 +547,28 @@ internal sealed class Flow
         {
             Drain();
             return _events.Skip(start).OfType<T>().FirstOrDefault(e => match is null || match(e));
+        }
+    }
+
+    /// <summary>Every event of type <typeparamref name="T"/> at or after index <paramref name="start"/>, in order.</summary>
+    private List<T> All<T>(int start)
+        where T : BridgeEvent
+    {
+        lock (_eventsLock)
+        {
+            Drain();
+            return [.. _events.Skip(start).OfType<T>()];
+        }
+    }
+
+    /// <summary>The index of the first event of type <typeparamref name="T"/> at or after <paramref name="start"/>, or -1.</summary>
+    private int IndexOf<T>(int start)
+        where T : BridgeEvent
+    {
+        lock (_eventsLock)
+        {
+            Drain();
+            return _events.FindIndex(start, e => e is T);
         }
     }
 

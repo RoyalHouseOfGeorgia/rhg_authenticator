@@ -69,6 +69,22 @@ public static class CoreLibrary
                 }
                 throw new InvalidOperationException("A different core library is already loaded.");
             }
+            if (OperatingSystem.IsLinux())
+            {
+                // The Go runtime changed .NET's signal handlers while the library
+                // loaded (its initialization runs synchronously in the load).
+                // Before the library counts as loaded, so a failure here never
+                // leaves it in use with the crashing handler.
+                try
+                {
+                    LinuxActivationSignal.ClearOnStack();
+                }
+                catch (InvalidOperationException e)
+                {
+                    NativeLibrary.Free(handle);
+                    throw new CoreLibraryException($"The app's core library could not be loaded.\n\n{e.Message}", e);
+                }
+            }
             s_handle = handle;
             NativeLibrary.SetDllImportResolver(typeof(CoreLibrary).Assembly, Resolve);
         }

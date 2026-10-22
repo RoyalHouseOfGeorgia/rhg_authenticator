@@ -97,17 +97,9 @@ public partial class PinDialog : Window
     private void ShowOverActiveWindow()
     {
         var isAppActive = DialogOwner.IsAppActive;
-        if (DialogOwner.Current is { IsVisible: true } owner)
+        if (DialogOwner.Current is { IsVisible: true, WindowState: WindowState.Minimized } owner)
         {
-            if (owner.WindowState == WindowState.Minimized)
-            {
-                owner.WindowState = WindowState.Normal;
-            }
-            Owner = owner;
-        }
-        else
-        {
-            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            owner.WindowState = WindowState.Normal;
         }
         if (!isAppActive)
         {
@@ -115,7 +107,7 @@ public partial class PinDialog : Window
             ContentRendered += (_, _) => NativeMethods.FlashUntilActivated(
                 new WindowInteropHelper(Application.Current.MainWindow ?? this).Handle);
         }
-        ShowDialog();
+        _ = DialogOwner.ShowModal(this);
     }
 
     /// <summary>The prompt closed: close the window, unless it is closing already.</summary>

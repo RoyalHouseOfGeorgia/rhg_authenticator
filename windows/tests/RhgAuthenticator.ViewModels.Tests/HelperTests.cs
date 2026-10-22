@@ -128,6 +128,18 @@ public sealed class AlertStateTests
     }
 
     [Fact]
+    public void OnlyAnAlertThatSaysSoOffersTheErrorLogExport()
+    {
+        Assert.False(new AlertState("Error", "m").OffersErrorLogExport);
+        Assert.False(AlertState.Error(new RpcException(RpcErrorCode.Failed, "m")).OffersErrorLogExport);
+        var offering = new AlertState("Error", "m", OffersErrorLogExport: true);
+        Assert.True(offering.OffersErrorLogExport);
+        Assert.True(offering.IsError);
+        Assert.NotEqual(new AlertState("Error", "m"), offering);
+        Assert.False(new AlertState("Update Failed", "m", OffersErrorLogExport: true).IsError);
+    }
+
+    [Fact]
     public void AlertsShowOneAtATimeInOrder()
     {
         var alerts = new AlertQueue();

@@ -198,6 +198,19 @@ public sealed class LoaderTests : IDisposable
     }
 
     [Fact]
+    public void LoadLeavesTheGcActivationSignalOffTheAlternateStack()
+    {
+        // The Go runtime sets SA_ONSTACK on it while loading; Load clears it.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "POSIX signals: Linux only.");
+        Assert.True(CoreLibrary.IsLoaded);
+        // CA1416: the platform analyzer does not treat SkipUnless as a guard.
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.False(LinuxActivationSignal.IsOnStack());
+        }
+    }
+
+    [Fact]
     public void LoadingADifferentLibraryIsRefused()
     {
         // A harmless native library of the runtime itself, not a second Go runtime.

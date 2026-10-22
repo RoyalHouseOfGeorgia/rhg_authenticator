@@ -10,8 +10,20 @@
         <DataTemplate DataType="{x:Type vm:SignViewModel}">
             <local:SignView />
         </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:YubiKeyViewModel}">
+            <local:YubiKeyView />
+        </DataTemplate>
     </Window.Resources>
     <DockPanel>
+        <!-- The menu, in every phase: Export Error Log… also helps report a failed startup. -->
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="{x:Static local:MainWindow.FileMenuTitle}">
+                <MenuItem Header="{x:Static local:MainWindow.ExitTitle}" Click="OnExitClick" />
+            </MenuItem>
+            <MenuItem Header="{x:Static local:MainWindow.HelpMenuTitle}">
+                <MenuItem Header="{x:Static vm:AppViewModel.ExportErrorLogTitle}" Command="{Binding ExportErrorLogCommand}" />
+            </MenuItem>
+        </Menu>
         <!-- The status bar: the core's items spread across the window (Fyne's HBox with spacers). -->
         <StackPanel x:Name="StatusBarArea" DockPanel.Dock="Bottom" Visibility="Collapsed">
             <Separator Margin="0" />

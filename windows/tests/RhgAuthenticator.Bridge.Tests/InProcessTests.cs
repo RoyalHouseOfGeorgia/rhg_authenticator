@@ -128,10 +128,16 @@ public sealed class LiveBridgeInProcessTests(CoreLibraryFixture fixture)
         // core still answers, so the real one was loaded by its full path.
         Assert.Equal(Path.Combine(AppContext.BaseDirectory, CoreLibrary.FileName), fixture.PlantedPath);
         Assert.True(File.Exists(fixture.PlantedPath));
-        Assert.Equal(0, MainCli.RunArgv(["rhg-authenticator", "--version"]));
+        Assert.True(MainCli.RunArgv(["rhg-authenticator", "--verify-update-zip"]) > 0);
     }
 }
 
+/// <summary>
+/// The core's CLI in this process. Only invocations that write to stderr: the
+/// core writes straight to file descriptor 1, which here is xUnit's message
+/// stream to the test runner, and a line landing inside a message drops that
+/// test's result. --version runs in FlowRunner (FlowTests).
+/// </summary>
 public sealed class MainCliTests(CoreLibraryFixture fixture)
 {
     public static TheoryData<string[]> NotCli => new()
@@ -155,7 +161,7 @@ public sealed class MainCliTests(CoreLibraryFixture fixture)
         Assert.NotNull(fixture);
         Assert.Null(MainCli.Run([]));
         Assert.Null(MainCli.Run(["--other"]));
-        Assert.Equal(0, MainCli.Run(["--version"]));
+        Assert.True(MainCli.Run(["--verify-update-zip"]) > 0);
         Assert.Throws<ArgumentNullException>(() => MainCli.Run(null!));
         Assert.Throws<ArgumentNullException>(() => MainCli.RunArgv(null!));
     }

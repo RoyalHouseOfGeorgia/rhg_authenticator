@@ -6,7 +6,11 @@ namespace RhgAuthenticator.ViewModels;
 /// <summary>An alert to show: title and message, both display only.</summary>
 /// <param name="Title">The alert's title.</param>
 /// <param name="Message">The alert's text.</param>
-public sealed record AlertState(string Title, string Message)
+/// <param name="OffersErrorLogExport">
+/// The alert gets an "Export Error Log…" button
+/// (<see cref="AppViewModel.ExportErrorLogCommand"/>) beside OK.
+/// </param>
+public sealed record AlertState(string Title, string Message, bool OffersErrorLogExport = false)
 {
     /// <summary>The title of a core error's alert.</summary>
     public const string ErrorTitle = "Error";

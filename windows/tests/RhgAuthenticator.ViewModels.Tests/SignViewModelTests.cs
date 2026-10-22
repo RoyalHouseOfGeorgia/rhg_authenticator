@@ -13,11 +13,17 @@ public sealed class SignViewModelTests
     private readonly FakeClipboard _clipboard = new();
     private readonly FakeUrlOpener _urls = new();
     private readonly AlertQueue _alerts = new();
+    private readonly BulkViewModel _bulk;
+
+    public SignViewModelTests()
+    {
+        _bulk = new BulkViewModel(_fake, new FakeFileOpen(), _fileSave, _alerts, () => false);
+    }
 
     /// <summary>A view model whose form is filled in, with the clock at <see cref="Fixtures.LateNewYearsDay"/>.</summary>
     private SignViewModel FilledModel()
     {
-        var model = new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, new FixedClock(Fixtures.LateNewYearsDay))
+        var model = new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, _bulk, new FixedClock(Fixtures.LateNewYearsDay))
         {
             Recipient = "Jose\u0301", // NFD; the core signs NFC
             Honor = "Order of the Eagle",
@@ -51,11 +57,12 @@ public sealed class SignViewModelTests
     [Fact]
     public void RequiresItsServices()
     {
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(null!, _fileSave, _clipboard, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, null!, _clipboard, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, null!, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, _clipboard, null!, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, _clipboard, _urls, null!));
+        Assert.Throws<ArgumentNullException>(() => new SignViewModel(null!, _fileSave, _clipboard, _urls, _alerts, _bulk));
+        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, null!, _clipboard, _urls, _alerts, _bulk));
+        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, null!, _urls, _alerts, _bulk));
+        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, _clipboard, null!, _alerts, _bulk));
+        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, _clipboard, _urls, null!, _bulk));
+        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, null!));
     }
 
     [Fact]
@@ -361,23 +368,23 @@ public sealed class SignViewModelTests
     [Fact]
     public void TheDateDefaultsToTheClocksUtcDateAroundMidnight()
     {
-        var late = new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, new FixedClock(Fixtures.LateNewYearsDay));
+        var late = new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, _bulk, new FixedClock(Fixtures.LateNewYearsDay));
         Assert.Equal(new DateTime(2026, 1, 1), late.Date);
         Assert.Equal("2026-01-01", late.DateString);
         Assert.Equal("2026-Jan-01", late.DisplayDateText);
 
         // 2026-01-02T01:30 in Tbilisi (+04:00) is still 2026-01-01 in UTC.
         var tbilisi = new DateTimeOffset(2026, 1, 2, 1, 30, 0, TimeSpan.FromHours(4));
-        Assert.Equal("2026-01-01", new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, new FixedClock(tbilisi)).DateString);
+        Assert.Equal("2026-01-01", new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, _bulk, new FixedClock(tbilisi)).DateString);
 
         var lastTick = new DateTimeOffset(2026, 1, 1, 23, 59, 59, TimeSpan.Zero).AddTicks(TimeSpan.TicksPerSecond - 1);
-        Assert.Equal("2026-01-01", new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, new FixedClock(lastTick)).DateString);
+        Assert.Equal("2026-01-01", new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, _bulk, new FixedClock(lastTick)).DateString);
         var midnight = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero);
-        Assert.Equal("2026-01-02", new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, new FixedClock(midnight)).DateString);
+        Assert.Equal("2026-01-02", new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, _bulk, new FixedClock(midnight)).DateString);
 
         // 2026-01-01T20:00 in Los Angeles (-08:00) is already 2026-01-02 in UTC.
         var losAngeles = new DateTimeOffset(2026, 1, 1, 20, 0, 0, TimeSpan.FromHours(-8));
-        Assert.Equal("2026-01-02", new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, new FixedClock(losAngeles)).DateString);
+        Assert.Equal("2026-01-02", new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, _bulk, new FixedClock(losAngeles)).DateString);
     }
 
     [Fact]
@@ -424,7 +431,7 @@ public sealed class SignViewModelTests
     [Fact]
     public void TheDefaultClockIsNow()
     {
-        var model = new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts);
+        var model = new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, _bulk);
         var before = DateTimeOffset.UtcNow.UtcDateTime.Date;
         Assert.InRange(model.Date, before.AddDays(-1), before.AddDays(1));
     }

@@ -20,6 +20,23 @@ internal static class DialogOwner
     /// <summary>Whether any of the app's windows is active (the app is in the foreground).</summary>
     public static bool IsAppActive => Application.Current?.Windows.OfType<Window>().Any(w => w.IsActive) ?? false;
 
+    /// <summary>
+    /// Shows <paramref name="dialog"/> modally, owned by <see cref="Current"/>
+    /// when it is visible, else centred on the screen; returns its result.
+    /// </summary>
+    public static bool? ShowModal(Window dialog)
+    {
+        if (Current is { IsVisible: true } owner)
+        {
+            dialog.Owner = owner;
+        }
+        else
+        {
+            dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        }
+        return dialog.ShowDialog();
+    }
+
     /// <summary>Shows <paramref name="message"/> under <paramref name="title"/> with an OK button, over <see cref="Current"/>.</summary>
     public static void ShowMessage(string title, string message, MessageBoxImage image = MessageBoxImage.None)
     {
@@ -53,6 +70,35 @@ internal sealed class FileSaveService : IFileSaveService
             AddExtension = true,
             Filter = $"{extension.ToUpperInvariant()} files (*.{extension})|*.{extension}",
             OverwritePrompt = true,
+            InitialDirectory = _location.InitialDirectory ?? "",
+        };
+        var chosen = DialogOwner.Current is { } owner ? dialog.ShowDialog(owner) : dialog.ShowDialog();
+        if (chosen != true)
+        {
+            return null;
+        }
+        _location.Remember(dialog.FileName);
+        return dialog.FileName;
+    }
+}
+
+/// <summary>
+/// The open dialog, filtered on the requested extension. It keeps its own
+/// folder history, apart from the save dialog's: it starts in the last
+/// folder opened from this session, else the Desktop.
+/// </summary>
+internal sealed class FileOpenService : IFileOpenService
+{
+    private readonly SaveLocation _location = new();
+
+    /// <inheritdoc />
+    public string? ChooseOpenPath(string extension)
+    {
+        var dialog = new OpenFileDialog
+        {
+            DefaultExt = extension,
+            Filter = $"{extension.ToUpperInvariant()} files (*.{extension})|*.{extension}",
+            CheckFileExists = true,
             InitialDirectory = _location.InitialDirectory ?? "",
         };
         var chosen = DialogOwner.Current is { } owner ? dialog.ShowDialog(owner) : dialog.ShowDialog();

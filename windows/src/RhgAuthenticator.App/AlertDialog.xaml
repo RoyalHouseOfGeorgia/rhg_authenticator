@@ -1,0 +1,23 @@
+<Window x:Class="RhgAuthenticator.App.AlertDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
+        Title="{Binding Title}"
+        Width="440" SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        FocusManager.FocusedElement="{Binding ElementName=OkButton}">
+    <Window.Resources>
+        <ResourceDictionary Source="TextStyles.xaml" />
+    </Window.Resources>
+    <StackPanel Margin="20">
+        <TextBox MaxHeight="400" VerticalScrollBarVisibility="Auto" Style="{StaticResource SelectableText}"
+                 Text="{Binding Message, Mode=OneWay}" />
+        <!-- As Fyne's error-with-log-export dialog: Export Error Log… is the affirmative, OK dismisses. -->
+        <StackPanel Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button MinWidth="80" Content="{x:Static vm:AppViewModel.ExportErrorLogTitle}" Click="OnExportClick" />
+            <!-- Enter and Escape both dismiss; the button closes the window with no export. -->
+            <Button x:Name="OkButton" MinWidth="80" Margin="8,0,0,0" IsDefault="True" IsCancel="True"
+                    Content="{x:Static vm:PinPromptViewModel.OkTitle}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

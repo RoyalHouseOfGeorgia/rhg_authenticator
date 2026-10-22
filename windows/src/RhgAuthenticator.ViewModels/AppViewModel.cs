@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using RhgAuthenticator.Bridge;
 
 namespace RhgAuthenticator.ViewModels;
@@ -12,7 +14,7 @@ public enum AppPhase
     /// <summary>Show the tabs and the status bar.</summary>
     Ready,
 
-    /// <summary>Startup failed: show <see cref="AppViewModel.FatalMessage"/>, then exit.</summary>
+    /// <summary>Startup failed: <see cref="AppViewModel.FatalMessage"/> is posted to the alerts (offering the error log); exit once they are shown.</summary>
     Fatal,
 }
 
@@ -43,29 +45,48 @@ public sealed partial class AppViewModel : ObservableObject
     /// <summary>Appended to a startup failure's message.</summary>
     public const string ReportSuffix = CoreLibraryException.ReportSuffix;
 
+    /// <summary>The Export Error Log button's title (the app menu, and alerts offering it).</summary>
+    public const string ExportErrorLogTitle = "Export Error Log…";
+
     private readonly IBridge _bridge;
+    private readonly IFileSaveService _fileSave;
+    private readonly TimeProvider _clock;
     private Task? _eventLoop;
     private Task<bool>? _quit;
 
     /// <summary>
     /// Creates the app's view models over <paramref name="bridge"/>, with the
     /// host's services; <paramref name="clock"/> (default the system clock)
-    /// dates the Sign form.
+    /// dates the Sign form and names exported files.
     /// </summary>
     public AppViewModel(
-        IBridge bridge, IFileSaveService fileSave, IClipboard clipboard, IUrlOpener urlOpener, TimeProvider? clock = null)
+        IBridge bridge,
+        IFileSaveService fileSave,
+        IFileOpenService fileOpen,
+        IClipboard clipboard,
+        IUrlOpener urlOpener,
+        TimeProvider? clock = null)
     {
         ArgumentNullException.ThrowIfNull(bridge);
+        ArgumentNullException.ThrowIfNull(fileSave);
         _bridge = bridge;
-        Sign = new SignViewModel(bridge, fileSave, clipboard, urlOpener, Alerts, clock);
+        _fileSave = fileSave;
+        _clock = clock ?? TimeProvider.System;
+        // Each flow is disabled while the other runs. Sign is assigned next,
+        // before anything can query Bulk's command.
+        Bulk = new BulkViewModel(bridge, fileOpen, fileSave, Alerts, () => Sign!.IsBusy);
+        Sign = new SignViewModel(bridge, fileSave, clipboard, urlOpener, Alerts, Bulk, _clock);
+        YubiKey = new YubiKeyViewModel(bridge);
         PinPrompt = new PinPromptViewModel(bridge);
+        Sign.PropertyChanged += OnSigningStateChanged;
+        Bulk.PropertyChanged += OnSigningStateChanged;
         Tabs =
         [
             new AppTab("Sign", Sign),
             new AppTab("History", null),
             new AppTab("Registry", null),
             new AppTab("Audit", null),
-            new AppTab("YubiKey", null),
+            new AppTab("YubiKey", YubiKey),
         ];
     }
 
@@ -74,6 +95,12 @@ public sealed partial class AppViewModel : ObservableObject
 
     /// <summary>The Sign tab.</summary>
     public SignViewModel Sign { get; }
+
+    /// <summary>Bulk Sign from File; its dialog shows over the Sign tab.</summary>
+    public BulkViewModel Bulk { get; }
+
+    /// <summary>The YubiKey tab.</summary>
+    public YubiKeyViewModel YubiKey { get; }
 
     /// <summary>The YubiKey PIN prompt.</summary>
     public PinPromptViewModel PinPrompt { get; }
@@ -96,6 +123,12 @@ public sealed partial class AppViewModel : ObservableObject
 
     /// <summary>The status bar's texts as the core words them (app.init); empty before startup.</summary>
     public IReadOnlyList<string> StatusItems => Info?.StatusItems ?? [];
+
+    /// <summary>
+    /// The error log's suggested file name, rhg-error-log-YYYY-MM-DD.log, by
+    /// today's date in the machine's time zone.
+    /// </summary>
+    public string SuggestedErrorLogFilename => $"rhg-error-log-{DisplayDate.Ymd(_clock.GetLocalNow().DateTime)}.log";
 
     /// <summary>The event drain, once started; it ends when the bridge's event channel completes.</summary>
     internal Task? EventLoop => _eventLoop;
@@ -123,6 +156,10 @@ public sealed partial class AppViewModel : ObservableObject
         {
             FatalMessage = error.Message + ReportSuffix;
             Phase = AppPhase.Fatal;
+            // The host exits once it has shown the alerts; the error log may
+            // explain the failure, and the core can export it once it knows
+            // the data folder.
+            Alerts.Show(new AlertState(AlertState.ErrorTitle, FatalMessage, OffersErrorLogExport: true));
             return;
         }
         Phase = AppPhase.Ready;
@@ -149,6 +186,39 @@ public sealed partial class AppViewModel : ObservableObject
             // Never block quitting: the core's own failure, or a bridge fault.
         }
         return true;
+    }
+
+    /// <summary>
+    /// Export Error Log…: asks where, then writes the diagnostic log there
+    /// (app.exportErrorLog) and shows the core's alert saying where it went or
+    /// why it failed. Available in every phase: the core accepts it once it
+    /// knows the data folder.
+    /// </summary>
+    [RelayCommand]
+    private async Task ExportErrorLogAsync()
+    {
+        if (_fileSave.ChooseSavePath(SuggestedErrorLogFilename, "log") is not { } path)
+        {
+            return;
+        }
+        try
+        {
+            var result = await _bridge.ExportErrorLogAsync(path);
+            Alerts.Show(new AlertState(result.Title, result.Message));
+        }
+        catch (RpcException error)
+        {
+            Alerts.Show(AlertState.Error(error));
+        }
+    }
+
+    private void OnSigningStateChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(SignViewModel.IsBusy) or nameof(BulkViewModel.IsActive))
+        {
+            Sign.SignCommand.NotifyCanExecuteChanged();
+            Bulk.BulkSignCommand.NotifyCanExecuteChanged();
+        }
     }
 
     private async Task DrainEventsAsync()
@@ -195,6 +265,13 @@ public sealed partial class AppViewModel : ObservableObject
                 break;
             case BridgeEvent.SignConnecting:
                 Sign.OnSignConnecting();
+                break;
+            case BridgeEvent.BulkProgressed e:
+                Bulk.OnBulkProgress(e.Progress);
+                break;
+            case BridgeEvent.BulkConnecting:
+                // The bulk dialog is up from confirm on, showing "Connecting
+                // to YubiKey..." until the first bulk.progress: nothing changes.
                 break;
             case BridgeEvent.AppInternalError:
                 ShowInternalError();

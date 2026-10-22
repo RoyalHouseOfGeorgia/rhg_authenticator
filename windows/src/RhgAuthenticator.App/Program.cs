@@ -45,7 +45,7 @@ internal static class Program
         // Buffers the core's events from here on; AppViewModel.StartAsync drains them.
         IBridge bridge = LiveBridge.Install();
         var app = new App();
-        var model = new AppViewModel(bridge, new FileSaveService(), new ClipboardService(), new UrlOpener());
+        var model = new AppViewModel(bridge, new FileSaveService(), new FileOpenService(), new ClipboardService(), new UrlOpener());
         return app.Run(new MainWindow(model));
     }
 }

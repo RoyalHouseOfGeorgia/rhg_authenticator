@@ -43,6 +43,9 @@ public sealed partial class SignViewModel : ObservableObject
     /// Creates the tab's view model, posting its alerts to
     /// <paramref name="alerts"/>; <paramref name="clock"/> (default the system
     /// clock) sets the initial <see cref="Date"/>, today in UTC.
+    /// <paramref name="bulk"/>'s flow, while active, also disables Sign
+    /// Credential; whoever owns both calls
+    /// <c>SignCommand.NotifyCanExecuteChanged()</c> when it changes.
     /// </summary>
     public SignViewModel(
         IBridge bridge,
@@ -50,6 +53,7 @@ public sealed partial class SignViewModel : ObservableObject
         IClipboard clipboard,
         IUrlOpener urlOpener,
         AlertQueue alerts,
+        BulkViewModel bulk,
         TimeProvider? clock = null)
     {
         ArgumentNullException.ThrowIfNull(bridge);
@@ -57,13 +61,18 @@ public sealed partial class SignViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(clipboard);
         ArgumentNullException.ThrowIfNull(urlOpener);
         ArgumentNullException.ThrowIfNull(alerts);
+        ArgumentNullException.ThrowIfNull(bulk);
         _bridge = bridge;
         _fileSave = fileSave;
         _clipboard = clipboard;
         _urlOpener = urlOpener;
         _alerts = alerts;
+        Bulk = bulk;
         _date = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime.Date;
     }
+
+    /// <summary>Bulk Sign from File, whose button sits on this tab.</summary>
+    public BulkViewModel Bulk { get; }
 
     /// <summary>The recipient field.</summary>
     [ObservableProperty]
@@ -177,14 +186,14 @@ public sealed partial class SignViewModel : ObservableObject
 
     private bool CanSign()
     {
-        return !IsBusy;
+        return !IsBusy && !Bulk.IsActive;
     }
 
-    /// <summary>Sign Credential: validates the form, then signs it. Ignored while busy.</summary>
+    /// <summary>Sign Credential: validates the form, then signs it. Ignored while busy or during a bulk flow.</summary>
     [RelayCommand(CanExecute = nameof(CanSign))]
     private async Task SignAsync()
     {
-        if (IsBusy)
+        if (!CanSign())
         {
             return;
         }

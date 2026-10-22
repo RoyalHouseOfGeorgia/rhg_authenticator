@@ -14,6 +14,17 @@ public interface IFileSaveService
     string? ChooseSavePath(string suggestedFileName, string extension);
 }
 
+/// <summary>A file open dialog.</summary>
+public interface IFileOpenService
+{
+    /// <summary>
+    /// Asks for an existing file, filtering on <paramref name="extension"/>
+    /// (without the dot, e.g. "csv"). Returns the chosen full path, or null
+    /// when cancelled.
+    /// </summary>
+    string? ChooseOpenPath(string extension);
+}
+
 /// <summary>The system clipboard.</summary>
 public interface IClipboard
 {

@@ -32,6 +32,17 @@ public sealed class FlowTests(CoreLibraryFixture fixture)
                 "pin.dismiss withdraws the timed-out request", "app.info after app.shutdown",
             ]
         },
+        {
+            "bulk",
+            [
+                "bulk.load plans 2 rows to sign and 1 invalid row", "bulk.cancel", "bulk.run cancelled at the PIN prompt",
+                "bulk.cancel at the PIN prompt stops the run as cancelled", "pin.dismiss withdraws the cancelled run's request",
+                "no bulk.connecting without a PIN", "the cancelled run signed nothing", "pin.submit", "bulk.run asks for the PIN",
+                "bulk.run with the PIN submitted", "bulk.run completes", "bulk.run suggests a CSV results file name",
+                "two bulk.progress events", "one PIN covers the whole run", "bulk.connecting before the first bulk.progress",
+                "bulk.progress counts the rows in order", "bulk.exportResults wrote the file", "app.info after app.shutdown",
+            ]
+        },
     };
 
     [Theory]

@@ -10,7 +10,7 @@
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
         </Style>
     </UserControl.Resources>
-    <!-- Laid out as the Fyne app's Sign tab: the form, Sign Credential, the status line, the signed credential. -->
+    <!-- Laid out as the Fyne app's Sign tab: the form, Sign Credential, Bulk Sign from File…, the status line, the signed credential. -->
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="16">
             <TextBlock Text="{x:Static vm:SignViewModel.RecipientLabel}" Margin="0,0,0,4" />
@@ -53,6 +53,9 @@
 
             <Button Margin="0,16,0,0" HorizontalAlignment="Left"
                     Content="{x:Static vm:SignViewModel.SignTitle}" Command="{Binding SignCommand}" />
+            <!-- The bulk flow's dialog is MainWindow's (BulkDialog). -->
+            <Button Margin="0,8,0,0" HorizontalAlignment="Left"
+                    Content="{x:Static vm:BulkViewModel.BulkSignTitle}" Command="{Binding Bulk.BulkSignCommand}" />
             <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding Status}" />
             <Button Margin="0,8,0,0" HorizontalAlignment="Left"
                     Content="{Binding Report.ButtonTitle}" Command="{Binding ReportIssueCommand}"

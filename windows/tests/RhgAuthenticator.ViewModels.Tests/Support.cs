@@ -144,9 +144,11 @@ internal sealed class Hold
     }
 }
 
-/// <summary>A clock stopped at <paramref name="now"/>.</summary>
-internal sealed class FixedClock(DateTimeOffset now) : TimeProvider
+/// <summary>A clock stopped at <paramref name="now"/>, in <paramref name="zone"/> (default UTC, so no test depends on the machine's).</summary>
+internal sealed class FixedClock(DateTimeOffset now, TimeZoneInfo? zone = null) : TimeProvider
 {
+    public override TimeZoneInfo LocalTimeZone => zone ?? TimeZoneInfo.Utc;
+
     public override DateTimeOffset GetUtcNow()
     {
         return now;
@@ -168,6 +170,25 @@ internal sealed class FakeFileSave : IFileSaveService
     public string? ChooseSavePath(string suggestedFileName, string extension)
     {
         Requests.Add((suggestedFileName, extension));
+        return _answers.Count > 0 ? _answers.Dequeue() : null;
+    }
+}
+
+/// <summary>An open dialog answering from a queue (null = cancelled); records what it was asked.</summary>
+internal sealed class FakeFileOpen : IFileOpenService
+{
+    private readonly Queue<string?> _answers = new();
+
+    public List<string> Requests { get; } = [];
+
+    public void Answer(string? path)
+    {
+        _answers.Enqueue(path);
+    }
+
+    public string? ChooseOpenPath(string extension)
+    {
+        Requests.Add(extension);
         return _answers.Count > 0 ? _answers.Dequeue() : null;
     }
 }
@@ -227,6 +248,28 @@ internal static class Fixtures
     public static readonly AppInfo OnlineInfo = new(
         3, true, 1, "v1.2.3", ["Core keys: three", "Core expired: one", "Core version 1.2.3"]);
 
+    /// <summary>A plan with <paramref name="toSign"/> rows to sign (at most 2) and one invalid row.</summary>
+    public static BulkLoadResult BulkPlan(int toSign = 2, IReadOnlyList<string>? invalid = null)
+    {
+        invalid ??= ["line 4: honor: not one of the allowed honor titles"];
+        return new BulkLoadResult(
+            toSign,
+            $"3 rows: {toSign} to sign, 0 already issued, {invalid.Count} invalid",
+            [.. new[] { "Jane Doe", "Carol White" }.Take(toSign)],
+            invalid);
+    }
+
+    public static BulkRunResult BulkOutcome(
+        BulkStop stopped = BulkStop.Completed, string stopMessage = "", IReadOnlyList<string>? failed = null)
+    {
+        return new BulkRunResult(
+            stopped,
+            "Processed 3 rows: 2 successful (2 newly signed, 0 already issued), 1 invalid, 0 failed/not attempted.",
+            stopMessage,
+            failed ?? [],
+            "rhg-bulk-results-2026-01-02-030405.csv");
+    }
+
     public static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47];
 
     public static SignResult SignResult(bool existing = false, string warning = "")
@@ -253,12 +296,16 @@ internal static class Fixtures
 
     /// <summary>An app whose startup succeeded, so its events are being drained.</summary>
     public static async Task<AppViewModel> StartedApp(
-        FakeBridge fake, TimeProvider? clock = null, FakeUrlOpener? urls = null, FakeFileSave? fileSave = null)
+        FakeBridge fake,
+        TimeProvider? clock = null,
+        FakeUrlOpener? urls = null,
+        FakeFileSave? fileSave = null,
+        FakeFileOpen? fileOpen = null)
     {
         fake.Respond(RpcMethod.AppInit, OnlineInfo);
         fake.Respond(RpcMethod.SignHonors, new HonorsResult(["Order of Queen Tamar", "Order of the Eagle"]));
         var app = new AppViewModel(
-            fake, fileSave ?? new FakeFileSave(), new FakeClipboard(), urls ?? new FakeUrlOpener(),
+            fake, fileSave ?? new FakeFileSave(), fileOpen ?? new FakeFileOpen(), new FakeClipboard(), urls ?? new FakeUrlOpener(),
             clock ?? new FixedClock(LateNewYearsDay));
         await app.StartAsync();
         Assert.Equal(AppPhase.Ready, app.Phase);

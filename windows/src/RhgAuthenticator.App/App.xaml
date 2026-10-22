@@ -7,9 +7,11 @@
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
         <local:NullToVisibilityConverter x:Key="NullToVisibility" />
         <local:EmptyToVisibilityConverter x:Key="EmptyToVisibility" />
+        <local:NonEmptyToVisibilityConverter x:Key="NonEmptyToVisibility" />
         <local:DisplayDateConverter x:Key="DisplayDate" />
         <local:HonorConverter x:Key="Honor" />
         <local:PngImageConverter x:Key="PngImage" />
+        <local:JoinLinesConverter x:Key="JoinLines" />
         <!-- A field's placeholder, over the field while it is empty; clicks go through to the field. -->
         <Style x:Key="Placeholder" TargetType="TextBlock">
             <Setter Property="IsHitTestVisible" Value="False" />

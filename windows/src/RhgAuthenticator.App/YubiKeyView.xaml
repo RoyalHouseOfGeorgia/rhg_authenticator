@@ -1,0 +1,22 @@
+<UserControl x:Class="RhgAuthenticator.App.YubiKeyView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels">
+    <UserControl.Resources>
+        <ResourceDictionary Source="TextStyles.xaml" />
+    </UserControl.Resources>
+    <!-- Laid out as the Fyne app's YubiKey tab: Check YubiKey with the status beside it, then the key's details. -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="16">
+            <DockPanel>
+                <!-- CheckCommand is disabled while a check runs. -->
+                <Button DockPanel.Dock="Left" VerticalAlignment="Center"
+                        Content="{x:Static vm:YubiKeyViewModel.CheckTitle}" Command="{Binding CheckCommand}" />
+                <TextBox Margin="12,0,0,0" VerticalAlignment="Center" Style="{StaticResource SelectableText}"
+                         Text="{Binding Status, Mode=OneWay}" />
+            </DockPanel>
+            <TextBox Margin="0,12,0,0" Style="{StaticResource SelectableText}"
+                     Text="{Binding Details, Mode=OneWay, Converter={StaticResource JoinLines}}" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

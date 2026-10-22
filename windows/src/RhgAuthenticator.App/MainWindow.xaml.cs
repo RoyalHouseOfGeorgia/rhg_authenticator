@@ -7,11 +7,20 @@ namespace RhgAuthenticator.App;
 
 /// <summary>
 /// The window: a progress view while the core starts, the tabs and status
-/// bar once it is ready, or the fatal startup error. Closing it runs the
-/// core's quit sequence first.
+/// bar once it is ready, or the fatal startup error; the menu in every
+/// phase. Closing it runs the core's quit sequence first.
 /// </summary>
 public partial class MainWindow : Window
 {
+    /// <summary>The File menu's title; "_" marks the access key (Alt+F).</summary>
+    public const string FileMenuTitle = "_File";
+
+    /// <summary>File > Exit's title; "_" marks the access key (X).</summary>
+    public const string ExitTitle = "E_xit";
+
+    /// <summary>The Help menu's title; "_" marks the access key (Alt+H).</summary>
+    public const string HelpMenuTitle = "_Help";
+
     private readonly AppViewModel _model;
     private bool _isShowingAlerts;
     private bool _isQuitting;
@@ -25,6 +34,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = model;
         PinDialog.Attach(model.PinPrompt);
+        BulkDialog.Attach(model.Bulk);
         model.PropertyChanged += OnModelChanged;
         model.Alerts.PropertyChanged += OnAlertsChanged;
         Loaded += OnLoaded;
@@ -53,6 +63,11 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnExitClick(object sender, RoutedEventArgs e)
+    {
+        Close();
+    }
+
     /// <summary>
     /// Shows the app's alerts one at a time, over whatever window is active.
     /// They open on a later dispatcher turn, never inside the change, so
@@ -68,22 +83,47 @@ public partial class MainWindow : Window
             return;
         }
         _isShowingAlerts = true;
-        _ = Dispatcher.BeginInvoke(new Action(() =>
+        _ = Dispatcher.BeginInvoke(new Action(ShowAlerts));
+    }
+
+    /// <summary>
+    /// Shows alerts until none is left: an alert posted meanwhile (an export's
+    /// result among them) is shown by this loop, which re-checks
+    /// <see cref="AlertQueue.Current"/> after each. Async void, so a failure
+    /// after an await reaches the dispatcher as an unhandled exception and
+    /// ends the app, as one before it does. After a fatal startup's alert
+    /// (and its export's result) the window closes.
+    /// </summary>
+    private async void ShowAlerts()
+    {
+        try
         {
-            try
+            while (_model.Alerts.Current is { } alert)
             {
-                while (_model.Alerts.Current is { } alert)
+                if (!alert.OffersErrorLogExport)
                 {
                     DialogOwner.ShowMessage(
                         alert.Title, alert.Message, alert.IsError ? MessageBoxImage.Error : MessageBoxImage.None);
                     _model.Alerts.Dismiss();
+                    continue;
+                }
+                var export = AlertDialog.Ask(alert);
+                _model.Alerts.Dismiss();
+                if (export)
+                {
+                    // Asks where, writes the log and posts its result alert, shown next.
+                    await _model.ExportErrorLogCommand.ExecuteAsync(null);
                 }
             }
-            finally
-            {
-                _isShowingAlerts = false;
-            }
-        }));
+        }
+        finally
+        {
+            _isShowingAlerts = false;
+        }
+        if (_model.Phase == AppPhase.Fatal)
+        {
+            Close();
+        }
     }
 
     private void ShowPhase()
@@ -92,15 +132,9 @@ public partial class MainWindow : Window
         LoadingView.Visibility = phase == AppPhase.Starting ? Visibility.Visible : Visibility.Collapsed;
         TabsView.Visibility = phase == AppPhase.Ready ? Visibility.Visible : Visibility.Collapsed;
         StatusBarArea.Visibility = TabsView.Visibility;
-        if (phase == AppPhase.Fatal)
-        {
-            // Startup failed: the error, then quit, as the Fyne app did.
-            _ = Dispatcher.BeginInvoke(new Action(() =>
-            {
-                DialogOwner.ShowMessage(AlertState.ErrorTitle, _model.FatalMessage ?? "", MessageBoxImage.Error);
-                Close();
-            }));
-        }
+        // Fatal: the view model posts the error as an alert; ShowAlerts
+        // closes the window once it (and any export's result) is shown, as
+        // the Fyne app quit after its error.
     }
 
     /// <summary>
@@ -127,7 +161,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Every close (the X, Alt+F4, a fatal error) runs the core's quit
+    /// Every close (the X, Alt+F4, File > Exit, a fatal error) runs the core's quit
     /// sequence first, then shuts the app down. The core calls run off the
     /// UI thread, so the window stays responsive meanwhile; closing again
     /// while it runs does nothing.
