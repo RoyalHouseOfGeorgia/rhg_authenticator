@@ -1,3 +1,4 @@
+using System.Globalization;
 using RhgAuthenticator.Bridge;
 
 namespace RhgAuthenticator.ViewModels.Tests;
@@ -52,6 +53,39 @@ public sealed class DisplayDateTests
     public void NullTextThrows()
     {
         Assert.Throws<ArgumentNullException>(() => DisplayDate.Format(null!));
+        Assert.Throws<ArgumentNullException>(() => DisplayDate.Culture(null!));
+    }
+
+    [Fact]
+    public void TheCultureShowsShortDatesAsYyyyMonDdOverAReadOnlyCulture()
+    {
+        var culture = DisplayDate.Culture(CultureInfo.InvariantCulture);
+        Assert.Equal("2026-Mar-05", new DateTime(2026, 3, 5).ToString("d", culture));
+        Assert.Equal("MM/dd/yyyy", CultureInfo.InvariantCulture.DateTimeFormat.ShortDatePattern);
+        Assert.True(CultureInfo.InvariantCulture.IsReadOnly);
+    }
+
+    [Fact]
+    public void TheCultureHasEnglishMonthNamesAndKeepsTheBaseCulturesNumbers()
+    {
+        // As a localized culture would: the test project has no culture data.
+        var local = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        local.DateTimeFormat.ShortDatePattern = "dd.MM.yyyy";
+        string[] months = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii", ""];
+        local.DateTimeFormat.MonthNames = months;
+        local.DateTimeFormat.AbbreviatedMonthNames = months;
+        local.NumberFormat.NumberDecimalSeparator = ",";
+
+        var culture = DisplayDate.Culture(local);
+
+        Assert.Equal("2026-Mar-05", new DateTime(2026, 3, 5).ToString("d", culture));
+        Assert.Equal("October", culture.DateTimeFormat.MonthNames[9]);
+        Assert.Equal("Oct", culture.DateTimeFormat.AbbreviatedMonthNames[9]);
+        Assert.Equal(",", culture.NumberFormat.NumberDecimalSeparator);
+        Assert.Equal("dd.MM.yyyy", local.DateTimeFormat.ShortDatePattern);
+        Assert.Equal("x", local.DateTimeFormat.MonthNames[9]);
+        Assert.Equal("x", local.DateTimeFormat.AbbreviatedMonthNames[9]);
+        Assert.False(local.IsReadOnly);
     }
 }
 

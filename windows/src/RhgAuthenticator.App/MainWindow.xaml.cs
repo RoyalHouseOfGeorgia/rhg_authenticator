@@ -17,7 +17,7 @@ public partial class MainWindow : Window
     // The window's sizes (only here; the XAML sets none): FitToWorkArea caps each at the work area.
 
     /// <summary>The preferred startup width.</summary>
-    internal const double DefaultWidth = 1000;
+    internal const double DefaultWidth = 1100;
 
     /// <summary>The preferred startup height.</summary>
     internal const double DefaultHeight = 680;

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using RhgAuthenticator.Bridge;
@@ -41,6 +42,9 @@ internal static class Program
         {
             return exitCode;
         }
+
+        // The date picker formats dates in the current culture: YYYY-Mon-DD there too.
+        CultureInfo.CurrentCulture = CultureInfo.DefaultThreadCurrentCulture = DisplayDate.Culture(CultureInfo.CurrentCulture);
 
         // Buffers the core's events from here on; AppViewModel.StartAsync drains them.
         IBridge bridge = LiveBridge.Install();

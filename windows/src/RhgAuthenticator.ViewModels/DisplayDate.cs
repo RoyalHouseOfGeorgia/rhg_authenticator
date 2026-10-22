@@ -24,6 +24,24 @@ public static class DisplayDate
         return month is >= 1 and <= 12 ? $"{ymd[..4]}-{s_months[month - 1]}-{ymd[8..]}" : ymd;
     }
 
+    /// <summary>
+    /// <paramref name="baseCulture"/> with its dates as the GUI shows them, for
+    /// controls that format dates themselves (the date picker): a copy whose
+    /// date format is the invariant culture's (Gregorian, English names) with
+    /// the short date YYYY-Mon-DD. Numbers and everything else stay the base
+    /// culture's. A base culture whose own default calendar is not Gregorian
+    /// still makes WPF's DatePicker fall back to its own short date.
+    /// </summary>
+    public static CultureInfo Culture(CultureInfo baseCulture)
+    {
+        ArgumentNullException.ThrowIfNull(baseCulture);
+        var dates = (DateTimeFormatInfo)CultureInfo.InvariantCulture.DateTimeFormat.Clone();
+        dates.ShortDatePattern = "yyyy-MMM-dd";
+        var culture = (CultureInfo)baseCulture.Clone();
+        culture.DateTimeFormat = dates;
+        return culture;
+    }
+
     /// <summary>The calendar date of <paramref name="date"/> as YYYY-MM-DD; its time of day is ignored.</summary>
     public static string Ymd(DateTime date)
     {

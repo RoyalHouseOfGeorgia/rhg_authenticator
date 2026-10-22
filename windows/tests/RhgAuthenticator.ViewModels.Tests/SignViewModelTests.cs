@@ -372,7 +372,6 @@ public sealed class SignViewModelTests
         var late = new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, _bulk, new FixedClock(Fixtures.LateNewYearsDay));
         Assert.Equal(new DateTime(2026, 1, 1), late.Date);
         Assert.Equal("2026-01-01", late.DateString);
-        Assert.Equal("2026-Jan-01", late.DisplayDateText);
 
         // 2026-01-02T01:30 in Tbilisi (+04:00) is still 2026-01-01 in UTC.
         var tbilisi = new DateTimeOffset(2026, 1, 2, 1, 30, 0, TimeSpan.FromHours(4));
@@ -397,15 +396,11 @@ public sealed class SignViewModelTests
         model.Date = new DateTime(2026, 3, 15, 13, 45, 0);
         Assert.Equal(new DateTime(2026, 3, 15), model.Date);
         Assert.Equal("2026-03-15", model.DateString);
-        Assert.Equal("2026-Mar-15", model.DisplayDateText);
         Assert.Equal(
-            [
-                nameof(SignViewModel.Date), nameof(SignViewModel.SelectedDate), nameof(SignViewModel.DateString),
-                nameof(SignViewModel.DisplayDateText),
-            ],
+            [nameof(SignViewModel.Date), nameof(SignViewModel.SelectedDate), nameof(SignViewModel.DateString)],
             changed);
         model.Date = new DateTime(2026, 3, 15, 1, 0, 0);
-        Assert.Equal(4, changed.Count);
+        Assert.Equal(3, changed.Count);
 
         _fake.Fail(RpcMethod.SignValidate, new RpcException(RpcErrorCode.Failed, "x"));
         await model.SignCommand.ExecuteAsync(null);

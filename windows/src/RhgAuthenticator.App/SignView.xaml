@@ -1,7 +1,8 @@
 <UserControl x:Class="RhgAuthenticator.App.SignView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels">
+             xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
+             Loaded="OnLoaded" SizeChanged="OnSizeChanged">
     <UserControl.Resources>
         <!-- A form label, beside its field, level with the field's first line of text. -->
         <Style x:Key="FieldLabel" TargetType="TextBlock">
@@ -34,11 +35,12 @@
                     AutomationProperties.Name="{x:Static vm:BulkViewModel.BulkSignTitle}"
                     Command="{Binding Bulk.BulkSignCommand}" />
         </StackPanel>
+        <!-- The panes' widths and minimums are set by FitPanes. -->
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="340" />
+                <ColumnDefinition x:Name="FormColumn" Width="340" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="ResultColumn" Width="*" />
             </Grid.ColumnDefinitions>
 
             <!-- The form, its status line and Report Issue. -->
@@ -46,7 +48,7 @@
                 <StackPanel Margin="24,0,16,16">
                     <Grid>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition x:Name="LabelColumn" Width="Auto" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
@@ -94,14 +96,15 @@
                                        Visibility="{Binding Text, ElementName=DetailBox, Converter={StaticResource EmptyToVisibility}}" />
                         </Grid>
 
-                        <!-- Picked only, never typed: Loaded makes the picker's text box read-only. YYYY-Mon-DD under it. -->
+                        <!--
+                          Picked only, never typed: Loaded makes the picker's text box read-only.
+                          It shows YYYY-Mon-DD: Program sets the app's short date (DisplayDate.Culture).
+                        -->
                         <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="{x:Static vm:SignViewModel.DateLabel}" />
-                        <StackPanel Grid.Row="3" Grid.Column="1" Margin="0,12,0,0">
-                            <DatePicker x:Name="DateBox" AutomationProperties.Name="{x:Static vm:SignViewModel.DateLabel}"
-                                        HorizontalAlignment="Stretch" Loaded="OnDatePickerLoaded"
-                                        SelectedDate="{Binding SelectedDate, Mode=TwoWay}" />
-                            <TextBlock Margin="0,4,0,0" Text="{Binding DisplayDateText}" />
-                        </StackPanel>
+                        <DatePicker x:Name="DateBox" Grid.Row="3" Grid.Column="1" Margin="0,12,0,0"
+                                    AutomationProperties.Name="{x:Static vm:SignViewModel.DateLabel}"
+                                    HorizontalAlignment="Stretch" Loaded="OnDatePickerLoaded"
+                                    SelectedDate="{Binding SelectedDate, Mode=TwoWay}" />
                     </Grid>
 
                     <TextBlock Margin="0,16,0,0" TextWrapping="Wrap" Text="{Binding Status}" />
@@ -111,7 +114,11 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <Border Grid.Column="1" Width="1" Margin="0,0,0,16" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
+            <!-- The divider: a 5 px drag (or arrow-key) handle around a 1 px line. -->
+            <GridSplitter Grid.Column="1" Width="5" Margin="0,0,0,16" Background="Transparent" Cursor="SizeWE"
+                          ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
+            <Border Grid.Column="1" Width="1" Margin="0,0,0,16" IsHitTestVisible="False"
+                    Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
 
             <!-- The signed credential: the fields as signed (not the form's), its QR code and actions. -->
             <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
