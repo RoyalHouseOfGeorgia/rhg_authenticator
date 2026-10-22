@@ -25,12 +25,95 @@ public sealed class AppViewModelTests
         Assert.Equal("Loading key registry…", AppViewModel.LoadingText);
         Assert.Equal(AppViewModel.ReportSuffix, s_reportSuffix);
         var app = NewApp();
-        Assert.Equal(["Sign", "History", "Registry", "Audit", "YubiKey"], app.Tabs.Select(t => t.Title));
+        Assert.Equal(["Sign", "History", "Registry", "Audit", "YubiKey", "Help"], app.Tabs.Select(t => t.Title));
+        Assert.Equal("Help", AppViewModel.HelpTitle);
         Assert.Same(app.Sign, app.Tabs[0].Content);
         Assert.Same(app.YubiKey, app.Tabs[4].Content);
-        Assert.Equal([false, true, true, true, false], app.Tabs.Select(t => t.IsPlaceholder));
+        Assert.Same(app, app.Tabs[5].Content);
+        Assert.Equal([false, true, true, true, false, false], app.Tabs.Select(t => t.IsPlaceholder));
         Assert.Equal([.. "Export Error Log"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(AppViewModel.ExportErrorLogTitle));
         Assert.Equal("Not yet available", AppTab.PlaceholderText);
+        Assert.Equal(
+            "Saves the app's diagnostic log to a file you choose, to attach to an issue report.", AppViewModel.HelpText);
+    }
+
+    [Fact]
+    public void AFreshAppEnablesAndSelectsOnlyHelpAndShowsLoading()
+    {
+        var app = NewApp();
+        Assert.Equal([false, false, false, false, false, true], app.Tabs.Select(t => t.IsEnabled));
+        Assert.Same(app.Tabs[5], app.SelectedTab);
+        Assert.True(app.IsStarting);
+    }
+
+    [Fact]
+    public async Task ReadyEnablesEveryTabAndSelectsSign()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        Assert.Equal(AppPhase.Ready, app.Phase);
+        Assert.All(app.Tabs, t => Assert.True(t.IsEnabled));
+        Assert.Same(app.Tabs[0], app.SelectedTab);
+        Assert.False(app.IsStarting);
+        // Any tab can be selected once ready; nothing selected falls back to Help.
+        app.SelectedTab = app.Tabs[2];
+        Assert.Same(app.Tabs[2], app.SelectedTab);
+        app.SelectedTab = null;
+        Assert.Same(app.Tabs[5], app.SelectedTab);
+    }
+
+    [Fact]
+    public async Task FatalDisablesEveryTabAndKeepsHelpSelected()
+    {
+        _fake.Fail(RpcMethod.AppInit, new RpcException(RpcErrorCode.Failed, "x"));
+        var app = NewApp();
+        await app.StartAsync();
+        Assert.Equal(AppPhase.Fatal, app.Phase);
+        Assert.All(app.Tabs, t => Assert.False(t.IsEnabled));
+        Assert.Same(app.Tabs[5], app.SelectedTab);
+        Assert.False(app.IsStarting);
+        // With every tab disabled, the view's selections stand.
+        app.SelectedTab = app.Tabs[0];
+        Assert.Same(app.Tabs[0], app.SelectedTab);
+        app.SelectedTab = null;
+        Assert.Null(app.SelectedTab);
+    }
+
+    [Fact]
+    public void WhileStartingSelectingADisabledTabOrNothingKeepsHelpSelected()
+    {
+        var app = NewApp();
+        app.SelectedTab = app.Tabs[0];
+        Assert.Same(app.Tabs[5], app.SelectedTab);
+        app.SelectedTab = app.Tabs[3];
+        Assert.Same(app.Tabs[5], app.SelectedTab);
+        app.SelectedTab = null;
+        Assert.Same(app.Tabs[5], app.SelectedTab);
+    }
+
+    [Fact]
+    public async Task TheTabsStayStartingWhileAppInitRuns()
+    {
+        var held = _fake.Hold(RpcMethod.AppInit);
+        _fake.Respond(RpcMethod.SignHonors, new HonorsResult([]));
+        var app = NewApp();
+        // The views bind these, so they must notify (order and count aside).
+        var changed = new List<string?>();
+        var signTabChanged = new List<string?>();
+        app.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+        app.Tabs[0].PropertyChanged += (_, e) => signTabChanged.Add(e.PropertyName);
+        var starting = app.StartAsync();
+        Assert.Equal(AppPhase.Starting, app.Phase);
+        Assert.True(app.IsStarting);
+        Assert.Equal([false, false, false, false, false, true], app.Tabs.Select(t => t.IsEnabled));
+        Assert.Same(app.Tabs[5], app.SelectedTab);
+        held.Release(Fixtures.OnlineInfo);
+        await starting;
+        Assert.Equal(AppPhase.Ready, app.Phase);
+        Assert.False(app.IsStarting);
+        Assert.Same(app.Tabs[0], app.SelectedTab);
+        Assert.Contains(nameof(AppViewModel.IsStarting), changed);
+        Assert.Contains(nameof(AppViewModel.SelectedTab), changed);
+        Assert.Contains(nameof(AppTab.IsEnabled), signTabChanged);
     }
 
     [Fact]
@@ -63,19 +146,6 @@ public sealed class AppViewModelTests
         Assert.Equal(["A", "B"], app.Sign.Honors);
         Assert.Equal([RpcMethod.AppInit, RpcMethod.SignHonors, RpcMethod.AppStart], _fake.Methods);
         Assert.Equal(["{\"dataDir\":\"/data\"}"], _fake.Params(RpcMethod.AppInit));
-    }
-
-    [Fact]
-    public async Task TheProgressPhaseLastsWhileAppInitRuns()
-    {
-        var held = _fake.Hold(RpcMethod.AppInit);
-        _fake.Respond(RpcMethod.SignHonors, new HonorsResult([]));
-        var app = NewApp();
-        var starting = app.StartAsync();
-        Assert.Equal(AppPhase.Starting, app.Phase);
-        held.Release(Fixtures.OnlineInfo);
-        await starting;
-        Assert.Equal(AppPhase.Ready, app.Phase);
     }
 
     [Fact]

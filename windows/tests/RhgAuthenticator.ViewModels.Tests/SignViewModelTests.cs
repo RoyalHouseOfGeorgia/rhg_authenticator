@@ -46,6 +46,7 @@ public sealed class SignViewModelTests
         Assert.Equal(
             [.. "Print QR at minimum 3"u8, 0xC3, 0x97, .. "3 cm"u8], // U+00D7
             Encoding.UTF8.GetBytes(SignViewModel.PrintAdvisory));
+        Assert.Equal("No credential signed yet.", SignViewModel.NoResultText);
         Assert.Equal(
             ["Save SVG", "Save PNG", "Copy URL"],
             [SignViewModel.SaveSvgTitle, SignViewModel.SavePngTitle, SignViewModel.CopyUrlTitle]);

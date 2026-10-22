@@ -3,97 +3,175 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels">
     <UserControl.Resources>
+        <!-- A form label, beside its field, level with the field's first line of text. -->
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="Grid.Column" Value="0" />
+            <Setter Property="Margin" Value="0,18,12,0" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
         <Style x:Key="ResultLabel" TargetType="TextBlock">
             <Setter Property="Grid.Column" Value="0" />
             <Setter Property="Margin" Value="0,0,12,4" />
             <Setter Property="HorizontalAlignment" Value="Right" />
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
         </Style>
+        <Style x:Key="ResultValue" TargetType="TextBlock">
+            <Setter Property="Grid.Column" Value="1" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
     </UserControl.Resources>
-    <!-- Laid out as the Fyne app's Sign tab: the form, Sign Credential, Bulk Sign from File…, the status line, the signed credential. -->
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Margin="16">
-            <TextBlock Text="{x:Static vm:SignViewModel.RecipientLabel}" Margin="0,0,0,4" />
-            <Grid>
-                <TextBox x:Name="RecipientBox" AutomationProperties.Name="{x:Static vm:SignViewModel.RecipientLabel}"
-                         Text="{Binding Recipient, UpdateSourceTrigger=PropertyChanged}" />
-                <TextBlock Style="{StaticResource Placeholder}" Text="{x:Static vm:SignViewModel.RecipientPlaceholder}"
-                           Visibility="{Binding Text, ElementName=RecipientBox, Converter={StaticResource EmptyToVisibility}}" />
-            </Grid>
-
-            <TextBlock Text="{x:Static vm:SignViewModel.HonorLabel}" Margin="0,8,0,4" />
-            <Grid>
-                <ComboBox x:Name="HonorBox" AutomationProperties.Name="{x:Static vm:SignViewModel.HonorLabel}"
-                          HorizontalAlignment="Stretch"
-                          ItemsSource="{Binding Honors}"
-                          SelectedItem="{Binding Honor, Converter={StaticResource Honor}}" />
-                <TextBlock Style="{StaticResource Placeholder}" Text="{x:Static vm:SignViewModel.HonorPlaceholder}"
-                           Visibility="{Binding Honor, Converter={StaticResource EmptyToVisibility}}" />
-            </Grid>
-
-            <TextBlock Text="{x:Static vm:SignViewModel.DetailLabel}" Margin="0,8,0,4" />
-            <Grid>
-                <TextBox x:Name="DetailBox" AutomationProperties.Name="{x:Static vm:SignViewModel.DetailLabel}"
-                         AcceptsReturn="True" TextWrapping="Wrap" MinLines="3" MaxLines="6"
-                         VerticalScrollBarVisibility="Auto"
-                         Text="{Binding Detail, UpdateSourceTrigger=PropertyChanged}" />
-                <TextBlock Style="{StaticResource Placeholder}" VerticalAlignment="Top"
-                           Text="{x:Static vm:SignViewModel.DetailPlaceholder}"
-                           Visibility="{Binding Text, ElementName=DetailBox, Converter={StaticResource EmptyToVisibility}}" />
-            </Grid>
-
-            <!-- Picked only, never typed: Loaded makes the picker's text box read-only. -->
-            <TextBlock Text="{x:Static vm:SignViewModel.DateLabel}" Margin="0,8,0,4" />
-            <StackPanel Orientation="Horizontal">
-                <DatePicker x:Name="DateBox" AutomationProperties.Name="{x:Static vm:SignViewModel.DateLabel}"
-                            MinWidth="160" Loaded="OnDatePickerLoaded"
-                            SelectedDate="{Binding SelectedDate, Mode=TwoWay}" />
-                <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Text="{Binding DisplayDateText}" />
-            </StackPanel>
-
-            <Button Margin="0,16,0,0" HorizontalAlignment="Left"
-                    Content="{x:Static vm:SignViewModel.SignTitle}" Command="{Binding SignCommand}" />
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Style="{StaticResource CommandRow}">
+            <Button Style="{StaticResource AccentButtonStyle}" ContentTemplate="{StaticResource CommandContent}"
+                    Tag="&#xE70F;" Content="{x:Static vm:SignViewModel.SignTitle}"
+                    AutomationProperties.Name="{x:Static vm:SignViewModel.SignTitle}"
+                    Command="{Binding SignCommand}" />
             <!-- The bulk flow's dialog is MainWindow's (BulkDialog). -->
-            <Button Margin="0,8,0,0" HorizontalAlignment="Left"
-                    Content="{x:Static vm:BulkViewModel.BulkSignTitle}" Command="{Binding Bulk.BulkSignCommand}" />
-            <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding Status}" />
-            <Button Margin="0,8,0,0" HorizontalAlignment="Left"
-                    Content="{Binding Report.ButtonTitle}" Command="{Binding ReportIssueCommand}"
-                    Visibility="{Binding Report.ButtonTitle, Converter={StaticResource NullToVisibility}}" />
+            <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
+                    Tag="&#xE8E5;" Content="{x:Static vm:BulkViewModel.BulkSignTitle}"
+                    AutomationProperties.Name="{x:Static vm:BulkViewModel.BulkSignTitle}"
+                    Command="{Binding Bulk.BulkSignCommand}" />
+        </StackPanel>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- The form, its status line and Report Issue. -->
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="24,0,16,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Style="{StaticResource FieldLabel}" Margin="0,6,12,0"
+                                   Text="{x:Static vm:SignViewModel.RecipientLabel}" />
+                        <Grid Grid.Row="0" Grid.Column="1">
+                            <TextBox x:Name="RecipientBox" AutomationProperties.Name="{x:Static vm:SignViewModel.RecipientLabel}"
+                                     Text="{Binding Recipient, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Style="{StaticResource Placeholder}" Text="{x:Static vm:SignViewModel.RecipientPlaceholder}"
+                                       Visibility="{Binding Text, ElementName=RecipientBox, Converter={StaticResource EmptyToVisibility}}" />
+                        </Grid>
+
+                        <TextBlock Grid.Row="1" Style="{StaticResource FieldLabel}" Text="{x:Static vm:SignViewModel.HonorLabel}" />
+                        <!-- A long title trims in the box; its tooltip has it whole (none while nothing is selected). -->
+                        <Grid Grid.Row="1" Grid.Column="1" Margin="0,12,0,0">
+                            <ComboBox x:Name="HonorBox" AutomationProperties.Name="{x:Static vm:SignViewModel.HonorLabel}"
+                                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                      ItemsSource="{Binding Honors}"
+                                      SelectedItem="{Binding Honor, Converter={StaticResource Honor}}"
+                                      ToolTip="{Binding Honor, Converter={StaticResource Honor}}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <TextBlock Style="{StaticResource Placeholder}" Text="{x:Static vm:SignViewModel.HonorPlaceholder}"
+                                       Visibility="{Binding Honor, Converter={StaticResource EmptyToVisibility}}" />
+                        </Grid>
+
+                        <TextBlock Grid.Row="2" Style="{StaticResource FieldLabel}" Text="{x:Static vm:SignViewModel.DetailLabel}" />
+                        <Grid Grid.Row="2" Grid.Column="1" Margin="0,12,0,0">
+                            <TextBox x:Name="DetailBox" AutomationProperties.Name="{x:Static vm:SignViewModel.DetailLabel}"
+                                     AcceptsReturn="True" TextWrapping="Wrap" MinLines="3" MaxLines="6"
+                                     VerticalScrollBarVisibility="Auto"
+                                     Text="{Binding Detail, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Style="{StaticResource Placeholder}" VerticalAlignment="Top"
+                                       Text="{x:Static vm:SignViewModel.DetailPlaceholder}"
+                                       Visibility="{Binding Text, ElementName=DetailBox, Converter={StaticResource EmptyToVisibility}}" />
+                        </Grid>
+
+                        <!-- Picked only, never typed: Loaded makes the picker's text box read-only. YYYY-Mon-DD under it. -->
+                        <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="{x:Static vm:SignViewModel.DateLabel}" />
+                        <StackPanel Grid.Row="3" Grid.Column="1" Margin="0,12,0,0">
+                            <DatePicker x:Name="DateBox" AutomationProperties.Name="{x:Static vm:SignViewModel.DateLabel}"
+                                        HorizontalAlignment="Stretch" Loaded="OnDatePickerLoaded"
+                                        SelectedDate="{Binding SelectedDate, Mode=TwoWay}" />
+                            <TextBlock Margin="0,4,0,0" Text="{Binding DisplayDateText}" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Margin="0,16,0,0" TextWrapping="Wrap" Text="{Binding Status}" />
+                    <Button Margin="0,8,0,0" HorizontalAlignment="Left"
+                            Content="{Binding Report.ButtonTitle}" Command="{Binding ReportIssueCommand}"
+                            Visibility="{Binding Report.ButtonTitle, Converter={StaticResource NullToVisibility}}" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border Grid.Column="1" Width="1" Margin="0,0,0,16" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
 
             <!-- The signed credential: the fields as signed (not the form's), its QR code and actions. -->
-            <StackPanel Margin="0,16,0,0" HorizontalAlignment="Center"
-                        Visibility="{Binding HasResult, Converter={StaticResource BoolToVisibility}}">
-                <Grid HorizontalAlignment="Center">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Style="{StaticResource ResultLabel}" Text="{x:Static vm:SignViewModel.RecipientLabel}" />
-                    <TextBlock Grid.Row="0" Grid.Column="1" TextWrapping="Wrap" MaxWidth="480" Text="{Binding Result.Recipient}" />
-                    <TextBlock Grid.Row="1" Style="{StaticResource ResultLabel}" Text="{x:Static vm:SignViewModel.HonorLabel}" />
-                    <TextBlock Grid.Row="1" Grid.Column="1" TextWrapping="Wrap" MaxWidth="480" Text="{Binding Result.Honor}" />
-                    <TextBlock Grid.Row="2" Style="{StaticResource ResultLabel}" Text="{x:Static vm:SignViewModel.DetailLabel}" />
-                    <TextBlock Grid.Row="2" Grid.Column="1" TextWrapping="Wrap" MaxWidth="480" Text="{Binding Result.Detail}" />
-                    <TextBlock Grid.Row="3" Style="{StaticResource ResultLabel}" Text="{x:Static vm:SignViewModel.DateLabel}" />
-                    <TextBlock Grid.Row="3" Grid.Column="1"
-                               Text="{Binding Result.Date, Converter={StaticResource DisplayDate}}" />
-                </Grid>
-                <Image Width="256" Height="256" Margin="0,8,0,0" RenderOptions.BitmapScalingMode="NearestNeighbor"
-                       Source="{Binding QrPreviewPng, Converter={StaticResource PngImage}}" />
-                <TextBlock Margin="0,8,0,0" HorizontalAlignment="Center" Text="{x:Static vm:SignViewModel.PrintAdvisory}" />
-                <StackPanel Margin="0,8,0,0" Orientation="Horizontal" HorizontalAlignment="Center">
-                    <Button Content="{x:Static vm:SignViewModel.SaveSvgTitle}" Command="{Binding SaveSvgCommand}" />
-                    <Button Margin="8,0,0,0" Content="{x:Static vm:SignViewModel.SavePngTitle}" Command="{Binding SavePngCommand}" />
-                    <Button Margin="8,0,0,0" Content="{x:Static vm:SignViewModel.CopyUrlTitle}" Command="{Binding CopyUrlCommand}" />
+            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          Visibility="{Binding HasResult, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel Margin="24,0,24,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Style="{StaticResource ResultLabel}" Text="{x:Static vm:SignViewModel.RecipientLabel}" />
+                        <TextBlock Grid.Row="0" Style="{StaticResource ResultValue}" Text="{Binding Result.Recipient}" />
+                        <TextBlock Grid.Row="1" Style="{StaticResource ResultLabel}" Text="{x:Static vm:SignViewModel.HonorLabel}" />
+                        <TextBlock Grid.Row="1" Style="{StaticResource ResultValue}" Text="{Binding Result.Honor}" />
+                        <TextBlock Grid.Row="2" Style="{StaticResource ResultLabel}" Text="{x:Static vm:SignViewModel.DetailLabel}" />
+                        <TextBlock Grid.Row="2" Style="{StaticResource ResultValue}" Text="{Binding Result.Detail}" />
+                        <TextBlock Grid.Row="3" Style="{StaticResource ResultLabel}" Text="{x:Static vm:SignViewModel.DateLabel}" />
+                        <TextBlock Grid.Row="3" Style="{StaticResource ResultValue}"
+                                   Text="{Binding Result.Date, Converter={StaticResource DisplayDate}}" />
+                    </Grid>
+                    <Image Width="256" Height="256" Margin="0,8,0,0" HorizontalAlignment="Left"
+                           RenderOptions.BitmapScalingMode="NearestNeighbor"
+                           Source="{Binding QrPreviewPng, Converter={StaticResource PngImage}}" />
+                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{x:Static vm:SignViewModel.PrintAdvisory}" />
+                    <WrapPanel Margin="0,4,0,0">
+                        <Button Margin="0,8,8,0" ContentTemplate="{StaticResource CommandContent}"
+                                Tag="&#xE74E;" Content="{x:Static vm:SignViewModel.SaveSvgTitle}"
+                                AutomationProperties.Name="{x:Static vm:SignViewModel.SaveSvgTitle}"
+                                Command="{Binding SaveSvgCommand}" />
+                        <Button Margin="0,8,8,0" ContentTemplate="{StaticResource CommandContent}"
+                                Tag="&#xE74E;" Content="{x:Static vm:SignViewModel.SavePngTitle}"
+                                AutomationProperties.Name="{x:Static vm:SignViewModel.SavePngTitle}"
+                                Command="{Binding SavePngCommand}" />
+                        <Button Margin="0,8,8,0" ContentTemplate="{StaticResource CommandContent}"
+                                Tag="&#xE8C8;" Content="{x:Static vm:SignViewModel.CopyUrlTitle}"
+                                AutomationProperties.Name="{x:Static vm:SignViewModel.CopyUrlTitle}"
+                                Command="{Binding CopyUrlCommand}" />
+                    </WrapPanel>
                 </StackPanel>
-            </StackPanel>
-        </StackPanel>
-    </ScrollViewer>
+            </ScrollViewer>
+            <!-- The empty state, until there is a result. -->
+            <TextBlock Grid.Column="2" Margin="24,0,24,16" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                       Text="{x:Static vm:SignViewModel.NoResultText}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasResult}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+        </Grid>
+    </DockPanel>
 </UserControl>

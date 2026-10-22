@@ -8,23 +8,44 @@ namespace RhgAuthenticator.ViewModels;
 /// <summary>Where startup is.</summary>
 public enum AppPhase
 {
-    /// <summary>app.init is fetching the registry: show a progress view (<see cref="AppViewModel.LoadingText"/>).</summary>
+    /// <summary>app.init is fetching the registry: only the Help tab is enabled, and it shows <see cref="AppViewModel.LoadingText"/>.</summary>
     Starting,
 
-    /// <summary>Show the tabs and the status bar.</summary>
+    /// <summary>Every tab is enabled and the status bar shown.</summary>
     Ready,
 
-    /// <summary>Startup failed: <see cref="AppViewModel.FatalMessage"/> is posted to the alerts (offering the error log); exit once they are shown.</summary>
+    /// <summary>
+    /// Startup failed: every tab header is disabled (the selected Help
+    /// content stays usable until the window closes) and
+    /// <see cref="AppViewModel.FatalMessage"/> is posted to the alerts
+    /// (offering the error log); exit once they are shown.
+    /// </summary>
     Fatal,
 }
 
-/// <summary>A tab of the main window.</summary>
-/// <param name="Title">The tab's title.</param>
-/// <param name="Content">The tab's view model; null shows <see cref="PlaceholderText"/>.</param>
-public sealed record AppTab(string Title, ObservableObject? Content)
+/// <summary>
+/// A tab of the main window; <see cref="AppViewModel"/> enables it by
+/// <see cref="AppViewModel.Phase"/>.
+/// </summary>
+/// <param name="title">The tab's title.</param>
+/// <param name="content">The tab's view model; null shows <see cref="PlaceholderText"/>.</param>
+public sealed partial class AppTab(string title, ObservableObject? content) : ObservableObject
 {
     /// <summary>The text of a tab that is not built yet.</summary>
     public const string PlaceholderText = "Not yet available";
+
+    /// <summary>The tab's title.</summary>
+    public string Title { get; } = title;
+
+    /// <summary>The tab's view model; null shows <see cref="PlaceholderText"/>.</summary>
+    public ObservableObject? Content { get; } = content;
+
+    /// <summary>
+    /// The tab's header is enabled (it can be clicked); at Fatal every header
+    /// is disabled while Help's content stays shown.
+    /// </summary>
+    [ObservableProperty]
+    public partial bool IsEnabled { get; internal set; }
 
     /// <summary>The tab shows <see cref="PlaceholderText"/>.</summary>
     public bool IsPlaceholder => Content is null;
@@ -39,18 +60,25 @@ public sealed partial class AppViewModel : ObservableObject
     /// <summary>The main window's title.</summary>
     public const string WindowTitle = "RHG Authenticator";
 
-    /// <summary>The progress view's text while starting.</summary>
+    /// <summary>The Help tab's loading text while starting.</summary>
     public const string LoadingText = "Loading key registry…";
+
+    /// <summary>The Help tab's title.</summary>
+    public const string HelpTitle = "Help";
+
+    /// <summary>The Help tab's line under its Export Error Log button.</summary>
+    public const string HelpText = "Saves the app's diagnostic log to a file you choose, to attach to an issue report.";
 
     /// <summary>Appended to a startup failure's message.</summary>
     public const string ReportSuffix = CoreLibraryException.ReportSuffix;
 
-    /// <summary>The Export Error Log button's title (the app menu, and alerts offering it).</summary>
+    /// <summary>The Export Error Log button's title (the Help tab, and alerts offering it).</summary>
     public const string ExportErrorLogTitle = "Export Error Log…";
 
     private readonly IBridge _bridge;
     private readonly IFileSaveService _fileSave;
     private readonly TimeProvider _clock;
+    private readonly AppTab _help;
     private Task? _eventLoop;
     private Task<bool>? _quit;
 
@@ -80,6 +108,7 @@ public sealed partial class AppViewModel : ObservableObject
         PinPrompt = new PinPromptViewModel(bridge);
         Sign.PropertyChanged += OnSigningStateChanged;
         Bulk.PropertyChanged += OnSigningStateChanged;
+        _help = new AppTab(HelpTitle, this);
         Tabs =
         [
             new AppTab("Sign", Sign),
@@ -87,7 +116,10 @@ public sealed partial class AppViewModel : ObservableObject
             new AppTab("Registry", null),
             new AppTab("Audit", null),
             new AppTab("YubiKey", YubiKey),
+            _help,
         ];
+        // The initial Phase does not raise OnPhaseChanged.
+        ApplyPhase();
     }
 
     /// <summary>Every alert of the app and its tabs, shown one at a time.</summary>
@@ -110,7 +142,18 @@ public sealed partial class AppViewModel : ObservableObject
 
     /// <summary>Where startup is.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsStarting))]
     public partial AppPhase Phase { get; private set; } = AppPhase.Starting;
+
+    /// <summary>The phase is <see cref="AppPhase.Starting"/>: the Help tab shows <see cref="LoadingText"/>.</summary>
+    public bool IsStarting => Phase == AppPhase.Starting;
+
+    /// <summary>
+    /// The selected tab: Help while starting, Sign once ready. A null or
+    /// disabled tab is replaced with Help while Help is enabled.
+    /// </summary>
+    [ObservableProperty]
+    public partial AppTab? SelectedTab { get; set; }
 
     /// <summary>The startup failure to show (<see cref="AppPhase.Fatal"/>), with <see cref="ReportSuffix"/>; null otherwise.</summary>
     [ObservableProperty]
@@ -209,6 +252,42 @@ public sealed partial class AppViewModel : ObservableObject
         catch (RpcException error)
         {
             Alerts.Show(AlertState.Error(error));
+        }
+    }
+
+    partial void OnPhaseChanged(AppPhase value)
+    {
+        ApplyPhase();
+    }
+
+    partial void OnSelectedTabChanged(AppTab? value)
+    {
+        // Undoes the view's own selections (such as its first item) of a
+        // tab the phase disables; at Fatal, when Help is disabled too, any
+        // selection stands.
+        if ((value is null || !value.IsEnabled) && _help.IsEnabled)
+        {
+            SelectedTab = _help;
+        }
+    }
+
+    /// <summary>Enables the tabs <see cref="Phase"/> allows, then selects its tab (Fatal keeps the selection).</summary>
+    private void ApplyPhase()
+    {
+        foreach (var tab in Tabs)
+        {
+            tab.IsEnabled = Phase == AppPhase.Ready || (Phase == AppPhase.Starting && tab == _help);
+        }
+        switch (Phase)
+        {
+            case AppPhase.Starting:
+                SelectedTab = _help;
+                break;
+            case AppPhase.Ready:
+                SelectedTab = Tabs[0];
+                break;
+            default:
+                break;
         }
     }
 

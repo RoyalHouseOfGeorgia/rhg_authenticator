@@ -4,7 +4,6 @@
         xmlns:local="clr-namespace:RhgAuthenticator.App"
         xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
         Title="{x:Static vm:AppViewModel.WindowTitle}"
-        Width="800" Height="600" MinWidth="600" MinHeight="450"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <DataTemplate DataType="{x:Type vm:SignViewModel}">
@@ -13,41 +12,99 @@
         <DataTemplate DataType="{x:Type vm:YubiKeyViewModel}">
             <local:YubiKeyView />
         </DataTemplate>
+        <!-- The Help tab's content is the app's own view model. -->
+        <DataTemplate DataType="{x:Type vm:AppViewModel}">
+            <local:HelpView />
+        </DataTemplate>
+
+        <!--
+          Office-style tab headers: text only, no border, the selected one
+          underlined in the accent colour. Not based on the Fluent TabItem
+          style (its template is replaced whole), so the brushes and focus
+          visual are set here.
+        -->
+        <Style x:Key="TabHeader" TargetType="TabItem">
+            <Setter Property="Header" Value="{Binding Title}" />
+            <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+            <!-- Not null: a null background takes no mouse, so hover would never show. -->
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="FocusVisualStyle" Value="{DynamicResource DefaultControlFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4"
+                                Padding="12,8,12,0" SnapsToDevicePixels="True">
+                            <StackPanel>
+                                <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
+                                                  HorizontalAlignment="Center" />
+                                <Border x:Name="Underline" Height="3" Margin="0,6,0,0" CornerRadius="1.5"
+                                        Background="{DynamicResource AccentFillColorDefaultBrush}" Visibility="Hidden" />
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <Setter TargetName="Underline" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorDisabledBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+          The tab row flush under the title bar, the window-wide banner row,
+          a divider, then the selected tab. The KeyboardNavigation settings
+          are the stock template's: Tab reaches the row once, the arrow keys
+          move between tabs.
+        -->
+        <ControlTemplate x:Key="TabRow" TargetType="TabControl">
+            <Grid KeyboardNavigation.TabNavigation="Local" SnapsToDevicePixels="True">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TabPanel Grid.Row="0" Margin="12,4,12,0" IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
+                <!-- The update banner and the "Updated to" notice go here, full width; empty until then. -->
+                <Border x:Name="BannerSlot" Grid.Row="1" Focusable="False" Visibility="Collapsed" />
+                <Border Grid.Row="2" Height="1" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
+                <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="3" ContentSource="SelectedContent"
+                                  KeyboardNavigation.TabNavigation="Local"
+                                  KeyboardNavigation.DirectionalNavigation="Contained"
+                                  KeyboardNavigation.TabIndex="2" />
+            </Grid>
+        </ControlTemplate>
     </Window.Resources>
     <DockPanel>
-        <!-- The menu, in every phase: Export Error Log… also helps report a failed startup. -->
-        <Menu DockPanel.Dock="Top">
-            <MenuItem Header="{x:Static local:MainWindow.FileMenuTitle}">
-                <MenuItem Header="{x:Static local:MainWindow.ExitTitle}" Click="OnExitClick" />
-            </MenuItem>
-            <MenuItem Header="{x:Static local:MainWindow.HelpMenuTitle}">
-                <MenuItem Header="{x:Static vm:AppViewModel.ExportErrorLogTitle}" Command="{Binding ExportErrorLogCommand}" />
-            </MenuItem>
-        </Menu>
-        <!-- The status bar: the core's items spread across the window (Fyne's HBox with spacers). -->
+        <!-- The status bar: the core's items spread across the window, shown once the core is ready. -->
         <StackPanel x:Name="StatusBarArea" DockPanel.Dock="Bottom" Visibility="Collapsed">
-            <Separator Margin="0" />
-            <Grid x:Name="StatusBar" Margin="16,6" />
+            <Border Height="1" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
+            <Grid x:Name="StatusBar" Margin="24,6" />
         </StackPanel>
-        <Grid>
-            <StackPanel x:Name="LoadingView" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <ProgressBar Width="240" IsIndeterminate="True" />
-                <TextBlock Margin="0,12,0,0" HorizontalAlignment="Center"
-                           Text="{x:Static vm:AppViewModel.LoadingText}" />
-            </StackPanel>
-            <TabControl x:Name="TabsView" Margin="12,12,12,0" Visibility="Collapsed"
-                        ItemsSource="{Binding Tabs}" DisplayMemberPath="Title" SelectedIndex="0">
-                <TabControl.ContentTemplate>
-                    <DataTemplate DataType="{x:Type vm:AppTab}">
-                        <Grid>
-                            <ContentControl Content="{Binding Content}" Focusable="False" />
-                            <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Text="{x:Static vm:AppTab.PlaceholderText}"
-                                       Visibility="{Binding IsPlaceholder, Converter={StaticResource BoolToVisibility}}" />
-                        </Grid>
-                    </DataTemplate>
-                </TabControl.ContentTemplate>
-            </TabControl>
-        </Grid>
+        <!-- In every phase; the view model enables the tabs and selects one by phase. ItemsSource before SelectedItem. -->
+        <TabControl Template="{StaticResource TabRow}" ItemContainerStyle="{StaticResource TabHeader}"
+                    ItemsSource="{Binding Tabs}" SelectedItem="{Binding SelectedTab, Mode=TwoWay}">
+            <TabControl.ContentTemplate>
+                <DataTemplate DataType="{x:Type vm:AppTab}">
+                    <Grid>
+                        <ContentControl Content="{Binding Content}" Focusable="False" />
+                        <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   Text="{x:Static vm:AppTab.PlaceholderText}"
+                                   Visibility="{Binding IsPlaceholder, Converter={StaticResource BoolToVisibility}}" />
+                    </Grid>
+                </DataTemplate>
+            </TabControl.ContentTemplate>
+        </TabControl>
     </DockPanel>
 </Window>

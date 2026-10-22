@@ -20,5 +20,28 @@
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
         </Style>
+        <!-- An icon glyph; every glyph used is in both fonts (Segoe MDL2 Assets on Windows 10). -->
+        <Style x:Key="IconFont" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <!--
+          A command button's content: the button's Tag as an icon glyph, then
+          its Content as the label. No Foreground here, so the button's own
+          (accent, disabled) reaches both.
+        -->
+        <DataTemplate x:Key="CommandContent">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource IconFont}"
+                           Text="{Binding Tag, RelativeSource={RelativeSource AncestorType=Button}}" />
+                <TextBlock Margin="8,0,0,0" VerticalAlignment="Center" Text="{Binding}" />
+            </StackPanel>
+        </DataTemplate>
+        <!-- A tab's command row: its actions, left-aligned in one row, over the tab's content. -->
+        <Style x:Key="CommandRow" TargetType="StackPanel">
+            <Setter Property="Orientation" Value="Horizontal" />
+            <Setter Property="Margin" Value="24,16" />
+        </Style>
     </Application.Resources>
 </Application>

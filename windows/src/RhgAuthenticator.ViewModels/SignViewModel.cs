@@ -20,6 +20,7 @@ public sealed partial class SignViewModel : ObservableObject
     public const string DateLabel = "Date";
     public const string SignTitle = "Sign Credential";
     public const string PrintAdvisory = "Print QR at minimum 3×3 cm";
+    public const string NoResultText = "No credential signed yet.";
     public const string SaveSvgTitle = "Save SVG";
     public const string SavePngTitle = "Save PNG";
     public const string CopyUrlTitle = "Copy URL";
@@ -154,7 +155,7 @@ public sealed partial class SignViewModel : ObservableObject
     /// <summary><see cref="Date"/> as the signed YYYY-MM-DD, whatever the machine's culture.</summary>
     public string DateString => DisplayDate.Ymd(_date);
 
-    /// <summary><see cref="Date"/> as shown next to the picker, YYYY-Mon-DD.</summary>
+    /// <summary><see cref="Date"/> as shown under the picker, YYYY-Mon-DD.</summary>
     public string DisplayDateText => DisplayDate.Format(DateString);
 
     /// <summary>A result is shown.</summary>

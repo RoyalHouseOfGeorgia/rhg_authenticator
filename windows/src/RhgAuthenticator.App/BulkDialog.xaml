@@ -17,10 +17,10 @@
         </ResourceDictionary>
     </Window.Resources>
     <!--
-      One content per phase. Buttons whose role is Enter or Escape (IsDefault,
-      IsCancel) have no Command: they close the window, and closing maps to
-      the phase's command (OnClosing). Their phases never overlap, so at most
-      one of each is enabled.
+      One content per phase. Buttons that only dismiss (IsCancel: Cancel,
+      Close) have no Command: they close the window, and closing maps to the
+      phase's command (OnClosing). Their phases never overlap, so at most one
+      IsDefault and one IsCancel button is enabled.
     -->
     <Grid Margin="20">
         <!-- Confirm: the plan's counts, the first names to be signed, the invalid rows to skip. -->
@@ -41,10 +41,10 @@
                          Text="{Binding Plan.InvalidLines, Mode=OneWay, Converter={StaticResource JoinLines}}" />
             </StackPanel>
             <StackPanel Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button MinWidth="80" IsCancel="True" Content="{x:Static vm:BulkViewModel.CancelTitle}"
-                        IsEnabled="{Binding IsConfirming}" />
-                <Button x:Name="SignButton" MinWidth="80" Margin="8,0,0,0" IsDefault="True"
+                <Button x:Name="SignButton" MinWidth="80" IsDefault="True" Style="{StaticResource AccentButtonStyle}"
                         Content="{x:Static vm:BulkViewModel.SignTitle}" Command="{Binding ConfirmCommand}" />
+                <Button MinWidth="80" Margin="8,0,0,0" IsCancel="True" Content="{x:Static vm:BulkViewModel.CancelTitle}"
+                        IsEnabled="{Binding IsConfirming}" />
             </StackPanel>
         </StackPanel>
 

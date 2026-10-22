@@ -19,7 +19,7 @@
         <CheckBox Margin="0,8,0,0" Content="{x:Static vm:PinPromptViewModel.RememberLabel}"
                   IsChecked="{Binding Remember}" />
         <StackPanel Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button MinWidth="80" IsDefault="True" Content="{x:Static vm:PinPromptViewModel.OkTitle}"
+            <Button MinWidth="80" IsDefault="True" Style="{StaticResource AccentButtonStyle}" Content="{x:Static vm:PinPromptViewModel.OkTitle}"
                     Command="{Binding SubmitCommand}" />
             <!-- Closes the window; closing it cancels the prompt (OnClosing). -->
             <Button MinWidth="80" Margin="8,0,0,0" IsCancel="True" Content="{x:Static vm:PinPromptViewModel.CancelTitle}" />

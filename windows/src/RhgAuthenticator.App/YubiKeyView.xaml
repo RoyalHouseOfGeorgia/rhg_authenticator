@@ -5,18 +5,35 @@
     <UserControl.Resources>
         <ResourceDictionary Source="TextStyles.xaml" />
     </UserControl.Resources>
-    <!-- Laid out as the Fyne app's YubiKey tab: Check YubiKey with the status beside it, then the key's details. -->
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Margin="16">
-            <DockPanel>
-                <!-- CheckCommand is disabled while a check runs. -->
-                <Button DockPanel.Dock="Left" VerticalAlignment="Center"
-                        Content="{x:Static vm:YubiKeyViewModel.CheckTitle}" Command="{Binding CheckCommand}" />
-                <TextBox Margin="12,0,0,0" VerticalAlignment="Center" Style="{StaticResource SelectableText}"
-                         Text="{Binding Status, Mode=OneWay}" />
-            </DockPanel>
-            <TextBox Margin="0,12,0,0" Style="{StaticResource SelectableText}"
-                     Text="{Binding Details, Mode=OneWay, Converter={StaticResource JoinLines}}" />
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Style="{StaticResource CommandRow}">
+            <!-- CheckCommand is disabled while a check runs. -->
+            <Button Style="{StaticResource AccentButtonStyle}" ContentTemplate="{StaticResource CommandContent}"
+                    Tag="&#xE8D7;" Content="{x:Static vm:YubiKeyViewModel.CheckTitle}"
+                    AutomationProperties.Name="{x:Static vm:YubiKeyViewModel.CheckTitle}"
+                    Command="{Binding CheckCommand}" />
         </StackPanel>
-    </ScrollViewer>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="24,0,24,16">
+                <TextBox Style="{StaticResource SelectableText}" Text="{Binding Status, Mode=OneWay}" />
+                <!-- The key's details as the core gives them, one per line; no card until there are some. -->
+                <Border Margin="0,12,0,0" Padding="12" BorderThickness="1"
+                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Details, Converter={StaticResource JoinLines}}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBox Style="{StaticResource SelectableText}"
+                             Text="{Binding Details, Mode=OneWay, Converter={StaticResource JoinLines}}" />
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
 </UserControl>

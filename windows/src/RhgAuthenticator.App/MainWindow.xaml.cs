@@ -6,20 +6,27 @@ using RhgAuthenticator.ViewModels;
 namespace RhgAuthenticator.App;
 
 /// <summary>
-/// The window: a progress view while the core starts, the tabs and status
-/// bar once it is ready, or the fatal startup error; the menu in every
-/// phase. Closing it runs the core's quit sequence first.
+/// The window: the tab row in every phase (the view model enables and
+/// selects the tabs: Help with its loading text while the core starts,
+/// every tab once it is ready), the status bar once ready, and the fatal
+/// startup error's alert, after which it closes. Closing it runs the core's
+/// quit sequence first.
 /// </summary>
 public partial class MainWindow : Window
 {
-    /// <summary>The File menu's title; "_" marks the access key (Alt+F).</summary>
-    public const string FileMenuTitle = "_File";
+    // The window's sizes (only here; the XAML sets none): FitToWorkArea caps each at the work area.
 
-    /// <summary>File > Exit's title; "_" marks the access key (X).</summary>
-    public const string ExitTitle = "E_xit";
+    /// <summary>The preferred startup width.</summary>
+    internal const double DefaultWidth = 1000;
 
-    /// <summary>The Help menu's title; "_" marks the access key (Alt+H).</summary>
-    public const string HelpMenuTitle = "_Help";
+    /// <summary>The preferred startup height.</summary>
+    internal const double DefaultHeight = 680;
+
+    /// <summary>The preferred minimum width.</summary>
+    internal const double MinimumWidth = 800;
+
+    /// <summary>The preferred minimum height.</summary>
+    internal const double MinimumHeight = 560;
 
     private readonly AppViewModel _model;
     private bool _isShowingAlerts;
@@ -31,8 +38,12 @@ public partial class MainWindow : Window
     {
         ArgumentNullException.ThrowIfNull(model);
         _model = model;
-        InitializeComponent();
+        // Before InitializeComponent: the TabControl's bindings then apply as
+        // the XAML loads, ItemsSource and then SelectedItem (the view model's
+        // Help), before it could select its first, disabled tab itself.
         DataContext = model;
+        InitializeComponent();
+        FitToWorkArea();
         PinDialog.Attach(model.PinPrompt);
         BulkDialog.Attach(model.Bulk);
         model.PropertyChanged += OnModelChanged;
@@ -63,9 +74,17 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnExitClick(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// The default and minimum sizes, each capped by the primary monitor's
+    /// work area, so the window opens wholly on a small or scaled screen.
+    /// </summary>
+    private void FitToWorkArea()
     {
-        Close();
+        var area = SystemParameters.WorkArea;
+        Width = Math.Min(DefaultWidth, area.Width);
+        Height = Math.Min(DefaultHeight, area.Height);
+        MinWidth = Math.Min(MinimumWidth, area.Width);
+        MinHeight = Math.Min(MinimumHeight, area.Height);
     }
 
     /// <summary>
@@ -128,13 +147,10 @@ public partial class MainWindow : Window
 
     private void ShowPhase()
     {
-        var phase = _model.Phase;
-        LoadingView.Visibility = phase == AppPhase.Starting ? Visibility.Visible : Visibility.Collapsed;
-        TabsView.Visibility = phase == AppPhase.Ready ? Visibility.Visible : Visibility.Collapsed;
-        StatusBarArea.Visibility = TabsView.Visibility;
-        // Fatal: the view model posts the error as an alert; ShowAlerts
-        // closes the window once it (and any export's result) is shown, as
-        // the Fyne app quit after its error.
+        StatusBarArea.Visibility = _model.Phase == AppPhase.Ready ? Visibility.Visible : Visibility.Collapsed;
+        // Fatal: the view model disables every tab and posts the error as an
+        // alert; ShowAlerts closes the window once it (and any export's
+        // result) is shown.
     }
 
     /// <summary>
@@ -161,7 +177,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Every close (the X, Alt+F4, File > Exit, a fatal error) runs the core's quit
+    /// Every close (the X, Alt+F4, a fatal error) runs the core's quit
     /// sequence first, then shuts the app down. The core calls run off the
     /// UI thread, so the window stays responsive meanwhile; closing again
     /// while it runs does nothing.
