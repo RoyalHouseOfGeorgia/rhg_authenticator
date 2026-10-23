@@ -49,10 +49,33 @@ public sealed class DisplayDateTests
         Assert.Equal("0999-01-01", DisplayDate.Ymd(new DateTime(999, 1, 1)));
     }
 
+    [Theory]
+    [InlineData("2026-01-02", "2026-01-02")]
+    [InlineData("2024-02-29", "2024-02-29")]
+    [InlineData("2026-02-29", null)]
+    [InlineData("2026-13-01", null)]
+    [InlineData("2026-1-02", null)]
+    [InlineData("26-01-02", null)]
+    [InlineData("2026-01-02T00:00", null)]
+    [InlineData("", null)]
+    [InlineData("２０２６-01-02", null)]
+    [InlineData("2026/01/02", null)]
+    [InlineData(" 2026-01-02", null)]
+    public void ParsesOnlyRealYmdDatesToMidnight(string text, string? expected)
+    {
+        var date = DisplayDate.ParseYmd(text);
+        Assert.Equal(expected, date is { } d ? DisplayDate.Ymd(d) : null);
+        if (date is { } parsed)
+        {
+            Assert.Equal(TimeSpan.Zero, parsed.TimeOfDay);
+        }
+    }
+
     [Fact]
     public void NullTextThrows()
     {
         Assert.Throws<ArgumentNullException>(() => DisplayDate.Format(null!));
+        Assert.Throws<ArgumentNullException>(() => DisplayDate.ParseYmd(null!));
     }
 
     [Fact]
@@ -186,13 +209,13 @@ public sealed class AlertStateTests
     }
 
     [Fact]
-    public void AlertsShowOneAtATimeInOrder()
+    public async Task AlertsShowOneAtATimeInOrder()
     {
         var alerts = new AlertQueue();
         var changes = 0;
         alerts.PropertyChanged += (_, _) => changes++;
         Assert.Null(alerts.Current);
-        alerts.Dismiss();
+        await alerts.DismissAsync();
         Assert.Null(alerts.Current);
 
         var first = new AlertState("A", "1");
@@ -202,14 +225,62 @@ public sealed class AlertStateTests
         alerts.Show(second);
         alerts.Show(third);
         Assert.Same(first, alerts.Current);
-        alerts.Dismiss();
+        await alerts.DismissAsync();
         Assert.Same(second, alerts.Current);
-        alerts.Dismiss();
+        await alerts.DismissAsync();
         Assert.Same(third, alerts.Current); // an equal alert posted again still shows
-        alerts.Dismiss();
+        await alerts.DismissAsync();
         Assert.Null(alerts.Current);
         Assert.Equal(4, changes);
         Assert.Throws<ArgumentNullException>(() => alerts.Show(null!));
+    }
+
+    [Fact]
+    public async Task AnAlertsFollowUpRunsOnceWhenItIsDismissedAfterTheNextAlertIsCurrent()
+    {
+        var alerts = new AlertQueue();
+        var ran = new List<string>();
+        AlertState? currentWhenRun = null;
+        var first = new AlertState("A", "1");
+        var second = new AlertState("B", "2");
+        var third = new AlertState("C", "3");
+        alerts.Show(first, () =>
+        {
+            ran.Add("first");
+            currentWhenRun = alerts.Current;
+            return Task.CompletedTask;
+        });
+        alerts.Show(second);
+        alerts.Show(third, () =>
+        {
+            ran.Add("third");
+            return Task.CompletedTask;
+        });
+        Assert.Empty(ran);
+        await alerts.DismissAsync();
+        Assert.Equal(["first"], ran);
+        Assert.Same(second, currentWhenRun);
+        await alerts.DismissAsync(); // the second has no follow-up
+        Assert.Equal(["first"], ran);
+        Assert.Same(third, alerts.Current);
+        await alerts.DismissAsync();
+        Assert.Equal(["first", "third"], ran);
+        Assert.Null(alerts.Current);
+        await alerts.DismissAsync(); // nothing left to run
+        Assert.Equal(["first", "third"], ran);
+    }
+
+    [Fact]
+    public async Task DismissingWaitsForTheFollowUp()
+    {
+        var alerts = new AlertQueue();
+        var followUp = new TaskCompletionSource();
+        alerts.Show(new AlertState("A", "1"), () => followUp.Task);
+        var dismissing = alerts.DismissAsync();
+        Assert.Null(alerts.Current);
+        Assert.False(dismissing.IsCompleted);
+        followUp.SetResult();
+        await dismissing;
     }
 
     [Fact]

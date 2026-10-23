@@ -52,6 +52,19 @@ public static class DisplayDate
         return date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// <paramref name="ymd"/> ("YYYY-MM-DD", a real calendar date) as a date
+    /// at midnight; null for any other text.
+    /// </summary>
+    public static DateTime? ParseYmd(string ymd)
+    {
+        ArgumentNullException.ThrowIfNull(ymd);
+        return IsYmdShaped(ymd)
+            && DateTime.TryParseExact(ymd, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
+                ? date
+                : null;
+    }
+
     /// <summary>Four ASCII digits, '-', two, '-', two.</summary>
     private static bool IsYmdShaped(string text)
     {

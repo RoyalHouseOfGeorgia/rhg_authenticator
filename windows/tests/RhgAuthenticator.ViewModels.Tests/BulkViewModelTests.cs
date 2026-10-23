@@ -431,7 +431,7 @@ public sealed class BulkViewModelTests
     /// <summary>An open dialog that runs <paramref name="onOpen"/>, then is cancelled.</summary>
     private sealed class CallbackFileOpen(Action onOpen) : IFileOpenService
     {
-        public string? ChooseOpenPath(string extension)
+        public string? ChooseOpenPath(params string[] extensions)
         {
             onOpen();
             return null;

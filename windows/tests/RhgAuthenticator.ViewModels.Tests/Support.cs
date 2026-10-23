@@ -174,7 +174,10 @@ internal sealed class FakeFileSave : IFileSaveService
     }
 }
 
-/// <summary>An open dialog answering from a queue (null = cancelled); records what it was asked.</summary>
+/// <summary>
+/// An open dialog answering from a queue (null = cancelled); records what it
+/// was asked, each request's extensions joined with ",".
+/// </summary>
 internal sealed class FakeFileOpen : IFileOpenService
 {
     private readonly Queue<string?> _answers = new();
@@ -186,10 +189,29 @@ internal sealed class FakeFileOpen : IFileOpenService
         _answers.Enqueue(path);
     }
 
-    public string? ChooseOpenPath(string extension)
+    public string? ChooseOpenPath(params string[] extensions)
     {
-        Requests.Add(extension);
+        Requests.Add(string.Join(",", extensions));
         return _answers.Count > 0 ? _answers.Dequeue() : null;
+    }
+}
+
+/// <summary>Confirmations answered from a queue (unscripted: declined); records every question.</summary>
+internal sealed class FakeConfirm : IConfirmService
+{
+    private readonly Queue<bool> _answers = new();
+
+    public List<Confirmation> Questions { get; } = [];
+
+    public void Answer(bool confirmed)
+    {
+        _answers.Enqueue(confirmed);
+    }
+
+    public bool Ask(Confirmation question)
+    {
+        Questions.Add(question);
+        return _answers.Count > 0 && _answers.Dequeue();
     }
 }
 
@@ -294,21 +316,56 @@ internal static class Fixtures
         return condition();
     }
 
-    /// <summary>An app whose startup succeeded, so its events are being drained.</summary>
+    public static readonly AuthState LoggedOut = new(false, false, "", "Not logged in");
+    public static readonly AuthState LoggedIn = new(true, false, "octocat", "Logged in as @octocat");
+    public static readonly AuthState LoggedInOffline = new(true, true, "octocat", "Offline");
+
+    public static readonly IReadOnlyList<string> RegistryColumns = ["#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"];
+
+    /// <summary>Registry entry <paramref name="n"/> (1 to 9) and its table row (the cell texts are the core's).</summary>
+    public static (RegistryEntry Entry, IReadOnlyList<string> Row) RegistryEntry(int n)
+    {
+        var entry = new RegistryEntry($"Authority {n}", $"2025-01-0{n}", $"2030-12-2{n}", false, $"KEY{n}=", "");
+        return (entry, [$"{n}", entry.Authority, $"2025-Jan-0{n}", $"2030-Dec-2{n}", "(none)", "", $"fp{n}"]);
+    }
+
+    /// <summary>A new snapshot of entries 1 to <paramref name="count"/> (records compare its lists by reference).</summary>
+    public static RegistrySnapshot Snapshot(int count, bool dirty = false, bool loaded = true)
+    {
+        var made = Enumerable.Range(1, count).Select(RegistryEntry).ToList();
+        return new RegistrySnapshot([.. made.Select(m => m.Entry)], [.. made.Select(m => m.Row)], dirty, loaded);
+    }
+
+    /// <summary>Scripts startup's auth.state, registry.columns and registry.snapshot.</summary>
+    public static void ScriptStartupReads(FakeBridge fake, AuthState? auth = null, RegistrySnapshot? snapshot = null)
+    {
+        fake.Respond(RpcMethod.AuthState, auth ?? LoggedOut);
+        fake.Respond(RpcMethod.RegistryColumns, new ColumnsResult(RegistryColumns));
+        fake.Respond(RpcMethod.RegistrySnapshot, snapshot ?? Snapshot(2));
+    }
+
+    /// <summary>
+    /// An app whose startup succeeded, so its events are being drained. Later
+    /// auth.state and registry.snapshot reads answer from each test's own script.
+    /// </summary>
     public static async Task<AppViewModel> StartedApp(
         FakeBridge fake,
         TimeProvider? clock = null,
         FakeUrlOpener? urls = null,
         FakeFileSave? fileSave = null,
-        FakeFileOpen? fileOpen = null)
+        FakeFileOpen? fileOpen = null,
+        FakeConfirm? confirm = null)
     {
         fake.Respond(RpcMethod.AppInit, OnlineInfo);
         fake.Respond(RpcMethod.SignHonors, new HonorsResult(["Order of Queen Tamar", "Order of the Eagle"]));
+        ScriptStartupReads(fake);
         var app = new AppViewModel(
             fake, fileSave ?? new FakeFileSave(), fileOpen ?? new FakeFileOpen(), new FakeClipboard(), urls ?? new FakeUrlOpener(),
-            clock ?? new FixedClock(LateNewYearsDay));
+            confirm ?? new FakeConfirm(), clock ?? new FixedClock(LateNewYearsDay));
         await app.StartAsync();
         Assert.Equal(AppPhase.Ready, app.Phase);
+        fake.Reset(RpcMethod.AuthState);
+        fake.Reset(RpcMethod.RegistrySnapshot);
         return app;
     }
 }

@@ -1,0 +1,71 @@
+<UserControl x:Class="RhgAuthenticator.App.RegistryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
+             Loaded="OnLoaded" Unloaded="OnUnloaded">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="TextStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <!-- A table cell's text: trimmed at the column's MaxWidth, whole in its tooltip (none for an empty cell). -->
+            <Style x:Key="TableCellText" TargetType="TextBlock" BasedOn="{x:Static DataGridTextColumn.DefaultElementStyle}">
+                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                <Style.Triggers>
+                    <Trigger Property="Text" Value="">
+                        <Setter Property="ToolTip" Value="{x:Null}" />
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+        </ResourceDictionary>
+    </UserControl.Resources>
+    <DockPanel>
+        <!-- The command row; the login button at its right end, docked first so it never clips. -->
+        <DockPanel DockPanel.Dock="Top">
+            <Button DockPanel.Dock="Right" Margin="0,16,24,16" ContentTemplate="{StaticResource CommandContent}"
+                    Tag="&#xE77B;" Content="{Binding Login.ButtonTitle}"
+                    AutomationProperties.Name="{Binding Login.ButtonTitle}"
+                    Command="{Binding Login.ButtonCommand}" />
+            <StackPanel Style="{StaticResource CommandRow}">
+                <Button ContentTemplate="{StaticResource CommandContent}"
+                        Tag="&#xE72C;" Content="{x:Static vm:RegistryViewModel.FetchTitle}"
+                        AutomationProperties.Name="{x:Static vm:RegistryViewModel.FetchTitle}"
+                        Command="{Binding FetchCommand}" />
+                <!-- The entry dialog is MainWindow's (EntryFormDialog). -->
+                <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
+                        Tag="&#xE710;" Content="{x:Static vm:RegistryViewModel.AddEntryTitle}"
+                        AutomationProperties.Name="{x:Static vm:RegistryViewModel.AddEntryTitle}"
+                        Command="{Binding AddEntryCommand}" />
+                <!-- Its tooltip says why it is disabled, so it shows only then. -->
+                <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
+                        Tag="&#xE70F;" Content="{x:Static vm:RegistryViewModel.EditEntryTitle}"
+                        AutomationProperties.Name="{x:Static vm:RegistryViewModel.EditEntryTitle}"
+                        Command="{Binding EditEntryCommand}"
+                        ToolTip="{x:Static vm:RegistryViewModel.EditEntryTooltip}"
+                        ToolTipService.ShowOnDisabled="True"
+                        ToolTipService.IsEnabled="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource Not}}" />
+                <Button Margin="8,0,0,0" Style="{StaticResource AccentButtonStyle}" ContentTemplate="{StaticResource CommandContent}"
+                        Tag="&#xE724;" Content="{x:Static vm:RegistryViewModel.SubmitTitle}"
+                        AutomationProperties.Name="{x:Static vm:RegistryViewModel.SubmitTitle}"
+                        Command="{Binding SubmitForReviewCommand}" />
+            </StackPanel>
+        </DockPanel>
+        <TextBox DockPanel.Dock="Bottom" Margin="24,12,24,16" Style="{StaticResource SelectableText}"
+                 Text="{Binding Status, Mode=OneWay}" />
+        <!--
+          One pane: the table. Its columns and rows are set in code-behind
+          (from Columns and Snapshot.Rows), the row index being the entry's
+          registry index, so it neither sorts nor reorders. Too many or too
+          wide columns scroll sideways.
+        -->
+        <DataGrid x:Name="Table" Margin="24,0"
+                  IsReadOnly="True" AutoGenerateColumns="False" HeadersVisibility="Column"
+                  SelectionUnit="Cell" SelectionMode="Single"
+                  CanUserAddRows="False" CanUserDeleteRows="False"
+                  CanUserReorderColumns="False" CanUserSortColumns="False"
+                  HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                  SelectedCellsChanged="OnSelectedCellsChanged"
+                  MouseDoubleClick="OnTableDoubleClick" PreviewKeyDown="OnTablePreviewKeyDown" />
+    </DockPanel>
+</UserControl>

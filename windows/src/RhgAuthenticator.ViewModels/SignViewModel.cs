@@ -272,7 +272,7 @@ public sealed partial class SignViewModel : ObservableObject
         try
         {
             var outcome = await _bridge.ReportErrorAsync(reportId);
-            if (Uri.TryCreate(outcome.Url, UriKind.Absolute, out var url) && url.Scheme == Uri.UriSchemeHttps)
+            if (HttpsUrl.Parse(outcome.Url) is { } url)
             {
                 openFailure = _urlOpener.Open(url);
             }

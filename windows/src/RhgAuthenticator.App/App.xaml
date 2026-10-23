@@ -8,6 +8,7 @@
         <local:NullToVisibilityConverter x:Key="NullToVisibility" />
         <local:EmptyToVisibilityConverter x:Key="EmptyToVisibility" />
         <local:NonEmptyToVisibilityConverter x:Key="NonEmptyToVisibility" />
+        <local:NotConverter x:Key="Not" />
         <local:DisplayDateConverter x:Key="DisplayDate" />
         <local:HonorConverter x:Key="Honor" />
         <local:PngImageConverter x:Key="PngImage" />

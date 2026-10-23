@@ -75,8 +75,13 @@ public sealed partial class AppViewModel : ObservableObject
     /// <summary>The Export Error Log button's title (the Help tab, and alerts offering it).</summary>
     public const string ExportErrorLogTitle = "Export Error Log…";
 
+    /// <summary>The quit confirmation with unsubmitted registry edits.</summary>
+    public static readonly Confirmation QuitConfirmation = new(
+        "Unsubmitted Changes", "The registry has unsubmitted changes. Exit anyway?", "Exit", IsDestructive: true);
+
     private readonly IBridge _bridge;
     private readonly IFileSaveService _fileSave;
+    private readonly IConfirmService _confirm;
     private readonly TimeProvider _clock;
     private readonly AppTab _help;
     private Task? _eventLoop;
@@ -85,7 +90,7 @@ public sealed partial class AppViewModel : ObservableObject
     /// <summary>
     /// Creates the app's view models over <paramref name="bridge"/>, with the
     /// host's services; <paramref name="clock"/> (default the system clock)
-    /// dates the Sign form and names exported files.
+    /// dates the Sign and entry forms and names exported files.
     /// </summary>
     public AppViewModel(
         IBridge bridge,
@@ -93,12 +98,15 @@ public sealed partial class AppViewModel : ObservableObject
         IFileOpenService fileOpen,
         IClipboard clipboard,
         IUrlOpener urlOpener,
+        IConfirmService confirm,
         TimeProvider? clock = null)
     {
         ArgumentNullException.ThrowIfNull(bridge);
         ArgumentNullException.ThrowIfNull(fileSave);
+        ArgumentNullException.ThrowIfNull(confirm);
         _bridge = bridge;
         _fileSave = fileSave;
+        _confirm = confirm;
         _clock = clock ?? TimeProvider.System;
         // Each flow is disabled while the other runs. Sign is assigned next,
         // before anything can query Bulk's command.
@@ -106,6 +114,8 @@ public sealed partial class AppViewModel : ObservableObject
         Sign = new SignViewModel(bridge, fileSave, clipboard, urlOpener, Alerts, Bulk, _clock);
         YubiKey = new YubiKeyViewModel(bridge);
         PinPrompt = new PinPromptViewModel(bridge);
+        Login = new LoginViewModel(bridge, confirm, clipboard, urlOpener, Alerts);
+        Registry = new RegistryViewModel(bridge, Login, confirm, fileOpen, urlOpener, Alerts, _clock);
         Sign.PropertyChanged += OnSigningStateChanged;
         Bulk.PropertyChanged += OnSigningStateChanged;
         _help = new AppTab(HelpTitle, this);
@@ -113,7 +123,7 @@ public sealed partial class AppViewModel : ObservableObject
         [
             new AppTab("Sign", Sign),
             new AppTab("History", null),
-            new AppTab("Registry", null),
+            new AppTab("Registry", Registry),
             new AppTab("Audit", null),
             new AppTab("YubiKey", YubiKey),
             _help,
@@ -136,6 +146,12 @@ public sealed partial class AppViewModel : ObservableObject
 
     /// <summary>The YubiKey PIN prompt.</summary>
     public PinPromptViewModel PinPrompt { get; }
+
+    /// <summary>The GitHub login (the Registry tab's button and the device-code dialog).</summary>
+    public LoginViewModel Login { get; }
+
+    /// <summary>The Registry tab.</summary>
+    public RegistryViewModel Registry { get; }
 
     /// <summary>The tabs, in order.</summary>
     public IReadOnlyList<AppTab> Tabs { get; }
@@ -178,7 +194,8 @@ public sealed partial class AppViewModel : ObservableObject
 
     /// <summary>
     /// Starts the core: drains its events (buffered since the bridge was
-    /// installed), then app.init, sign.honors and app.start. Ends in
+    /// installed), then app.init, sign.honors, auth.state, the registry
+    /// (registry.columns, registry.snapshot) and app.start. Ends in
     /// <see cref="AppPhase.Ready"/> or <see cref="AppPhase.Fatal"/>. Call once,
     /// on the UI thread; later calls return at once.
     /// </summary>
@@ -193,6 +210,8 @@ public sealed partial class AppViewModel : ObservableObject
         {
             Info = await _bridge.InitAppAsync(dataDir);
             await Sign.LoadHonorsAsync();
+            await Login.LoadStateAsync();
+            await Registry.LoadAsync();
             await _bridge.StartAppAsync();
         }
         catch (RpcException error)
@@ -209,17 +228,40 @@ public sealed partial class AppViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The quit sequence: app.shutdown, without relaunch. Returns whether the
-    /// host may exit; core errors never block quitting. Concurrent and later
-    /// calls share the first sequence, so shutdown runs once.
+    /// The quit sequence: app.canQuit, asking <see cref="QuitConfirmation"/>
+    /// with unsubmitted registry edits, then app.shutdown, without relaunch.
+    /// Returns whether the host may exit: false only when the operator keeps
+    /// the edits (a later call then asks again). Core errors never block
+    /// quitting. Concurrent and later calls share the first sequence, so
+    /// shutdown runs once. Call on the UI thread: the question is asked there.
     /// </summary>
-    public Task<bool> PrepareToQuitAsync()
+    public async Task<bool> PrepareToQuitAsync()
     {
-        return _quit ??= QuitAsync();
+        var quit = _quit ??= QuitAsync();
+        var terminate = await quit;
+        if (!terminate && _quit == quit)
+        {
+            _quit = null;
+        }
+        return terminate;
     }
 
     private async Task<bool> QuitAsync()
     {
+        bool dirty;
+        try
+        {
+            dirty = (await _bridge.CanQuitAsync()).Dirty;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // Never block quitting: the core's own failure, or a bridge fault.
+            dirty = false;
+        }
+        if (dirty && !_confirm.Ask(QuitConfirmation))
+        {
+            return false;
+        }
         try
         {
             await _bridge.ShutdownAsync(relaunch: false);
@@ -328,9 +370,27 @@ public sealed partial class AppViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Runs <paramref name="work"/> (a re-read started by an event) to its
+    /// end: a failure shows the restart alert, as a failing handler does.
+    /// </summary>
+    private async Task ObserveAsync(Task work)
+    {
+        try
+        {
+            await work;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            ShowInternalError();
+        }
+    }
+
+    /// <summary>
     /// Handles one event, synchronously, so events apply in order and none
-    /// waits behind a core call (pin.request least of all). Events of tabs
-    /// not built yet are ignored, as are unknown ones.
+    /// waits behind a core call (pin.request least of all). auth.changed and
+    /// registry.changed re-read in their own tasks, each starting (and so
+    /// ordered) here; each view model applies only its latest read. Events
+    /// of tabs not built yet are ignored, as are unknown ones.
     /// </summary>
     private void Handle(BridgeEvent bridgeEvent)
     {
@@ -354,6 +414,16 @@ public sealed partial class AppViewModel : ObservableObject
                 break;
             case BridgeEvent.AppInternalError:
                 ShowInternalError();
+                break;
+            case BridgeEvent.AuthChanged:
+                // Only a signal: the payloads can arrive out of order.
+                _ = ObserveAsync(Login.AuthChangedAsync());
+                break;
+            case BridgeEvent.AuthDeviceCode e:
+                Login.ShowDeviceCode(e.Code);
+                break;
+            case BridgeEvent.RegistryChanged:
+                _ = ObserveAsync(Registry.RegistryChangedAsync());
                 break;
             default:
                 break;

@@ -58,6 +58,23 @@ internal sealed class NonEmptyToVisibilityConverter : IValueConverter
     }
 }
 
+/// <summary>The negation of a bool: a control disabled while a flag is set.</summary>
+[ValueConversion(typeof(bool), typeof(bool))]
+internal sealed class NotConverter : IValueConverter
+{
+    /// <inheritdoc />
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value is not true;
+    }
+
+    /// <inheritdoc />
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
 /// <summary>A YYYY-MM-DD date as the GUI shows dates, YYYY-Mon-DD (<see cref="DisplayDate.Format"/>).</summary>
 [ValueConversion(typeof(string), typeof(string))]
 internal sealed class DisplayDateConverter : IValueConverter

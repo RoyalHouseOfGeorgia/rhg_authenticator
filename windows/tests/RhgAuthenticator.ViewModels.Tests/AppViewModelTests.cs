@@ -12,10 +12,11 @@ public sealed class AppViewModelTests
 
     private readonly FakeFileSave _fileSave = new();
     private readonly FakeFileOpen _fileOpen = new();
+    private readonly FakeConfirm _confirm = new();
 
     private AppViewModel NewApp(TimeProvider? clock = null)
     {
-        return new AppViewModel(_fake, _fileSave, _fileOpen, new FakeClipboard(), new FakeUrlOpener(), clock);
+        return new AppViewModel(_fake, _fileSave, _fileOpen, new FakeClipboard(), new FakeUrlOpener(), _confirm, clock);
     }
 
     [Fact]
@@ -28,9 +29,15 @@ public sealed class AppViewModelTests
         Assert.Equal(["Sign", "History", "Registry", "Audit", "YubiKey", "Help"], app.Tabs.Select(t => t.Title));
         Assert.Equal("Help", AppViewModel.HelpTitle);
         Assert.Same(app.Sign, app.Tabs[0].Content);
+        Assert.Same(app.Registry, app.Tabs[2].Content);
+        Assert.Same(app.Login, app.Registry.Login);
         Assert.Same(app.YubiKey, app.Tabs[4].Content);
         Assert.Same(app, app.Tabs[5].Content);
-        Assert.Equal([false, true, true, true, false, false], app.Tabs.Select(t => t.IsPlaceholder));
+        Assert.Equal([false, true, false, true, false, false], app.Tabs.Select(t => t.IsPlaceholder));
+        Assert.Equal(
+            new Confirmation(
+                "Unsubmitted Changes", "The registry has unsubmitted changes. Exit anyway?", "Exit", "Cancel", IsDestructive: true),
+            AppViewModel.QuitConfirmation);
         Assert.Equal([.. "Export Error Log"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(AppViewModel.ExportErrorLogTitle));
         Assert.Equal("Not yet available", AppTab.PlaceholderText);
         Assert.Equal(
@@ -95,6 +102,7 @@ public sealed class AppViewModelTests
     {
         var held = _fake.Hold(RpcMethod.AppInit);
         _fake.Respond(RpcMethod.SignHonors, new HonorsResult([]));
+        Fixtures.ScriptStartupReads(_fake);
         var app = NewApp();
         // The views bind these, so they must notify (order and count aside).
         var changed = new List<string?>();
@@ -120,15 +128,21 @@ public sealed class AppViewModelTests
     public void RequiresItsServices()
     {
         Assert.Throws<ArgumentNullException>(
-            () => new AppViewModel(null!, _fileSave, _fileOpen, new FakeClipboard(), new FakeUrlOpener()));
+            () => new AppViewModel(null!, _fileSave, _fileOpen, new FakeClipboard(), new FakeUrlOpener(), _confirm));
         Assert.Throws<ArgumentNullException>(
-            () => new AppViewModel(_fake, null!, _fileOpen, new FakeClipboard(), new FakeUrlOpener()));
+            () => new AppViewModel(_fake, null!, _fileOpen, new FakeClipboard(), new FakeUrlOpener(), _confirm));
         Assert.Throws<ArgumentNullException>(
-            () => new AppViewModel(_fake, _fileSave, null!, new FakeClipboard(), new FakeUrlOpener()));
+            () => new AppViewModel(_fake, _fileSave, null!, new FakeClipboard(), new FakeUrlOpener(), _confirm));
+        Assert.Throws<ArgumentNullException>(
+            () => new AppViewModel(_fake, _fileSave, _fileOpen, null!, new FakeUrlOpener(), _confirm));
+        Assert.Throws<ArgumentNullException>(
+            () => new AppViewModel(_fake, _fileSave, _fileOpen, new FakeClipboard(), null!, _confirm));
+        Assert.Throws<ArgumentNullException>(
+            () => new AppViewModel(_fake, _fileSave, _fileOpen, new FakeClipboard(), new FakeUrlOpener(), null!));
     }
 
     [Fact]
-    public async Task StartupInitHonorsStartInOrderThenReadyWithTheStatusBar()
+    public async Task StartupInitHonorsLoginRegistryStartInOrderThenReadyWithTheStatusBar()
     {
         var app = NewApp();
         Assert.Equal(AppPhase.Starting, app.Phase);
@@ -137,6 +151,8 @@ public sealed class AppViewModelTests
         app.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
         _fake.Respond(RpcMethod.AppInit, Fixtures.OnlineInfo);
         _fake.Respond(RpcMethod.SignHonors, new HonorsResult(["A", "B"]));
+        var snapshot = Fixtures.Snapshot(1);
+        Fixtures.ScriptStartupReads(_fake, Fixtures.LoggedIn, snapshot);
         await app.StartAsync("/data");
         Assert.Equal(AppPhase.Ready, app.Phase);
         Assert.Null(app.FatalMessage);
@@ -144,7 +160,16 @@ public sealed class AppViewModelTests
         Assert.Equal(["Core keys: three", "Core expired: one", "Core version 1.2.3"], app.StatusItems);
         Assert.Contains(nameof(AppViewModel.StatusItems), changed);
         Assert.Equal(["A", "B"], app.Sign.Honors);
-        Assert.Equal([RpcMethod.AppInit, RpcMethod.SignHonors, RpcMethod.AppStart], _fake.Methods);
+        Assert.Equal(Fixtures.LoggedIn, app.Login.AuthState);
+        Assert.Equal(Fixtures.RegistryColumns, app.Registry.Columns);
+        Assert.Same(snapshot, app.Registry.Snapshot);
+        Assert.Equal(RegistryViewModel.LoadedStatus, app.Registry.Status);
+        Assert.Equal(
+            [
+                RpcMethod.AppInit, RpcMethod.SignHonors, RpcMethod.AuthState, RpcMethod.RegistryColumns,
+                RpcMethod.RegistrySnapshot, RpcMethod.AppStart,
+            ],
+            _fake.Methods);
         Assert.Equal(["{\"dataDir\":\"/data\"}"], _fake.Params(RpcMethod.AppInit));
     }
 
@@ -153,6 +178,7 @@ public sealed class AppViewModelTests
     {
         _fake.Respond(RpcMethod.AppInit, new AppInfo(0, false, 0, "vv2", ["Core offline — ქ", "Core build vv2"]));
         _fake.Respond(RpcMethod.SignHonors, new HonorsResult([]));
+        Fixtures.ScriptStartupReads(_fake);
         var app = NewApp();
         await app.StartAsync();
         Assert.Equal(AppPhase.Ready, app.Phase);
@@ -190,11 +216,32 @@ public sealed class AppViewModelTests
         Assert.Equal([RpcMethod.AppInit, RpcMethod.SignHonors], _fake.Methods);
     }
 
+    [Theory]
+    [InlineData(RpcMethod.AuthState)]
+    [InlineData(RpcMethod.RegistryColumns)]
+    [InlineData(RpcMethod.RegistrySnapshot)]
+    public async Task AStartupReadFailureIsFatalAndAppStartIsNotCalled(string failing)
+    {
+        _fake.Respond(RpcMethod.AppInit, Fixtures.OnlineInfo);
+        _fake.Respond(RpcMethod.SignHonors, new HonorsResult(["Order of Queen Tamar"]));
+        Fixtures.ScriptStartupReads(_fake);
+        _fake.Reset(failing);
+        _fake.Fail(failing, new RpcException(RpcErrorCode.Internal, "read broke"));
+        var app = NewApp();
+        await app.StartAsync();
+        Assert.Equal(AppPhase.Fatal, app.Phase);
+        Assert.Equal("read broke" + s_reportSuffix, app.FatalMessage);
+        Assert.Equal(new AlertState(AlertState.ErrorTitle, app.FatalMessage!, OffersErrorLogExport: true), app.Alerts.Current);
+        Assert.Equal(failing, _fake.Methods[^1]);
+        Assert.Equal(0, _fake.Count(RpcMethod.AppStart));
+    }
+
     [Fact]
     public async Task AppStartFailureIsFatal()
     {
         _fake.Respond(RpcMethod.AppInit, Fixtures.OnlineInfo);
         _fake.Respond(RpcMethod.SignHonors, new HonorsResult([]));
+        Fixtures.ScriptStartupReads(_fake);
         _fake.Fail(RpcMethod.AppStart, new RpcException(RpcErrorCode.Input, "not initialized"));
         var app = NewApp();
         await app.StartAsync();
@@ -225,6 +272,7 @@ public sealed class AppViewModelTests
     {
         var held = _fake.Hold(RpcMethod.AppInit);
         _fake.Respond(RpcMethod.SignHonors, new HonorsResult([]));
+        Fixtures.ScriptStartupReads(_fake);
         var app = NewApp();
         var starting = app.StartAsync();
         _fake.Emit(new BridgeEvent.PinRequested(new PinRequest(3, false, 8)));
@@ -241,7 +289,7 @@ public sealed class AppViewModelTests
         _fake.Emit(new BridgeEvent.AppInternalError());
         Assert.True(await Fixtures.Settle(() => app.Alerts.Current is not null));
         Assert.Equal(new AlertState("Error", "An internal error occurred — please restart"), app.Alerts.Current);
-        app.Alerts.Dismiss();
+        await app.Alerts.DismissAsync();
         Assert.Null(app.Alerts.Current);
     }
 
@@ -290,16 +338,14 @@ public sealed class AppViewModelTests
     {
         var app = await Fixtures.StartedApp(_fake);
         var callsBefore = _fake.Calls.Count;
-        var loggedIn = new AuthState(true, false, "octocat", "Logged in as @octocat");
         BridgeEvent[] ignored =
         [
-            new BridgeEvent.AuthChanged(loggedIn),
+            // No login is running: the code is not shown.
             new BridgeEvent.AuthDeviceCode(new DeviceCode("ABCD-1234", "https://github.com/login/device")),
             new BridgeEvent.BulkConnecting(),
             new BridgeEvent.BulkProgressed(new BulkProgress(1, 2, "A")),
             new BridgeEvent.HistoryChanged(),
             new BridgeEvent.HistoryRevocationsChanged(),
-            new BridgeEvent.RegistryChanged(),
             new BridgeEvent.UpdateStatusChanged(new UpdateStatus(UpdateState.Ready, "1.3.0", "", false)),
             new BridgeEvent.UpdateUpdated(new UpdatedNotice("1.2.3", "")),
             new BridgeEvent.Unknown("future.event"),
@@ -316,6 +362,7 @@ public sealed class AppViewModelTests
         Assert.Equal(callsBefore, _fake.Calls.Count);
         Assert.Equal(BulkPhase.Idle, app.Bulk.Phase);
         Assert.Null(app.Bulk.Progress);
+        Assert.Null(app.Login.DeviceCode);
     }
 
     [Fact]
@@ -325,7 +372,7 @@ public sealed class AppViewModelTests
         Assert.Null(app.EventLoop);
         _fake.Fail(RpcMethod.AppInit, new RpcException(RpcErrorCode.Failed, "x"));
         await app.StartAsync();
-        app.Alerts.Dismiss(); // the fatal error's
+        await app.Alerts.DismissAsync(); // the fatal error's
         var loop = Assert.IsType<Task>(app.EventLoop, exactMatch: false);
         _fake.Emit(new BridgeEvent.AppInternalError());
         _fake.CompleteEvents();
@@ -335,45 +382,155 @@ public sealed class AppViewModelTests
     }
 
     [Fact]
-    public async Task QuitShutsDownWithoutRelaunch()
+    public async Task ACleanQuitShutsDownWithoutRelaunchAndAsksNothing()
     {
+        _fake.Respond(RpcMethod.AppCanQuit, new CanQuitResult(false));
         var app = NewApp();
         Assert.True(await app.PrepareToQuitAsync());
-        Assert.Equal([RpcMethod.AppShutdown], _fake.Methods);
+        Assert.Equal([RpcMethod.AppCanQuit, RpcMethod.AppShutdown], _fake.Methods);
         Assert.Equal(["{\"relaunch\":false}"], _fake.Params(RpcMethod.AppShutdown));
+        Assert.Empty(_confirm.Questions);
     }
 
     [Fact]
     public async Task CoreErrorsNeverBlockQuitting()
     {
+        _fake.Fail(RpcMethod.AppCanQuit, new RpcException(RpcErrorCode.Internal, "x"));
         _fake.Fail(RpcMethod.AppShutdown, new RpcException(RpcErrorCode.Internal, "y"));
         var app = NewApp();
         Assert.True(await app.PrepareToQuitAsync());
-        Assert.Equal([RpcMethod.AppShutdown], _fake.Methods);
+        Assert.Equal([RpcMethod.AppCanQuit, RpcMethod.AppShutdown], _fake.Methods);
+        Assert.Empty(_confirm.Questions);
     }
 
     [Fact]
     public async Task ABridgeFaultNeverBlocksQuittingEither()
     {
-        _fake.Respond(RpcMethod.AppShutdown, "not the shutdown result"); // the fake throws InvalidOperationException
+        // The fake throws InvalidOperationException for both.
+        _fake.Respond(RpcMethod.AppCanQuit, "not the canQuit result");
+        _fake.Respond(RpcMethod.AppShutdown, "not the shutdown result");
         var app = NewApp();
         Assert.True(await app.PrepareToQuitAsync());
+        Assert.Equal([RpcMethod.AppCanQuit, RpcMethod.AppShutdown], _fake.Methods);
     }
 
     [Fact]
-    public async Task ConcurrentAndLaterQuitsShareOneShutdown()
+    public async Task ConcurrentAndLaterQuitsShareOneSequence()
     {
+        var canQuit = _fake.Hold(RpcMethod.AppCanQuit);
         var held = _fake.Hold(RpcMethod.AppShutdown);
+        _confirm.Answer(true);
         var app = NewApp();
         var first = app.PrepareToQuitAsync();
         var second = app.PrepareToQuitAsync();
         Assert.False(first.IsCompleted);
         Assert.False(second.IsCompleted);
+        canQuit.Release(new CanQuitResult(true));
+        Assert.True(await Fixtures.Settle(() => _fake.Count(RpcMethod.AppShutdown) == 1));
+        Assert.False(first.IsCompleted);
         held.Release(Empty.Value);
         Assert.True(await first);
         Assert.True(await second);
         Assert.True(await app.PrepareToQuitAsync());
+        Assert.Equal(1, _fake.Count(RpcMethod.AppCanQuit));
         Assert.Equal(1, _fake.Count(RpcMethod.AppShutdown));
+        Assert.Single(_confirm.Questions);
+    }
+
+    [Fact]
+    public async Task UnsubmittedEditsAskAndExitShutsDown()
+    {
+        _fake.Respond(RpcMethod.AppCanQuit, new CanQuitResult(true));
+        _confirm.Answer(true);
+        var app = NewApp();
+        Assert.True(await app.PrepareToQuitAsync());
+        Assert.Equal([AppViewModel.QuitConfirmation], _confirm.Questions);
+        Assert.Equal([RpcMethod.AppCanQuit, RpcMethod.AppShutdown], _fake.Methods);
+    }
+
+    [Fact]
+    public async Task KeepingUnsubmittedEditsKeepsTheAppRunningAndALaterQuitAsksAgain()
+    {
+        _fake.Respond(RpcMethod.AppCanQuit, new CanQuitResult(true));
+        _confirm.Answer(false);
+        _confirm.Answer(true);
+        var app = NewApp();
+        Assert.False(await app.PrepareToQuitAsync());
+        Assert.Equal([RpcMethod.AppCanQuit], _fake.Methods);
+        Assert.True(await app.PrepareToQuitAsync());
+        Assert.Equal([RpcMethod.AppCanQuit, RpcMethod.AppCanQuit, RpcMethod.AppShutdown], _fake.Methods);
+        Assert.Equal([AppViewModel.QuitConfirmation, AppViewModel.QuitConfirmation], _confirm.Questions);
+    }
+
+    [Fact]
+    public async Task ConcurrentQuitsKeepingTheEditsBothKeepTheAppRunning()
+    {
+        var canQuit = _fake.Hold(RpcMethod.AppCanQuit);
+        var app = NewApp();
+        var first = app.PrepareToQuitAsync();
+        var second = app.PrepareToQuitAsync();
+        canQuit.Release(new CanQuitResult(true));
+        Assert.False(await first);
+        Assert.False(await second);
+        Assert.Single(_confirm.Questions);
+        Assert.Equal(0, _fake.Count(RpcMethod.AppShutdown));
+    }
+
+    [Fact]
+    public async Task AuthChangedRereadsTheLoginStateWhateverItsPayload()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        _fake.Respond(RpcMethod.AuthState, Fixtures.LoggedIn);
+        _fake.Emit(new BridgeEvent.AuthChanged(Fixtures.LoggedOut));
+        Assert.True(await Fixtures.Settle(() => app.Login.AuthState == Fixtures.LoggedIn));
+        Assert.Equal(2, _fake.Count(RpcMethod.AuthState));
+    }
+
+    [Fact]
+    public async Task AuthAndRegistryEventsReachTheLoginAndTheRegistryTab()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        app.Registry.SelectCell(0, 1);
+        Assert.NotNull(app.Registry.SelectedCell);
+        var snapshot = Fixtures.Snapshot(3);
+        _fake.Respond(RpcMethod.RegistrySnapshot, snapshot);
+        var held = _fake.Hold(RpcMethod.AuthLogin);
+        var login = app.Login.StartAsync();
+        Assert.True(await Fixtures.Settle(() => _fake.Count(RpcMethod.AuthLogin) == 1));
+        // Login status texts land on the Registry tab's status line.
+        Assert.Equal(LoginViewModel.RequestingCodeStatus, app.Registry.Status);
+        _fake.Emit(new BridgeEvent.AuthDeviceCode(new DeviceCode("ABCD-1234", "https://github.com/login/device")));
+        Assert.True(await Fixtures.Settle(() => app.Login.DeviceCode is not null));
+        Assert.Equal("ABCD-1234", app.Login.DeviceCode!.UserCode);
+        _fake.Emit(new BridgeEvent.RegistryChanged());
+        Assert.True(await Fixtures.Settle(() => app.Registry.Snapshot == snapshot));
+        Assert.Null(app.Registry.SelectedCell);
+        Assert.Equal(RegistryViewModel.LoadedStatus, app.Registry.Status);
+        held.Release(Fixtures.LoggedIn);
+        await login;
+        Assert.Equal("Logged in as @octocat", app.Registry.Status);
+        Assert.Null(app.Alerts.Current);
+    }
+
+    [Fact]
+    public async Task AFailingReReadShowsTheRestartAlertAndTheDrainGoesOn()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        var fail = true;
+        app.Login.PropertyChanged += (_, _) =>
+        {
+            if (fail)
+            {
+                fail = false;
+                throw new InvalidOperationException("a view handler failed");
+            }
+        };
+        _fake.Respond(RpcMethod.AuthState, Fixtures.LoggedIn);
+        _fake.Emit(new BridgeEvent.AuthChanged(Fixtures.LoggedIn));
+        Assert.True(await Fixtures.Settle(() => app.Alerts.Current is not null));
+        Assert.Equal(new AlertState("Error", "An internal error occurred — please restart"), app.Alerts.Current);
+        _fake.Emit(new BridgeEvent.PinRequested(new PinRequest(5, false, 8)));
+        Assert.True(await Fixtures.Settle(() => app.PinPrompt.Request?.RequestId == 5));
     }
 
     [Fact]
@@ -489,7 +646,7 @@ public sealed class AppViewModelTests
         await app.StartAsync();
         Assert.Equal(AppPhase.Fatal, app.Phase);
         Assert.True(app.Alerts.Current?.OffersErrorLogExport);
-        app.Alerts.Dismiss(); // as the host does before exporting from it
+        await app.Alerts.DismissAsync(); // as the host does before exporting from it
         _fileSave.Answer("/data/x.log");
         await app.ExportErrorLogCommand.ExecuteAsync(null);
         Assert.Equal(new AlertState("Error", "Choose a folder outside the app's data folder."), app.Alerts.Current);

@@ -46,6 +46,8 @@ public partial class MainWindow : Window
         FitToWorkArea();
         PinDialog.Attach(model.PinPrompt);
         BulkDialog.Attach(model.Bulk);
+        EntryFormDialog.Attach(model.Registry);
+        DeviceCodeDialog.Attach(model.Login);
         model.PropertyChanged += OnModelChanged;
         model.Alerts.PropertyChanged += OnAlertsChanged;
         Loaded += OnLoaded;
@@ -123,11 +125,11 @@ public partial class MainWindow : Window
                 {
                     DialogOwner.ShowMessage(
                         alert.Title, alert.Message, alert.IsError ? MessageBoxImage.Error : MessageBoxImage.None);
-                    _model.Alerts.Dismiss();
+                    Dismiss();
                     continue;
                 }
                 var export = AlertDialog.Ask(alert);
-                _model.Alerts.Dismiss();
+                Dismiss();
                 if (export)
                 {
                     // Asks where, writes the log and posts its result alert, shown next.
@@ -143,6 +145,17 @@ public partial class MainWindow : Window
         {
             Close();
         }
+    }
+
+    /// <summary>
+    /// Dismisses the current alert. Its follow-up (a login after Session
+    /// Expired, which can run for minutes) runs on its own, so the alerts
+    /// after it are not held up; async void, so its failure ends the app,
+    /// as the loop's own does.
+    /// </summary>
+    private async void Dismiss()
+    {
+        await _model.Alerts.DismissAsync();
     }
 
     private void ShowPhase()

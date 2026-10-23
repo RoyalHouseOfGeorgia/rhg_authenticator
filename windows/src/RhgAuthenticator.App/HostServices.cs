@@ -83,7 +83,7 @@ internal sealed class FileSaveService : IFileSaveService
 }
 
 /// <summary>
-/// The open dialog, filtered on the requested extension. It keeps its own
+/// The open dialog, filtered on the requested extensions. It keeps its own
 /// folder history, apart from the save dialog's: it starts in the last
 /// folder opened from this session, else the Desktop.
 /// </summary>
@@ -92,12 +92,17 @@ internal sealed class FileOpenService : IFileOpenService
     private readonly SaveLocation _location = new();
 
     /// <inheritdoc />
-    public string? ChooseOpenPath(string extension)
+    public string? ChooseOpenPath(params string[] extensions)
     {
+        ArgumentNullException.ThrowIfNull(extensions);
+        ArgumentOutOfRangeException.ThrowIfZero(extensions.Length);
+        // "CSV files (*.csv)|*.csv"; "CRT/PEM files (*.crt;*.pem)|*.crt;*.pem".
+        var names = string.Join("/", extensions.Select(e => e.ToUpperInvariant()));
+        var patterns = string.Join(";", extensions.Select(e => $"*.{e}"));
         var dialog = new OpenFileDialog
         {
-            DefaultExt = extension,
-            Filter = $"{extension.ToUpperInvariant()} files (*.{extension})|*.{extension}",
+            DefaultExt = extensions[0],
+            Filter = $"{names} files ({patterns})|{patterns}",
             CheckFileExists = true,
             InitialDirectory = _location.InitialDirectory ?? "",
         };
@@ -124,7 +129,7 @@ internal sealed class ClipboardService : IClipboard
         }
         catch (ExternalException e)
         {
-            return $"Could not copy the URL to the clipboard.\n\n{e.Message}";
+            return $"Could not copy to the clipboard.\n\n{e.Message}";
         }
     }
 }
@@ -149,5 +154,15 @@ internal sealed class UrlOpener : IUrlOpener
         {
             return $"Could not open {url.AbsoluteUri}\n\n{e.Message}";
         }
+    }
+}
+
+/// <summary>Asks a <see cref="Confirmation"/> in a <see cref="ConfirmDialog"/> over the active window.</summary>
+internal sealed class ConfirmService : IConfirmService
+{
+    /// <inheritdoc />
+    public bool Ask(Confirmation question)
+    {
+        return ConfirmDialog.Ask(question);
     }
 }

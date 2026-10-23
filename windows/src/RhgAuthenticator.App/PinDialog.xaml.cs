@@ -17,7 +17,6 @@ namespace RhgAuthenticator.App;
 public partial class PinDialog : Window
 {
     private readonly PinPromptViewModel _prompt;
-    private bool _isClosing;
 
     private PinDialog(PinPromptViewModel prompt)
     {
@@ -37,60 +36,14 @@ public partial class PinDialog : Window
     public static void Attach(PinPromptViewModel prompt)
     {
         ArgumentNullException.ThrowIfNull(prompt);
-        prompt.PropertyChanged += new Presenter(prompt).OnPromptChanged;
-    }
-
-    /// <summary>
-    /// At most one dialog per open prompt. The dialog opens on a later
-    /// dispatcher turn: the prompt opens from the core's event drain, which
-    /// must not wait behind a modal loop. BeginInvoke, not InvokeAsync, so a
-    /// failure ends the app instead of vanishing into a discarded task.
-    /// </summary>
-    private sealed class Presenter(PinPromptViewModel prompt)
-    {
-        private PinDialog? _shown;
-        private bool _isPending;
-
-        public void OnPromptChanged(object? sender, PropertyChangedEventArgs e)
-        {
-            if (e.PropertyName != nameof(PinPromptViewModel.IsOpen))
-            {
-                return;
-            }
-            if (!prompt.IsOpen)
-            {
-                _shown?.CloseForPrompt();
-                return;
-            }
-            if (_shown is null && !_isPending)
-            {
-                _isPending = true;
-                _ = Application.Current.Dispatcher.BeginInvoke(new Action(ShowPending));
-            }
-        }
-
-        private void ShowPending()
-        {
-            _isPending = false;
-            if (!prompt.IsOpen || _shown is not null)
-            {
-                return;
-            }
-            var dialog = new PinDialog(prompt);
-            // Closed runs inside Close, so a request that replaces a withdrawn
-            // one in the same event batch gets a new dialog.
-            dialog.Closed += (_, _) => OnDialogClosed(dialog);
-            _shown = dialog;
-            dialog.ShowOverActiveWindow();
-        }
-
-        private void OnDialogClosed(PinDialog dialog)
-        {
-            if (_shown == dialog)
-            {
-                _shown = null;
-            }
-        }
+        // Keyed on the prompt while open: a request that replaces a withdrawn
+        // one in the same event batch closes the old dialog and opens a new one.
+        _ = new ModalPresenter<PinDialog>(
+            prompt,
+            nameof(PinPromptViewModel.IsOpen),
+            () => prompt.IsOpen ? prompt : null,
+            _ => new PinDialog(prompt),
+            dialog => dialog.ShowOverActiveWindow());
     }
 
     /// <summary>Shows the dialog modally over the active window; flashes the taskbar if the app is in the background.</summary>
@@ -110,23 +63,18 @@ public partial class PinDialog : Window
         _ = DialogOwner.ShowModal(this);
     }
 
-    /// <summary>The prompt closed: close the window, unless it is closing already.</summary>
-    private void CloseForPrompt()
-    {
-        if (!_isClosing)
-        {
-            Close();
-        }
-    }
-
-    /// <summary>Closing while the prompt is still open (Cancel, Escape, the close button) cancels it.</summary>
+    /// <summary>
+    /// Closing while the prompt is still open (Cancel, Escape, the close
+    /// button) cancels the request on screen (never one that replaced it);
+    /// the prompt's change then closes the window, clearing the field.
+    /// </summary>
     private void OnClosing(object? sender, CancelEventArgs e)
     {
-        _isClosing = true;
-        PinBox.Clear();
-        if (_prompt.IsOpen)
+        var request = _prompt.Request;
+        if (!ModalPresenter.CloseByHand(
+            this, e, () => _prompt.IsOpen && _prompt.Request == request, () => _prompt.CancelCommand.Execute(null)))
         {
-            _prompt.CancelCommand.Execute(null);
+            PinBox.Clear();
         }
     }
 

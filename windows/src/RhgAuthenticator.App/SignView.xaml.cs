@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using RhgAuthenticator.ViewModels;
 
@@ -40,11 +39,7 @@ public partial class SignView : UserControl
     /// <summary>The date is picked from the calendar only: its text box takes no typing.</summary>
     private void OnDatePickerLoaded(object sender, RoutedEventArgs e)
     {
-        var picker = (DatePicker)sender;
-        if (picker.Template?.FindName("PART_TextBox", picker) is DatePickerTextBox text)
-        {
-            text.IsReadOnly = true;
-        }
+        DatePickers.MakePickOnly((DatePicker)sender);
     }
 
     /// <summary>

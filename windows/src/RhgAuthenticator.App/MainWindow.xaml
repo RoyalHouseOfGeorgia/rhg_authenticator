@@ -10,6 +10,9 @@
         <DataTemplate DataType="{x:Type vm:SignViewModel}">
             <local:SignView />
         </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:RegistryViewModel}">
+            <local:RegistryView />
+        </DataTemplate>
         <DataTemplate DataType="{x:Type vm:YubiKeyViewModel}">
             <local:YubiKeyView />
         </DataTemplate>

@@ -128,7 +128,7 @@ public sealed class SignViewModelTests
         Assert.Equal(
             new AlertState("Not Recorded", "Core: signed, but the issuance log could not be written."), _alerts.Current);
         Assert.NotNull(model.Result);
-        _alerts.Dismiss();
+        await _alerts.DismissAsync();
         Assert.Null(_alerts.Current);
     }
 
@@ -291,7 +291,7 @@ public sealed class SignViewModelTests
         await reporting;
         Assert.IsType<ReportState.Unavailable>(model.Report);
         Assert.Same(alreadyIssued, _alerts.Current);
-        _alerts.Dismiss();
+        await _alerts.DismissAsync();
         Assert.Null(_alerts.Current); // the stale report failure posted nothing
     }
 
