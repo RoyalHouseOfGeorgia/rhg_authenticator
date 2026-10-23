@@ -45,14 +45,24 @@ public interface IUrlOpener
     string? Open(Uri url);
 }
 
-/// <summary>A modal question with two buttons.</summary>
+/// <summary>A modal question with two buttons, or three with an alternate action.</summary>
 public interface IConfirmService
 {
     /// <summary>
-    /// Asks <paramref name="question"/> and waits for the answer. Returns
-    /// whether the operator confirmed (cancelling or closing does not).
+    /// Asks <paramref name="question"/> and waits for the answer: the button
+    /// chosen, <see cref="ConfirmChoice.Cancel"/> when cancelled or closed.
     /// </summary>
-    bool Ask(Confirmation question);
+    ConfirmChoice Choose(Confirmation question);
+
+    /// <summary>
+    /// Asks <paramref name="question"/> and waits for the answer. Returns
+    /// whether the operator confirmed (cancelling, closing or the alternate
+    /// button does not).
+    /// </summary>
+    bool Ask(Confirmation question)
+    {
+        return Choose(question) == ConfirmChoice.Confirm;
+    }
 }
 
 /// <summary>URLs from the core that the host may open.</summary>

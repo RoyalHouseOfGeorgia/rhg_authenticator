@@ -6,9 +6,9 @@ namespace RhgAuthenticator.ViewModels;
 
 /// <summary>
 /// The History tab: the issuance log with its search, the selected record's
-/// detail, Refresh, Revoke, Export Issuance Log… and Remove Duplicates…. The
-/// core reads, filters, words and revokes; this view model shows what it
-/// returns.
+/// detail, Refresh, Revoke, Delete Entry…, Export Issuance Log… and Remove
+/// Duplicates…. The core reads, filters, words, revokes and deletes; this view
+/// model shows what it returns.
 /// </summary>
 public sealed partial class HistoryViewModel : ObservableObject
 {
@@ -16,6 +16,8 @@ public sealed partial class HistoryViewModel : ObservableObject
     public const string SearchPlaceholder = "Search by recipient...";
     public const string RefreshTitle = "Refresh";
     public const string RevokeTitle = "Revoke";
+    public const string DeleteEntryTitle = "Delete Entry…";
+    public const string DeleteEntryTooltip = "Select a record to delete it.";
     public const string ExportTitle = "Export Issuance Log…";
     public const string RemoveDuplicatesTitle = "Remove Duplicates…";
     public const string RevocationUnavailableStatus = "Revocation unavailable";
@@ -23,6 +25,11 @@ public sealed partial class HistoryViewModel : ObservableObject
     public const string ConfirmRevocationTitle = "Confirm Revocation";
     public const string SessionExpiredTitle = "Session Expired";
     public const string RevocationFailedTitle = "Revocation Failed";
+    public const string DeleteRecordConfirmTitle = "Delete Issuance Record";
+    public const string DeleteTitle = "Delete";
+    public const string RevokeInsteadTitle = "Revoke Instead";
+    public const string RecordNotFoundTitle = "Record Not Found";
+    public const string DeleteFailedTitle = "Delete Failed";
     public const string NothingToExportTitle = "Nothing to Export";
     public const string RemoveDuplicatesConfirmTitle = "Remove Duplicates";
     public const string RemoveEntriesTitle = "Remove Entries";
@@ -103,7 +110,7 @@ public sealed partial class HistoryViewModel : ObservableObject
     /// <summary>The log as last read, filtered by <see cref="Query"/>; empty and not loaded until app.start's history.changed.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(RevocationStatus))]
-    [NotifyCanExecuteChangedFor(nameof(RevokeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RevokeCommand), nameof(DeleteEntryCommand))]
     public partial HistoryListResult Snapshot { get; private set; } = new(
         Rows: [], LoadFailed: false, RevocationsUnavailable: false, RevocationsLoaded: false, RevokeAvailable: false);
 
@@ -120,7 +127,7 @@ public sealed partial class HistoryViewModel : ObservableObject
     /// index, not a credential id: duplicate rows share a payload hash.
     /// </summary>
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(RevokeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RevokeCommand), nameof(DeleteEntryCommand))]
     public partial int? SelectedIndex { get; private set; }
 
     /// <summary>The selected record's detail (history.recordText); null shows <see cref="EmptyDetailText"/>.</summary>
@@ -131,10 +138,15 @@ public sealed partial class HistoryViewModel : ObservableObject
     [ObservableProperty]
     public partial string Status { get; private set; } = "";
 
-    /// <summary>A revocation is being submitted; Revoke stays disabled.</summary>
+    /// <summary>A revocation is being submitted; Revoke and Delete Entry… stay disabled.</summary>
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(RevokeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RevokeCommand), nameof(DeleteEntryCommand))]
     public partial bool IsRevoking { get; private set; }
+
+    /// <summary>A record is being deleted (history.deleteEntry); Revoke and Delete Entry… stay disabled.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RevokeCommand), nameof(DeleteEntryCommand))]
+    public partial bool IsDeleting { get; private set; }
 
     /// <summary><see cref="RevocationUnavailableStatus"/> when the revocation list could not be fetched; "" otherwise.</summary>
     public string RevocationStatus => Snapshot.RevocationsUnavailable ? RevocationUnavailableStatus : "";
@@ -286,6 +298,7 @@ public sealed partial class HistoryViewModel : ObservableObject
     private bool CanRevoke()
     {
         return !IsRevoking
+            && !IsDeleting
             && Snapshot.RevokeAvailable
             && SelectedIndex is { } index
             && index < Snapshot.Rows.Count
@@ -293,10 +306,9 @@ public sealed partial class HistoryViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Revoke: asks the core's question about the selected record, then opens
-    /// a revocation pull request (history.revoke) and shows the outcome the
-    /// core words. Enabled for a selected, unrevoked row when the core allows
-    /// revoking and no revocation is being submitted.
+    /// Revoke: revokes the selected record (<see cref="RevokeRecordAsync"/>).
+    /// Enabled for a selected, unrevoked row when the core allows revoking and
+    /// no revocation or deletion is running.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanRevoke))]
     private async Task RevokeAsync()
@@ -305,7 +317,18 @@ public sealed partial class HistoryViewModel : ObservableObject
         {
             return;
         }
-        var record = Snapshot.Rows[SelectedIndex!.Value].Record;
+        await RevokeRecordAsync(Snapshot.Rows[SelectedIndex!.Value].Record);
+    }
+
+    /// <summary>
+    /// Asks the core's question about <paramref name="record"/>, then opens a
+    /// revocation pull request (history.revoke), with <see cref="IsRevoking"/>
+    /// set while it runs, and shows the outcome the core words. Reads no
+    /// selection and checks no gate: Revoke and Delete Entry…'s Revoke Instead
+    /// both come here.
+    /// </summary>
+    private async Task RevokeRecordAsync(HistoryRecord record)
+    {
         RecordTextResult text;
         try
         {
@@ -352,6 +375,79 @@ public sealed partial class HistoryViewModel : ObservableObject
         // The row now reads revoked.
         BeginRowsReplacement();
         await RereadAsync();
+        _alerts.Show(new AlertState(result.Title, result.Message));
+    }
+
+    private bool CanDeleteEntry()
+    {
+        return !IsRevoking
+            && !IsDeleting
+            && SelectedIndex is { } index
+            && index < Snapshot.Rows.Count;
+    }
+
+    /// <summary>
+    /// Delete Entry…: asks the core's question about the selected record,
+    /// offering Revoke Instead when the core says to (an unrevoked credential
+    /// it could revoke), then deletes the record (history.deleteEntry) or
+    /// revokes it (<see cref="RevokeRecordAsync"/>). The record is captured
+    /// before asking, so a history.changed meanwhile does not move the action
+    /// to another row; the list reloads on the core's history.changed.
+    /// Enabled for a selected row while no revocation or deletion runs
+    /// (<see cref="DeleteEntryTooltip"/> otherwise).
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanDeleteEntry))]
+    private async Task DeleteEntryAsync()
+    {
+        if (!CanDeleteEntry())
+        {
+            return;
+        }
+        var record = Snapshot.Rows[SelectedIndex!.Value].Record;
+        RecordTextResult text;
+        try
+        {
+            text = await _bridge.RecordTextAsync(record);
+        }
+        catch (RpcException error)
+        {
+            _alerts.Show(AlertState.Error(error));
+            return;
+        }
+        var question = new Confirmation(
+            DeleteRecordConfirmTitle,
+            text.DeleteConfirm,
+            DeleteTitle,
+            IsDestructive: true,
+            AlternateTitle: text.OfferRevoke ? RevokeInsteadTitle : null);
+        switch (_confirm.Choose(question))
+        {
+            case ConfirmChoice.Confirm:
+                break;
+            // Revoke Instead exists only when the core offers it.
+            case ConfirmChoice.Alternate when text.OfferRevoke:
+                await RevokeRecordAsync(record);
+                return;
+            default:
+                return;
+        }
+        IsDeleting = true;
+        DeleteEntryResult result;
+        try
+        {
+            result = await _bridge.DeleteEntryAsync(record);
+        }
+        catch (RpcException error)
+        {
+            _alerts.Show(error.Code == RpcErrorCode.NotFound
+                ? new AlertState(RecordNotFoundTitle, error.Message)
+                : new AlertState(DeleteFailedTitle, error.Message, OffersErrorLogExport: true));
+            return;
+        }
+        finally
+        {
+            IsDeleting = false;
+        }
         _alerts.Show(new AlertState(result.Title, result.Message));
     }
 

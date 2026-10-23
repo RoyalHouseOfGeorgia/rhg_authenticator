@@ -52,6 +52,7 @@ internal sealed record MethodContract(
         [RpcMethod.BulkExportResults] = Of(Json.PathParams, Json.Empty),
         [RpcMethod.BulkLoad] = Of(Json.PathParams, Json.BulkLoadResult),
         [RpcMethod.BulkRun] = Of(Json.Empty, Json.BulkRunResult, r => Wire(r.Stopped)),
+        [RpcMethod.HistoryDeleteEntry] = Of(Json.RecordParams, Json.DeleteEntryResult),
         [RpcMethod.HistoryDuplicatePreview] = Of(Json.Empty, Json.DuplicatePreviewResult),
         [RpcMethod.HistoryExportIssuanceLog] = Of(Json.PathParams, Json.ExportResult),
         [RpcMethod.HistoryList] = Of(Json.HistoryListParams, Json.HistoryListResult),

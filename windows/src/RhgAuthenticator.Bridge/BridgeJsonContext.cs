@@ -42,6 +42,7 @@ namespace RhgAuthenticator.Bridge;
 [JsonSerializable(typeof(RecordTextResult))]
 [JsonSerializable(typeof(DuplicatePreviewResult))]
 [JsonSerializable(typeof(RemoveDuplicatesResult))]
+[JsonSerializable(typeof(DeleteEntryResult))]
 [JsonSerializable(typeof(RevokeResult))]
 [JsonSerializable(typeof(RegistrySnapshot))]
 [JsonSerializable(typeof(ColumnsResult))]

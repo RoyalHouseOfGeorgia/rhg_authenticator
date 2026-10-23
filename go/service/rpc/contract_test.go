@@ -88,6 +88,7 @@ var contractParamTypes = map[string]any{
 	"history.exportIssuanceLog":  pathParams{},
 	"history.duplicatePreview":   struct{}{},
 	"history.removeDuplicates":   struct{}{},
+	"history.deleteEntry":        recordParams{},
 	"pin.submit":                 pinSubmitParams{},
 	"pin.cancel":                 pinCancelParams{},
 	"update.current":             struct{}{},
@@ -112,7 +113,7 @@ var clockRules = []struct {
 	fixed string
 }{
 	{regexp.MustCompile(`rhg-bulk-results-\d{4}-\d{2}-\d{2}-\d{6}\.csv`), "rhg-bulk-results-2026-01-02-030405.csv"},
-	{regexp.MustCompile(`\.bak-\d{8}T\d{6}Z`), ".bak-20260102T030405Z"},
+	{regexp.MustCompile(`\.bak-\d{8}T\d{6}Z(-\d+)?`), ".bak-20260102T030405Z"},
 }
 
 // scrubDocs lists every scrub rule for the README.
@@ -120,7 +121,7 @@ var scrubDocs = []string{
 	"Paths under the test's temporary directories, as a whole value or a space- or newline-separated word in one: the app data directory becomes `/DATA` and the folder files are saved to becomes `/OUT`, with `/` separators.",
 	"The local test registry server's origin (`http://127.0.0.1:<port>`) becomes `" + registryOrigin + "`.",
 	"Every `pngPreview` value becomes `" + pngPlaceholder + "` (base64 of the PNG signature).",
-	"The clock time in a bulk results file name becomes `rhg-bulk-results-2026-01-02-030405.csv`, and in an issuance-log backup name `.bak-20260102T030405Z`.",
+	"The clock time in a bulk results file name becomes `rhg-bulk-results-2026-01-02-030405.csv`, and in an issuance-log backup name `.bak-20260102T030405Z` (dropping any `-2`, `-3`, … suffix that kept it unique).",
 }
 
 // addDir maps dir, and its symlink-resolved form, to placeholder.
@@ -342,13 +343,13 @@ func buildContract(t *testing.T) *contract {
 	writeRecords(t, h.dir, []issuancelog.IssuanceRecord{alice, jane, bob, bob})
 	c.dispatch(h.srv, "history.refresh", empty)
 	c.dispatch(h.srv, "history.list", queryParams{Query: ""})
-	c.dispatch(h.srv, "history.recordText", recordParams{Record: service.HistoryRecord{
-		Timestamp: alice.Timestamp, Recipient: alice.Recipient, Honor: alice.Honor, Detail: alice.Detail,
-		Date: alice.Date, PayloadSHA256: alice.PayloadSHA256, SignatureB64URL: alice.SignatureB64URL,
-	}})
+	c.dispatch(h.srv, "history.recordText", recordParams{Record: historyRecordOf(alice)})
 	c.dispatch(h.srv, "history.duplicatePreview", empty)
 	c.dispatch(h.srv, "history.removeDuplicates", empty)
 	c.dispatch(h.srv, "history.exportIssuanceLog", pathParams{Path: filepath.Join(h.out, "issuances-export.json")})
+	// After the export (which records the deduplicated log) and on Bob, not
+	// Jane, whom sign.sign below must find already issued.
+	c.dispatch(h.srv, "history.deleteEntry", recordParams{Record: historyRecordOf(bob)})
 
 	sign := service.SignFields{Recipient: "Jane Doe", Honor: "Ennoblement", Detail: "For service", Date: "2026-01-02"}
 	c.dispatch(h.srv, "sign.validate", sign)
@@ -659,17 +660,20 @@ Without -update the test fails on any missing, extra or changed file.
 ## What clients may branch on
 
 Clients branch only on ok, the error code and offerReport, and on typed
-fields: booleans, enums (update state, bulk stopped, key-check outcome, revoke
-status), numbers and ids. CodeFailed means "show the message"; "input" always
-means a host programming error.
+fields: booleans (such as recordText's offerRevoke, which says whether to
+offer revoking instead of deleting), enums (update state, bulk stopped,
+key-check outcome, revoke status), numbers and ids. CodeFailed means "show
+the message"; "input" always means a host programming error.
 
 Display strings are render-only and may change in any release: never compare
 or parse them. They are every message, statusText, summary, summaryLine,
 countsLine, stopMessage, title, the key-check status and details, the
-registry rows and columns, recordText's detail and revokeConfirm, app.info's
-and app.init's statusItems, duplicatePreview's confirmMessage, and every
-*Filename. A message or confirmMessage is "" when there is nothing to say
-(no duplicates found or removed).
+registry rows and columns, recordText's detail, revokeConfirm and deleteConfirm,
+app.info's and app.init's statusItems, duplicatePreview's confirmMessage,
+deleteEntry's title and message, and every *Filename. A message or
+confirmMessage is "" when there is nothing to say (no duplicates found or
+removed). removeDuplicates' and deleteEntry's backup is a file path, shown as
+given and never parsed.
 
 ## When to re-read
 
@@ -942,7 +946,8 @@ func TestScrubber(t *testing.T) {
 		"Saved to:\n/tmp/x/a.txt\n\nAttach it.":  "Saved to:\n/DATA/a.txt\n\nAttach it.",
 		"Backup saved to /tmp/x/sub/f.json.":     "Backup saved to /SUB/f.json.",
 		"rhg-bulk-results-2031-12-30-235959.csv": "rhg-bulk-results-2026-01-02-030405.csv",
-		"/tmp/x/issuances.json.bak-20311230T235959Z": "/DATA/issuances.json.bak-20260102T030405Z",
+		"/tmp/x/issuances.json.bak-20311230T235959Z":             "/DATA/issuances.json.bak-20260102T030405Z",
+		"Backup saved to /tmp/x/i.json.bak-20311230T235959Z-12.": "Backup saved to /DATA/i.json.bak-20260102T030405Z.",
 	} {
 		if got := s.str(in); got != want {
 			t.Errorf("str(%q) = %q, want %q", in, got, want)

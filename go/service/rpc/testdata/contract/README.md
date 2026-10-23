@@ -40,17 +40,20 @@ Without -update the test fails on any missing, extra or changed file.
 ## What clients may branch on
 
 Clients branch only on ok, the error code and offerReport, and on typed
-fields: booleans, enums (update state, bulk stopped, key-check outcome, revoke
-status), numbers and ids. CodeFailed means "show the message"; "input" always
-means a host programming error.
+fields: booleans (such as recordText's offerRevoke, which says whether to
+offer revoking instead of deleting), enums (update state, bulk stopped,
+key-check outcome, revoke status), numbers and ids. CodeFailed means "show
+the message"; "input" always means a host programming error.
 
 Display strings are render-only and may change in any release: never compare
 or parse them. They are every message, statusText, summary, summaryLine,
 countsLine, stopMessage, title, the key-check status and details, the
-registry rows and columns, recordText's detail and revokeConfirm, app.info's
-and app.init's statusItems, duplicatePreview's confirmMessage, and every
-*Filename. A message or confirmMessage is "" when there is nothing to say
-(no duplicates found or removed).
+registry rows and columns, recordText's detail, revokeConfirm and deleteConfirm,
+app.info's and app.init's statusItems, duplicatePreview's confirmMessage,
+deleteEntry's title and message, and every *Filename. A message or
+confirmMessage is "" when there is nothing to say (no duplicates found or
+removed). removeDuplicates' and deleteEntry's backup is a file path, shown as
+given and never parsed.
 
 ## When to re-read
 
@@ -77,7 +80,7 @@ then only these values are replaced:
 - Paths under the test's temporary directories, as a whole value or a space- or newline-separated word in one: the app data directory becomes `/DATA` and the folder files are saved to becomes `/OUT`, with `/` separators.
 - The local test registry server's origin (`http://127.0.0.1:<port>`) becomes `https://registry.example`.
 - Every `pngPreview` value becomes `iVBORw0KGgo=` (base64 of the PNG signature).
-- The clock time in a bulk results file name becomes `rhg-bulk-results-2026-01-02-030405.csv`, and in an issuance-log backup name `.bak-20260102T030405Z`.
+- The clock time in a bulk results file name becomes `rhg-bulk-results-2026-01-02-030405.csv`, and in an issuance-log backup name `.bak-20260102T030405Z` (dropping any `-2`, `-3`, … suffix that kept it unique).
 
 The app version is the unstamped "dev" of test builds.
 

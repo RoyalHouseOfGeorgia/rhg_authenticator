@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/bulk"
@@ -46,15 +45,16 @@ func loadBulkPlan(r io.Reader, logPath string, logger *debuglog.Logger) ([]bulk.
 
 // issuedSignatures maps each logged payload hash (lower-case, as
 // core.PayloadSHA256Hex returns it) to the stored signature a duplicate
-// reuses: a malformed signature never counts, and the first well-formed
-// record wins. Sign (findExistingIssuance) and Bulk Sign both use it.
+// reuses: a record with an empty hash or a malformed signature never counts
+// (see issuancelog.IssuedKey), and the first record that counts wins. Sign
+// (findExistingIssuance) and Bulk Sign both use it.
 func issuedSignatures(records []issuancelog.IssuanceRecord) map[string]string {
 	issued := make(map[string]string, len(records))
 	for _, rec := range records {
-		if !issuancelog.SignatureWellFormed(rec.SignatureB64URL) {
+		hash, ok := issuancelog.IssuedKey(rec)
+		if !ok {
 			continue
 		}
-		hash := strings.ToLower(rec.PayloadSHA256)
 		if _, ok := issued[hash]; !ok {
 			issued[hash] = rec.SignatureB64URL
 		}

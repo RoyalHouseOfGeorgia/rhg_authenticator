@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -807,5 +808,253 @@ func TestDuplicates_Errors(t *testing.T) {
 	}
 	if names := eventNames(h); len(names) != 0 {
 		t.Errorf("events = %v, want none", names)
+	}
+}
+
+// --- Deleting a record ---
+
+func TestDeleteConfirmText(t *testing.T) {
+	r := HistoryRecord{Recipient: "John Doe", Date: "2026-03-14"}
+	for _, tc := range []struct {
+		name                    string
+		revoked, anotherRemains bool
+		want                    string
+	}{
+		{"active only record", false, false, "Are you sure you want to delete the record for John Doe dated 2026-Mar-14 from this computer's issuance log?\n\n" +
+			"The credential stays valid: anyone with its QR code can still verify it, and once the record is deleted it can no longer be revoked from this app. Did you mean to revoke it instead?\n\n" +
+			"A backup of the log is saved first."},
+		{"active another remains", false, true, "Are you sure you want to delete this record for John Doe dated 2026-Mar-14 from this computer's issuance log? Another record of this credential remains in the log.\n\n" +
+			"A backup of the log is saved first."},
+		{"revoked", true, false, "Are you sure you want to delete the record for John Doe dated 2026-Mar-14 from this computer's issuance log?\n\n" +
+			"A backup of the log is saved first."},
+		{"revoked wins", true, true, "Are you sure you want to delete the record for John Doe dated 2026-Mar-14 from this computer's issuance log?\n\n" +
+			"A backup of the log is saved first."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DeleteConfirmText(r, tc.revoked, tc.anotherRemains); got != tc.want {
+				t.Errorf("DeleteConfirmText = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRecordDeletedText(t *testing.T) {
+	title, msg := RecordDeletedText(HistoryRecord{Recipient: "John Doe", Date: "2026-03-14"}, "/data/issuances.json.bak-20260102T030405Z")
+	if title != "Record Deleted" {
+		t.Errorf("title = %q", title)
+	}
+	if want := "Deleted the record for John Doe dated 2026-Mar-14. Backup saved to /data/issuances.json.bak-20260102T030405Z."; msg != want {
+		t.Errorf("message = %q, want %q", msg, want)
+	}
+}
+
+func TestDeleteConfirm(t *testing.T) {
+	malformed := func(r issuancelog.IssuanceRecord) issuancelog.IssuanceRecord {
+		r.SignatureB64URL = "c2ln" // decodes, but not Ed25519-sized
+		return r
+	}
+	withHash := func(r issuancelog.IssuanceRecord, hash string) issuancelog.IssuanceRecord {
+		r.PayloadSHA256 = hash
+		return r
+	}
+	alice := rec("Alice", "2026-01-01", hashA)
+	bob := rec("Bob", "2026-02-01", hashB)
+	const (
+		loaded   = "loaded"   // revocation list loaded, revoking revoked
+		unloaded = "unloaded" // never fetched
+		failed   = "failed"   // the only fetch failed
+	)
+	for _, tc := range []struct {
+		name        string
+		log         []issuancelog.IssuanceRecord
+		selected    issuancelog.IssuanceRecord
+		revocations string
+		revoked     []string
+		wantRevoked bool
+		wantAnother bool
+	}{
+		{"active only record", []issuancelog.IssuanceRecord{alice, bob}, alice, loaded, nil, false, false},
+		{"active with mixed-case copy", []issuancelog.IssuanceRecord{alice, bob, withHash(rec("Alice", "2026-01-05", ""), strings.ToUpper(hashA))}, alice, loaded, nil, false, true},
+		{"identical copy counts", []issuancelog.IssuanceRecord{alice, alice}, alice, loaded, nil, false, true},
+		{"selected malformed, well-formed copy remains", []issuancelog.IssuanceRecord{malformed(alice), alice}, malformed(alice), loaded, nil, false, true},
+		{"empty hashes never count", []issuancelog.IssuanceRecord{withHash(alice, ""), withHash(bob, "")}, withHash(alice, ""), loaded, nil, false, false},
+		{"malformed copy counts as none", []issuancelog.IssuanceRecord{alice, malformed(alice)}, alice, loaded, nil, false, false},
+		{"selected not in loaded history", []issuancelog.IssuanceRecord{bob}, malformed(alice), loaded, nil, false, false},
+		{"selected gone, well-formed copy loaded", []issuancelog.IssuanceRecord{alice}, rec("Alice", "2026-01-05", hashA), loaded, nil, false, true},
+		{"revoked via mixed-case hash", []issuancelog.IssuanceRecord{withHash(alice, strings.ToUpper(hashA))}, withHash(alice, strings.ToUpper(hashA)), loaded, []string{hashA}, true, false},
+		{"revoked with copy", []issuancelog.IssuanceRecord{alice, alice}, alice, loaded, []string{hashA}, true, false},
+		{"revocations not loaded", []issuancelog.IssuanceRecord{alice}, alice, unloaded, nil, false, false},
+		{"revocation fetch failed", []issuancelog.IssuanceRecord{alice}, alice, failed, nil, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newAppHarness(t, nil)
+			writeIssuanceLog(t, h, tc.log...)
+			switch tc.revocations {
+			case loaded:
+				setRevocations(h, tc.revoked...)
+				h.app.loadHistory()
+			case unloaded:
+				h.app.loadHistory()
+			case failed:
+				revocationServer(t, h, http.StatusInternalServerError)
+				h.app.RefreshHistory()
+				if snap := h.app.History(""); !snap.RevocationsUnavailable || snap.RevocationsLoaded {
+					t.Fatalf("fetch did not fail: %+v", snap)
+				}
+			}
+			sel := historyRecord(tc.selected)
+			msg, offer := h.app.DeleteConfirm(sel)
+			if offer == tc.wantRevoked {
+				t.Errorf("offerRevoke = %v, want %v", offer, !tc.wantRevoked)
+			}
+			if want := DeleteConfirmText(sel, tc.wantRevoked, tc.wantAnother); msg != want {
+				t.Errorf("message = %q, want %q", msg, want)
+			}
+		})
+	}
+}
+
+// deleteHarness has an issuance log of alice, bob and alice again, loaded,
+// with no events recorded.
+func deleteHarness(t *testing.T) (h *appHarness, alice, bob issuancelog.IssuanceRecord) {
+	t.Helper()
+	h = newAppHarness(t, nil)
+	alice, bob = rec("Alice", "2026-01-01", hashA), rec("Bob", "2026-02-01", hashB)
+	alice.Timestamp, bob.Timestamp = "2026-01-01T10:00:00Z", "2026-02-01T10:00:00Z"
+	writeIssuanceLog(t, h, alice, bob, alice)
+	h.app.loadHistory()
+	h.events.reset()
+	return h, alice, bob
+}
+
+func TestDeleteEntry_Success(t *testing.T) {
+	h, alice, bob := deleteHarness(t)
+	original, err := os.ReadFile(h.app.logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := h.app.DeleteEntry(historyRecord(alice))
+	if err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+	if !strings.HasPrefix(backup, h.app.logPath+".bak-") {
+		t.Errorf("backup = %q", backup)
+	}
+	if data, err := os.ReadFile(backup); err != nil || string(data) != string(original) {
+		t.Errorf("backup = %q, %v; want the original log", data, err)
+	}
+	got, err := issuancelog.ReadLog(h.app.logPath)
+	if err != nil || !reflect.DeepEqual(got, []issuancelog.IssuanceRecord{bob, alice}) {
+		t.Errorf("log = %+v, %v; want bob, alice", got, err)
+	}
+	if names := eventNames(h); !reflect.DeepEqual(names, []string{EventHistoryChanged}) {
+		t.Errorf("events = %v", names)
+	}
+	if rows := h.app.History("").Rows; len(rows) != 2 {
+		t.Errorf("history rows = %d, want 2 after reload", len(rows))
+	}
+}
+
+func TestDeleteEntry_NotFound(t *testing.T) {
+	h, alice, _ := deleteHarness(t)
+	original, err := os.ReadFile(h.app.logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The log changed since it was loaded: the selected record is gone.
+	writeIssuanceLog(t, h, rec("Carol", "2026-03-01", hashC))
+	_, err = h.app.DeleteEntry(historyRecord(alice))
+	if !errors.Is(err, ErrNotFound) || err.Error() != "This record is no longer in the issuance log." {
+		t.Errorf("err = %v, want not found", err)
+	}
+	if names := eventNames(h); !reflect.DeepEqual(names, []string{EventHistoryChanged}) {
+		t.Errorf("events = %v, want a reload", names)
+	}
+	if rows := h.app.History("").Rows; len(rows) != 1 || rows[0].Record.Recipient != "Carol" {
+		t.Errorf("history = %+v, want the reloaded log", rows)
+	}
+	if data, _ := os.ReadFile(h.app.logPath); string(data) == string(original) {
+		t.Error("test setup: log not replaced")
+	}
+	if matches, _ := filepath.Glob(h.app.logPath + ".bak-*"); len(matches) != 0 {
+		t.Errorf("backups written: %v", matches)
+	}
+}
+
+func TestDeleteEntry_Errors(t *testing.T) {
+	t.Run("unreadable", func(t *testing.T) {
+		h, alice, _ := deleteHarness(t)
+		writeRawLog(t, h, "not json")
+		_, err := h.app.DeleteEntry(historyRecord(alice))
+		if err == nil || err.Error() != "Could not read the issuance log." || errors.Is(err, ErrNotFound) {
+			t.Errorf("err = %v", err)
+		}
+		if data, _ := os.ReadFile(h.app.logPath); string(data) != "not json" {
+			t.Errorf("log changed: %q", data)
+		}
+		if !strings.Contains(h.debugLog(t), "history: failed to read log for delete: ") {
+			t.Error("read failure not logged")
+		}
+		if names := eventNames(h); len(names) != 0 {
+			t.Errorf("events = %v, want none", names)
+		}
+	})
+	t.Run("backup fails", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Unix file permissions not supported on Windows")
+		}
+		h, alice, _ := deleteHarness(t)
+		dir := filepath.Join(h.dir, "readonly")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		h.app.logPath = filepath.Join(dir, "issuances.json")
+		writeIssuanceLog(t, h, alice)
+		original, err := os.ReadFile(h.app.logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+		_, err = h.app.DeleteEntry(historyRecord(alice))
+		if err == nil || err.Error() != "Could not delete the record. The issuance log was not changed." || errors.Is(err, ErrNotFound) {
+			t.Errorf("err = %v", err)
+		}
+		if data, _ := os.ReadFile(h.app.logPath); string(data) != string(original) {
+			t.Errorf("log changed: %q", data)
+		}
+		entries, _ := os.ReadDir(dir)
+		if len(entries) != 1 {
+			t.Errorf("dir holds %d files, want only the log", len(entries))
+		}
+		if !strings.Contains(h.debugLog(t), "history: delete record failed: ") {
+			t.Error("delete failure not logged")
+		}
+		if names := eventNames(h); len(names) != 0 {
+			t.Errorf("events = %v, want none", names)
+		}
+	})
+}
+
+func TestRemoveDuplicates_BackupFailsKeepsMessage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
+	h := newAppHarness(t, nil)
+	dir := filepath.Join(h.dir, "readonly")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h.app.logPath = filepath.Join(dir, "issuances.json")
+	writeIssuanceLog(t, h, rec("Alice", "2026-01-01", hashA), rec("Alice", "2026-01-01", hashA))
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if _, _, err := h.app.RemoveDuplicates(); err == nil || err.Error() != "Could not remove duplicates. The issuance log was not changed." {
+		t.Errorf("RemoveDuplicates err = %v", err)
 	}
 }

@@ -147,7 +147,7 @@ struct AppModelTests {
     func historyChangedEvent() async {
         let fake = FakeBridge()
         let app = await startedApp(fake)
-        fake.respond(.historyRecordText, RecordTextResult(detail: "d", revokeConfirm: "q"))
+        fake.respond(.historyRecordText, RecordTextResult(detail: "d", revokeConfirm: "q", deleteConfirm: "dq", offerRevoke: true))
         await app.history.select(row: 1)
         #expect(app.history.selection == 1)
         fake.reset(.historyList)
@@ -164,7 +164,7 @@ struct AppModelTests {
     func revocationsChangedEvent() async {
         let fake = FakeBridge()
         let app = await startedApp(fake)
-        fake.respond(.historyRecordText, RecordTextResult(detail: "d", revokeConfirm: "q"))
+        fake.respond(.historyRecordText, RecordTextResult(detail: "d", revokeConfirm: "q", deleteConfirm: "dq", offerRevoke: true))
         await app.history.select(row: 1)
         fake.reset(.historyList)
         fake.respond(.historyList, historyList(count: 2, revoked: [1]))

@@ -196,22 +196,31 @@ internal sealed class FakeFileOpen : IFileOpenService
     }
 }
 
-/// <summary>Confirmations answered from a queue (unscripted: declined); records every question.</summary>
+/// <summary>Answers each question with the next scripted choice, Cancel once none is left; records every question.</summary>
 internal sealed class FakeConfirm : IConfirmService
 {
-    private readonly Queue<bool> _answers = new();
+    private readonly Queue<ConfirmChoice> _answers = new();
 
     public List<Confirmation> Questions { get; } = [];
 
+    /// <summary>Runs while a question is open, before it is answered (to raise events meanwhile).</summary>
+    public Action<Confirmation>? OnAsk { get; set; }
+
     public void Answer(bool confirmed)
     {
-        _answers.Enqueue(confirmed);
+        Answer(confirmed ? ConfirmChoice.Confirm : ConfirmChoice.Cancel);
     }
 
-    public bool Ask(Confirmation question)
+    public void Answer(ConfirmChoice choice)
+    {
+        _answers.Enqueue(choice);
+    }
+
+    public ConfirmChoice Choose(Confirmation question)
     {
         Questions.Add(question);
-        return _answers.Count > 0 && _answers.Dequeue();
+        OnAsk?.Invoke(question);
+        return _answers.Count > 0 ? _answers.Dequeue() : ConfirmChoice.Cancel;
     }
 }
 

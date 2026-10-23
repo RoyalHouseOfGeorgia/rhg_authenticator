@@ -279,6 +279,12 @@ func record(i int, recipient string) issuancelog.IssuanceRecord {
 	}
 }
 
+// historyRecordOf returns rec as the history record history.list returns.
+func historyRecordOf(rec issuancelog.IssuanceRecord) *service.HistoryRecord {
+	hr := service.HistoryRecord(rec)
+	return &hr
+}
+
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
@@ -680,9 +686,13 @@ func TestHistory(t *testing.T) {
 	if !strings.Contains(string(recJSON), `"payloadSha256":`) || !strings.Contains(string(recJSON), `"signatureB64url":`) {
 		t.Errorf("record JSON = %s", recJSON)
 	}
-	var text struct{ Detail, RevokeConfirm string }
+	var text struct {
+		Detail, RevokeConfirm, DeleteConfirm string
+		OfferRevoke                          bool
+	}
 	h.call(t, "history.recordText", `{"record":`+string(recJSON)+`}`).ok(t, &text)
-	if text.Detail != service.FormatRecordDetail(rec) || text.RevokeConfirm != service.RevokeConfirmText(rec) {
+	if text.Detail != service.FormatRecordDetail(rec) || text.RevokeConfirm != service.RevokeConfirmText(rec) ||
+		text.DeleteConfirm != service.DeleteConfirmText(rec, false, false) || !text.OfferRevoke {
 		t.Errorf("text = %+v", text)
 	}
 
@@ -798,4 +808,88 @@ func TestClassify(t *testing.T) {
 func TestDispatch_NilLogger(t *testing.T) {
 	s := &server{state: stateReady, methods: map[string]handler{"p": func(*server, []byte) (any, error) { panic(1) }}}
 	dispatch(t, s, "p", ``).fails(t, CodeInternal, msgInternal)
+}
+
+// historyChanges counts the history.changed events h's sink received.
+func (h *harness) historyChanges() int {
+	n := 0
+	for _, e := range h.sink.all() {
+		if strings.Contains(e, `"event":"`+service.EventHistoryChanged+`"`) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestHistoryDeleteEntry(t *testing.T) {
+	bob := record(2, "Bob Jones")
+	zoe := record(3, "Zoe\u0308 Smith") // a decomposed accent, kept byte for byte
+	h := newHarnessWith(t, nil, `{"revocations":[{"hash":"`+bob.PayloadSHA256+`","revoked_on":"2026-03-01"}]}`)
+	writeRecords(t, h.dir, []issuancelog.IssuanceRecord{bob, zoe})
+	h.call(t, "history.refresh", ``).ok(t, nil)
+
+	// The record exactly as history.list returned it, newest first.
+	var list struct {
+		Rows []struct{ Record json.RawMessage }
+	}
+	h.call(t, "history.list", `{"query":""}`).ok(t, &list)
+	if len(list.Rows) != 2 {
+		t.Fatalf("rows = %d", len(list.Rows))
+	}
+	zoeJSON, bobJSON := string(list.Rows[0].Record), string(list.Rows[1].Record)
+	if !strings.Contains(zoeJSON, "Zoe\u0308 Smith") {
+		t.Fatalf("rows[0].record = %s", zoeJSON)
+	}
+
+	var text struct {
+		DeleteConfirm string
+		OfferRevoke   bool
+	}
+	h.call(t, "history.recordText", `{"record":`+zoeJSON+`}`).ok(t, &text)
+	if want := service.DeleteConfirmText(*historyRecordOf(zoe), false, false); text.DeleteConfirm != want || !text.OfferRevoke {
+		t.Errorf("active recordText = %+v", text)
+	}
+	h.call(t, "history.recordText", `{"record":`+bobJSON+`}`).ok(t, &text)
+	if want := service.DeleteConfirmText(*historyRecordOf(bob), true, false); text.DeleteConfirm != want || text.OfferRevoke {
+		t.Errorf("revoked recordText = %+v", text)
+	}
+
+	before := h.historyChanges()
+	var res struct{ Backup, Title, Message string }
+	h.call(t, "history.deleteEntry", `{"record":`+zoeJSON+`}`).ok(t, &res)
+	if !strings.HasPrefix(res.Backup, filepath.Join(h.dir, "issuances.json")+".bak-") || res.Title != "Record Deleted" ||
+		res.Message != "Deleted the record for Zoe\u0308 Smith dated 2026-Jan-02. Backup saved to "+res.Backup+"." {
+		t.Errorf("deleteEntry = %+v", res)
+	}
+	if got := h.historyChanges(); got != before+1 {
+		t.Errorf("history.changed events = %d, want %d", got, before+1)
+	}
+	logged, err := issuancelog.ReadLog(filepath.Join(h.dir, "issuances.json"))
+	if err != nil || !reflect.DeepEqual(logged, []issuancelog.IssuanceRecord{bob}) {
+		t.Errorf("log = %+v, %v; want only bob", logged, err)
+	}
+
+	// Gone now: not found, and the history is still reloaded.
+	h.call(t, "history.deleteEntry", `{"record":`+zoeJSON+`}`).fails(t, CodeNotFound, "This record is no longer in the issuance log.")
+	if got := h.historyChanges(); got != before+2 {
+		t.Errorf("history.changed events = %d, want %d", got, before+2)
+	}
+}
+
+func TestHistoryRecordParams_Input(t *testing.T) {
+	h := newHarness(t, nil)
+	for _, m := range []string{"history.recordText", "history.deleteEntry"} {
+		for _, params := range []string{``, `{}`, `{"record":null}`, `{"record":1}`, `{"record":"x"}`, `{"record":{"bogus":1}}`} {
+			h.call(t, m, params).fails(t, CodeInput, msgBadParams)
+		}
+	}
+	// An all-empty record is structurally valid: not input.
+	h.call(t, "history.deleteEntry", `{"record":{}}`).fails(t, CodeNotFound, "This record is no longer in the issuance log.")
+	h.call(t, "history.recordText", `{"record":{}}`).ok(t, nil)
+}
+
+func TestHistoryDeleteEntry_Unreadable(t *testing.T) {
+	h := newHarness(t, nil)
+	writeFile(t, filepath.Join(h.dir, "issuances.json"), "not json")
+	h.call(t, "history.deleteEntry", `{"record":{"recipient":"x"}}`).fails(t, CodeFailed, "Could not read the issuance log.")
 }

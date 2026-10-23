@@ -349,10 +349,33 @@ public struct RecordTextResult: Codable, Sendable, Equatable {
     public var detail: String
     /// Display only.
     public var revokeConfirm: String
+    /// The question to ask before deleting the record; display only.
+    public var deleteConfirm: String
+    /// Offer revoking instead of deleting: the credential is not known to be
+    /// revoked.
+    public var offerRevoke: Bool
 
-    public init(detail: String, revokeConfirm: String) {
+    public init(detail: String, revokeConfirm: String, deleteConfirm: String, offerRevoke: Bool) {
         self.detail = detail
         self.revokeConfirm = revokeConfirm
+        self.deleteConfirm = deleteConfirm
+        self.offerRevoke = offerRevoke
+    }
+}
+
+/// history.deleteEntry.
+public struct DeleteEntryResult: Codable, Sendable, Equatable {
+    /// Path of the backup of the log before the deletion.
+    public var backup: String
+    /// Display only.
+    public var title: String
+    /// Display only.
+    public var message: String
+
+    public init(backup: String, title: String, message: String) {
+        self.backup = backup
+        self.title = title
+        self.message = message
     }
 }
 

@@ -213,7 +213,7 @@ public interface IBridge
         return Call(RpcMethod.HistoryList, new HistoryListParams(query), Json.HistoryListParams, Json.HistoryListResult);
     }
 
-    /// <summary>history.recordText: <paramref name="record"/>'s detail text and revoke question.</summary>
+    /// <summary>history.recordText: <paramref name="record"/>'s detail text and its revoke and delete questions.</summary>
     Task<RecordTextResult> RecordTextAsync(HistoryRecord record)
     {
         return Call(RpcMethod.HistoryRecordText, new RecordParams(record), Json.RecordParams, Json.RecordTextResult);
@@ -241,6 +241,17 @@ public interface IBridge
     Task<RemoveDuplicatesResult> RemoveDuplicatesAsync()
     {
         return Call(RpcMethod.HistoryRemoveDuplicates, Json.RemoveDuplicatesResult);
+    }
+
+    /// <summary>
+    /// history.deleteEntry: backs up the issuance log, then deletes
+    /// <paramref name="record"/> (as history.list returned it); emits
+    /// history.changed, also when the record is no longer in the log
+    /// (<see cref="RpcErrorCode.NotFound"/>).
+    /// </summary>
+    Task<DeleteEntryResult> DeleteEntryAsync(HistoryRecord record)
+    {
+        return Call(RpcMethod.HistoryDeleteEntry, new RecordParams(record), Json.RecordParams, Json.DeleteEntryResult);
     }
 
     /// <summary>audit.commits: the registry's GitHub commit history.</summary>

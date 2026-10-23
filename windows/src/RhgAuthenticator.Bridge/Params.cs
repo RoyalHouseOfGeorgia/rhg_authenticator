@@ -85,8 +85,8 @@ public sealed record PinCancelParams(ulong RequestId);
 /// <param name="Query">Filter text; "" lists every record.</param>
 public sealed record HistoryListParams(string Query);
 
-/// <summary>history.recordText.</summary>
-/// <param name="Record">A record from history.list.</param>
+/// <summary>history.recordText, history.deleteEntry.</summary>
+/// <param name="Record">A record exactly as history.list returned it.</param>
 public sealed record RecordParams(HistoryRecord Record);
 
 /// <summary>history.revoke.</summary>

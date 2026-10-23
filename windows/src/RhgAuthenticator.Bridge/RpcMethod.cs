@@ -19,6 +19,7 @@ public static class RpcMethod
     public const string BulkExportResults = "bulk.exportResults";
     public const string BulkLoad = "bulk.load";
     public const string BulkRun = "bulk.run";
+    public const string HistoryDeleteEntry = "history.deleteEntry";
     public const string HistoryDuplicatePreview = "history.duplicatePreview";
     public const string HistoryExportIssuanceLog = "history.exportIssuanceLog";
     public const string HistoryList = "history.list";
@@ -49,8 +50,8 @@ public static class RpcMethod
     public static IReadOnlyList<string> All { get; } =
     [
         AppCanQuit, AppExportErrorLog, AppInfo, AppInit, AppShutdown, AppStart, AuditCommits, AuthCancelLogin,
-        AuthLogin, AuthLogout, AuthState, BulkCancel, BulkExportResults, BulkLoad, BulkRun, HistoryDuplicatePreview,
-        HistoryExportIssuanceLog, HistoryList, HistoryRecordText, HistoryRefresh, HistoryRemoveDuplicates,
+        AuthLogin, AuthLogout, AuthState, BulkCancel, BulkExportResults, BulkLoad, BulkRun, HistoryDeleteEntry,
+        HistoryDuplicatePreview, HistoryExportIssuanceLog, HistoryList, HistoryRecordText, HistoryRefresh, HistoryRemoveDuplicates,
         HistoryRevoke, PinCancel, PinSubmit, RegistryAddEntry, RegistryColumns, RegistryFetch,
         RegistryImportCertificate, RegistryImportFromYubiKey, RegistrySnapshot, RegistrySubmit, RegistryUpdateEntry,
         SignHonors, SignReportError, SignSaveQr, SignSign, SignValidate, UpdateCurrent, YubikeyCheck,

@@ -36,9 +36,14 @@ var (
 	ErrNothingToExport = errors.New("No credentials have been signed on this computer yet.")
 )
 
-// msgIssuanceLogUnreadable is the error text when the issuance log can't be
-// read for an export or duplicate check.
-const msgIssuanceLogUnreadable = "Could not read the issuance log."
+// Error texts for the issuance log methods.
+const (
+	// msgIssuanceLogUnreadable is the error text when the issuance log can't
+	// be read for an export, duplicate check or record deletion.
+	msgIssuanceLogUnreadable = "Could not read the issuance log."
+	msgRecordNotInLog        = "This record is no longer in the issuance log."
+	msgDeleteFailed          = "Could not delete the record. The issuance log was not changed."
+)
 
 // historyState is the issuance history held under App.mu.
 type historyState struct {
@@ -65,17 +70,16 @@ type HistoryRecord struct {
 	SignatureB64URL string `json:"signatureB64url"`
 }
 
-// historyRecord returns the HistoryRecord for rec.
+// historyRecord returns the HistoryRecord for rec. HistoryRecord keeps
+// IssuanceRecord's fields (only the JSON tags differ), so a field added to
+// one but not the other fails to compile here.
 func historyRecord(rec issuancelog.IssuanceRecord) HistoryRecord {
-	return HistoryRecord{
-		Timestamp:       rec.Timestamp,
-		Recipient:       rec.Recipient,
-		Honor:           rec.Honor,
-		Detail:          rec.Detail,
-		Date:            rec.Date,
-		PayloadSHA256:   rec.PayloadSHA256,
-		SignatureB64URL: rec.SignatureB64URL,
-	}
+	return HistoryRecord(rec)
+}
+
+// issuanceRecord returns the issuance log record for rec.
+func issuanceRecord(rec HistoryRecord) issuancelog.IssuanceRecord {
+	return issuancelog.IssuanceRecord(rec)
 }
 
 // HistoryRow is one issuance record in the history list.
@@ -132,6 +136,33 @@ func FormatRecordDetail(rec HistoryRecord) string {
 // RevokeConfirmText returns the confirmation prompt for revoking rec.
 func RevokeConfirmText(rec HistoryRecord) string {
 	return fmt.Sprintf("Revoke credential for %s dated %s?\n\nThis cannot be undone.", rec.Recipient, core.FormatDateDisplay(rec.Date))
+}
+
+// DeleteConfirmText returns the question asked before deleting rec from the
+// issuance log. revoked says the credential is revoked; otherwise
+// anotherRemains says another record of the same credential stays in the log,
+// and without one the question warns that the credential stays valid and can
+// no longer be revoked from the app.
+func DeleteConfirmText(rec HistoryRecord, revoked, anotherRemains bool) string {
+	date := core.FormatDateDisplay(rec.Date)
+	const backup = "\n\nA backup of the log is saved first."
+	switch {
+	case revoked:
+		return fmt.Sprintf("Are you sure you want to delete the record for %s dated %s from this computer's issuance log?", rec.Recipient, date) + backup
+	case anotherRemains:
+		return fmt.Sprintf("Are you sure you want to delete this record for %s dated %s from this computer's issuance log?"+
+			" Another record of this credential remains in the log.", rec.Recipient, date) + backup
+	default:
+		return fmt.Sprintf("Are you sure you want to delete the record for %s dated %s from this computer's issuance log?"+
+			"\n\nThe credential stays valid: anyone with its QR code can still verify it, and once the record is deleted"+
+			" it can no longer be revoked from this app. Did you mean to revoke it instead?", rec.Recipient, date) + backup
+	}
+}
+
+// RecordDeletedText returns the title and message reporting that rec was
+// deleted from the issuance log after a backup to backup.
+func RecordDeletedText(rec HistoryRecord, backup string) (title, message string) {
+	return "Record Deleted", fmt.Sprintf("Deleted the record for %s dated %s. Backup saved to %s.", rec.Recipient, core.FormatDateDisplay(rec.Date), backup)
 }
 
 // DuplicatesConfirmText returns the question asked before removing n
@@ -394,4 +425,70 @@ func (a *App) RemoveDuplicates() (removed int, backup string, err error) {
 		a.loadHistory()
 	}
 	return removed, backup, nil
+}
+
+// DeleteConfirm returns the question to ask before DeleteEntry deletes rec,
+// and whether to offer revoking it instead: true unless rec's credential is
+// revoked. Before the revocation list has loaded, or when its first fetch
+// failed, every credential counts as not revoked. The question says whether
+// another record of the credential remains in the loaded history: one with
+// the same payload hash (case-insensitive, never empty) and a well-formed
+// signature, other than rec itself.
+func (a *App) DeleteConfirm(rec HistoryRecord) (message string, offerRevoke bool) {
+	a.mu.Lock()
+	revoked := core.IsRevoked(rec.PayloadSHA256, a.history.revoked)
+	anotherRemains := !revoked && a.otherCopiesLocked(rec) > 0
+	a.mu.Unlock()
+	return DeleteConfirmText(rec, revoked, anotherRemains), !revoked
+}
+
+// otherCopiesLocked counts the loaded records, other than rec, that are the
+// issued credential for rec's payload hash (see issuancelog.IssuedKey).
+// Identical copies of rec count; only the first record equal to rec is rec
+// itself, and none is when rec is no longer loaded. a.mu must be held.
+func (a *App) otherCopiesLocked(rec HistoryRecord) int {
+	if rec.PayloadSHA256 == "" {
+		return 0
+	}
+	self := issuanceRecord(rec)
+	hash := strings.ToLower(rec.PayloadSHA256)
+	n := 0
+	skipped := false
+	for _, r := range a.history.records {
+		if !skipped && r == self {
+			skipped = true
+			continue
+		}
+		// The hash check first: IssuedKey decodes the signature.
+		if !strings.EqualFold(r.PayloadSHA256, hash) {
+			continue
+		}
+		if _, ok := issuancelog.IssuedKey(r); ok {
+			n++
+		}
+	}
+	return n
+}
+
+// DeleteEntry deletes the first issuance log record equal to rec (every
+// field, exact match), backing the log up first, and returns the backup path.
+// It reloads the history (emitting EventHistoryChanged) after deleting and
+// when no record matched; the latter returns an error matching ErrNotFound.
+// Errors are logged and their text is user-facing.
+func (a *App) DeleteEntry(rec HistoryRecord) (backup string, err error) {
+	backup, err = issuancelog.RemoveRecord(a.logPath, issuanceRecord(rec))
+	switch {
+	case err == nil:
+		a.loadHistory()
+		return backup, nil
+	case errors.Is(err, issuancelog.ErrRecordNotFound):
+		a.loadHistory()
+		return "", userErr(msgRecordNotInLog, ErrNotFound, err)
+	case errors.Is(err, issuancelog.ErrLogUnreadable):
+		a.logger.Logf("history: failed to read log for delete: %s", core.SanitizeForLog(err.Error()))
+		return "", userErr(msgIssuanceLogUnreadable, err)
+	default:
+		a.logger.Logf("history: delete record failed: %s", core.SanitizeForLog(err.Error()))
+		return "", userErr(msgDeleteFailed, err)
+	}
 }

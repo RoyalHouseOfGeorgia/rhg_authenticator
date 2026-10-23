@@ -689,7 +689,7 @@ public sealed class AppViewModelTests
         _fake.Emit(new BridgeEvent.HistoryChanged());
         Assert.True(await Fixtures.Settle(() => app.History.Snapshot.Rows.Count == count));
         _fake.Reset(RpcMethod.HistoryList);
-        _fake.Respond(RpcMethod.HistoryRecordText, new RecordTextResult("detail", "revoke?"));
+        _fake.Respond(RpcMethod.HistoryRecordText, new RecordTextResult("detail", "revoke?", "delete?", OfferRevoke: true));
         await app.History.SelectAsync(0);
         Assert.Equal("detail", app.History.SelectedDetail);
         return app;

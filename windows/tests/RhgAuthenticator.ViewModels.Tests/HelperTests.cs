@@ -343,3 +343,31 @@ public sealed class UpdateBannerTests
         Assert.Throws<ArgumentNullException>(() => UpdateBanner.From(null!));
     }
 }
+
+public sealed class ConfirmServiceTests
+{
+    private static readonly Confirmation s_question = new("Title", "Message?", "OK");
+
+    [Theory]
+    [InlineData(ConfirmChoice.Confirm, true)]
+    [InlineData(ConfirmChoice.Cancel, false)]
+    [InlineData(ConfirmChoice.Alternate, false)]
+    public void AskIsWhetherTheConfirmButtonWasChosen(ConfirmChoice choice, bool confirmed)
+    {
+        var fake = new FakeConfirm();
+        fake.Answer(choice);
+        IConfirmService confirm = fake;
+        Assert.Equal(confirmed, confirm.Ask(s_question));
+        Assert.Equal([s_question], fake.Questions);
+    }
+
+    [Fact]
+    public void AQuestionHasTwoButtonsUnlessGivenAnAlternate()
+    {
+        Assert.Equal(("Title", "Message?", "OK"), (s_question.Title, s_question.Message, s_question.ConfirmTitle));
+        Assert.Null(s_question.AlternateTitle);
+        Assert.Equal("Cancel", s_question.CancelTitle);
+        Assert.False(s_question.IsDestructive);
+        Assert.Equal("Other", (s_question with { AlternateTitle = "Other" }).AlternateTitle);
+    }
+}

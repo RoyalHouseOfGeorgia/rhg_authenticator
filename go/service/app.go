@@ -109,9 +109,10 @@ const (
 	// EventRegistryChanged fires after a fetch replaces the edited registry, and
 	// after the Start fetch even if it failed (Registry().Loaded then stays false). Payload: nil.
 	EventRegistryChanged = "registry.changed"
-	// EventHistoryChanged fires after RefreshHistory, RemoveDuplicates, a Sign
-	// that wrote a new record, or a RunBulk that signed any row re-reads the
-	// issuance log, even if the read failed
+	// EventHistoryChanged fires after RefreshHistory, RemoveDuplicates,
+	// DeleteEntry (also when the record was not found), a Sign that wrote a new
+	// record, or a RunBulk that signed any row re-reads the issuance log, even
+	// if the read failed
 	// (HistorySnapshot.LoadFailed). The records may have changed, so a UI
 	// resets its selection. Payload: nil.
 	EventHistoryChanged = "history.changed"

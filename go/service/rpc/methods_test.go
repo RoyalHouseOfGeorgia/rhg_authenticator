@@ -38,6 +38,8 @@ var appMethods = map[string]string{
 	"ExportIssuanceLog": "history.exportIssuanceLog",
 	"DuplicatePreview":  "history.duplicatePreview",
 	"RemoveDuplicates":  "history.removeDuplicates",
+	"DeleteConfirm":     "history.recordText",
+	"DeleteEntry":       "history.deleteEntry",
 	"AuditCommits":      "audit.commits",
 	"Start":             "app.start",
 	"Close":             "app.shutdown",
@@ -51,7 +53,7 @@ var excludedAppMethods = []string{"IssuanceLogExport", "ErrorLogExport"}
 // nonAppMethods are rpc methods backed by package-level service functions,
 // SignFields or the server itself.
 var nonAppMethods = []string{
-	"sign.validate", "registry.columns", "history.recordText",
+	"sign.validate", "registry.columns",
 	"app.init", "app.exportErrorLog", "pin.submit", "pin.cancel", "update.current",
 }
 

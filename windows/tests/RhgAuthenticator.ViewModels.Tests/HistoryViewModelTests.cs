@@ -50,10 +50,31 @@ public sealed class HistoryViewModelTests
         return task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
     }
 
-    private static RecordTextResult Text(int n)
+    private static RecordTextResult Text(int n, bool offerRevoke = true)
     {
-        return new RecordTextResult($"Detail of record {n}", $"Revoke the credential of Recipient {n}?");
+        return new RecordTextResult(
+            $"Detail of record {n}", $"Revoke the credential of Recipient {n}?", $"Delete the record of Recipient {n}?", offerRevoke);
     }
+
+    /// <summary>The delete question the core's text for record <paramref name="n"/> asks.</summary>
+    private static Confirmation DeleteQuestion(int n, bool offerRevoke = true)
+    {
+        return new Confirmation(
+            "Delete Issuance Record", $"Delete the record of Recipient {n}?", "Delete", "Cancel", IsDestructive: true,
+            AlternateTitle: offerRevoke ? "Revoke Instead" : null);
+    }
+
+    /// <summary>The revoke question the core's text for record <paramref name="n"/> asks.</summary>
+    private static Confirmation RevokeQuestion(int n)
+    {
+        return new Confirmation("Confirm Revocation", $"Revoke the credential of Recipient {n}?", "Revoke", "Cancel", IsDestructive: true);
+    }
+
+    private static readonly RevokeResult s_submitted =
+        new(RevokeStatus.Submitted, 12, "https://github.com/x/pull/12", "Revocation Submitted", "PR #12 opened.");
+
+    private static readonly DeleteEntryResult s_deleted =
+        new("/data/issuances.json.bak", "Core Deleted Title", "Core says: deleted it.");
 
     private static string RecordJson(int n)
     {
@@ -86,6 +107,14 @@ public sealed class HistoryViewModelTests
     {
         Assert.Equal("Search by recipient...", HistoryViewModel.SearchPlaceholder);
         Assert.Equal(["Refresh", "Revoke"], [HistoryViewModel.RefreshTitle, HistoryViewModel.RevokeTitle]);
+        Assert.Equal([.. "Delete Entry"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(HistoryViewModel.DeleteEntryTitle));
+        Assert.Equal("Select a record to delete it.", HistoryViewModel.DeleteEntryTooltip);
+        Assert.Equal(
+            ["Delete Issuance Record", "Delete", "Revoke Instead", "Record Not Found", "Delete Failed"],
+            [
+                HistoryViewModel.DeleteRecordConfirmTitle, HistoryViewModel.DeleteTitle, HistoryViewModel.RevokeInsteadTitle,
+                HistoryViewModel.RecordNotFoundTitle, HistoryViewModel.DeleteFailedTitle,
+            ]);
         Assert.Equal([.. "Export Issuance Log"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(HistoryViewModel.ExportTitle));
         Assert.Equal([.. "Remove Duplicates"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(HistoryViewModel.RemoveDuplicatesTitle));
         Assert.Equal("Revocation unavailable", HistoryViewModel.RevocationUnavailableStatus);
@@ -134,8 +163,10 @@ public sealed class HistoryViewModelTests
         Assert.Equal("", history.Status);
         Assert.Equal("", history.RevocationStatus);
         Assert.False(history.IsRevoking);
+        Assert.False(history.IsDeleting);
         Assert.True(history.PendingSearch.IsCompleted);
         Assert.False(history.RevokeCommand.CanExecute(null));
+        Assert.False(history.DeleteEntryCommand.CanExecute(null));
         Assert.True(history.RefreshCommand.CanExecute(null));
         Assert.Empty(_fake.Calls);
     }
@@ -738,6 +769,323 @@ public sealed class HistoryViewModelTests
         Assert.False(history.IsRevoking);
         await _alerts.DismissAsync();
         Assert.Equal(0, _fake.Count(RpcMethod.AuthLogin));
+    }
+
+    // Delete Entry…
+
+    [Fact]
+    public async Task DeleteEntryNeedsASelectedRowRevokedOrNotWithRevokingUnavailable()
+    {
+        var history = await Loaded(List([1, 2], revokeAvailable: false, revoked: [2]));
+        var changes = 0;
+        history.DeleteEntryCommand.CanExecuteChanged += (_, _) => changes++;
+        Assert.False(history.DeleteEntryCommand.CanExecute(null));
+        await history.DeleteEntryCommand.ExecuteAsync(null); // ignored
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryRecordText));
+        Assert.Empty(_confirm.Questions);
+
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(2, offerRevoke: false));
+        await history.SelectAsync(1);
+        Assert.True(changes > 0);
+        Assert.True(history.DeleteEntryCommand.CanExecute(null)); // revoked, revoking unavailable: still deletable
+        Assert.False(history.RevokeCommand.CanExecute(null));
+
+        changes = 0;
+        _fake.Respond(RpcMethod.HistoryList, List([1]));
+        await history.RereadAsync(); // the selected row is gone
+        Assert.True(changes > 0);
+        Assert.Null(history.SelectedIndex);
+        Assert.False(history.DeleteEntryCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task ASnapshotChangeReRaisesDeleteEntrysCanExecute()
+    {
+        var history = await Selected(0);
+        var changes = 0;
+        history.DeleteEntryCommand.CanExecuteChanged += (_, _) => changes++;
+        _fake.Respond(RpcMethod.HistoryList, List([1, 2, 3], revoked: [1]));
+        await history.RereadAsync();
+        Assert.Equal(0, history.SelectedIndex);
+        Assert.True(changes > 0);
+        Assert.True(history.DeleteEntryCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task DeleteEntryIsDisabledWhileARevocationRuns()
+    {
+        var held = _fake.Hold(RpcMethod.HistoryRevoke);
+        _confirm.Answer(true);
+        var history = await Selected(0);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
+        var changes = 0;
+        history.DeleteEntryCommand.CanExecuteChanged += (_, _) => changes++;
+        var revoking = history.RevokeCommand.ExecuteAsync(null);
+        Assert.True(await Fixtures.Settle(() => _fake.Count(RpcMethod.HistoryRevoke) == 1));
+        Assert.True(history.IsRevoking);
+        Assert.Equal(0, history.SelectedIndex);
+        Assert.False(history.DeleteEntryCommand.CanExecute(null));
+        Assert.True(changes > 0);
+        _fake.Respond(RpcMethod.HistoryList, List([1, 2, 3], revoked: [1]));
+        held.Release(s_submitted);
+        await revoking;
+        Assert.False(history.IsRevoking);
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryDeleteEntry));
+    }
+
+    [Fact]
+    public async Task RevokeAndDeleteEntryAreDisabledWhileADeletionRuns()
+    {
+        var held = _fake.Hold(RpcMethod.HistoryDeleteEntry);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        var history = await Selected(0);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
+        Assert.True(history.RevokeCommand.CanExecute(null));
+        var revokeChanges = 0;
+        history.RevokeCommand.CanExecuteChanged += (_, _) => revokeChanges++;
+        var deleting = history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.True(await Fixtures.Settle(() => _fake.Count(RpcMethod.HistoryDeleteEntry) == 1));
+        Assert.True(history.IsDeleting);
+        Assert.Equal(0, history.SelectedIndex);
+        Assert.False(history.RevokeCommand.CanExecute(null));
+        Assert.False(history.DeleteEntryCommand.CanExecute(null));
+        Assert.True(revokeChanges > 0);
+        await history.RevokeCommand.ExecuteAsync(null); // ignored
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryRevoke));
+        held.Release(s_deleted);
+        await deleting;
+        Assert.False(history.IsDeleting);
+        Assert.True(history.RevokeCommand.CanExecute(null));
+        Assert.True(history.DeleteEntryCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task DeleteEntryIsDisabledWhileARevokeInsteadRuns()
+    {
+        var held = _fake.Hold(RpcMethod.HistoryRevoke);
+        _confirm.Answer(ConfirmChoice.Alternate);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        var history = await Selected(0);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
+        var revoking = history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.True(await Fixtures.Settle(() => _fake.Count(RpcMethod.HistoryRevoke) == 1));
+        Assert.True(history.IsRevoking);
+        Assert.False(history.IsDeleting);
+        Assert.False(history.DeleteEntryCommand.CanExecute(null));
+        Assert.False(history.RevokeCommand.CanExecute(null));
+        _fake.Respond(RpcMethod.HistoryList, List([1, 2, 3], revoked: [1]));
+        held.Release(s_submitted);
+        await revoking;
+        Assert.False(history.IsRevoking);
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryDeleteEntry));
+    }
+
+    [Fact]
+    public async Task AnActiveRecordsQuestionOffersRevokeInsteadInTheCoresWords()
+    {
+        var history = await Selected(1);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(2));
+        await history.DeleteEntryCommand.ExecuteAsync(null); // cancelled
+        Assert.Equal([DeleteQuestion(2)], _confirm.Questions);
+        Assert.Equal([RecordJson(2), RecordJson(2)], _fake.Params(RpcMethod.HistoryRecordText));
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryDeleteEntry));
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryRevoke));
+        Assert.Equal(1, history.SelectedIndex);
+        Assert.False(history.IsDeleting);
+        Assert.Null(_alerts.Current);
+    }
+
+    [Fact]
+    public async Task ARevokedRecordsQuestionHasTwoButtons()
+    {
+        var history = await Selected(0, List([1, 2], revoked: [1]));
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1, offerRevoke: false));
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        var question = Assert.Single(_confirm.Questions);
+        Assert.Equal(DeleteQuestion(1, offerRevoke: false), question);
+        Assert.Null(question.AlternateTitle);
+    }
+
+    [Fact]
+    public async Task WithoutRevokeInsteadAnAlternateAnswerDoesNothing()
+    {
+        var history = await Selected(0, List([1, 2], revoked: [1]));
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1, offerRevoke: false));
+        _confirm.Answer(ConfirmChoice.Alternate);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Single(_confirm.Questions);
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryRevoke));
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryDeleteEntry));
+        Assert.Null(_alerts.Current);
+    }
+
+    [Fact]
+    public async Task ConfirmedDeleteDeletesTheRecordAndShowsTheCoresAlert()
+    {
+        var history = await Selected(1);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(2));
+        _fake.Respond(RpcMethod.HistoryDeleteEntry, s_deleted);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Equal([RecordJson(2)], _fake.Params(RpcMethod.HistoryDeleteEntry));
+        Assert.Equal(new AlertState("Core Deleted Title", "Core says: deleted it."), _alerts.Current);
+        Assert.False(_alerts.Current!.IsError);
+        Assert.False(history.IsDeleting);
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryRevoke));
+        // The list reloads on the core's history.changed, not here.
+        Assert.Equal(1, _fake.Count(RpcMethod.HistoryList)); // the load's only
+    }
+
+    [Fact]
+    public async Task RevokeInsteadRevokesTheCapturedRecordAfterTheRevokeQuestion()
+    {
+        var history = await Selected(0);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
+        _confirm.Answer(ConfirmChoice.Alternate);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        var revoked = List([1, 2, 3], revoked: [1]);
+        _fake.Respond(RpcMethod.HistoryList, revoked);
+        _fake.Respond(RpcMethod.HistoryRevoke, s_submitted);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Equal([DeleteQuestion(1), RevokeQuestion(1)], _confirm.Questions);
+        Assert.Equal(["{\"payloadSha256\":\"hash1\"}"], _fake.Params(RpcMethod.HistoryRevoke));
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryDeleteEntry));
+        Assert.Same(revoked, history.Snapshot);
+        Assert.False(history.IsRevoking);
+        Assert.Equal(new AlertState("Revocation Submitted", "PR #12 opened."), _alerts.Current);
+    }
+
+    [Fact]
+    public async Task DecliningTheRevokeQuestionAfterRevokeInsteadDoesNothing()
+    {
+        var history = await Selected(0);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
+        _confirm.Answer(ConfirmChoice.Alternate);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Equal([DeleteQuestion(1), RevokeQuestion(1)], _confirm.Questions);
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryRevoke));
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryDeleteEntry));
+        Assert.Null(_alerts.Current);
+    }
+
+    [Fact]
+    public async Task RevokeInsteadWhileLoggedOutStartsTheLogin()
+    {
+        var history = await Selected(0, List([1, 2, 3], revokeAvailable: false));
+        Assert.False(history.RevokeCommand.CanExecute(null));
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
+        _confirm.Answer(ConfirmChoice.Alternate);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        _fake.Fail(RpcMethod.HistoryRevoke, new RpcException(RpcErrorCode.NotLoggedIn, "Not logged in to GitHub."));
+        _fake.Respond(RpcMethod.AuthLogin, Fixtures.LoggedIn);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Equal([RpcMethod.HistoryRevoke, RpcMethod.AuthLogin], _fake.Methods.TakeLast(2));
+        Assert.False(history.IsRevoking);
+        Assert.Equal("Logged in as @octocat", history.Status);
+        Assert.Null(_alerts.Current);
+    }
+
+    [Fact]
+    public async Task RevokeInsteadWithTheRevocationListNotLoadedShowsRevocationFailed()
+    {
+        const string Message = "The revocation list has not loaded yet.";
+        var history = await Selected(0, List([1, 2, 3], revokeAvailable: false, revocationsUnavailable: true));
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
+        _confirm.Answer(ConfirmChoice.Alternate);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        _fake.Fail(RpcMethod.HistoryRevoke, new RpcException(RpcErrorCode.Failed, Message));
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Equal(new AlertState("Revocation Failed", Message, OffersErrorLogExport: true), _alerts.Current);
+        Assert.False(history.IsRevoking);
+        Assert.Equal(0, _fake.Count(RpcMethod.AuthLogin));
+    }
+
+    [Fact]
+    public async Task HistoryChangedWhileTheQuestionIsOpenStillDeletesTheCapturedRecord()
+    {
+        var history = await Selected(1);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(2));
+        _fake.Respond(RpcMethod.HistoryDeleteEntry, s_deleted);
+        var moved = List([4, 1, 2, 3]);
+        _fake.Respond(RpcMethod.HistoryList, moved);
+        Task changed = Task.CompletedTask;
+        _confirm.OnAsk = _ => changed = history.HistoryChangedAsync();
+        _confirm.Answer(ConfirmChoice.Confirm);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        await changed;
+        Assert.Same(moved, history.Snapshot);
+        Assert.Null(history.SelectedIndex);
+        Assert.Equal([RecordJson(2)], _fake.Params(RpcMethod.HistoryDeleteEntry));
+        Assert.Equal(new AlertState("Core Deleted Title", "Core says: deleted it."), _alerts.Current);
+    }
+
+    [Fact]
+    public async Task HistoryChangedWhileTheQuestionIsOpenStillRevokesTheCapturedRecord()
+    {
+        var history = await Selected(1);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(2));
+        _fake.Respond(RpcMethod.HistoryRevoke, s_submitted);
+        var moved = List([4, 1, 2, 3]);
+        _fake.Respond(RpcMethod.HistoryList, moved);
+        Task changed = Task.CompletedTask;
+        _confirm.OnAsk = question =>
+        {
+            if (question.Title == HistoryViewModel.DeleteRecordConfirmTitle)
+            {
+                changed = history.HistoryChangedAsync();
+            }
+        };
+        _confirm.Answer(ConfirmChoice.Alternate);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        await changed;
+        Assert.Equal([DeleteQuestion(2), RevokeQuestion(2)], _confirm.Questions);
+        Assert.Equal(["{\"payloadSha256\":\"hash2\"}"], _fake.Params(RpcMethod.HistoryRevoke));
+        Assert.Equal([RecordJson(2), RecordJson(2), RecordJson(2)], _fake.Params(RpcMethod.HistoryRecordText));
+        Assert.Equal(new AlertState("Revocation Submitted", "PR #12 opened."), _alerts.Current);
+    }
+
+    [Fact]
+    public async Task ARecordNoLongerInTheLogShowsRecordNotFound()
+    {
+        const string Message = "This record is no longer in the issuance log.";
+        var history = await Selected(0);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
+        _fake.Fail(RpcMethod.HistoryDeleteEntry, new RpcException(RpcErrorCode.NotFound, Message));
+        _confirm.Answer(ConfirmChoice.Confirm);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Equal(new AlertState("Record Not Found", Message), _alerts.Current);
+        Assert.False(_alerts.Current!.OffersErrorLogExport);
+        Assert.False(history.IsDeleting);
+    }
+
+    [Theory]
+    [InlineData("failed")]
+    [InlineData("input")]
+    [InlineData("internal")]
+    [InlineData("future")]
+    public async Task AnyOtherDeleteFailureShowsDeleteFailedOfferingTheErrorLog(string code)
+    {
+        const string Message = "Could not delete the record. The issuance log was not changed.";
+        var history = await Selected(0);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
+        _fake.Fail(RpcMethod.HistoryDeleteEntry, new RpcException(code, Message));
+        _confirm.Answer(ConfirmChoice.Confirm);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Equal(new AlertState("Delete Failed", Message, OffersErrorLogExport: true), _alerts.Current);
+        Assert.False(history.IsDeleting);
+        Assert.True(history.DeleteEntryCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task ARecordTextFailureBeforeDeletingShowsTheCoresErrorAndAsksNothing()
+    {
+        var history = await Selected(0);
+        _fake.Fail(RpcMethod.HistoryRecordText, new RpcException(RpcErrorCode.Failed, "no text"));
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Empty(_confirm.Questions);
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryDeleteEntry));
+        Assert.Equal(new AlertState("Error", "no text"), _alerts.Current);
     }
 
     // Export Issuance Log…

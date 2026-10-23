@@ -3,8 +3,9 @@ import Observation
 import RHGBridge
 
 /// The History tab: the issuance log with its search, Refresh, Connect to
-/// GitHub, Revoke, Export Issuance Log… and Remove Duplicates…. The core
-/// reads, filters, words and revokes; this model shows what it returns.
+/// GitHub, Revoke, Delete Entry…, Export Issuance Log… and Remove
+/// Duplicates…. The core reads, filters, words, revokes and deletes; this
+/// model shows what it returns.
 @MainActor
 @Observable
 public final class HistoryModel {
@@ -14,6 +15,15 @@ public final class HistoryModel {
     nonisolated public static let revokeTitle = "Revoke"
     nonisolated public static let exportTitle = "Export Issuance Log\u{2026}"
     nonisolated public static let removeDuplicatesTitle = "Remove Duplicates\u{2026}"
+    nonisolated public static let deleteTitle = "Delete Entry\u{2026}"
+    nonisolated public static let deleteTooltip = "Select a record to delete it."
+    /// The delete question's title and buttons.
+    nonisolated public static let deleteQuestionTitle = "Delete Issuance Record"
+    nonisolated public static let deleteConfirmTitle = "Delete"
+    nonisolated public static let revokeInsteadTitle = "Revoke Instead"
+    /// The alerts of a deletion that did not happen.
+    nonisolated public static let deleteNotFoundTitle = "Record Not Found"
+    nonisolated public static let deleteFailedTitle = "Delete Failed"
     nonisolated public static let revocationUnavailableStatus = "Revocation unavailable"
 
     /// The log as last read, filtered by the search.
@@ -24,9 +34,12 @@ public final class HistoryModel {
     /// The selected row's index in `snapshot.rows`. An index, not a
     /// credential id: duplicate rows share a payload hash.
     public private(set) var selection: Int?
-    /// A revocation is being submitted; Revoke stays disabled.
+    /// A revocation is being submitted; Revoke and Delete Entry… stay disabled.
     public private(set) var isRevoking = false
-    /// Ask this; answer with `confirm()` or `dismissConfirmation()`.
+    /// A deletion is being made; Delete Entry… and Revoke stay disabled.
+    public private(set) var isDeleting = false
+    /// Ask this; answer with `confirm()`, `dismissConfirmation()` or, when it
+    /// has an `alternateTitle`, `alternate()`.
     public private(set) var pendingConfirmation: Confirmation?
     /// The alert to show; `alertDismissed()` when the operator closes it.
     public private(set) var alert: AlertState?
@@ -40,6 +53,8 @@ public final class HistoryModel {
     @ObservationIgnored private let debounce: Duration
     /// Runs when the pending confirmation is confirmed.
     @ObservationIgnored private var confirmAction: (@MainActor () async -> Void)?
+    /// Runs when the pending confirmation's alternate button is picked.
+    @ObservationIgnored private var alternateAction: (@MainActor () async -> Void)?
     /// Runs when the alert is dismissed.
     @ObservationIgnored private var alertAction: (@MainActor () async -> Void)?
     /// Counts list reads, so only the latest one is applied.
@@ -70,12 +85,21 @@ public final class HistoryModel {
     public var showsConnectButton: Bool { !login.hasUsableSession }
 
     /// Revoke is enabled for a selected, unrevoked row when the core allows
-    /// revoking and no revocation is being submitted.
+    /// revoking and no revocation or deletion is under way.
     public var canRevoke: Bool {
-        guard !isRevoking, snapshot.revokeAvailable, let selection, snapshot.rows.indices.contains(selection) else {
+        guard !isRevoking, !isDeleting, snapshot.revokeAvailable, let selection,
+            snapshot.rows.indices.contains(selection)
+        else {
             return false
         }
         return !snapshot.rows[selection].revoked
+    }
+
+    /// Delete Entry… is enabled for a selected row while no revocation or
+    /// deletion is under way.
+    public var canDelete: Bool {
+        guard !isRevoking, !isDeleting, let selection else { return false }
+        return snapshot.rows.indices.contains(selection)
     }
 
     /// "Revocation unavailable" when the revocation list could not be fetched.
@@ -181,7 +205,12 @@ public final class HistoryModel {
     /// Revoke: asks the core's question about the selected row, then revokes it.
     public func revokeTapped() async {
         guard canRevoke, let selection else { return }
-        let record = snapshot.rows[selection].record
+        await revokeAsking(snapshot.rows[selection].record)
+    }
+
+    /// Asks the core's revoke question about `record` (history.recordText),
+    /// then revokes it.
+    private func revokeAsking(_ record: HistoryRecord) async {
         let text: RecordTextResult
         do {
             text = try await bridge.recordText(record)
@@ -224,6 +253,51 @@ public final class HistoryModel {
         // The row now reads revoked.
         resetSelection()
         await reread()
+        show(AlertState(title: result.title, message: result.message))
+    }
+
+    /// Delete Entry…: asks the core's delete question about the selected row,
+    /// offering Revoke Instead when the core says to, then deletes it. The
+    /// question holds the record it asked about, so a history.changed that
+    /// re-reads the rows meanwhile does not change what is deleted or revoked.
+    public func deleteTapped() async {
+        guard canDelete, let selection else { return }
+        let record = snapshot.rows[selection].record
+        let text: RecordTextResult
+        do {
+            text = try await bridge.recordText(record)
+        } catch {
+            show(.error(error))
+            return
+        }
+        let question = Confirmation(
+            title: Self.deleteQuestionTitle, message: text.deleteConfirm, confirmTitle: Self.deleteConfirmTitle,
+            alternateTitle: text.offerRevoke ? Self.revokeInsteadTitle : nil, isDestructive: true)
+        // Revoke Instead exists only when the core offers it.
+        var revokeInstead: (@MainActor () async -> Void)?
+        if text.offerRevoke {
+            revokeInstead = { [weak self] in await self?.revokeAsking(record) }
+        }
+        ask(question, then: { [weak self] in await self?.delete(record) }, alternate: revokeInstead)
+    }
+
+    /// Deletes `record` from the issuance log (history.deleteEntry) and shows
+    /// the core's report; the list reloads on history.changed.
+    private func delete(_ record: HistoryRecord) async {
+        isDeleting = true
+        let result: DeleteEntryResult
+        do {
+            result = try await bridge.deleteEntry(record)
+        } catch {
+            isDeleting = false
+            if error.code == .notFound {
+                show(AlertState(title: Self.deleteNotFoundTitle, message: error.message))
+            } else {
+                show(AlertState(title: Self.deleteFailedTitle, message: error.message, offersErrorLogExport: true))
+            }
+            return
+        }
+        isDeleting = false
         show(AlertState(title: result.title, message: result.message))
     }
 
@@ -291,9 +365,15 @@ public final class HistoryModel {
         show(AlertState(title: "No Duplicates", message: "The issuance log has no duplicate entries."))
     }
 
-    private func ask(_ question: Confirmation, then action: @escaping @MainActor () async -> Void) {
+    /// Asks `question`: `action` runs on confirm, `alternate` (if any) on its
+    /// alternate button.
+    private func ask(
+        _ question: Confirmation, then action: @escaping @MainActor () async -> Void,
+        alternate: (@MainActor () async -> Void)? = nil
+    ) {
         pendingConfirmation = question
         confirmAction = action
+        alternateAction = alternate
     }
 
     private func show(_ state: AlertState, then action: (@MainActor () async -> Void)? = nil) {
@@ -304,15 +384,27 @@ public final class HistoryModel {
     /// The pending confirmation was confirmed: runs its action.
     public func confirm() async {
         let action = confirmAction
-        pendingConfirmation = nil
-        confirmAction = nil
+        clearConfirmation()
+        await action?()
+    }
+
+    /// The pending confirmation's alternate button was picked: runs its
+    /// alternate action, which may ask the next question.
+    public func alternate() async {
+        let action = alternateAction
+        clearConfirmation()
         await action?()
     }
 
     /// The pending confirmation was declined.
     public func dismissConfirmation() {
+        clearConfirmation()
+    }
+
+    private func clearConfirmation() {
         pendingConfirmation = nil
         confirmAction = nil
+        alternateAction = nil
     }
 
     /// The operator closed the alert; runs its follow-up, if any.

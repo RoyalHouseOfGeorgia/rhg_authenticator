@@ -128,7 +128,7 @@ public struct HistoryListParams: Codable, Sendable, Equatable {
     }
 }
 
-/// history.recordText.
+/// history.recordText, history.deleteEntry.
 public struct RecordParams: Codable, Sendable, Equatable {
     public var record: HistoryRecord
 

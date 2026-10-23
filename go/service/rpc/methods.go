@@ -65,7 +65,7 @@ type (
 		Query string `json:"query"`
 	}
 	recordParams struct {
-		Record service.HistoryRecord `json:"record"`
+		Record *service.HistoryRecord `json:"record"` // required
 	}
 	revokeParams struct {
 		PayloadSHA256 string `json:"payloadSha256"`
@@ -86,6 +86,13 @@ type (
 	recordTextResult struct {
 		Detail        string `json:"detail"`
 		RevokeConfirm string `json:"revokeConfirm"`
+		DeleteConfirm string `json:"deleteConfirm"`
+		OfferRevoke   bool   `json:"offerRevoke"` // offer revoking instead of deleting
+	}
+	deleteEntryResult struct {
+		Backup  string `json:"backup"`
+		Title   string `json:"title"`
+		Message string `json:"message"`
 	}
 	duplicatePreviewResult struct {
 		Count          int    `json:"count"`
@@ -194,11 +201,29 @@ func methodTable() map[string]handler {
 			snap.Rows = orEmpty(snap.Rows)
 			return snap, nil
 		}),
-		"history.recordText": method(func(_ *server, p recordParams) (any, error) {
+		"history.recordText": method(func(s *server, p recordParams) (any, error) {
+			if p.Record == nil {
+				return nil, errBadParams
+			}
+			rec := *p.Record
+			deleteConfirm, offerRevoke := s.app.DeleteConfirm(rec)
 			return recordTextResult{
-				Detail:        service.FormatRecordDetail(p.Record),
-				RevokeConfirm: service.RevokeConfirmText(p.Record),
+				Detail:        service.FormatRecordDetail(rec),
+				RevokeConfirm: service.RevokeConfirmText(rec),
+				DeleteConfirm: deleteConfirm,
+				OfferRevoke:   offerRevoke,
 			}, nil
+		}),
+		"history.deleteEntry": method(func(s *server, p recordParams) (any, error) {
+			if p.Record == nil {
+				return nil, errBadParams
+			}
+			backup, err := s.app.DeleteEntry(*p.Record)
+			if err != nil {
+				return nil, err
+			}
+			title, message := service.RecordDeletedText(*p.Record, backup)
+			return deleteEntryResult{Backup: backup, Title: title, Message: message}, nil
 		}),
 		"history.revoke": method(func(s *server, p revokeParams) (any, error) {
 			return s.app.Revoke(bg, p.PayloadSHA256)

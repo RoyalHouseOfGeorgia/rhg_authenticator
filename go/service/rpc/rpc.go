@@ -27,11 +27,11 @@
 //
 // Display strings: message, statusText, summary, summaryLine, countsLine,
 // stopMessage, title, the KeyCheck status and details, the registry rows and
-// columns, recordText's detail and revokeConfirm, and every *Filename are
-// render-only text that may change in any release. Hosts show them as given
-// and never compare or parse them; they branch only on ok, code, offerReport,
-// and the typed fields (booleans, enums such as state, stopped, outcome and
-// status, numbers and ids).
+// columns, recordText's detail, revokeConfirm and deleteConfirm, and every
+// *Filename are render-only text that may change in any release. Hosts show
+// them as given and never compare or parse them; they branch only on ok, code,
+// offerReport, and the typed fields (booleans, enums such as state, stopped,
+// outcome and status, numbers and ids).
 package rpc
 
 import (

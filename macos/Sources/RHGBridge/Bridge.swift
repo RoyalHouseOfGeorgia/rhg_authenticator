@@ -33,6 +33,7 @@ public enum RPCMethod: String, CaseIterable, Sendable {
     case bulkExportResults = "bulk.exportResults"
     case bulkLoad = "bulk.load"
     case bulkRun = "bulk.run"
+    case historyDeleteEntry = "history.deleteEntry"
     case historyDuplicatePreview = "history.duplicatePreview"
     case historyExportIssuanceLog = "history.exportIssuanceLog"
     case historyList = "history.list"
@@ -218,9 +219,17 @@ extension Bridge {
         try await call(.historyList, HistoryListParams(query: query))
     }
 
-    /// history.recordText: `record`'s detail text and revoke question.
+    /// history.recordText: `record`'s detail text and its revoke and delete
+    /// questions.
     public func recordText(_ record: HistoryRecord) async throws(RPCError) -> RecordTextResult {
         try await call(.historyRecordText, RecordParams(record: record))
+    }
+
+    /// history.deleteEntry: backs up the issuance log, then removes `record`
+    /// (exactly as history.list returned it); emits history.changed, also
+    /// when the record is no longer there (`.notFound`).
+    public func deleteEntry(_ record: HistoryRecord) async throws(RPCError) -> DeleteEntryResult {
+        try await call(.historyDeleteEntry, RecordParams(record: record))
     }
 
     /// history.revoke: opens a revocation pull request for the credential.

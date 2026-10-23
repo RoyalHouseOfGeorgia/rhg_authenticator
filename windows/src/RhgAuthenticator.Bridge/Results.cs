@@ -183,7 +183,9 @@ public sealed record HistoryListResult(
 /// <summary>history.recordText.</summary>
 /// <param name="Detail">Display only.</param>
 /// <param name="RevokeConfirm">Display only.</param>
-public sealed record RecordTextResult(string Detail, string RevokeConfirm);
+/// <param name="DeleteConfirm">The question to ask before history.deleteEntry; display only.</param>
+/// <param name="OfferRevoke">Offer revoking the credential instead of deleting its record.</param>
+public sealed record RecordTextResult(string Detail, string RevokeConfirm, string DeleteConfirm, bool OfferRevoke);
 
 /// <summary>history.duplicatePreview.</summary>
 /// <param name="Count">Duplicate entries history.removeDuplicates would remove.</param>
@@ -195,6 +197,12 @@ public sealed record DuplicatePreviewResult(int Count, string ConfirmMessage);
 /// <param name="Backup">Path of the backup of the log before removal.</param>
 /// <param name="Message">Display only; "" when removed is 0.</param>
 public sealed record RemoveDuplicatesResult(int Removed, string Backup, string Message);
+
+/// <summary>history.deleteEntry.</summary>
+/// <param name="Backup">Path of the backup of the log before the deletion; shown as given, never parsed.</param>
+/// <param name="Title">Display only.</param>
+/// <param name="Message">Display only.</param>
+public sealed record DeleteEntryResult(string Backup, string Title, string Message);
 
 /// <summary>The outcome of a history.revoke that did not fail.</summary>
 [JsonConverter(typeof(WireEnumConverter<RevokeStatus>))]

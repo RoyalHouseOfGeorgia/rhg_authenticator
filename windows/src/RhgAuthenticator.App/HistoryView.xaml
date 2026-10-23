@@ -23,12 +23,20 @@
                         Tag="&#xE711;" Content="{x:Static vm:HistoryViewModel.RevokeTitle}"
                         AutomationProperties.Name="{x:Static vm:HistoryViewModel.RevokeTitle}"
                         Command="{Binding RevokeCommand}" />
+                <!-- Destructive too; the core's question may offer Revoke Instead. Its tooltip shows only while disabled. -->
+                <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
+                        Tag="&#xE74D;" Content="{x:Static vm:HistoryViewModel.DeleteEntryTitle}"
+                        AutomationProperties.Name="{x:Static vm:HistoryViewModel.DeleteEntryTitle}"
+                        Command="{Binding DeleteEntryCommand}"
+                        ToolTip="{x:Static vm:HistoryViewModel.DeleteEntryTooltip}"
+                        ToolTipService.ShowOnDisabled="True"
+                        ToolTipService.IsEnabled="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource Not}}" />
                 <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
                         Tag="&#xE78C;" Content="{x:Static vm:HistoryViewModel.ExportTitle}"
                         AutomationProperties.Name="{x:Static vm:HistoryViewModel.ExportTitle}"
                         Command="{Binding ExportIssuanceLogCommand}" />
                 <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
-                        Tag="&#xE74D;" Content="{x:Static vm:HistoryViewModel.RemoveDuplicatesTitle}"
+                        Tag="&#xE738;" Content="{x:Static vm:HistoryViewModel.RemoveDuplicatesTitle}"
                         AutomationProperties.Name="{x:Static vm:HistoryViewModel.RemoveDuplicatesTitle}"
                         Command="{Binding RemoveDuplicatesCommand}" />
             </StackPanel>

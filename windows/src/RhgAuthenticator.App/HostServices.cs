@@ -161,8 +161,8 @@ internal sealed class UrlOpener : IUrlOpener
 internal sealed class ConfirmService : IConfirmService
 {
     /// <inheritdoc />
-    public bool Ask(Confirmation question)
+    public ConfirmChoice Choose(Confirmation question)
     {
-        return ConfirmDialog.Ask(question);
+        return ConfirmDialog.Choose(question);
     }
 }

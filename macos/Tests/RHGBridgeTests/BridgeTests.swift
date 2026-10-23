@@ -237,6 +237,10 @@ struct HelperTests {
         #expect(try await !bridge.exportIssuanceLog(path: "/OUT/issuances-export.json").title.isEmpty)
         #expect(try await bridge.duplicatePreview().count == 1)
         #expect(try await bridge.removeDuplicates().removed == 1)
+        let deleted = try JSONDecoder().decode(
+            RecordParams.self, from: contractFile("methods/history.deleteEntry/params.json")
+        ).record
+        #expect(try await !bridge.deleteEntry(deleted).backup.isEmpty)
         #expect(try await bridge.auditCommits().rows.count == 1)
 
         let expected: [RPCMethod] = [
@@ -246,7 +250,7 @@ struct HelperTests {
             .registryAddEntry, .registryUpdateEntry, .registryImportCertificate, .registryImportFromYubiKey,
             .registrySubmit, .authState, .authLogin, .authCancelLogin, .authLogout, .historyRefresh, .historyList,
             .historyRecordText, .historyRevoke, .historyExportIssuanceLog, .historyDuplicatePreview,
-            .historyRemoveDuplicates, .auditCommits,
+            .historyRemoveDuplicates, .historyDeleteEntry, .auditCommits,
         ]
         let calls = bridge.calls
         #expect(calls.map(\.method) == expected.map(\.rawValue))
@@ -288,6 +292,13 @@ struct InitializerTests {
         #expect(try params("history.list") == HistoryListParams(query: ""))
         #expect(try params("history.revoke") == RevokeParams(payloadSha256: String(repeating: "0", count: 63) + "2"))
         #expect(try params("history.recordText") == RecordParams(record: record))
+        #expect(
+            try params("history.deleteEntry")
+                == RecordParams(
+                    record: HistoryRecord(
+                        timestamp: "2026-03-04T05:06:07Z", recipient: "Bob Jones", honor: "Ennoblement",
+                        detail: "For service", date: "2026-03-04", payloadSha256: String(repeating: "0", count: 63) + "2",
+                        signatureB64url: String(repeating: "A", count: 86))))
         let key = "JUO5L/EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0="
         #expect(
             try params("registry.addEntry")
@@ -348,12 +359,28 @@ struct InitializerTests {
                     rows: list.rows, loadFailed: false, revocationsUnavailable: false, revocationsLoaded: true, revokeAvailable: false))
         let text: RecordTextResult = try result("history.recordText/result.json")
         // Each field holds its own key's text, whatever the wording.
-        struct RawEnvelope: Decodable { let result: [String: String] }
+        struct RawText: Decodable {
+            let detail, revokeConfirm, deleteConfirm: String
+            let offerRevoke: Bool
+        }
+        struct RawEnvelope: Decodable { let result: RawText }
         let raw = try JSONDecoder().decode(
             RawEnvelope.self, from: contractFile("methods/history.recordText/result.json")
         ).result
-        #expect(!text.detail.isEmpty && text.detail == raw["detail"])
-        #expect(!text.revokeConfirm.isEmpty && text.revokeConfirm == raw["revokeConfirm"])
+        #expect(!text.detail.isEmpty && text.detail == raw.detail)
+        #expect(!text.revokeConfirm.isEmpty && text.revokeConfirm == raw.revokeConfirm)
+        #expect(!text.deleteConfirm.isEmpty && text.deleteConfirm == raw.deleteConfirm)
+        #expect(
+            text
+                == RecordTextResult(
+                    detail: raw.detail, revokeConfirm: raw.revokeConfirm, deleteConfirm: raw.deleteConfirm,
+                    offerRevoke: raw.offerRevoke))
+        let deleted: DeleteEntryResult = try result("history.deleteEntry/result.json")
+        #expect(
+            deleted
+                == DeleteEntryResult(
+                    backup: "/DATA/issuances.json.bak-20260102T030405Z", title: deleted.title, message: deleted.message))
+        #expect(!deleted.title.isEmpty && !deleted.message.isEmpty && deleted.title != deleted.message)
         let preview: DuplicatePreviewResult = try result("history.duplicatePreview/result.json")
         #expect(preview == DuplicatePreviewResult(count: 1, confirmMessage: preview.confirmMessage))
         #expect(!preview.confirmMessage.isEmpty)

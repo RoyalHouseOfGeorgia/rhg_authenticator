@@ -16,6 +16,7 @@ public sealed class HelperTests
         var credential = new CredentialParams("Jane Doe", "Ennoblement", "For service", "2026-01-02");
         var signUrl = JsonSerializer.Deserialize(Support.ContractFile("methods/sign.saveQR/params.json"), Json.SaveQrParams)!.Url;
         var record = JsonSerializer.Deserialize(Support.ContractFile("methods/history.recordText/params.json"), Json.RecordParams)!.Record;
+        var deleted = JsonSerializer.Deserialize(Support.ContractFile("methods/history.deleteEntry/params.json"), Json.RecordParams)!.Record;
         const string certKey = "JUO5L/EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0=";
         const string yubiKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
 
@@ -54,7 +55,9 @@ public sealed class HelperTests
         await bridge.LogoutAsync();
         await bridge.RefreshHistoryAsync();
         Assert.Equal(4, (await bridge.ListHistoryAsync("")).Rows.Count);
-        Assert.NotEmpty((await bridge.RecordTextAsync(record)).RevokeConfirm);
+        var text = await bridge.RecordTextAsync(record);
+        Assert.True(text.RevokeConfirm.Length > 0 && text.DeleteConfirm.Length > 0 && !text.OfferRevoke);
+        Assert.Equal("/DATA/issuances.json.bak-20260102T030405Z", (await bridge.DeleteEntryAsync(deleted)).Backup);
         Assert.Equal(RevokeStatus.Submitted, (await bridge.RevokeAsync(new string('0', 63) + "2")).Status);
         Assert.NotEmpty((await bridge.ExportIssuanceLogAsync("/OUT/issuances-export.json")).Title);
         Assert.Equal(1, (await bridge.DuplicatePreviewAsync()).Count);
@@ -71,8 +74,8 @@ public sealed class HelperTests
             RpcMethod.RegistryFetch, RpcMethod.RegistryAddEntry, RpcMethod.RegistryUpdateEntry,
             RpcMethod.RegistryImportCertificate, RpcMethod.RegistryImportFromYubiKey, RpcMethod.RegistrySubmit,
             RpcMethod.AuthState, RpcMethod.AuthLogin, RpcMethod.AuthCancelLogin, RpcMethod.AuthLogout,
-            RpcMethod.HistoryRefresh, RpcMethod.HistoryList, RpcMethod.HistoryRecordText, RpcMethod.HistoryRevoke,
-            RpcMethod.HistoryExportIssuanceLog, RpcMethod.HistoryDuplicatePreview, RpcMethod.HistoryRemoveDuplicates,
+            RpcMethod.HistoryRefresh, RpcMethod.HistoryList, RpcMethod.HistoryRecordText,
+            RpcMethod.HistoryDeleteEntry, RpcMethod.HistoryRevoke, RpcMethod.HistoryExportIssuanceLog, RpcMethod.HistoryDuplicatePreview, RpcMethod.HistoryRemoveDuplicates,
             RpcMethod.AuditCommits,
         ];
         var calls = recording.Calls;
@@ -165,5 +168,10 @@ public sealed class HelperTests
         var text = Result("history.recordText/result.json", Json.RecordTextResult);
         Assert.StartsWith("Timestamp:", text.Detail, StringComparison.Ordinal);
         Assert.StartsWith("Revoke", text.RevokeConfirm, StringComparison.Ordinal);
+        Assert.NotEmpty(text.DeleteConfirm);
+        Assert.False(text.OfferRevoke);
+        var deleted = Result("history.deleteEntry/result.json", Json.DeleteEntryResult);
+        Assert.Equal(new DeleteEntryResult("/DATA/issuances.json.bak-20260102T030405Z", "Record Deleted", deleted.Message), deleted);
+        Assert.NotEmpty(deleted.Message);
     }
 }

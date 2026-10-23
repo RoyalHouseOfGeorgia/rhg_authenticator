@@ -42,6 +42,7 @@ struct MethodContract {
             MethodContract(Empty.self, BulkRunResult.self) {
                 ($0.stopped.rawValue, BulkStop.known.contains($0.stopped))
             }
+        case .historyDeleteEntry: MethodContract(RecordParams.self, DeleteEntryResult.self)
         case .historyDuplicatePreview: MethodContract(Empty.self, DuplicatePreviewResult.self)
         case .historyExportIssuanceLog: MethodContract(PathParams.self, ExportResult.self)
         case .historyList: MethodContract(HistoryListParams.self, HistoryListResult.self)
