@@ -15,8 +15,8 @@ public sealed record DeviceCodePrompt(string UserCode, Uri? VerificationUri);
 /// <summary>
 /// GitHub login: the login button, the device-code dialog and logging out.
 /// The core runs the login and words its state; this view model shows what it
-/// returns. Its status texts go to the Registry tab's status line
-/// (<see cref="StatusChanged"/>), whichever tab started the login.
+/// returns. Its status texts go to the Registry and History tabs' status
+/// lines (<see cref="StatusChanged"/>), whichever tab started the login.
 /// </summary>
 public sealed partial class LoginViewModel : ObservableObject
 {
@@ -72,7 +72,7 @@ public sealed partial class LoginViewModel : ObservableObject
         _alerts = alerts;
     }
 
-    /// <summary>Receives the login's status texts: the Registry tab's status line.</summary>
+    /// <summary>Receives the login's status texts: the Registry and History tabs' status lines.</summary>
     public event Action<string>? StatusChanged;
 
     /// <summary>The login state; logged out until startup reads it.</summary>

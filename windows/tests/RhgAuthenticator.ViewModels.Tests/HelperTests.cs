@@ -307,3 +307,39 @@ public sealed class AlertStateTests
         Assert.Equal<ReportState>(new ReportState.Reported(), reported);
     }
 }
+
+public sealed class UpdateBannerTests
+{
+    private const string ReleaseUrl = "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/releases/tag/v1.3.0";
+
+    [Fact]
+    public void Copy()
+    {
+        Assert.Equal("Download", UpdateBanner.DownloadTitle);
+    }
+
+    [Fact]
+    public void AManualOnlyUpdateWithAnHttpsReleaseIsOffered()
+    {
+        var offer = UpdateBanner.From(new UpdateStatus(UpdateState.ManualOnly, "1.3.0", ReleaseUrl, false));
+        Assert.Equal(new UpdateBanner("Version 1.3.0 is available —", new Uri(ReleaseUrl)), offer);
+    }
+
+    [Theory]
+    [InlineData(UpdateState.ManualOnly, "")]
+    [InlineData(UpdateState.ManualOnly, "http://github.com/RoyalHouseOfGeorgia/rhg_authenticator/releases")]
+    [InlineData(UpdateState.ManualOnly, "releases/tag/v1.3.0")]
+    [InlineData(UpdateState.Idle, ReleaseUrl)]
+    [InlineData(UpdateState.Ready, ReleaseUrl)]
+    [InlineData(UpdateState.Unknown, ReleaseUrl)]
+    public void AnythingElseOffersNothing(UpdateState state, string url)
+    {
+        Assert.Null(UpdateBanner.From(new UpdateStatus(state, "1.3.0", url, true)));
+    }
+
+    [Fact]
+    public void NullStatusThrows()
+    {
+        Assert.Throws<ArgumentNullException>(() => UpdateBanner.From(null!));
+    }
+}

@@ -29,17 +29,19 @@ public sealed class AppViewModelTests
         Assert.Equal(["Sign", "History", "Registry", "Audit", "YubiKey", "Help"], app.Tabs.Select(t => t.Title));
         Assert.Equal("Help", AppViewModel.HelpTitle);
         Assert.Same(app.Sign, app.Tabs[0].Content);
+        Assert.Same(app.History, app.Tabs[1].Content);
         Assert.Same(app.Registry, app.Tabs[2].Content);
+        Assert.Same(app.Audit, app.Tabs[3].Content);
         Assert.Same(app.Login, app.Registry.Login);
+        Assert.Same(app.Login, app.History.Login);
         Assert.Same(app.YubiKey, app.Tabs[4].Content);
         Assert.Same(app, app.Tabs[5].Content);
-        Assert.Equal([false, true, false, true, false, false], app.Tabs.Select(t => t.IsPlaceholder));
+        Assert.Null(app.UpdateBanner);
         Assert.Equal(
             new Confirmation(
                 "Unsubmitted Changes", "The registry has unsubmitted changes. Exit anyway?", "Exit", "Cancel", IsDestructive: true),
             AppViewModel.QuitConfirmation);
         Assert.Equal([.. "Export Error Log"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(AppViewModel.ExportErrorLogTitle));
-        Assert.Equal("Not yet available", AppTab.PlaceholderText);
         Assert.Equal(
             "Saves the app's diagnostic log to a file you choose, to attach to an issue report.", AppViewModel.HelpText);
     }
@@ -167,7 +169,7 @@ public sealed class AppViewModelTests
         Assert.Equal(
             [
                 RpcMethod.AppInit, RpcMethod.SignHonors, RpcMethod.AuthState, RpcMethod.RegistryColumns,
-                RpcMethod.RegistrySnapshot, RpcMethod.AppStart,
+                RpcMethod.RegistrySnapshot, RpcMethod.AppStart, RpcMethod.AuditCommits,
             ],
             _fake.Methods);
         Assert.Equal(["{\"dataDir\":\"/data\"}"], _fake.Params(RpcMethod.AppInit));
@@ -234,6 +236,7 @@ public sealed class AppViewModelTests
         Assert.Equal(new AlertState(AlertState.ErrorTitle, app.FatalMessage!, OffersErrorLogExport: true), app.Alerts.Current);
         Assert.Equal(failing, _fake.Methods[^1]);
         Assert.Equal(0, _fake.Count(RpcMethod.AppStart));
+        Assert.Equal(0, _fake.Count(RpcMethod.AuditCommits));
     }
 
     [Fact]
@@ -248,6 +251,7 @@ public sealed class AppViewModelTests
         Assert.Equal(AppPhase.Fatal, app.Phase);
         Assert.Equal("not initialized" + s_reportSuffix, app.FatalMessage);
         Assert.Equal(new AlertState(AlertState.ErrorTitle, app.FatalMessage!, OffersErrorLogExport: true), app.Alerts.Current);
+        Assert.Equal(0, _fake.Count(RpcMethod.AuditCommits));
     }
 
     [Fact]
@@ -334,7 +338,7 @@ public sealed class AppViewModelTests
     }
 
     [Fact]
-    public async Task EventsOfFeaturesNotBuiltYetBulkEventsOutsideARunAndUnknownEventsAreIgnored()
+    public async Task UpdatedNoticesBulkEventsOutsideARunAndUnknownEventsAreIgnored()
     {
         var app = await Fixtures.StartedApp(_fake);
         var callsBefore = _fake.Calls.Count;
@@ -344,10 +348,8 @@ public sealed class AppViewModelTests
             new BridgeEvent.AuthDeviceCode(new DeviceCode("ABCD-1234", "https://github.com/login/device")),
             new BridgeEvent.BulkConnecting(),
             new BridgeEvent.BulkProgressed(new BulkProgress(1, 2, "A")),
-            new BridgeEvent.HistoryChanged(),
-            new BridgeEvent.HistoryRevocationsChanged(),
-            new BridgeEvent.UpdateStatusChanged(new UpdateStatus(UpdateState.Ready, "1.3.0", "", false)),
-            new BridgeEvent.UpdateUpdated(new UpdatedNotice("1.2.3", "")),
+            // Windows never updates in place, so it is never just updated.
+            new BridgeEvent.UpdateUpdated(new UpdatedNotice("1.2.3", "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/releases")),
             new BridgeEvent.Unknown("future.event"),
         ];
         foreach (var bridgeEvent in ignored)
@@ -363,6 +365,7 @@ public sealed class AppViewModelTests
         Assert.Equal(BulkPhase.Idle, app.Bulk.Phase);
         Assert.Null(app.Bulk.Progress);
         Assert.Null(app.Login.DeviceCode);
+        Assert.Null(app.UpdateBanner);
     }
 
     [Fact]
@@ -660,5 +663,159 @@ public sealed class AppViewModelTests
         Assert.Single(_fileSave.Requests);
         Assert.Empty(_fake.Calls);
         Assert.Null(app.Alerts.Current);
+    }
+
+    // History, Audit and the update banner
+
+    private const string ReleaseUrl = "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/releases/tag/v1.3.0";
+
+    private static HistoryListResult HistoryList(int count, bool loadFailed = false)
+    {
+        var rows = Enumerable.Range(1, count)
+            .Select(n => new HistoryRow(
+                new HistoryRecord($"2026-01-{n:D2}T10:00:00Z", $"R{n}", "Order of the Eagle", "", $"2026-01-{n:D2}", $"h{n}", $"s{n}"),
+                $"R{n}",
+                false))
+            .ToList();
+        return new HistoryListResult(
+            Rows: rows, LoadFailed: loadFailed, RevocationsUnavailable: false, RevocationsLoaded: true, RevokeAvailable: true);
+    }
+
+    /// <summary>A started app whose History shows <paramref name="count"/> rows with the first selected.</summary>
+    private async Task<AppViewModel> AppWithHistorySelection(int count)
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        _fake.Respond(RpcMethod.HistoryList, HistoryList(count));
+        _fake.Emit(new BridgeEvent.HistoryChanged());
+        Assert.True(await Fixtures.Settle(() => app.History.Snapshot.Rows.Count == count));
+        _fake.Reset(RpcMethod.HistoryList);
+        _fake.Respond(RpcMethod.HistoryRecordText, new RecordTextResult("detail", "revoke?"));
+        await app.History.SelectAsync(0);
+        Assert.Equal("detail", app.History.SelectedDetail);
+        return app;
+    }
+
+    [Fact]
+    public async Task TheAuditTabFetchesItsCommitsOnceReady()
+    {
+        _fake.Respond(RpcMethod.AuditCommits, new AuditResult([new AuditRow("Add key", "")], "1 commit"));
+        var app = await Fixtures.StartedApp(_fake);
+        Assert.True(await Fixtures.Settle(() => app.Audit.Status == "1 commit"));
+        Assert.Single(app.Audit.Rows);
+        Assert.Equal(1, _fake.Count(RpcMethod.AuditCommits));
+    }
+
+    [Fact]
+    public async Task ASlowAuditFetchDoesNotHoldStartup()
+    {
+        var held = _fake.Hold(RpcMethod.AuditCommits);
+        var app = await Fixtures.StartedApp(_fake);
+        Assert.Equal(AppPhase.Ready, app.Phase);
+        Assert.True(app.Audit.IsRefreshing);
+        Assert.Equal(AuditViewModel.FetchingStatus, app.Audit.Status);
+        held.Release(new AuditResult([], "No commits"));
+        Assert.True(await Fixtures.Settle(() => !app.Audit.IsRefreshing));
+        Assert.Equal("No commits", app.Audit.Status);
+    }
+
+    [Fact]
+    public async Task HistoryChangedClearsTheSelectionAndReReadsTheLog()
+    {
+        var app = await AppWithHistorySelection(2);
+        var list = HistoryList(3);
+        _fake.Respond(RpcMethod.HistoryList, list);
+        _fake.Emit(new BridgeEvent.HistoryChanged());
+        Assert.True(await Fixtures.Settle(() => ReferenceEquals(app.History.Snapshot, list)));
+        Assert.Null(app.History.SelectedIndex);
+        Assert.Null(app.History.SelectedDetail);
+        Assert.Equal(["{\"query\":\"\"}", "{\"query\":\"\"}"], _fake.Params(RpcMethod.HistoryList));
+    }
+
+    [Fact]
+    public async Task HistoryChangedReportsALogThatFailedToLoad()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        _fake.Respond(RpcMethod.HistoryList, HistoryList(0, loadFailed: true));
+        _fake.Emit(new BridgeEvent.HistoryChanged());
+        Assert.True(await Fixtures.Settle(() => app.Alerts.Current is not null));
+        Assert.Equal(new AlertState("Error", "unable to load history"), app.Alerts.Current);
+    }
+
+    [Fact]
+    public async Task RevocationsChangedReReadsTheLogKeepingTheSelection()
+    {
+        var app = await AppWithHistorySelection(2);
+        // The same rows; only the flags change, so the read is applied.
+        var list = HistoryList(2) with { RevokeAvailable = false };
+        var reads = _fake.Count(RpcMethod.HistoryList);
+        _fake.Respond(RpcMethod.HistoryList, list);
+        _fake.Emit(new BridgeEvent.HistoryRevocationsChanged());
+        Assert.True(await Fixtures.Settle(() => ReferenceEquals(app.History.Snapshot, list)));
+        Assert.Equal(reads + 1, _fake.Count(RpcMethod.HistoryList));
+        Assert.Equal(0, app.History.SelectedIndex);
+        Assert.Equal("detail", app.History.SelectedDetail);
+        // The kept row's record is unchanged: its detail is not asked for again.
+        Assert.Equal(1, _fake.Count(RpcMethod.HistoryRecordText));
+    }
+
+    [Fact]
+    public async Task AuthChangedReReadsTheLogToo()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        _fake.Respond(RpcMethod.AuthState, Fixtures.LoggedIn);
+        var list = HistoryList(1);
+        _fake.Respond(RpcMethod.HistoryList, list);
+        _fake.Emit(new BridgeEvent.AuthChanged(Fixtures.LoggedIn));
+        Assert.True(await Fixtures.Settle(() => ReferenceEquals(app.History.Snapshot, list)));
+        Assert.True(await Fixtures.Settle(() => app.Login.AuthState == Fixtures.LoggedIn));
+    }
+
+    [Fact]
+    public async Task LoginStatusTextsReachTheRegistryAndHistoryStatusLines()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        _fake.Respond(RpcMethod.AuthLogin, Fixtures.LoggedIn);
+        await app.Login.StartAsync();
+        Assert.Equal("Logged in as @octocat", app.Registry.Status);
+        Assert.Equal("Logged in as @octocat", app.History.Status);
+    }
+
+    [Fact]
+    public async Task UpdateStatusSetsAndClearsTheBanner()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        var changed = new List<string?>();
+        app.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+        _fake.Emit(new BridgeEvent.UpdateStatusChanged(new UpdateStatus(UpdateState.ManualOnly, "1.3.0", ReleaseUrl, false)));
+        Assert.True(await Fixtures.Settle(() => app.UpdateBanner is not null));
+        Assert.Equal(new UpdateBanner("Version 1.3.0 is available —", new Uri(ReleaseUrl)), app.UpdateBanner);
+        Assert.Contains(nameof(AppViewModel.UpdateBanner), changed);
+        _fake.Emit(new BridgeEvent.UpdateStatusChanged(new UpdateStatus(UpdateState.Idle, "", "", false)));
+        Assert.True(await Fixtures.Settle(() => app.UpdateBanner is null));
+    }
+
+    [Fact]
+    public async Task DownloadOpensTheReleasePage()
+    {
+        var urls = new FakeUrlOpener();
+        var app = await Fixtures.StartedApp(_fake, urls: urls);
+        app.OpenReleaseCommand.Execute(null); // no banner: nothing
+        Assert.Empty(urls.Opened);
+        _fake.Emit(new BridgeEvent.UpdateStatusChanged(new UpdateStatus(UpdateState.ManualOnly, "1.3.0", ReleaseUrl, false)));
+        Assert.True(await Fixtures.Settle(() => app.UpdateBanner is not null));
+        app.OpenReleaseCommand.Execute(null);
+        Assert.Equal([new Uri(ReleaseUrl)], urls.Opened);
+        Assert.Null(app.Alerts.Current);
+    }
+
+    [Fact]
+    public async Task ABrowserThatFailsToOpenTheReleaseShowsAnErrorAlert()
+    {
+        var urls = new FakeUrlOpener { Failure = "Could not open the browser." };
+        var app = await Fixtures.StartedApp(_fake, urls: urls);
+        _fake.Emit(new BridgeEvent.UpdateStatusChanged(new UpdateStatus(UpdateState.ManualOnly, "1.3.0", ReleaseUrl, false)));
+        Assert.True(await Fixtures.Settle(() => app.UpdateBanner is not null));
+        app.OpenReleaseCommand.Execute(null);
+        Assert.Equal(new AlertState("Error", "Could not open the browser."), app.Alerts.Current);
     }
 }

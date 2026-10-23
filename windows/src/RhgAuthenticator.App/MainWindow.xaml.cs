@@ -8,7 +8,8 @@ namespace RhgAuthenticator.App;
 /// <summary>
 /// The window: the tab row in every phase (the view model enables and
 /// selects the tabs: Help with its loading text while the core starts,
-/// every tab once it is ready), the status bar once ready, and the fatal
+/// every tab once it is ready), the update banner under it while there is
+/// an update (bound in the XAML), the status bar once ready, and the fatal
 /// startup error's alert, after which it closes. Closing it runs the core's
 /// quit sequence first.
 /// </summary>

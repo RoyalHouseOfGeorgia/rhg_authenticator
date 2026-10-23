@@ -28,17 +28,14 @@ public enum AppPhase
 /// <see cref="AppViewModel.Phase"/>.
 /// </summary>
 /// <param name="title">The tab's title.</param>
-/// <param name="content">The tab's view model; null shows <see cref="PlaceholderText"/>.</param>
-public sealed partial class AppTab(string title, ObservableObject? content) : ObservableObject
+/// <param name="content">The tab's view model.</param>
+public sealed partial class AppTab(string title, ObservableObject content) : ObservableObject
 {
-    /// <summary>The text of a tab that is not built yet.</summary>
-    public const string PlaceholderText = "Not yet available";
-
     /// <summary>The tab's title.</summary>
     public string Title { get; } = title;
 
-    /// <summary>The tab's view model; null shows <see cref="PlaceholderText"/>.</summary>
-    public ObservableObject? Content { get; } = content;
+    /// <summary>The tab's view model.</summary>
+    public ObservableObject Content { get; } = content;
 
     /// <summary>
     /// The tab's header is enabled (it can be clicked); at Fatal every header
@@ -46,9 +43,6 @@ public sealed partial class AppTab(string title, ObservableObject? content) : Ob
     /// </summary>
     [ObservableProperty]
     public partial bool IsEnabled { get; internal set; }
-
-    /// <summary>The tab shows <see cref="PlaceholderText"/>.</summary>
-    public bool IsPlaceholder => Content is null;
 }
 
 /// <summary>
@@ -82,6 +76,7 @@ public sealed partial class AppViewModel : ObservableObject
     private readonly IBridge _bridge;
     private readonly IFileSaveService _fileSave;
     private readonly IConfirmService _confirm;
+    private readonly IUrlOpener _urlOpener;
     private readonly TimeProvider _clock;
     private readonly AppTab _help;
     private Task? _eventLoop;
@@ -90,7 +85,8 @@ public sealed partial class AppViewModel : ObservableObject
     /// <summary>
     /// Creates the app's view models over <paramref name="bridge"/>, with the
     /// host's services; <paramref name="clock"/> (default the system clock)
-    /// dates the Sign and entry forms and names exported files.
+    /// dates the Sign and entry forms, times the History search and names
+    /// exported files.
     /// </summary>
     public AppViewModel(
         IBridge bridge,
@@ -103,9 +99,11 @@ public sealed partial class AppViewModel : ObservableObject
     {
         ArgumentNullException.ThrowIfNull(bridge);
         ArgumentNullException.ThrowIfNull(fileSave);
+        ArgumentNullException.ThrowIfNull(urlOpener);
         ArgumentNullException.ThrowIfNull(confirm);
         _bridge = bridge;
         _fileSave = fileSave;
+        _urlOpener = urlOpener;
         _confirm = confirm;
         _clock = clock ?? TimeProvider.System;
         // Each flow is disabled while the other runs. Sign is assigned next,
@@ -116,15 +114,17 @@ public sealed partial class AppViewModel : ObservableObject
         PinPrompt = new PinPromptViewModel(bridge);
         Login = new LoginViewModel(bridge, confirm, clipboard, urlOpener, Alerts);
         Registry = new RegistryViewModel(bridge, Login, confirm, fileOpen, urlOpener, Alerts, _clock);
+        History = new HistoryViewModel(bridge, Login, confirm, fileSave, Alerts, _clock);
+        Audit = new AuditViewModel(bridge, urlOpener, Alerts);
         Sign.PropertyChanged += OnSigningStateChanged;
         Bulk.PropertyChanged += OnSigningStateChanged;
         _help = new AppTab(HelpTitle, this);
         Tabs =
         [
             new AppTab("Sign", Sign),
-            new AppTab("History", null),
+            new AppTab("History", History),
             new AppTab("Registry", Registry),
-            new AppTab("Audit", null),
+            new AppTab("Audit", Audit),
             new AppTab("YubiKey", YubiKey),
             _help,
         ];
@@ -147,11 +147,17 @@ public sealed partial class AppViewModel : ObservableObject
     /// <summary>The YubiKey PIN prompt.</summary>
     public PinPromptViewModel PinPrompt { get; }
 
-    /// <summary>The GitHub login (the Registry tab's button and the device-code dialog).</summary>
+    /// <summary>The GitHub login (the Registry and History tabs' button and the device-code dialog).</summary>
     public LoginViewModel Login { get; }
 
     /// <summary>The Registry tab.</summary>
     public RegistryViewModel Registry { get; }
+
+    /// <summary>The History tab.</summary>
+    public HistoryViewModel History { get; }
+
+    /// <summary>The Audit tab.</summary>
+    public AuditViewModel Audit { get; }
 
     /// <summary>The tabs, in order.</summary>
     public IReadOnlyList<AppTab> Tabs { get; }
@@ -180,6 +186,10 @@ public sealed partial class AppViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(StatusItems))]
     public partial AppInfo? Info { get; private set; }
 
+    /// <summary>The update banner (update.status); null shows none.</summary>
+    [ObservableProperty]
+    public partial UpdateBanner? UpdateBanner { get; private set; }
+
     /// <summary>The status bar's texts as the core words them (app.init); empty before startup.</summary>
     public IReadOnlyList<string> StatusItems => Info?.StatusItems ?? [];
 
@@ -195,9 +205,12 @@ public sealed partial class AppViewModel : ObservableObject
     /// <summary>
     /// Starts the core: drains its events (buffered since the bridge was
     /// installed), then app.init, sign.honors, auth.state, the registry
-    /// (registry.columns, registry.snapshot) and app.start. Ends in
-    /// <see cref="AppPhase.Ready"/> or <see cref="AppPhase.Fatal"/>. Call once,
-    /// on the UI thread; later calls return at once.
+    /// (registry.columns, registry.snapshot) and app.start, whose
+    /// history.changed brings History's first rows. Ends in
+    /// <see cref="AppPhase.Ready"/>, then fetches the Audit tab's commits in
+    /// the background so a slow GitHub never holds startup, or in
+    /// <see cref="AppPhase.Fatal"/>. Call once, on the UI thread; later calls
+    /// return at once.
     /// </summary>
     public async Task StartAsync(string? dataDir = null)
     {
@@ -225,6 +238,7 @@ public sealed partial class AppViewModel : ObservableObject
             return;
         }
         Phase = AppPhase.Ready;
+        _ = ObserveAsync(Audit.RefreshAsync());
     }
 
     /// <summary>
@@ -294,6 +308,16 @@ public sealed partial class AppViewModel : ObservableObject
         catch (RpcException error)
         {
             Alerts.Show(AlertState.Error(error));
+        }
+    }
+
+    /// <summary>The update banner's Download link: opens the release page. Nothing without a banner.</summary>
+    [RelayCommand]
+    private void OpenRelease()
+    {
+        if (UpdateBanner is { } offer && _urlOpener.Open(offer.ReleaseUrl) is { } failure)
+        {
+            Alerts.Show(new AlertState(AlertState.ErrorTitle, failure));
         }
     }
 
@@ -387,10 +411,11 @@ public sealed partial class AppViewModel : ObservableObject
 
     /// <summary>
     /// Handles one event, synchronously, so events apply in order and none
-    /// waits behind a core call (pin.request least of all). auth.changed and
-    /// registry.changed re-read in their own tasks, each starting (and so
-    /// ordered) here; each view model applies only its latest read. Events
-    /// of tabs not built yet are ignored, as are unknown ones.
+    /// waits behind a core call (pin.request least of all). auth.changed,
+    /// registry.changed and the history events re-read in their own tasks,
+    /// each starting (and so ordered) here; each view model applies only its
+    /// latest read. update.status sets the update banner; update.updated and
+    /// unknown events are ignored.
     /// </summary>
     private void Handle(BridgeEvent bridgeEvent)
     {
@@ -416,14 +441,29 @@ public sealed partial class AppViewModel : ObservableObject
                 ShowInternalError();
                 break;
             case BridgeEvent.AuthChanged:
-                // Only a signal: the payloads can arrive out of order.
+                // Only a signal: the payloads can arrive out of order. Logging
+                // in or out changes whether History can revoke.
                 _ = ObserveAsync(Login.AuthChangedAsync());
+                _ = ObserveAsync(History.RereadAsync());
                 break;
             case BridgeEvent.AuthDeviceCode e:
                 Login.ShowDeviceCode(e.Code);
                 break;
             case BridgeEvent.RegistryChanged:
                 _ = ObserveAsync(Registry.RegistryChangedAsync());
+                break;
+            case BridgeEvent.HistoryChanged:
+                _ = ObserveAsync(History.HistoryChangedAsync());
+                break;
+            case BridgeEvent.HistoryRevocationsChanged:
+                _ = ObserveAsync(History.RereadAsync());
+                break;
+            case BridgeEvent.UpdateStatusChanged e:
+                UpdateBanner = UpdateBanner.From(e.Status);
+                break;
+            case BridgeEvent.UpdateUpdated:
+                // Emitted only after an in-app update, which Windows never
+                // does: it updates by hand from the Download link.
                 break;
             default:
                 break;

@@ -10,8 +10,14 @@
         <DataTemplate DataType="{x:Type vm:SignViewModel}">
             <local:SignView />
         </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:HistoryViewModel}">
+            <local:HistoryView />
+        </DataTemplate>
         <DataTemplate DataType="{x:Type vm:RegistryViewModel}">
             <local:RegistryView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:AuditViewModel}">
+            <local:AuditView />
         </DataTemplate>
         <DataTemplate DataType="{x:Type vm:YubiKeyViewModel}">
             <local:YubiKeyView />
@@ -65,10 +71,11 @@
         </Style>
 
         <!--
-          The tab row flush under the title bar, the window-wide banner row,
-          a divider, then the selected tab. The KeyboardNavigation settings
-          are the stock template's: Tab reaches the row once, the arrow keys
-          move between tabs.
+          The tab row flush under the title bar, the window-wide update
+          banner (while there is an update), a divider, then the selected
+          tab. The KeyboardNavigation settings are the stock template's (Tab
+          reaches the row once, the arrow keys move between tabs), with the
+          banner's link between the row and the tab.
         -->
         <ControlTemplate x:Key="TabRow" TargetType="TabControl">
             <Grid KeyboardNavigation.TabNavigation="Local" SnapsToDevicePixels="True">
@@ -79,13 +86,27 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <TabPanel Grid.Row="0" Margin="12,4,12,0" IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
-                <!-- The update banner and the "Updated to" notice go here, full width; empty until then. -->
-                <Border x:Name="BannerSlot" Grid.Row="1" Focusable="False" Visibility="Collapsed" />
+                <!--
+                  The update banner, full width; collapsed without an update.
+                  Its DataContext is the TabControl's, the AppViewModel. The
+                  link opens the release page only through OpenReleaseCommand,
+                  which checks the URL and reports a failure; never NavigateUri.
+                -->
+                <Border x:Name="BannerSlot" Grid.Row="1" Focusable="False" Padding="24,12"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="2"
+                        Visibility="{Binding UpdateBanner, Converter={StaticResource NullToVisibility}}">
+                    <TextBlock TextWrapping="Wrap">
+                        <Run Text="{Binding UpdateBanner.Text, Mode=OneWay}" />
+                        <Hyperlink Command="{Binding OpenReleaseCommand}"
+                                   AutomationProperties.Name="{x:Static vm:UpdateBanner.DownloadTitle}"><Run Text="{x:Static vm:UpdateBanner.DownloadTitle}" /></Hyperlink>
+                    </TextBlock>
+                </Border>
                 <Border Grid.Row="2" Height="1" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
                 <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="3" ContentSource="SelectedContent"
                                   KeyboardNavigation.TabNavigation="Local"
                                   KeyboardNavigation.DirectionalNavigation="Contained"
-                                  KeyboardNavigation.TabIndex="2" />
+                                  KeyboardNavigation.TabIndex="3" />
             </Grid>
         </ControlTemplate>
     </Window.Resources>
@@ -100,13 +121,7 @@
                     ItemsSource="{Binding Tabs}" SelectedItem="{Binding SelectedTab, Mode=TwoWay}">
             <TabControl.ContentTemplate>
                 <DataTemplate DataType="{x:Type vm:AppTab}">
-                    <Grid>
-                        <ContentControl Content="{Binding Content}" Focusable="False" />
-                        <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                   Text="{x:Static vm:AppTab.PlaceholderText}"
-                                   Visibility="{Binding IsPlaceholder, Converter={StaticResource BoolToVisibility}}" />
-                    </Grid>
+                    <ContentControl Content="{Binding Content}" Focusable="False" />
                 </DataTemplate>
             </TabControl.ContentTemplate>
         </TabControl>

@@ -1,0 +1,46 @@
+<UserControl x:Class="RhgAuthenticator.App.AuditView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
+             Loaded="OnLoaded" Unloaded="OnUnloaded">
+    <UserControl.Resources>
+        <ResourceDictionary Source="TextStyles.xaml" />
+    </UserControl.Resources>
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Style="{StaticResource CommandRow}">
+            <!-- RefreshCommand is disabled while a fetch runs. -->
+            <Button Style="{StaticResource AccentButtonStyle}" ContentTemplate="{StaticResource CommandContent}"
+                    Tag="&#xE72C;" Content="{x:Static vm:AuditViewModel.RefreshTitle}"
+                    AutomationProperties.Name="{x:Static vm:AuditViewModel.RefreshTitle}"
+                    Command="{Binding RefreshCommand}" />
+            <!-- Its tooltip says why it is disabled, so it shows only then. -->
+            <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
+                    Tag="&#xE8A7;" Content="{x:Static vm:AuditViewModel.OpenTitle}"
+                    AutomationProperties.Name="{x:Static vm:AuditViewModel.OpenTitle}"
+                    Command="{Binding OpenCommand}"
+                    ToolTip="{x:Static vm:AuditViewModel.OpenTooltip}"
+                    ToolTipService.ShowOnDisabled="True"
+                    ToolTipService.IsEnabled="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource Not}}" />
+        </StackPanel>
+        <TextBox DockPanel.Dock="Bottom" Margin="24,12,24,16" Style="{StaticResource SelectableText}"
+                 Text="{Binding Status, Mode=OneWay}" />
+        <!--
+          One pane: the commits, newest first. Their rows are set in
+          code-behind (from Rows), the row index being what the view model
+          selects. Selecting never opens the browser; a double-click or Enter
+          does, through Open on GitHub. A long summary trims (no sideways
+          scrolling), its tooltip holding it whole.
+        -->
+        <ListBox x:Name="Commits" Margin="24,0" SelectionMode="Single"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                 SelectionChanged="OnCommitsSelectionChanged"
+                 MouseDoubleClick="OnCommitsDoubleClick" PreviewKeyDown="OnCommitsPreviewKeyDown">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding Summary}" ToolTip="{Binding Summary}" />
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</UserControl>
