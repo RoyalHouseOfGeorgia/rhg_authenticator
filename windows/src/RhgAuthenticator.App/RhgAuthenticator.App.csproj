@@ -21,6 +21,8 @@
     <Product>RHG Authenticator</Product>
     <!-- asInvoker, Windows 10/11, themed common controls: see the file. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The exe's icon (Explorer, taskbar, Alt+Tab): go/icon.png at 16–256 px; MainWindow shows it too. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <!-- Lets the solution build and run its tests (and dotnet format) on Linux. -->
     <EnableWindowsTargeting Condition="'$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
@@ -28,6 +30,11 @@
 
   <ItemGroup>
     <ProjectReference Include="../RhgAuthenticator.ViewModels/RhgAuthenticator.ViewModels.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- For MainWindow's Icon (the title bar); the exe's own icon is ApplicationIcon above. -->
+    <Resource Include="app.ico" />
   </ItemGroup>
 
   <PropertyGroup>

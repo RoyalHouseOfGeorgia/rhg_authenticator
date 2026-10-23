@@ -4,6 +4,7 @@
         xmlns:local="clr-namespace:RhgAuthenticator.App"
         xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
         Title="{x:Static vm:AppViewModel.WindowTitle}"
+        Icon="app.ico"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <DataTemplate DataType="{x:Type vm:SignViewModel}">

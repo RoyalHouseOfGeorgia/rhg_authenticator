@@ -35,17 +35,17 @@
                     AutomationProperties.Name="{x:Static vm:BulkViewModel.BulkSignTitle}"
                     Command="{Binding Bulk.BulkSignCommand}" />
         </StackPanel>
-        <!-- The panes' widths and minimums are set by FitPanes. -->
+        <!-- The panes' widths and minimums are set in code-behind (the constructor, OnLoaded, FitPanes). -->
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="FormColumn" Width="340" />
+                <ColumnDefinition x:Name="FormColumn" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition x:Name="ResultColumn" Width="*" />
             </Grid.ColumnDefinitions>
 
             <!-- The form, its status line and Report Issue. -->
             <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Margin="24,0,16,16">
+                <StackPanel x:Name="FormPanel" Margin="24,0,16,16">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition x:Name="LabelColumn" Width="Auto" />
@@ -115,7 +115,7 @@
             </ScrollViewer>
 
             <!-- The divider: a 5 px drag (or arrow-key) handle around a 1 px line. -->
-            <GridSplitter Grid.Column="1" Width="5" Margin="0,0,0,16" Background="Transparent" Cursor="SizeWE"
+            <GridSplitter x:Name="Splitter" Grid.Column="1" Width="5" Margin="0,0,0,16" Background="Transparent" Cursor="SizeWE"
                           ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
             <Border Grid.Column="1" Width="1" Margin="0,0,0,16" IsHitTestVisible="False"
                     Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
@@ -123,7 +123,7 @@
             <!-- The signed credential: the fields as signed (not the form's), its QR code and actions. -->
             <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                           Visibility="{Binding HasResult, Converter={StaticResource BoolToVisibility}}">
-                <StackPanel Margin="24,0,24,16">
+                <StackPanel x:Name="ResultPanel" Margin="24,0,24,16">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -145,7 +145,7 @@
                         <TextBlock Grid.Row="3" Style="{StaticResource ResultValue}"
                                    Text="{Binding Result.Date, Converter={StaticResource DisplayDate}}" />
                     </Grid>
-                    <Image Width="256" Height="256" Margin="0,8,0,0" HorizontalAlignment="Left"
+                    <Image x:Name="QrImage" Width="256" Height="256" Margin="0,8,0,0" HorizontalAlignment="Left"
                            RenderOptions.BitmapScalingMode="NearestNeighbor"
                            Source="{Binding QrPreviewPng, Converter={StaticResource PngImage}}" />
                     <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{x:Static vm:SignViewModel.PrintAdvisory}" />

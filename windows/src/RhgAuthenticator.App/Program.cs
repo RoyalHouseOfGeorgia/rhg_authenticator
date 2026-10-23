@@ -43,8 +43,11 @@ internal static class Program
             return exitCode;
         }
 
-        // The date picker formats dates in the current culture: YYYY-Mon-DD there too.
-        CultureInfo.CurrentCulture = CultureInfo.DefaultThreadCurrentCulture = DisplayDate.Culture(CultureInfo.CurrentCulture);
+        // The process-wide date format (this thread and every later one), so the
+        // date picker, which formats in the current culture, shows YYYY-Mon-DD too.
+        var culture = DisplayDate.Culture(CultureInfo.CurrentCulture);
+        CultureInfo.DefaultThreadCurrentCulture = culture;
+        CultureInfo.CurrentCulture = culture;
 
         // Buffers the core's events from here on; AppViewModel.StartAsync drains them.
         IBridge bridge = LiveBridge.Install();
