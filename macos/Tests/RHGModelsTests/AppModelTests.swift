@@ -7,6 +7,15 @@ import Testing
 @Suite("AppModel")
 @MainActor
 struct AppModelTests {
+    @Test("the tab picker's titles")
+    func tabTitles() {
+        let titles = [
+            AppModel.signTabTitle, AppModel.historyTabTitle, AppModel.registryTabTitle, AppModel.auditTabTitle,
+            AppModel.yubiKeyTabTitle,
+        ]
+        #expect(titles == ["Sign", "History", "Registry", "Audit", "YubiKey"])
+    }
+
     @Test("startup online: init, honors, login state, registry, history, start in order; ready; status bar; audit")
     func startOnline() async {
         let fake = FakeBridge()
@@ -139,7 +148,8 @@ struct AppModelTests {
         #expect(await settle { !app.audit.isRefreshing })
         #expect(app.audit.rows == [AuditRow(summary: "c", url: commit)])
         #expect(app.audit.status == "Loaded 1 commits")
-        app.audit.open(row: 0)
+        app.audit.select(row: 0)
+        app.audit.openSelected()
         #expect(urls.opened == [try #require(URL(string: commit))])
     }
 
@@ -148,13 +158,14 @@ struct AppModelTests {
         let fake = FakeBridge()
         let app = await startedApp(fake)
         fake.respond(.historyRecordText, RecordTextResult(detail: "d", revokeConfirm: "q", deleteConfirm: "dq", offerRevoke: true))
-        await app.history.select(row: 1)
-        #expect(app.history.selection == 1)
+        app.history.select(row: 1)
+        await app.history.pendingDetail?.value
+        #expect(app.history.selection == 1 && app.history.selectedDetail == "d")
         fake.reset(.historyList)
         let held = fake.hold(.historyList)
         fake.emit(.historyChanged)
         #expect(await settle { fake.count(.historyList) == 2 })
-        #expect(app.history.selection == nil)
+        #expect(app.history.selection == nil && app.history.selectedDetail == nil)
         held.release(historyList(count: 3))
         #expect(await settle { app.history.snapshot == historyList(count: 3) })
         #expect(app.history.selection == nil)
@@ -165,7 +176,8 @@ struct AppModelTests {
         let fake = FakeBridge()
         let app = await startedApp(fake)
         fake.respond(.historyRecordText, RecordTextResult(detail: "d", revokeConfirm: "q", deleteConfirm: "dq", offerRevoke: true))
-        await app.history.select(row: 1)
+        app.history.select(row: 1)
+        await app.history.pendingDetail?.value
         fake.reset(.historyList)
         fake.respond(.historyList, historyList(count: 2, revoked: [1]))
         fake.emit(.historyRevocationsChanged)
@@ -177,7 +189,7 @@ struct AppModelTests {
     func authChangedReloadsHistory() async {
         let fake = FakeBridge()
         let app = await startedApp(fake)
-        #expect(app.history.showsConnectButton)
+        #expect(!app.login.hasUsableSession)
         fake.reset(.historyList)
         fake.respond(.historyList, historyList(count: 2, revokeAvailable: false))
         fake.reset(.authState)
@@ -185,20 +197,46 @@ struct AppModelTests {
         fake.emit(.authChanged(loggedIn))
         // Two tasks, the login's re-read and the history's: wait for both.
         #expect(await settle { app.history.snapshot.revokeAvailable == false && app.login.authState == loggedIn })
-        #expect(!app.history.showsConnectButton)
+        #expect(app.login.hasUsableSession)
         #expect(fake.count(.historyList) == 2)
     }
 
-    @Test("login status texts land on the Registry tab's status line")
+    @Test("the app's one login puts its status texts on the History tab too")
     func loginStatusSink() async {
         let fake = FakeBridge()
         let held = fake.hold(.authLogin)
         let app = await startedApp(fake)
         let login = Task { await app.login.start() }
-        #expect(await settle { app.registry.status == "Requesting device code..." })
+        // One LoginModel serves both tabs (LoginModelTests covers the routing).
+        #expect(await settle { app.history.status == "Requesting device code..." })
         held.release(loggedIn)
         await login.value
-        #expect(app.registry.status == "Logged in as @octocat")
+        #expect(app.history.status == "Logged in as @octocat")
+    }
+
+    @Test("after a confirmed delete, the core's history.changed selects the row in its place and shows its detail")
+    func deleteThenHistoryChanged() async {
+        let fake = FakeBridge()
+        let app = await startedApp(fake)
+        let history = app.history
+        fake.respond(
+            .historyRecordText,
+            RecordTextResult(detail: "Detail of record 1", revokeConfirm: "q", deleteConfirm: "dq", offerRevoke: true))
+        history.select(row: 0)
+        await history.pendingDetail?.value
+        fake.respond(.historyDeleteEntry, DeleteEntryResult(backup: "/b", title: "Deleted", message: "Gone."))
+        await history.deleteTapped()
+        await history.confirm()
+        #expect(fake.count(.historyDeleteEntry) == 1)
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(records: [2]))
+        fake.reset(.historyRecordText)
+        fake.respond(
+            .historyRecordText,
+            RecordTextResult(detail: "Detail of record 2", revokeConfirm: "q", deleteConfirm: "dq", offerRevoke: true))
+        fake.emit(.historyChanged)
+        #expect(await settle { history.selection == 0 && history.selectedDetail == "Detail of record 2" })
+        #expect(history.snapshot == historyList(records: [2]))
     }
 
     @Test("auth and registry events reach the login and the Registry tab")

@@ -2,7 +2,7 @@ import AppKit
 import RHGModels
 import SwiftUI
 
-/// The update banner over the tabs, as in the Fyne app: the "Updated to"
+/// The update banner between the toolbar and the tabs: the "Updated to"
 /// notice, then the update offer. Each part shows only when the model has
 /// one, so an empty banner takes no space.
 @MainActor
@@ -27,14 +27,15 @@ struct UpdateBannerView: View {
                 .accessibilityLabel(UpdatedBanner.closeLabel)
                 .help(UpdatedBanner.closeLabel)
             }
-            .padding([.top, .horizontal])
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
         }
         if let banner = model.updateBanner {
             Group {
                 switch banner {
                 case .ready(let title):
                     HStack {
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(title)
                                 .bold()
                             Text(UpdateBanner.readyDetail)
@@ -49,7 +50,7 @@ struct UpdateBannerView: View {
                         .buttonStyle(.borderedProminent)
                     }
                 case .manualOnly(let text, let releaseURL, let hint):
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline) {
                             Text(text)
                             Link(UpdateBanner.downloadTitle, destination: releaseURL)
@@ -61,7 +62,8 @@ struct UpdateBannerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding([.top, .horizontal])
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
         }
     }
 }

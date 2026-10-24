@@ -32,6 +32,8 @@ struct DeviceCodeSheet: View {
                         _ = NSWorkspace.shared.open(url)
                     }
                 }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
                 .disabled(prompt.verificationURL == nil)
             }
             HStack {

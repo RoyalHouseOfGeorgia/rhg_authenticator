@@ -4,8 +4,9 @@ import RHGBridge
 
 /// GitHub login: the login button, the device-code sheet and logging out.
 /// The core runs the login and words its state; this model shows what it
-/// returns. Its status texts go to the Registry tab's status line (`onStatus`),
-/// whichever tab started the login, as in the Fyne app.
+/// returns. Its status texts go to every status line that asked for them
+/// (`addStatusHandler(_:)`: the Registry and History tabs'), whichever tab
+/// started the login.
 @MainActor
 @Observable
 public final class LoginModel {
@@ -52,13 +53,25 @@ public final class LoginModel {
     /// Counts auth.state reads, so only the latest one is applied.
     @ObservationIgnored private var stateReads = 0
 
-    /// Receives the login status texts: the Registry tab's status line.
-    @ObservationIgnored var onStatus: @MainActor (String) -> Void = { _ in }
+    /// Receive the login status texts: the tabs' status lines.
+    @ObservationIgnored private var statusHandlers: [@MainActor (String) -> Void] = []
 
     @ObservationIgnored private let bridge: any Bridge
 
     public init(bridge: any Bridge) {
         self.bridge = bridge
+    }
+
+    /// Adds a receiver of the login status texts; each text goes to all of
+    /// them, in the order they were added.
+    func addStatusHandler(_ handler: @escaping @MainActor (String) -> Void) {
+        statusHandlers.append(handler)
+    }
+
+    private func publishStatus(_ text: String) {
+        for handler in statusHandlers {
+            handler(text)
+        }
     }
 
     /// Logged in and online: GitHub calls can go ahead.
@@ -108,7 +121,7 @@ public final class LoginModel {
             alert = .error(error)
             return
         }
-        onStatus("Logged out")
+        publishStatus("Logged out")
     }
 
     /// Log Out declined.
@@ -120,7 +133,7 @@ public final class LoginModel {
     /// device flow (auth.login, which emits auth.deviceCode), and shows the
     /// outcome. The single entry point of every "log in" button.
     public func start() async {
-        onStatus(authState.loggedIn && authState.offline ? "Reconnecting to GitHub..." : "Requesting device code...")
+        publishStatus(authState.loggedIn && authState.offline ? "Reconnecting to GitHub..." : "Requesting device code...")
         loginCalls += 1
         let state: AuthState
         do {
@@ -129,14 +142,14 @@ public final class LoginModel {
             // Another login is running and owns the sheet.
             if error.code == .busy {
                 loginCalls -= 1
-                onStatus("Login already in progress")
+                publishStatus("Login already in progress")
                 return
             }
             finished()
             if error.code != .cancelled {
                 alert = .error(error)
             }
-            onStatus("")
+            publishStatus("")
             return
         }
         finished()
@@ -144,12 +157,12 @@ public final class LoginModel {
         stateReads += 1
         authState = state
         if state.offline {
-            onStatus("")
+            publishStatus("")
             alert = AlertState(
                 title: "GitHub Unreachable", message: "Still can't reach GitHub. Check your connection and try again.")
             return
         }
-        onStatus(state.statusText)
+        publishStatus(state.statusText)
     }
 
     /// The login ended: closes the device-code sheet without cancelling.
@@ -172,7 +185,7 @@ public final class LoginModel {
     /// auth.deviceCode: shows the code. Ignored when no login is running.
     func showDeviceCode(_ code: DeviceCode) {
         guard isLoggingIn else { return }
-        onStatus("Waiting for GitHub authorization...")
+        publishStatus("Waiting for GitHub authorization...")
         let url = code.verificationUri.isEmpty ? nil : URL(string: code.verificationUri)
         deviceCode = DeviceCodePrompt(userCode: code.userCode, verificationURL: url)
     }

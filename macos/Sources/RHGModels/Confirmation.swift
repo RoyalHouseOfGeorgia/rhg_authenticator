@@ -23,4 +23,29 @@ public struct Confirmation: Sendable, Equatable {
         self.alternateTitle = alternateTitle
         self.isDestructive = isDestructive
     }
+
+    /// The question's buttons in the order they are added to the dialog
+    /// (NSAlert shows the first rightmost and gives it Return). A question
+    /// that is not destructive has confirm first, then the alternate, if
+    /// any, then Cancel. A destructive one has Cancel first, so Return never
+    /// destroys anything, then confirm and the alternate.
+    public var buttonRoles: [ConfirmChoice] {
+        let alternate: [ConfirmChoice] = alternateTitle == nil ? [] : [.alternate]
+        return isDestructive ? [.cancel, .confirm] + alternate : [.confirm] + alternate + [.cancel]
+    }
+
+    /// The answer of the button at `index` in `buttonRoles`; any other index
+    /// (the dialog closed some other way) is Cancel.
+    public func choice(forButtonAt index: Int) -> ConfirmChoice {
+        let roles = buttonRoles
+        return roles.indices.contains(index) ? roles[index] : .cancel
+    }
+}
+
+/// The operator's answer to a `Confirmation`: its confirm button, its
+/// alternate button, or Cancel (also any other way the question closed).
+public enum ConfirmChoice: Sendable, Equatable {
+    case confirm
+    case alternate
+    case cancel
 }

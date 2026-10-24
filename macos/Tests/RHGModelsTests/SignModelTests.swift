@@ -28,6 +28,7 @@ struct SignModelTests {
         #expect(SignModel.recipientPlaceholder == "Full name of recipient")
         #expect(SignModel.detailPlaceholder == "Specific distinction or rank")
         #expect(SignModel.signTitle == "Sign Credential")
+        #expect(SignModel.noResultText == "No credential signed yet.")
         let advisory: [UInt8] = Array("Print QR at minimum 3".utf8) + [0xC3, 0x97] + Array("3 cm".utf8)  // U+00D7
         #expect(Array(SignModel.printAdvisory.utf8) == advisory)
         #expect([SignModel.saveSVGTitle, SignModel.savePNGTitle, SignModel.copyURLTitle] == ["Save SVG", "Save PNG", "Copy URL"])

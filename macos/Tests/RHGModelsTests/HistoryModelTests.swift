@@ -1,182 +1,405 @@
 import Foundation
+import Observation
 import RHGBridge
 import Testing
 
 @testable import RHGModels
 
+/// Whether an observed property changed since `watch` started tracking it.
+final class ChangeFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    var changed: Bool { lock.withLock { value } }
+
+    func set() {
+        lock.withLock { value = true }
+    }
+}
+
+/// Tracks the observable properties `read` reads; the flag is set on their
+/// first change.
+@MainActor
+func watch(_ read: () -> Void) -> ChangeFlag {
+    let flag = ChangeFlag()
+    withObservationTracking(read) { flag.set() }
+    return flag
+}
+
+/// The tests named after a Windows HistoryViewModelTests test port it, with
+/// one Mac difference: a failed detail read shows the core's error in the
+/// detail pane (`detailFailedPrefix`), never as an alert.
 @Suite("HistoryModel")
 @MainActor
 struct HistoryModelTests {
-    let recordText = RecordTextResult(
-        detail: "Timestamp: 2026-01-02T03:04:05Z\nRecipient: Recipient 2",
-        revokeConfirm: "Revoke credential for Recipient 2 dated 2026-Jan-02?\n\nThis cannot be undone.",
-        deleteConfirm: "Core asks: delete the record for Recipient 2?", offerRevoke: true)
-    /// The record text of a revoked record: no Revoke Instead.
-    let revokedText = RecordTextResult(
-        detail: "d", revokeConfirm: "q", deleteConfirm: "Core asks: delete the revoked record?", offerRevoke: false)
     let deleted = DeleteEntryResult(
-        backup: "/DATA/issuances.json.bak-20260102T030405Z", title: "Core Deleted Title", message: "Core says: deleted.")
+        backup: "/data/issuances.json.bak", title: "Core Deleted Title", message: "Core says: deleted it.")
+    let submitted = RevokeResult(
+        status: .submitted, prNumber: 12, url: "https://github.com/x/pull/12", title: "Revocation Submitted",
+        message: "PR #12 opened.")
 
-    /// The delete question asking `message`, offering Revoke Instead or not.
-    func deleteQuestion(_ message: String, offerRevoke: Bool) -> RHGModels.Confirmation {
+    /// The core's texts for `historyRecord(n)`.
+    func text(_ n: Int, offerRevoke: Bool = true) -> RecordTextResult {
+        RecordTextResult(
+            detail: "Detail of record \(n)", revokeConfirm: "Revoke the credential of Recipient \(n)?",
+            deleteConfirm: "Delete the record of Recipient \(n)?", offerRevoke: offerRevoke)
+    }
+
+    /// The delete question the core's text for record `n` asks.
+    func deleteQuestion(_ n: Int, offerRevoke: Bool = true) -> RHGModels.Confirmation {
         Confirmation(
-            title: "Delete Issuance Record", message: message, confirmTitle: "Delete", cancelTitle: "Cancel",
-            alternateTitle: offerRevoke ? "Revoke Instead" : nil, isDestructive: true)
+            title: "Delete Issuance Record", message: "Delete the record of Recipient \(n)?", confirmTitle: "Delete",
+            cancelTitle: "Cancel", alternateTitle: offerRevoke ? "Revoke Instead" : nil, isDestructive: true)
     }
 
-    /// The revoke question for `recordText`.
-    var revokeQuestion: RHGModels.Confirmation {
+    /// The revoke question the core's text for record `n` asks.
+    func revokeQuestion(_ n: Int) -> RHGModels.Confirmation {
         Confirmation(
-            title: "Confirm Revocation", message: recordText.revokeConfirm, confirmTitle: "Revoke", cancelTitle: "Cancel",
-            isDestructive: true)
+            title: "Confirm Revocation", message: "Revoke the credential of Recipient \(n)?", confirmTitle: "Revoke",
+            cancelTitle: "Cancel", isDestructive: true)
     }
 
-    /// The canonical params of a call about `record`.
-    func recordParams(_ record: HistoryRecord) throws -> String {
-        String(decoding: try CanonicalJSON.encode(RecordParams(record: record)), as: UTF8.self)
+    /// The canonical params of a call about `historyRecord(n)`.
+    func recordParams(_ n: Int) throws -> String {
+        String(decoding: try CanonicalJSON.encode(RecordParams(record: historyRecord(n))), as: UTF8.self)
     }
 
-    /// A model loaded with `list`, its login in `auth`.
-    func loaded(
-        _ fake: FakeBridge, list: HistoryListResult = historyList(count: 3), auth: AuthState = loggedIn,
-        debounce: Duration = .zero
-    ) async throws -> HistoryModel {
-        fake.respond(.historyList, list)
+    /// The canonical params of history.revoke for `historyRecord(n)`.
+    func revokeParams(_ n: Int) -> String {
+        #"{"payloadSha256":"\#(historyRecord(n).payloadSha256)"}"#
+    }
+
+    /// A model nothing has been read into, its login in `auth`.
+    func model(_ fake: FakeBridge, auth: AuthState = loggedIn, debounce: Duration = .zero) async -> HistoryModel {
         let login = LoginModel(bridge: fake)
         await setAuth(login, auth, fake)
-        let history = HistoryModel(bridge: fake, login: login, debounce: debounce)
+        return HistoryModel(bridge: fake, login: login, debounce: debounce)
+    }
+
+    /// history.changed as AppModel handles it: the selection is cleared at
+    /// once, then the log re-read.
+    func changed(_ history: HistoryModel) async {
+        history.historyChanged()
         await history.reread()
-        // Later reads answer from each test's own script.
+    }
+
+    /// history.changed whose re-read runs in a task, returned once its
+    /// history.list call is sent (the `count`th).
+    func changing(_ history: HistoryModel, _ fake: FakeBridge, count: Int) async -> Task<Void, Never> {
+        history.historyChanged()
+        let task = Task { await history.reread() }
+        #expect(await settle { fake.count(.historyList) == count })
+        return task
+    }
+
+    /// A model whose first rows (default records 1 to 3) landed through
+    /// history.changed; later reads answer from each test's own script.
+    func loaded(
+        _ fake: FakeBridge, list: HistoryListResult = historyList(records: [1, 2, 3]), auth: AuthState = loggedIn,
+        debounce: Duration = .zero
+    ) async -> HistoryModel {
+        fake.respond(.historyList, list)
+        let history = await model(fake, auth: auth, debounce: debounce)
+        await changed(history)
         fake.reset(.historyList)
         return history
     }
 
-    /// `history` with `row` selected (its record alert dismissed).
-    func selecting(_ row: Int, in history: HistoryModel, _ fake: FakeBridge) async {
-        fake.respond(.historyRecordText, recordText)
-        await history.select(row: row)
-        await history.alertDismissed()
+    /// A loaded model with `row` (holding record `row + 1`) selected and its
+    /// detail shown; later record texts answer from each test's own script.
+    func selected(
+        _ row: Int, _ fake: FakeBridge, list: HistoryListResult = historyList(records: [1, 2, 3]),
+        auth: AuthState = loggedIn, debounce: Duration = .zero
+    ) async -> HistoryModel {
+        let history = await loaded(fake, list: list, auth: auth, debounce: debounce)
+        fake.respond(.historyRecordText, text(row + 1))
+        history.select(row: row)
+        await history.pendingDetail?.value
+        fake.reset(.historyRecordText)
+        #expect(history.selectedDetail == "Detail of record \(row + 1)")
+        return history
     }
 
-    @Test("UI copy matches the Fyne app")
+    /// A model with `row` of `list` (row n holding record n + 1) deleted; its
+    /// history.changed is not raised yet.
+    func deletedRow(
+        _ row: Int, _ fake: FakeBridge, list: HistoryListResult = historyList(records: [1, 2, 3])
+    ) async -> HistoryModel {
+        let history = await selected(row, fake, list: list)
+        fake.respond(.historyRecordText, text(row + 1))
+        fake.respond(.historyDeleteEntry, deleted)
+        await history.deleteTapped()
+        await history.confirm()
+        fake.reset(.historyRecordText)
+        #expect(fake.count(.historyDeleteEntry) == 1)
+        return history
+    }
+
+    @Test("UI copy")
     func copy() {
         #expect(HistoryModel.searchPlaceholder == "Search by recipient...")
-        #expect(
-            [HistoryModel.refreshTitle, HistoryModel.connectTitle, HistoryModel.revokeTitle]
-                == ["Refresh", "Connect to GitHub", "Revoke"])
+        #expect([HistoryModel.refreshTitle, HistoryModel.revokeTitle] == ["Refresh", "Revoke"])
         #expect(HistoryModel.exportTitle == "Export Issuance Log…")
         #expect(HistoryModel.removeDuplicatesTitle == "Remove Duplicates…")
         #expect(HistoryModel.revocationUnavailableStatus == "Revocation unavailable")
         #expect(HistoryModel.deleteTitle == "Delete Entry…")
-        #expect(HistoryModel.deleteTooltip == "Select a record to delete it.")
         #expect(
             [HistoryModel.deleteQuestionTitle, HistoryModel.deleteConfirmTitle, HistoryModel.revokeInsteadTitle]
                 == ["Delete Issuance Record", "Delete", "Revoke Instead"])
         #expect([HistoryModel.deleteNotFoundTitle, HistoryModel.deleteFailedTitle] == ["Record Not Found", "Delete Failed"])
+        #expect(HistoryModel.emptyDetailText == "Select a record to see its details.")
+        #expect(HistoryModel.detailFailedPrefix == "Unable to show this record: ")
     }
 
-    // MARK: Reads
+    @Test("tooltips")
+    func tooltips() {
+        #expect(HistoryModel.refreshTooltip == "Refresh (\u{2318}R)")
+        #expect(HistoryModel.searchTooltip == "Search (\u{2318}F)")
+        #expect(
+            HistoryModel.deleteTooltip == "Select a record to delete it. In the list, Delete deletes the selected record.")
+    }
 
-    @Test("before load: no rows, nothing selected, nothing to revoke")
-    func initial() {
-        let history = HistoryModel(bridge: FakeBridge(), login: LoginModel(bridge: FakeBridge()))
-        #expect(history.snapshot.rows.isEmpty && !history.snapshot.revokeAvailable)
-        #expect(history.query == "" && history.selection == nil && !history.isRevoking && !history.isDeleting)
-        #expect(history.alert == nil && history.pendingConfirmation == nil)
+    @Test("ANewModelIsEmptyAndNotLoaded")
+    func aNewModelIsEmptyAndNotLoaded() {
+        let fake = FakeBridge()
+        let history = HistoryModel(bridge: fake, login: LoginModel(bridge: fake))
+        #expect(history.snapshot.rows.isEmpty && !history.snapshot.revocationsLoaded)
+        #expect(history.query == "" && history.selection == nil && history.selectedDetail == nil)
+        #expect(history.status == "" && history.revocationStatus == "")
+        #expect(!history.isRevoking && !history.isDeleting && !history.isAsking)
+        #expect(history.pendingDetail == nil && history.alert == nil && history.pendingConfirmation == nil)
         #expect(!history.canRevoke && !history.canDelete)
+        #expect(fake.calls.isEmpty)
         // The default clock is now.
         #expect(history.suggestedExportFilename.hasPrefix("rhg-issuances-20"))
     }
 
-    @Test("the first read is for the empty query")
-    func load() async throws {
+    // MARK: Reads
+
+    @Test("HistoryChangedReadsTheLogForTheQuery")
+    func historyChangedReadsTheLogForTheQuery() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
-        #expect(history.snapshot == historyList(count: 3))
+        let history = await model(fake)
+        fake.respond(.historyList, historyList(records: [1, 2]))
+        await changed(history)
+        #expect(history.snapshot == historyList(records: [1, 2]))
         #expect(fake.params(.historyList) == [#"{"query":""}"#])
-        #expect(history.selection == nil && history.alert == nil)
+        #expect(history.alert == nil)
+    }
+
+    @Test("AReReadWithTheSameRowsKeepsTheSnapshot")
+    func aReReadWithTheSameRowsKeepsTheSnapshot() async {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        let flag = watch { _ = history.snapshot }
+        fake.respond(.historyList, historyList(records: [1, 2, 3]))
+        await history.reread()
+        #expect(!flag.changed)
+        #expect(history.selection == 1)
+        #expect(history.selectedDetail == "Detail of record 2")
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(records: [1, 2, 3], revoked: [2]))
+        await history.reread()
+        #expect(history.snapshot.rows[1].revoked)
+        #expect(flag.changed)
+    }
+
+    @Test("HistoryChangedClearsTheSelectionEvenWhenTheRowStillExists")
+    func historyChangedClearsTheSelectionEvenWhenTheRowStillExists() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyList, historyList(records: [1, 2, 3]))
+        history.historyChanged()
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
+        await history.reread()
+        #expect(history.selection == nil)
+        #expect(fake.count(.historyRecordText) == 1)  // the selection's only
+    }
+
+    @Test("ARowPickedBeforeHistoryChangedsReadLandsIsClearedWhenTheRowsDiffer")
+    func aRowPickedBeforeHistoryChangedsReadLandsIsClearedWhenTheRowsDiffer() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake)
+        let read = fake.hold(.historyList)
+        let changed = await changing(history, fake, count: 2)
+        fake.respond(.historyRecordText, text(2))
+        history.select(row: 1)
+        await history.pendingDetail?.value
+        #expect(history.selection == 1)
+        read.release(historyList(records: [4, 1, 2, 3]))
+        await changed.value
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
+    }
+
+    @Test("ARowPickedBeforeHistoryChangedsReadLandsSurvivesTheSameRows")
+    func aRowPickedBeforeHistoryChangedsReadLandsSurvivesTheSameRows() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake)
+        let read = fake.hold(.historyList)
+        let changed = await changing(history, fake, count: 2)
+        fake.respond(.historyRecordText, text(2))
+        history.select(row: 1)
+        await history.pendingDetail?.value
+        let flag = watch { _ = history.snapshot }
+        read.release(historyList(records: [1, 2, 3]))
+        await changed.value
+        #expect(!flag.changed)
+        #expect(history.selection == 1)
+        #expect(history.selectedDetail == "Detail of record 2")
+        #expect(fake.count(.historyRecordText) == 1)  // the pick's only
+    }
+
+    @Test("AReReadWhereOnlyTheRevocationListFailedIsShown")
+    func aReReadWhereOnlyTheRevocationListFailedIsShown() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake, list: historyList(records: [1]))
+        var failed = historyList(records: [1], revocationsUnavailable: true)
+        failed.revocationsLoaded = true
+        fake.respond(.historyList, failed)
+        await history.reread()
+        #expect(history.snapshot == failed)
+        #expect(history.revocationStatus == "Revocation unavailable")
+    }
+
+    @Test("AReReadKeepsASelectionInRangeWithoutReReadingAnUnchangedRecord")
+    func aReReadKeepsASelectionInRangeWithoutReReadingAnUnchangedRecord() async {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        let list = historyList(records: [1, 2, 3], revoked: [2])
+        fake.respond(.historyList, list)
+        await history.reread()
+        #expect(history.snapshot == list)
+        #expect(history.selection == 1)
+        #expect(history.selectedDetail == "Detail of record 2")
+        #expect(fake.count(.historyRecordText) == 1)  // the selection's only
+    }
+
+    @Test("AReReadDropsASelectionOutOfRange")
+    func aReReadDropsASelectionOutOfRange() async {
+        let fake = FakeBridge()
+        let history = await selected(2, fake)
+        fake.respond(.historyList, historyList(records: [1, 2]))
+        await history.reread()
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
+    }
+
+    @Test("AKeptRowWhoseRecordChangedHasItsDetailReRead")
+    func aKeptRowWhoseRecordChangedHasItsDetailReRead() async throws {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyList, historyList(records: [4, 1, 2, 3]))
+        fake.respond(.historyRecordText, text(4))
+        await history.reread()
+        #expect(history.selection == 0)
+        #expect(history.selectedDetail == "Detail of record 4")
+        #expect(fake.params(.historyRecordText) == [try recordParams(1), try recordParams(4)])
+    }
+
+    // Mac: a failed detail shows the core's error in the pane, not an alert.
+    @Test("AFailedDetailIsNotAskedForAgainByAReReadOfTheSameRecord")
+    func aFailedDetailIsNotAskedForAgainByAReReadOfTheSameRecord() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake)
+        fake.fail(.historyRecordText, RPCError(code: .failed, message: "no"))
+        history.select(row: 0)
+        await history.pendingDetail?.value
+        // The pane shows the core's error; no alert.
+        #expect(history.selectedDetail == HistoryModel.detailFailedPrefix + "no")
+        #expect(history.alert == nil)
+        fake.respond(.historyList, historyList(records: [1, 2, 3]))
+        await history.reread()
+        #expect(history.selection == 0)
+        #expect(fake.count(.historyRecordText) == 1)
+        #expect(history.selectedDetail == HistoryModel.detailFailedPrefix + "no")
+        #expect(history.alert == nil)
+    }
+
+    @Test("AnOlderReadFinishingLastIsDropped")
+    func anOlderReadFinishingLastIsDropped() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake)
+        let older = fake.hold(.historyList)
+        fake.respond(.historyList, historyList(records: [1]))
+        let first = Task { await history.reread() }
+        #expect(await settle { fake.count(.historyList) == 2 })
+        await history.reread()
+        #expect(history.snapshot == historyList(records: [1]))
+        older.release(historyList(records: [1, 2, 3, 4]))
+        await first.value
+        #expect(history.snapshot == historyList(records: [1]))
+    }
+
+    @Test("AFailedReadKeepsTheRowsAndLeavesThePendingClearAndReportToTheNextRead")
+    func aFailedReadKeepsTheRowsAndLeavesThePendingClearAndReportToTheNextRead() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake)
+        let before = history.snapshot
+        fake.fail(.historyList, RPCError(code: .internal, message: "x"))
+        await changed(history)
+        #expect(history.snapshot == before)
+        #expect(history.alert == nil)
+        fake.respond(.historyRecordText, text(1))
+        history.select(row: 0)
+        await history.pendingDetail?.value
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(records: [], loadFailed: true))
+        await history.reread()  // as history.revocationsChanged does
+        #expect(history.selection == nil)
+        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
+    }
+
+    @Test("TheLoadFailureIsReportedOncePerHistoryChanged")
+    func theLoadFailureIsReportedOncePerHistoryChanged() async {
+        let fake = FakeBridge()
+        fake.respond(.historyList, historyList(records: [], loadFailed: true))
+        let history = await model(fake)
+        await changed(history)
+        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
+        await history.alertDismissed()
+        await history.reread()
+        #expect(history.alert == nil)
+        await changed(history)
+        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
+    }
+
+    @Test("AFailedLoadIsNotReportedWithoutHistoryChangedNorAfterALoadThatWorked")
+    func aFailedLoadIsNotReportedWithoutHistoryChangedNorAfterALoadThatWorked() async {
+        let fake = FakeBridge()
+        fake.respond(.historyList, historyList(records: [], loadFailed: true))
+        let history = await model(fake)
+        await history.reread()  // revocationsChanged, auth.changed: not armed
+        #expect(history.snapshot.loadFailed)
+        #expect(history.alert == nil)
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(records: [1]))
+        fake.respond(.historyList, historyList(records: [], loadFailed: true))
+        await changed(history)  // consumes the report: the log loaded
+        #expect(history.alert == nil)
+        await history.reread()
+        #expect(history.snapshot.loadFailed)
+        #expect(history.alert == nil)
+    }
+
+    @Test("RevocationStatusFollowsTheSnapshot")
+    func revocationStatusFollowsTheSnapshot() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake, list: historyList(records: [1], revocationsUnavailable: true))
+        #expect(history.revocationStatus == "Revocation unavailable")
+        fake.respond(.historyList, historyList(records: [1]))
+        await history.reread()
         #expect(history.revocationStatus == "")
     }
 
-    @Test("history.changed clears the selection and applies the re-read log")
-    func historyChanged() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        #expect(history.selection == 1)
-        fake.respond(.historyList, historyList(count: 4))
-        history.historyChanged()
-        await history.reread()
-        #expect(history.selection == nil)
-        #expect(history.snapshot == historyList(count: 4))
-        #expect(history.alert == nil)
-    }
-
-    @Test("history.changed with a log that failed to load: unable to load history")
-    func historyChangedLoadFailed() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        fake.respond(.historyList, historyList(count: 0, loadFailed: true))
-        history.historyChanged()
-        await history.reread()
-        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
-        await history.alertDismissed()
-        #expect(history.alert == nil)
-    }
-
-    @Test("revocations and auth changes re-read the log, keeping the selection")
-    func keepSelection() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(2, in: history, fake)
-        fake.respond(.historyList, historyList(count: 3, revoked: [3]))
-        await history.reread()
-        #expect(history.snapshot == historyList(count: 3, revoked: [3]))
-        #expect(history.selection == 2)
-        fake.reset(.historyList)
-        fake.respond(.historyList, historyList(count: 3, revokeAvailable: false))
-        await history.reread()
-        #expect(history.snapshot == historyList(count: 3, revokeAvailable: false))
-        #expect(history.selection == 2)
-    }
-
-    @Test("a read with fewer rows than the selected index clears the selection")
-    func selectionOutOfRange() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(2, in: history, fake)
-        fake.respond(.historyList, historyList(count: 2))
-        await history.reread()
-        #expect(history.selection == nil)
-    }
-
-    @Test("a failed read keeps the rows; the next read applied still replaces them and reports a failed load")
-    func readFailure() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        fake.fail(.historyList, RPCError(code: .internal, message: "x"))
-        history.historyChanged()
-        await history.reread()
-        #expect(history.snapshot == historyList(count: 3))
-        #expect(history.alert == nil)
-        await selecting(1, in: history, fake)
-        fake.reset(.historyList)
-        fake.respond(.historyList, historyList(count: 3, loadFailed: true))
-        await history.reread()
-        #expect(history.selection == nil)
-        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
-    }
-
     @Test("an older read finishing last is dropped, its load failure included")
-    func staleRead() async throws {
+    func staleRead() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         let first = fake.hold(.historyList)
         fake.respond(.historyList, historyList(count: 4))
-        history.historyChanged()
-        let older = Task { await history.reread() }
-        #expect(await settle { fake.count(.historyList) == 2 })
+        let older = await changing(history, fake, count: 2)
         await history.reread()
         #expect(history.snapshot == historyList(count: 4))
         first.release(historyList(count: 0, loadFailed: true))
@@ -186,31 +409,28 @@ struct HistoryModelTests {
     }
 
     @Test("a load failure landing under another alert waits until that alert is closed")
-    func loadFailureUnderAlert() async throws {
+    func loadFailureUnderAlert() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
-        fake.respond(.historyRecordText, recordText)
-        await history.select(row: 1)
-        let recordAlert = AlertState(title: "Issuance Record", message: recordText.detail)
-        #expect(history.alert == recordAlert)
+        let history = await loaded(fake)
+        fake.fail(.historyRefresh, RPCError(code: .busy, message: "Already refreshing."))
+        await history.refreshTapped()
+        let blocking = AlertState(title: "Error", message: "Already refreshing.")
+        #expect(history.alert == blocking)
         fake.respond(.historyList, historyList(count: 0, loadFailed: true))
-        history.historyChanged()
-        await history.reread()
-        #expect(history.alert == recordAlert)
+        await changed(history)
+        #expect(history.alert == blocking)
         await history.alertDismissed()
         await history.reread()
         #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
     }
 
     @Test("history.changed overtaken by a newer read: the newer read reports the load failure")
-    func loadFailureOnNewerRead() async throws {
+    func loadFailureOnNewerRead() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         let first = fake.hold(.historyList)
         fake.respond(.historyList, historyList(count: 0, loadFailed: true))
-        history.historyChanged()
-        let older = Task { await history.reread() }
-        #expect(await settle { fake.count(.historyList) == 2 })
+        let older = await changing(history, fake, count: 2)
         await history.reread()
         #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
         first.release(historyList(count: 3))
@@ -218,38 +438,64 @@ struct HistoryModelTests {
         #expect(history.snapshot == historyList(count: 0, loadFailed: true))
     }
 
-    @Test("a row picked from the old rows while history.changed re-reads is not carried onto the new ones")
-    func selectDuringReplacingRead() async throws {
+    // MARK: Search
+
+    @Test("ASearchReadsOnceTypingPausesAndClearsTheSelectionAtOnce")
+    func aSearchReadsOnceTypingPausesAndClearsTheSelectionAtOnce() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        let held = fake.hold(.historyList)
-        history.historyChanged()
-        let read = Task { await history.reread() }
-        #expect(await settle { fake.count(.historyList) == 2 })
-        await selecting(1, in: history, fake)
-        held.release(historyList(count: 3))
-        await read.value
+        let history = await selected(1, fake, debounce: .milliseconds(50))
+        let filtered = historyList(records: [2])
+        fake.respond(.historyList, filtered)
+        history.setQuery("Recipient 2")
+        #expect(history.query == "Recipient 2")
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
+        #expect(await settle { history.snapshot == filtered })
+        #expect(fake.params(.historyList) == [#"{"query":""}"#, #"{"query":"Recipient 2"}"#])
         #expect(history.selection == nil)
     }
 
-    @Test("Revocation unavailable shows while the revocation list could not be fetched")
-    func revocationStatus() async throws {
+    @Test("SettingTheSameQueryDoesNothing")
+    func settingTheSameQueryDoesNothing() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake, list: historyList(count: 1, revocationsUnavailable: true, revokeAvailable: false))
-        #expect(history.revocationStatus == "Revocation unavailable")
-        fake.respond(.historyList, historyList(count: 1))
-        await history.reread()
-        #expect(history.revocationStatus == "")
+        let history = await selected(0, fake)
+        history.setQuery("")
+        #expect(history.selection == 0)
+        #expect(history.selectedDetail == "Detail of record 1")
+        // A search task, had one started, would run in this yield.
+        await Task.yield()
+        #expect(fake.count(.historyList) == 1)  // the load's only
     }
 
-    // MARK: Search
+    @Test("AQueryChangeDropsAReadAlreadySentAndARowPickedMeanwhile")
+    func aQueryChangeDropsAReadAlreadySentAndARowPickedMeanwhile() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake, debounce: .seconds(60))
+        let older = fake.hold(.historyList)
+        let newer = historyList(records: [3])
+        fake.respond(.historyList, newer)
+        let reread = Task { await history.reread() }
+        #expect(await settle { fake.count(.historyList) == 2 })
+        history.setQuery("3")
+        // A row picked from the old rows before the search's read lands.
+        fake.respond(.historyRecordText, text(1))
+        history.select(row: 0)
+        await history.pendingDetail?.value
+        #expect(history.selection == 0)
+        older.release(historyList(records: [1, 2]))
+        await reread.value
+        #expect(history.snapshot.rows.count == 3)
+        // The search's own read (its debounce never fires in this test).
+        await history.reread()
+        #expect(history.snapshot == newer)
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
+    }
 
     @Test("typing re-reads once it pauses, sending only the latest query, with the selection reset")
-    func debounce() async throws {
+    func debounce() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake, debounce: .milliseconds(50))
-        await selecting(0, in: history, fake)
+        let history = await selected(0, fake, debounce: .milliseconds(50))
         fake.respond(.historyList, historyList(count: 1))
         history.setQuery("R")
         history.setQuery("Re")
@@ -259,22 +505,10 @@ struct HistoryModelTests {
         #expect(fake.params(.historyList) == [#"{"query":""}"#, #"{"query":"Re"}"#])
     }
 
-    @Test("an unchanged query neither searches nor clears the selection")
-    func sameQuery() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        history.setQuery("")
-        #expect(history.selection == 1)
-        // A search task, had one started, would run in this yield.
-        await Task.yield()
-        #expect(fake.count(.historyList) == 1)
-    }
-
     @Test("a newer query supersedes a read in flight for the older one")
-    func supersededResult() async throws {
+    func supersededResult() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake, debounce: .seconds(60))
+        let history = await loaded(fake, debounce: .seconds(60))
         let first = fake.hold(.historyList)
         fake.respond(.historyList, historyList(count: 1))
         history.setQuery("R")
@@ -289,30 +523,10 @@ struct HistoryModelTests {
         #expect(fake.params(.historyList).suffix(2) == [#"{"query":"R"}"#, #"{"query":"Re"}"#])
     }
 
-    @Test("a read sent before the search changed is dropped, so a row picked meanwhile is not carried onto the new rows")
-    func readSentBeforeQueryChange() async throws {
+    @Test("a read for a new query before its search runs leaves the selection cleared")
+    func readForNewQuery() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake, debounce: .seconds(60))
-        let held = fake.hold(.historyList)
-        fake.respond(.historyList, historyList(count: 3, revoked: [1]))
-        let stale = Task { await history.reread() }
-        #expect(await settle { fake.count(.historyList) == 2 })
-        history.setQuery("R")
-        held.release(historyList(count: 2))
-        await stale.value
-        #expect(history.snapshot == historyList(count: 3))
-        await selecting(1, in: history, fake)
-        // The search's own read lands.
-        await history.reread()
-        #expect(history.snapshot == historyList(count: 3, revoked: [1]))
-        #expect(history.selection == nil)
-    }
-
-    @Test("a read for a new query before its search runs clears the selection")
-    func readForNewQuery() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake, debounce: .seconds(60))
-        await selecting(1, in: history, fake)
+        let history = await selected(1, fake, debounce: .seconds(60))
         fake.respond(.historyList, historyList(count: 3))
         history.setQuery("Recipient")
         await history.reread()
@@ -321,87 +535,171 @@ struct HistoryModelTests {
         await Task.yield()
         #expect(fake.count(.historyList) == 2)
         #expect(fake.params(.historyList).last == #"{"query":"Recipient"}"#)
-        #expect(history.selection == nil)
+        #expect(history.selection == nil && history.selectedDetail == nil)
     }
 
     // MARK: Selection
 
-    @Test("selecting a row shows its record; out of range is ignored")
-    func select() async throws {
+    @Test("SelectingARowShowsItsDetail")
+    func selectingARowShowsItsDetail() async throws {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
-        fake.respond(.historyRecordText, recordText)
-        await history.select(row: 1)
+        let history = await loaded(fake)
+        fake.respond(.historyRecordText, text(2))
+        history.select(row: 1)
         #expect(history.selection == 1)
-        #expect(history.alert == AlertState(title: "Issuance Record", message: recordText.detail))
-        let params = try #require(fake.params(.historyRecordText).first)
-        #expect(params.contains(#""payloadSha256":"\#(historyRecord(2).payloadSha256)""#))
-        await history.select(row: 3)
-        await history.select(row: -1)
-        #expect(history.selection == 1)
-        #expect(fake.count(.historyRecordText) == 1)
+        await history.pendingDetail?.value
+        #expect(history.selectedDetail == "Detail of record 2")
+        #expect(fake.params(.historyRecordText) == [try recordParams(2)])
+        #expect(history.alert == nil)
     }
 
-    @Test("a record text failure shows the core's error")
-    func selectFailure() async throws {
+    @Test("TheDetailStaysUntilTheNextRowsDetailArrives")
+    func theDetailStaysUntilTheNextRowsDetailArrives() async {
         let fake = FakeBridge()
-        fake.fail(.historyRecordText, RPCError(code: .failed, message: "no such record"))
-        let history = try await loaded(fake)
-        await history.select(row: 0)
-        #expect(history.selection == 0)
-        #expect(history.alert == AlertState(title: "Error", message: "no such record"))
+        let history = await selected(0, fake)
+        let held = fake.hold(.historyRecordText)
+        history.select(row: 1)
+        #expect(history.selection == 1)
+        #expect(history.selectedDetail == "Detail of record 1")
+        held.release(text(2))
+        await history.pendingDetail?.value
+        #expect(history.selectedDetail == "Detail of record 2")
+    }
+
+    // Mac: the pane shows detailFailedPrefix and the core's error instead of
+    // clearing, and no alert shows.
+    @Test("AFailedDetailReadClearsTheDetailAndShowsTheCoresError")
+    func aFailedDetailReadClearsTheDetailAndShowsTheCoresError() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.fail(.historyRecordText, RPCError(code: .failed, message: "cannot word it"))
+        history.select(row: 2)
+        await history.pendingDetail?.value
+        #expect(history.selection == 2)
+        // The pane shows the core's error; no alert.
+        #expect(history.selectedDetail == "Unable to show this record: cannot word it")
+        #expect(history.alert == nil)
+    }
+
+    @Test("TheLatestSelectionWinsItsRepliesAndFailuresIncluded")
+    func theLatestSelectionWinsItsRepliesAndFailuresIncluded() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake)
+        let first = fake.hold(.historyRecordText)
+        let second = fake.hold(.historyRecordText)
+        fake.respond(.historyRecordText, text(3))
+        history.select(row: 0)
+        let one = history.pendingDetail
+        #expect(await settle { fake.count(.historyRecordText) == 1 })
+        history.select(row: 1)
+        let two = history.pendingDetail
+        #expect(await settle { fake.count(.historyRecordText) == 2 })
+        history.select(row: 2)
+        await history.pendingDetail?.value
+        #expect(history.selectedDetail == "Detail of record 3")
+        first.release(text(1))
+        second.release(failing: RPCError(code: .failed, message: "stale"))
+        await one?.value
+        await two?.value
+        #expect(history.selection == 2)
+        #expect(history.selectedDetail == "Detail of record 3")
+        #expect(history.alert == nil)
+    }
+
+    @Test("NoRowOrOneOutOfRangeClearsTheSelection", arguments: [nil, -1, 3] as [Int?])
+    func noRowOrOneOutOfRangeClearsTheSelection(_ row: Int?) async {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        history.select(row: row)
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
+        #expect(fake.count(.historyRecordText) == 1)  // the first selection's only
+    }
+
+    @Test("ClearingTheSelectionDropsADetailReadStillRunning")
+    func clearingTheSelectionDropsADetailReadStillRunning() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake)
+        let held = fake.hold(.historyRecordText)
+        history.select(row: 0)
+        let pending = history.pendingDetail
+        history.select(row: nil)
+        held.release(text(1))
+        await pending?.value
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
     }
 
     @Test("duplicate rows sharing a hash are selected by index")
-    func duplicateRows() async throws {
+    func duplicateRows() async {
         let fake = FakeBridge()
-        let row = historyRow(2)
-        let list = HistoryListResult(
-            rows: [row, row], loadFailed: false, revocationsUnavailable: false, revocationsLoaded: true, revokeAvailable: true)
-        let history = try await loaded(fake, list: list)
-        await selecting(1, in: history, fake)
+        let history = await selected(1, fake, list: historyList(records: [2, 2]))
         #expect(history.selection == 1)
         #expect(history.canRevoke)
     }
 
-    // MARK: Gates
-
-    @Test("Connect to GitHub shows logged out or offline")
-    func connectButton() async throws {
-        #expect(try await loaded(FakeBridge(), auth: loggedOut).showsConnectButton)
-        #expect(try await loaded(FakeBridge(), auth: loggedInOffline).showsConnectButton)
-        #expect(try await loaded(FakeBridge(), auth: loggedIn).showsConnectButton == false)
+    @Test("re-selecting the selected row makes no call, also after a failed detail")
+    func reselectingTheSelectedRow() async {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        history.select(row: 1)
+        // Awaits whatever detail read is latest: a new one would run here.
+        await history.pendingDetail?.value
+        #expect(fake.count(.historyRecordText) == 1)
+        #expect(history.selectedDetail == "Detail of record 2")
+        fake.fail(.historyRecordText, RPCError(code: .failed, message: "no"))
+        history.select(row: 0)
+        await history.pendingDetail?.value
+        #expect(history.selectedDetail == HistoryModel.detailFailedPrefix + "no")
+        history.select(row: 0)
+        await history.pendingDetail?.value
+        #expect(fake.count(.historyRecordText) == 2)
+        #expect(history.selection == 0)
+        #expect(history.selectedDetail == HistoryModel.detailFailedPrefix + "no")
     }
 
-    @Test("Revoke needs a selected, unrevoked row and the core's go-ahead")
-    func canRevoke() async throws {
+    @Test("a row selected just before history.changed shows no detail once its read lands")
+    func selectThenHistoryChanged() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake, list: historyList(count: 2, revoked: [2]))
-        #expect(!history.canRevoke)
-        await selecting(0, in: history, fake)
-        #expect(history.canRevoke)
-        await selecting(1, in: history, fake)
-        #expect(!history.canRevoke)
-        let unavailable = try await loaded(fake, list: historyList(count: 2, revokeAvailable: false))
-        await selecting(0, in: unavailable, fake)
-        #expect(!unavailable.canRevoke)
+        let history = await loaded(fake)
+        fake.respond(.historyRecordText, text(2))
+        history.select(row: 1)
+        history.historyChanged()
+        await history.pendingDetail?.value
+        #expect(fake.count(.historyRecordText) == 1)
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
     }
 
-    @Test("Connect to GitHub starts the login")
-    func connect() async throws {
+    @Test("a failed detail read leaves another alert up, and that alert's follow-up still runs")
+    func failedDetailUnderAnAlert() async {
         let fake = FakeBridge()
+        let message = "Your GitHub session expired. Please log in again."
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        fake.fail(.historyRevoke, RPCError(code: .sessionExpired, message: message))
         fake.respond(.authLogin, loggedIn)
-        let history = try await loaded(fake, auth: loggedOut)
-        await history.connectTapped()
+        await history.revokeTapped()
+        await history.confirm()
+        let sessionExpired = AlertState(title: "Session Expired", message: message)
+        #expect(history.alert == sessionExpired)
+        fake.reset(.historyRecordText)
+        fake.fail(.historyRecordText, RPCError(code: .failed, message: "cannot word it"))
+        history.select(row: 1)
+        await history.pendingDetail?.value
+        #expect(history.alert == sessionExpired)
+        #expect(history.selectedDetail == HistoryModel.detailFailedPrefix + "cannot word it")
+        #expect(fake.count(.authLogin) == 0)
+        await history.alertDismissed()
         #expect(fake.count(.authLogin) == 1)
     }
 
     // MARK: Refresh
 
     @Test("Refresh asks the core; the results arrive as events")
-    func refresh() async throws {
+    func refresh() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.refreshTapped()
         #expect(fake.params(.historyRefresh) == ["{}"])
         #expect(history.alert == nil)
@@ -409,129 +707,163 @@ struct HistoryModelTests {
     }
 
     @Test("a failed Refresh shows the core's error")
-    func refreshFailure() async throws {
+    func refreshFailure() async {
         let fake = FakeBridge()
         fake.fail(.historyRefresh, RPCError(code: .internal, message: "x"))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.refreshTapped()
         #expect(history.alert == AlertState(title: "Error", message: "x"))
     }
 
     // MARK: Revoke
 
-    @Test("Revoke asks the core's question, revokes the row's hash, re-reads with the selection reset and shows the outcome")
-    func revoke() async throws {
-        let outcome = RevokeResult(
-            status: .submitted, prNumber: 43, url: "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/pull/43",
-            title: "Revocation Submitted",
-            message: "Pull request #43 created:\nhttps://github.com/RoyalHouseOfGeorgia/rhg_authenticator/pull/43")
+    @Test("RevokeNeedsASelectedUnrevokedRowAndTheCoresGoAhead")
+    func revokeNeedsASelectedUnrevokedRowAndTheCoresGoAhead() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
+        let history = await loaded(fake, list: historyList(records: [1, 2], revoked: [2]))
+        #expect(!history.canRevoke)
+        await history.revokeTapped()  // ignored
+        #expect(fake.count(.historyRecordText) == 0)
+        #expect(history.pendingConfirmation == nil)
+
+        fake.respond(.historyRecordText, text(2))
+        history.select(row: 1)
+        await history.pendingDetail?.value
+        #expect(!history.canRevoke)  // already revoked
+
+        history.select(row: 0)
+        await history.pendingDetail?.value
+        #expect(history.canRevoke)
+
+        let flag = watch { _ = history.canRevoke }
+        fake.respond(.historyList, historyList(records: [1, 2], revoked: [2], revokeAvailable: false))
+        await history.reread()
+        #expect(history.selection == 0)
+        #expect(flag.changed)
+        #expect(!history.canRevoke)  // logged out, offline or no revocation list
+    }
+
+    @Test("RevokeIsDisabledWhileARevocationRuns")
+    func revokeIsDisabledWhileARevocationRuns() async {
+        let fake = FakeBridge()
+        let held = fake.hold(.historyRevoke)
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
         await history.revokeTapped()
-        #expect(
-            history.pendingConfirmation
-                == Confirmation(
-                    title: "Confirm Revocation", message: recordText.revokeConfirm, confirmTitle: "Revoke",
-                    cancelTitle: "Cancel", isDestructive: true))
+        let revoking = Task { await history.confirm() }
+        #expect(await settle { fake.count(.historyRevoke) == 1 })
+        #expect(history.isRevoking)
+        #expect(!history.canRevoke)
+        fake.respond(.historyList, historyList(records: [1, 2, 3], revoked: [1]))
+        held.release(submitted)
+        await revoking.value
+        #expect(!history.isRevoking)
+    }
+
+    @Test("ConfirmedRevokeOpensThePullRequestReReadsAndShowsTheCoresOutcome")
+    func confirmedRevokeOpensThePullRequestReReadsAndShowsTheCoresOutcome() async throws {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        let revoked = historyList(records: [1, 2, 3], revoked: [1])
+        fake.respond(.historyList, revoked)
+        fake.respond(.historyRevoke, submitted)
+        await history.revokeTapped()
+        #expect(history.pendingConfirmation == revokeQuestion(1))
         #expect(fake.count(.historyRevoke) == 0)
-        fake.respond(.historyRevoke, outcome)
-        fake.respond(.historyList, historyList(count: 3, revoked: [2]))
         await history.confirm()
         #expect(history.pendingConfirmation == nil)
-        #expect(fake.params(.historyRevoke) == [#"{"payloadSha256":"\#(historyRecord(2).payloadSha256)"}"#])
-        #expect(history.snapshot == historyList(count: 3, revoked: [2]))
+        #expect(fake.params(.historyRecordText) == [try recordParams(1), try recordParams(1)])
+        #expect(fake.params(.historyRevoke) == [revokeParams(1)])
+        #expect(history.snapshot == revoked)
         #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
         #expect(!history.isRevoking)
-        #expect(history.alert == AlertState(title: outcome.title, message: outcome.message))
+        #expect(history.alert == AlertState(title: "Revocation Submitted", message: "PR #12 opened."))
         await history.alertDismissed()
         #expect(fake.count(.authLogin) == 0)
     }
 
-    @Test("Revoke while it cannot revoke calls nothing")
-    func revokeGated() async throws {
+    @Test("ASuccessfulRevocationWhoseReReadFailsStillShowsTheCoresOutcome")
+    func aSuccessfulRevocationWhoseReReadFailsStillShowsTheCoresOutcome() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
+        let history = await selected(0, fake)
+        let shown = history.snapshot
+        fake.respond(.historyRecordText, text(1))
+        fake.fail(.historyList, RPCError(code: .internal, message: "x"))
+        fake.respond(.historyRevoke, submitted)
         await history.revokeTapped()
-        #expect(history.pendingConfirmation == nil)
-        #expect(fake.count(.historyRecordText) == 0)
+        await history.confirm()
+        #expect(history.snapshot == shown)
+        #expect(history.selection == nil)
+        #expect(!history.isRevoking)
+        #expect(history.alert == AlertState(title: "Revocation Submitted", message: "PR #12 opened."))
     }
 
-    @Test("a record text failure on Revoke shows the error and asks nothing")
-    func revokeTextFailure() async throws {
+    @Test("DecliningTheRevocationRevokesNothing")
+    func decliningTheRevocationRevokesNothing() async {
         let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
-        fake.reset(.historyRecordText)
-        fake.fail(.historyRecordText, RPCError(code: .failed, message: "bad record"))
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
         await history.revokeTapped()
-        #expect(history.pendingConfirmation == nil)
-        #expect(history.alert == AlertState(title: "Error", message: "bad record"))
-    }
-
-    @Test("Revoke declined: nothing is revoked")
-    func revokeDeclined() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
-        await history.revokeTapped()
+        #expect(history.pendingConfirmation == revokeQuestion(1))
         history.dismissConfirmation()
         #expect(history.pendingConfirmation == nil)
         await history.confirm()
         #expect(fake.count(.historyRevoke) == 0)
+        #expect(history.selection == 0)
+        #expect(history.alert == nil)
     }
 
-    @Test("Revoke stays disabled while a revocation is being submitted")
-    func revoking() async throws {
+    @Test("ARecordTextFailureBeforeRevokingShowsTheCoresErrorAndAsksNothing")
+    func aRecordTextFailureBeforeRevokingShowsTheCoresErrorAndAsksNothing() async {
         let fake = FakeBridge()
-        let held = fake.hold(.historyRevoke)
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
+        let history = await selected(0, fake)
+        fake.fail(.historyRecordText, RPCError(code: .failed, message: "no text"))
         await history.revokeTapped()
-        let confirm = Task { await history.confirm() }
-        #expect(await settle { fake.count(.historyRevoke) == 1 })
-        #expect(history.isRevoking && !history.canRevoke)
-        await history.revokeTapped()
-        #expect(fake.count(.historyRecordText) == 2)
-        held.release(failing: RPCError(code: .failed, message: "x"))
-        await confirm.value
-        #expect(!history.isRevoking && history.canRevoke)
+        #expect(history.pendingConfirmation == nil)
+        #expect(fake.count(.historyRevoke) == 0)
+        #expect(history.alert == AlertState(title: "Error", message: "no text"))
+        #expect(!history.isAsking)
     }
 
-    @Test("busy: nothing shows; the running revocation reports itself")
-    func revokeBusy() async throws {
+    @Test("ABusyRevocationShowsNothing")
+    func aBusyRevocationShowsNothing() async {
         let fake = FakeBridge()
-        fake.fail(.historyRevoke, RPCError(code: .busy, message: "Another operation is in progress."))
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        fake.fail(.historyRevoke, RPCError(code: .busy, message: "busy"))
         await history.revokeTapped()
         await history.confirm()
-        #expect(history.alert == nil && !history.isRevoking)
-        #expect(history.selection == 0)
+        #expect(history.alert == nil)
+        #expect(!history.isRevoking)
         #expect(fake.count(.authLogin) == 0)
+        #expect(history.selection == 0)
     }
 
-    @Test("not logged in: Revoke starts the login")
-    func revokeNotLoggedIn() async throws {
+    @Test("NotLoggedInStartsTheLoginWhoseStatusTextsShowOnHistory")
+    func notLoggedInStartsTheLoginWhoseStatusTextsShowOnHistory() async {
         let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
         fake.fail(.historyRevoke, RPCError(code: .notLoggedIn, message: "Not logged in to GitHub."))
         fake.respond(.authLogin, loggedIn)
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
         await history.revokeTapped()
         await history.confirm()
         #expect(fake.methods.suffix(2) == ["history.revoke", "auth.login"])
-        #expect(history.alert == nil && !history.isRevoking)
+        #expect(!history.isRevoking)
+        #expect(history.status == "Logged in as @octocat")
+        #expect(history.alert == nil)
     }
 
-    @Test("session expired: the alert, then the login only once it is dismissed")
-    func revokeSessionExpired() async throws {
+    @Test("SessionExpiredShowsTheAlertThenLogsInOnlyOnceItIsDismissed")
+    func sessionExpiredShowsTheAlertThenLogsInOnlyOnceItIsDismissed() async {
         let fake = FakeBridge()
         let message = "Your GitHub session expired. Please log in again."
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
         fake.fail(.historyRevoke, RPCError(code: .sessionExpired, message: message))
         fake.respond(.authLogin, loggedIn)
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
         await history.revokeTapped()
         await history.confirm()
         #expect(history.alert == AlertState(title: "Session Expired", message: message))
@@ -539,18 +871,19 @@ struct HistoryModelTests {
         await history.alertDismissed()
         #expect(history.alert == nil)
         #expect(fake.count(.authLogin) == 1)
+        #expect(history.status == "Logged in as @octocat")
         await history.alertDismissed()
         #expect(fake.count(.authLogin) == 1)
     }
 
     @Test(
-        "any other failure: Revocation Failed offering the error log",
+        "AnyOtherRevocationFailureShowsRevocationFailedOfferingTheErrorLog",
         arguments: [RPCErrorCode.failed, .internal, .input, .unknown("future")])
-    func revokeFailed(_ code: RPCErrorCode) async throws {
+    func anyOtherRevocationFailureShowsRevocationFailedOfferingTheErrorLog(_ code: RPCErrorCode) async {
         let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
         fake.fail(.historyRevoke, RPCError(code: code, message: "GitHub returned an error."))
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
         await history.revokeTapped()
         await history.confirm()
         #expect(
@@ -559,6 +892,693 @@ struct HistoryModelTests {
         #expect(!history.isRevoking && history.selection == 0)
         await history.alertDismissed()
         #expect(fake.count(.authLogin) == 0)
+    }
+
+    @Test("a confirmed revoke drops a detail read still running")
+    func confirmedRevokeDropsADetailRead() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        // Enqueued first: the selection's detail read takes the hold, the
+        // revoke question the reply after it.
+        let held = fake.hold(.historyRecordText)
+        fake.respond(.historyRecordText, text(2))
+        history.select(row: 1)
+        let detail = history.pendingDetail
+        #expect(await settle { fake.count(.historyRecordText) == 2 })
+        fake.respond(.historyList, historyList(records: [1, 2, 3], revoked: [2]))
+        fake.respond(.historyRevoke, submitted)
+        await history.revokeTapped()
+        #expect(history.pendingConfirmation == revokeQuestion(2))
+        await history.confirm()
+        #expect(history.selection == nil && history.selectedDetail == nil)
+        held.release(text(2))
+        await detail?.value
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
+    }
+
+    @Test("a deletion whose history.changed never came is not taken by a revocation's re-read")
+    func revokeDropsAPendingDelete() async {
+        let fake = FakeBridge()
+        let history = await deletedRow(1, fake)
+        // The deletion's history.changed is lost; record 1 is revoked next.
+        // Its re-read differs from the rows the deletion was counted in, so
+        // a pending deletion still held would select row 1.
+        fake.respond(.historyRecordText, text(2))
+        fake.respond(.historyList, historyList(records: [1, 3], revoked: [3]))
+        fake.respond(.historyRevoke, submitted)
+        history.select(row: 0)
+        await history.pendingDetail?.value
+        await history.revokeTapped()
+        await history.confirm()
+        #expect(fake.count(.historyRevoke) == 1)
+        #expect(history.snapshot == historyList(records: [1, 3], revoked: [3]))
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
+    }
+
+    // MARK: Delete
+
+    @Test("DeleteEntryNeedsASelectedRowRevokedOrNotWithRevokingUnavailable")
+    func deleteEntryNeedsASelectedRowRevokedOrNotWithRevokingUnavailable() async {
+        let fake = FakeBridge()
+        let history = await loaded(fake, list: historyList(records: [1, 2], revoked: [2], revokeAvailable: false))
+        #expect(!history.canDelete)
+        await history.deleteTapped()  // ignored
+        #expect(fake.count(.historyRecordText) == 0)
+        #expect(history.pendingConfirmation == nil)
+
+        fake.respond(.historyRecordText, text(2, offerRevoke: false))
+        history.select(row: 1)
+        await history.pendingDetail?.value
+        #expect(history.canDelete)  // revoked, revoking unavailable: still deletable
+        #expect(!history.canRevoke)
+
+        fake.respond(.historyList, historyList(records: [1]))
+        await history.reread()  // the selected row is gone
+        #expect(history.selection == nil)
+        #expect(!history.canDelete)
+    }
+
+    @Test("ASnapshotChangeReRaisesDeleteEntrysCanExecute")
+    func aSnapshotChangeReRaisesDeleteEntrysCanExecute() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        let flag = watch { _ = history.canDelete }
+        fake.respond(.historyList, historyList(records: [1, 2, 3], revoked: [1]))
+        await history.reread()
+        #expect(history.selection == 0)
+        #expect(flag.changed)
+        #expect(history.canDelete)
+    }
+
+    @Test("DeleteEntryIsDisabledWhileARevocationRuns")
+    func deleteEntryIsDisabledWhileARevocationRuns() async {
+        let fake = FakeBridge()
+        let held = fake.hold(.historyRevoke)
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        await history.revokeTapped()
+        let revoking = Task { await history.confirm() }
+        #expect(await settle { fake.count(.historyRevoke) == 1 })
+        #expect(history.isRevoking)
+        #expect(history.selection == 0)
+        #expect(!history.canDelete)
+        fake.respond(.historyList, historyList(records: [1, 2, 3], revoked: [1]))
+        held.release(submitted)
+        await revoking.value
+        #expect(!history.isRevoking)
+        #expect(fake.count(.historyDeleteEntry) == 0)
+    }
+
+    @Test("RevokeAndDeleteEntryAreDisabledWhileADeletionRuns")
+    func revokeAndDeleteEntryAreDisabledWhileADeletionRuns() async {
+        let fake = FakeBridge()
+        let held = fake.hold(.historyDeleteEntry)
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        #expect(history.canRevoke)
+        await history.deleteTapped()
+        let deleting = Task { await history.confirm() }
+        #expect(await settle { fake.count(.historyDeleteEntry) == 1 })
+        #expect(history.isDeleting)
+        #expect(history.selection == 0)
+        #expect(!history.canRevoke)
+        #expect(!history.canDelete)
+        await history.revokeTapped()  // ignored
+        await history.deleteTapped()  // ignored
+        #expect(fake.count(.historyRevoke) == 0)
+        #expect(fake.count(.historyRecordText) == 2)
+        held.release(deleted)
+        await deleting.value
+        #expect(!history.isDeleting)
+        #expect(history.canRevoke)
+        #expect(history.canDelete)
+    }
+
+    @Test("DeleteEntryIsDisabledWhileARevokeInsteadRuns")
+    func deleteEntryIsDisabledWhileARevokeInsteadRuns() async {
+        let fake = FakeBridge()
+        let held = fake.hold(.historyRevoke)
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        await history.deleteTapped()
+        await history.alternate()
+        let revoking = Task { await history.confirm() }
+        #expect(await settle { fake.count(.historyRevoke) == 1 })
+        #expect(history.isRevoking)
+        #expect(!history.isDeleting)
+        #expect(!history.canDelete)
+        #expect(!history.canRevoke)
+        await history.deleteTapped()  // ignored
+        #expect(fake.count(.historyRecordText) == 3)
+        fake.respond(.historyList, historyList(records: [1, 2, 3], revoked: [1]))
+        held.release(submitted)
+        await revoking.value
+        #expect(!history.isRevoking)
+        #expect(fake.count(.historyDeleteEntry) == 0)
+    }
+
+    @Test("AnActiveRecordsQuestionOffersRevokeInsteadInTheCoresWords")
+    func anActiveRecordsQuestionOffersRevokeInsteadInTheCoresWords() async throws {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        fake.respond(.historyRecordText, text(2))
+        await history.deleteTapped()
+        #expect(history.pendingConfirmation == deleteQuestion(2))
+        history.dismissConfirmation()
+        #expect(fake.params(.historyRecordText) == [try recordParams(2), try recordParams(2)])
+        #expect(fake.count(.historyDeleteEntry) == 0)
+        #expect(fake.count(.historyRevoke) == 0)
+        #expect(history.selection == 1)
+        #expect(!history.isDeleting)
+        #expect(history.alert == nil)
+    }
+
+    @Test("ARevokedRecordsQuestionHasTwoButtons")
+    func aRevokedRecordsQuestionHasTwoButtons() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake, list: historyList(records: [1, 2], revoked: [1]))
+        fake.respond(.historyRecordText, text(1, offerRevoke: false))
+        await history.deleteTapped()
+        #expect(history.pendingConfirmation == deleteQuestion(1, offerRevoke: false))
+        #expect(history.pendingConfirmation?.alternateTitle == nil)
+    }
+
+    @Test("WithoutRevokeInsteadAnAlternateAnswerDoesNothing")
+    func withoutRevokeInsteadAnAlternateAnswerDoesNothing() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake, list: historyList(records: [1, 2], revoked: [1]))
+        fake.respond(.historyRecordText, text(1, offerRevoke: false))
+        await history.deleteTapped()
+        await history.alternate()
+        #expect(history.pendingConfirmation == nil)
+        // No revoke question was asked: that would read the record text again.
+        #expect(fake.count(.historyRecordText) == 2)
+        #expect(fake.count(.historyRevoke) == 0)
+        #expect(fake.count(.historyDeleteEntry) == 0)
+        #expect(history.alert == nil)
+    }
+
+    @Test("ConfirmedDeleteDeletesTheRecordAndShowsTheCoresAlert")
+    func confirmedDeleteDeletesTheRecordAndShowsTheCoresAlert() async throws {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        fake.respond(.historyRecordText, text(2))
+        fake.respond(.historyDeleteEntry, deleted)
+        await history.deleteTapped()
+        #expect(fake.count(.historyDeleteEntry) == 0)
+        await history.confirm()
+        #expect(history.pendingConfirmation == nil)
+        #expect(fake.params(.historyDeleteEntry) == [try recordParams(2)])
+        #expect(history.alert == AlertState(title: "Core Deleted Title", message: "Core says: deleted it."))
+        #expect(!history.isDeleting)
+        #expect(fake.count(.historyRevoke) == 0)
+        // The list reloads on the core's history.changed, not here.
+        #expect(fake.count(.historyList) == 1)  // the load's only
+        // The question is gone: its alternate has nothing to run.
+        await history.alternate()
+        #expect(fake.count(.historyRecordText) == 2)
+    }
+
+    @Test("answering the delete question routes each button: confirm deletes, alternate asks to revoke, cancel ends it")
+    func answerRoutesEachButton() async throws {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        fake.respond(.historyDeleteEntry, deleted)
+
+        await history.deleteTapped()
+        await history.answer(.cancel)
+        #expect(history.pendingConfirmation == nil)
+        #expect(fake.count(.historyDeleteEntry) == 0)
+
+        await history.deleteTapped()
+        await history.answer(.alternate)
+        #expect(history.pendingConfirmation == revokeQuestion(1))
+        await history.answer(.cancel)
+        #expect(fake.count(.historyRevoke) == 0)
+
+        await history.deleteTapped()
+        await history.answer(.confirm)
+        #expect(history.pendingConfirmation == nil)
+        #expect(fake.params(.historyDeleteEntry) == [try recordParams(1)])
+        #expect(fake.count(.historyRevoke) == 0)
+    }
+
+    @Test("RevokeInsteadRevokesTheCapturedRecordAfterTheRevokeQuestion")
+    func revokeInsteadRevokesTheCapturedRecordAfterTheRevokeQuestion() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        let revoked = historyList(records: [1, 2, 3], revoked: [1])
+        fake.respond(.historyList, revoked)
+        fake.respond(.historyRevoke, submitted)
+        await history.deleteTapped()
+        #expect(history.pendingConfirmation == deleteQuestion(1))
+        await history.alternate()
+        #expect(history.pendingConfirmation == revokeQuestion(1))
+        await history.confirm()
+        #expect(fake.params(.historyRevoke) == [revokeParams(1)])
+        #expect(fake.count(.historyDeleteEntry) == 0)
+        #expect(history.snapshot == revoked)
+        #expect(!history.isRevoking)
+        #expect(history.alert == AlertState(title: "Revocation Submitted", message: "PR #12 opened."))
+    }
+
+    @Test("DecliningTheRevokeQuestionAfterRevokeInsteadDoesNothing")
+    func decliningTheRevokeQuestionAfterRevokeInsteadDoesNothing() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        await history.deleteTapped()
+        await history.alternate()
+        #expect(history.pendingConfirmation == revokeQuestion(1))
+        history.dismissConfirmation()
+        await history.confirm()
+        await history.alternate()
+        #expect(fake.count(.historyRevoke) == 0)
+        #expect(fake.count(.historyDeleteEntry) == 0)
+        #expect(history.alert == nil)
+    }
+
+    @Test("RevokeInsteadWhileLoggedOutStartsTheLogin")
+    func revokeInsteadWhileLoggedOutStartsTheLogin() async {
+        let fake = FakeBridge()
+        let history = await selected(
+            0, fake, list: historyList(records: [1, 2, 3], revokeAvailable: false), auth: loggedOut)
+        #expect(!history.canRevoke)
+        fake.respond(.historyRecordText, text(1))
+        fake.fail(.historyRevoke, RPCError(code: .notLoggedIn, message: "Not logged in to GitHub."))
+        fake.respond(.authLogin, loggedIn)
+        await history.deleteTapped()
+        await history.alternate()
+        await history.confirm()
+        #expect(fake.methods.suffix(2) == ["history.revoke", "auth.login"])
+        #expect(!history.isRevoking)
+        #expect(history.status == "Logged in as @octocat")
+        #expect(history.alert == nil)
+        #expect(fake.count(.historyDeleteEntry) == 0)
+    }
+
+    @Test("RevokeInsteadWithTheRevocationListNotLoadedShowsRevocationFailed")
+    func revokeInsteadWithTheRevocationListNotLoadedShowsRevocationFailed() async {
+        let fake = FakeBridge()
+        let message = "The revocation list has not loaded yet."
+        let history = await selected(
+            0, fake, list: historyList(records: [1, 2, 3], revocationsUnavailable: true, revokeAvailable: false))
+        fake.respond(.historyRecordText, text(1))
+        fake.fail(.historyRevoke, RPCError(code: .failed, message: message))
+        await history.deleteTapped()
+        await history.alternate()
+        await history.confirm()
+        #expect(history.alert == AlertState(title: "Revocation Failed", message: message, offersErrorLogExport: true))
+        #expect(!history.isRevoking)
+        #expect(fake.count(.authLogin) == 0)
+    }
+
+    @Test("HistoryChangedWhileTheQuestionIsOpenStillDeletesTheCapturedRecord")
+    func historyChangedWhileTheQuestionIsOpenStillDeletesTheCapturedRecord() async throws {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        fake.respond(.historyRecordText, text(2))
+        fake.respond(.historyDeleteEntry, deleted)
+        await history.deleteTapped()
+        let moved = historyList(records: [4, 1, 2, 3])
+        fake.respond(.historyList, moved)
+        await changed(history)
+        #expect(history.pendingConfirmation == deleteQuestion(2))
+        await history.confirm()
+        #expect(history.snapshot == moved)
+        #expect(history.selection == nil)
+        #expect(fake.params(.historyDeleteEntry) == [try recordParams(2)])
+        #expect(history.alert == AlertState(title: "Core Deleted Title", message: "Core says: deleted it."))
+        // The deletion's own history.changed: the record was found in the
+        // moved rows, so the row now in its place is selected.
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(records: [4, 1, 3]))
+        await changed(history)
+        #expect(history.selection == 2)
+    }
+
+    @Test("HistoryChangedWhileTheQuestionIsOpenStillRevokesTheCapturedRecord")
+    func historyChangedWhileTheQuestionIsOpenStillRevokesTheCapturedRecord() async throws {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        fake.respond(.historyRecordText, text(2))
+        fake.respond(.historyRevoke, submitted)
+        await history.deleteTapped()
+        fake.respond(.historyList, historyList(records: [4, 1, 2, 3]))
+        await changed(history)
+        #expect(history.selection == nil)
+        await history.alternate()
+        #expect(history.pendingConfirmation == revokeQuestion(2))
+        await history.confirm()
+        #expect(fake.params(.historyRevoke) == [revokeParams(2)])
+        #expect(
+            fake.params(.historyRecordText) == [try recordParams(2), try recordParams(2), try recordParams(2)])
+        #expect(history.alert == AlertState(title: "Revocation Submitted", message: "PR #12 opened."))
+    }
+
+    @Test("ARecordNoLongerInTheLogShowsRecordNotFound")
+    func aRecordNoLongerInTheLogShowsRecordNotFound() async {
+        let fake = FakeBridge()
+        let message = "This record is no longer in the issuance log."
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        fake.fail(.historyDeleteEntry, RPCError(code: .notFound, message: message))
+        await history.deleteTapped()
+        await history.confirm()
+        #expect(history.alert == AlertState(title: "Record Not Found", message: message))
+        #expect(history.alert?.offersErrorLogExport == false)
+        #expect(!history.isDeleting && history.canDelete)
+    }
+
+    @Test(
+        "AnyOtherDeleteFailureShowsDeleteFailedOfferingTheErrorLog",
+        arguments: [RPCErrorCode.failed, .input, .internal, .busy, .unknown("future")])
+    func anyOtherDeleteFailureShowsDeleteFailedOfferingTheErrorLog(_ code: RPCErrorCode) async {
+        let fake = FakeBridge()
+        let message = "Could not delete the record. The issuance log was not changed."
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        fake.fail(.historyDeleteEntry, RPCError(code: code, message: message))
+        await history.deleteTapped()
+        await history.confirm()
+        #expect(history.alert == AlertState(title: "Delete Failed", message: message, offersErrorLogExport: true))
+        #expect(!history.isDeleting)
+        #expect(history.canDelete)
+    }
+
+    @Test("ARecordTextFailureBeforeDeletingShowsTheCoresErrorAndAsksNothing")
+    func aRecordTextFailureBeforeDeletingShowsTheCoresErrorAndAsksNothing() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.fail(.historyRecordText, RPCError(code: .failed, message: "no text"))
+        await history.deleteTapped()
+        #expect(history.pendingConfirmation == nil)
+        #expect(fake.count(.historyDeleteEntry) == 0)
+        #expect(history.alert == AlertState(title: "Error", message: "no text"))
+        #expect(!history.isAsking)
+    }
+
+    @Test("a record text failure on Revoke Instead shows the error and asks nothing")
+    func revokeInsteadTextFailure() async {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        fake.respond(.historyRecordText, text(2))
+        await history.deleteTapped()
+        fake.reset(.historyRecordText)
+        fake.fail(.historyRecordText, RPCError(code: .failed, message: "bad record"))
+        await history.alternate()
+        #expect(history.pendingConfirmation == nil)
+        #expect(history.alert == AlertState(title: "Error", message: "bad record"))
+        #expect(!history.isAsking)
+    }
+
+    @Test("Delete declined: nothing is deleted, revoked or asked")
+    func deleteDeclined() async {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        fake.respond(.historyRecordText, text(2))
+        await history.deleteTapped()
+        history.dismissConfirmation()
+        #expect(history.pendingConfirmation == nil)
+        await history.confirm()
+        await history.alternate()
+        #expect(fake.count(.historyDeleteEntry) == 0 && fake.count(.historyRevoke) == 0)
+        #expect(fake.count(.historyRecordText) == 2)
+        #expect(history.pendingConfirmation == nil && history.alert == nil)
+    }
+
+    // MARK: The row in a deleted row's place
+
+    @Test("AfterADeletionTheRowInItsPlaceIsSelectedWithItsDetail")
+    func afterADeletionTheRowInItsPlaceIsSelectedWithItsDetail() async throws {
+        let fake = FakeBridge()
+        let history = await deletedRow(1, fake)
+        fake.respond(.historyRecordText, text(3))
+        fake.respond(.historyList, historyList(records: [1, 3]))
+        await changed(history)
+        #expect(history.selection == 1)
+        #expect(fake.params(.historyRecordText).last == (try recordParams(3)))
+        #expect(history.selectedDetail == "Detail of record 3")
+    }
+
+    @Test("AfterDeletingTheLastRowTheNewLastRowIsSelected")
+    func afterDeletingTheLastRowTheNewLastRowIsSelected() async {
+        let fake = FakeBridge()
+        let history = await deletedRow(2, fake)
+        fake.respond(.historyList, historyList(records: [1, 2]))
+        await changed(history)
+        #expect(history.selection == 1)
+    }
+
+    @Test("AfterDeletingTheOnlyRowNothingIsSelected")
+    func afterDeletingTheOnlyRowNothingIsSelected() async {
+        let fake = FakeBridge()
+        let history = await deletedRow(0, fake, list: historyList(records: [1]))
+        let empty = historyList(records: [])
+        fake.respond(.historyList, empty)
+        await changed(history)
+        #expect(history.snapshot == empty)
+        #expect(history.selection == nil)
+        #expect(history.selectedDetail == nil)
+        // Taken by that read: a later issuance selects nothing.
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(records: [5]))
+        await changed(history)
+        #expect(history.selection == nil)
+    }
+
+    @Test("ARereadShowingTheDeletionFirstStillSelectsTheRowInItsPlace")
+    func aRereadShowingTheDeletionFirstStillSelectsTheRowInItsPlace() async throws {
+        // A revocations or login re-read lands after the core's write but
+        // before its history.changed: that one then reads the same rows.
+        let fake = FakeBridge()
+        let history = await deletedRow(1, fake)
+        fake.respond(.historyRecordText, text(3))
+        let rows = historyList(records: [1, 3])
+        fake.respond(.historyList, rows)
+        await history.reread()
+        #expect(history.snapshot == rows)
+        await changed(history)
+        #expect(history.selection == 1)
+        #expect(fake.params(.historyRecordText).last == (try recordParams(3)))
+        #expect(history.selectedDetail == "Detail of record 3")
+        // Taken: a later change selects nothing.
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(records: [1, 3, 4]))
+        await changed(history)
+        #expect(history.selection == nil)
+    }
+
+    @Test("AHistoryChangedStillHoldingTheDeletedRecordDoesNotTakeItsPlace")
+    func aHistoryChangedStillHoldingTheDeletedRecordDoesNotTakeItsPlace() async {
+        // An unrelated history.changed read before the core's write.
+        let fake = FakeBridge()
+        let history = await deletedRow(1, fake)
+        fake.respond(.historyList, historyList(records: [1, 2, 3]))
+        await changed(history)
+        #expect(history.selection == nil)
+        fake.reset(.historyList)
+        fake.respond(.historyList, historyList(records: [1, 3]))
+        await changed(history)
+        #expect(history.selection == 1)
+    }
+
+    @Test("ADeletionDuringAPendingSearchSelectsNothingAfterIt")
+    func aDeletionDuringAPendingSearchSelectsNothingAfterIt() async {
+        // A row picked from the old rows while the search waits for typing to
+        // pause: its position is not in the rows the search reads.
+        let fake = FakeBridge()
+        let history = await selected(1, fake, debounce: .seconds(60))
+        history.setQuery("Recipient")
+        fake.respond(.historyRecordText, text(2))
+        history.select(row: 1)
+        await history.pendingDetail?.value
+        #expect(history.selection == 1)
+        fake.respond(.historyDeleteEntry, deleted)
+        await history.deleteTapped()
+        await history.confirm()
+        #expect(fake.count(.historyDeleteEntry) == 1)
+        let rows = historyList(records: [1, 3])
+        fake.respond(.historyList, rows)
+        await changed(history)
+        #expect(history.snapshot == rows)
+        #expect(history.selection == nil)
+    }
+
+    @Test("HistoryChangedBeforeTheDeleteReplyStillSelectsTheRowInItsPlace")
+    func historyChangedBeforeTheDeleteReplyStillSelectsTheRowInItsPlace() async throws {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        fake.respond(.historyRecordText, text(2))
+        let held = fake.hold(.historyDeleteEntry)
+        await history.deleteTapped()
+        let deleting = Task { await history.confirm() }
+        #expect(await settle { fake.count(.historyDeleteEntry) == 1 })
+        fake.reset(.historyRecordText)
+        fake.respond(.historyRecordText, text(3))
+        fake.respond(.historyList, historyList(records: [1, 3]))
+        await changed(history)
+        held.release(deleted)
+        await deleting.value
+        #expect(history.selection == 1)
+        #expect(fake.params(.historyRecordText).last == (try recordParams(3)))
+        #expect(history.selectedDetail == "Detail of record 3")
+    }
+
+    @Test("DeletingTheLaterOfTwoIdenticalDuplicatesKeepsTheSelectionInPlace")
+    func deletingTheLaterOfTwoIdenticalDuplicatesKeepsTheSelectionInPlace() async throws {
+        // The first identical copy is row 0: the first-match rule alone would give 0.
+        let fake = FakeBridge()
+        let history = await deletedRow(1, fake, list: historyList(records: [2, 2, 3]))
+        #expect(fake.params(.historyDeleteEntry) == [try recordParams(2)])
+        fake.respond(.historyList, historyList(records: [2, 3]))
+        await changed(history)
+        #expect(history.selection == 1)
+    }
+
+    @Test("OnlyTheAppliedReadAfterADeletionTakesItsPlace")
+    func onlyTheAppliedReadAfterADeletionTakesItsPlace() async {
+        let fake = FakeBridge()
+        let history = await deletedRow(3, fake, list: historyList(records: [1, 2, 3, 4, 5]))
+        let shown = history.snapshot
+        let superseded = fake.hold(.historyList)
+        let latest = fake.hold(.historyList)
+        let first = await changing(history, fake, count: 2)
+        let second = await changing(history, fake, count: 3)
+        superseded.release(historyList(records: [1, 2]))
+        await first.value
+        #expect(history.snapshot == shown)
+        #expect(history.selection == nil)
+        let rows = historyList(records: [1, 2, 3, 5])
+        latest.release(rows)
+        await second.value
+        #expect(history.snapshot == rows)
+        #expect(history.selection == 3)
+    }
+
+    @Test("AFailedDeletionSelectsNothingOnTheNextHistoryChanged", arguments: [RPCErrorCode.notFound, .failed])
+    func aFailedDeletionSelectsNothingOnTheNextHistoryChanged(_ code: RPCErrorCode) async {
+        let fake = FakeBridge()
+        let history = await selected(1, fake)
+        fake.respond(.historyRecordText, text(2))
+        fake.fail(.historyDeleteEntry, RPCError(code: code, message: "no"))
+        await history.deleteTapped()
+        await history.confirm()
+        let rows = historyList(records: [1, 3])
+        fake.respond(.historyList, rows)
+        await changed(history)
+        #expect(history.snapshot == rows)
+        #expect(history.selection == nil)
+    }
+
+    @Test("ASearchChangedWhileDeletingSelectsNothingAfterIt")
+    func aSearchChangedWhileDeletingSelectsNothingAfterIt() async {
+        let fake = FakeBridge()
+        let history = await selected(1, fake, debounce: .seconds(60))
+        fake.respond(.historyRecordText, text(2))
+        let held = fake.hold(.historyDeleteEntry)
+        await history.deleteTapped()
+        let deleting = Task { await history.confirm() }
+        #expect(await settle { fake.count(.historyDeleteEntry) == 1 })
+        history.setQuery("Recipient")
+        held.release(deleted)
+        await deleting.value
+        let rows = historyList(records: [1, 3])
+        fake.respond(.historyList, rows)
+        await changed(history)
+        #expect(history.snapshot == rows)
+        #expect(history.selection == nil)
+    }
+
+    // MARK: One question at a time
+
+    @Test("a second Delete or Revoke tap while a question is up does nothing")
+    func secondTapWhileAQuestionIsUp() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        await history.deleteTapped()
+        #expect(history.pendingConfirmation == deleteQuestion(1))
+        // A held Delete key repeats.
+        await history.deleteTapped()
+        await history.revokeTapped()
+        await history.removeDuplicatesTapped()
+        #expect(fake.count(.historyRecordText) == 2)
+        #expect(fake.count(.historyDuplicatePreview) == 0)
+        #expect(history.pendingConfirmation == deleteQuestion(1))
+    }
+
+    @Test("a second Delete or Revoke tap while a question is being prepared does nothing")
+    func secondTapWhileAQuestionIsPrepared() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        // The question takes the hold; a tap the gate let through would get
+        // the reply after it at once and be counted, rather than wait.
+        let held = fake.hold(.historyRecordText)
+        fake.respond(.historyRecordText, text(1))
+        let asking = Task { await history.revokeTapped() }
+        #expect(await settle { fake.count(.historyRecordText) == 2 })
+        #expect(history.isAsking)
+        await history.deleteTapped()
+        await history.revokeTapped()
+        #expect(fake.count(.historyRecordText) == 2)
+        held.release(text(1))
+        await asking.value
+        #expect(!history.isAsking)
+        #expect(history.pendingConfirmation == revokeQuestion(1))
+    }
+
+    @Test("a Delete or Revoke tap while Revoke Instead prepares its question does nothing")
+    func secondTapDuringRevokeInstead() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        fake.respond(.historyRecordText, text(1))
+        await history.deleteTapped()
+        fake.reset(.historyRecordText)
+        let held = fake.hold(.historyRecordText)
+        fake.respond(.historyRecordText, text(1))
+        let alternate = Task { await history.alternate() }
+        #expect(await settle { fake.count(.historyRecordText) == 3 })
+        #expect(history.pendingConfirmation == nil)
+        await history.deleteTapped()
+        await history.revokeTapped()
+        await history.removeDuplicatesTapped()
+        #expect(fake.count(.historyRecordText) == 3)
+        #expect(fake.count(.historyDuplicatePreview) == 0)
+        held.release(text(1))
+        await alternate.value
+        #expect(history.pendingConfirmation == revokeQuestion(1))
+    }
+
+    @Test("Remove Duplicates while a delete question is being prepared does nothing, and the reverse")
+    func removeDuplicatesAndDeleteDoNotOverlap() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake)
+        let heldText = fake.hold(.historyRecordText)
+        fake.respond(.historyRecordText, text(1))
+        let deleting = Task { await history.deleteTapped() }
+        #expect(await settle { fake.count(.historyRecordText) == 2 })
+        await history.removeDuplicatesTapped()
+        #expect(fake.count(.historyDuplicatePreview) == 0)
+        heldText.release(text(1))
+        await deleting.value
+        #expect(history.pendingConfirmation == deleteQuestion(1))
+        history.dismissConfirmation()
+
+        let heldPreview = fake.hold(.historyDuplicatePreview)
+        fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1, confirmMessage: "Core asks: remove one?"))
+        let previewing = Task { await history.removeDuplicatesTapped() }
+        #expect(await settle { fake.count(.historyDuplicatePreview) == 1 })
+        await history.deleteTapped()
+        await history.revokeTapped()
+        #expect(fake.count(.historyRecordText) == 2)
+        heldPreview.release(DuplicatePreviewResult(count: 1, confirmMessage: "Core asks: remove one?"))
+        await previewing.value
+        #expect(history.pendingConfirmation?.title == "Remove Duplicates")
     }
 
     // MARK: Export
@@ -575,30 +1595,30 @@ struct HistoryModelTests {
     }
 
     @Test("export: the core's alert, as given")
-    func export() async throws {
+    func export() async {
         let fake = FakeBridge()
         fake.respond(.historyExportIssuanceLog, ExportResult(title: "Core Log Title", message: "Core says: copied."))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.exportIssuanceLog(path: "/out/rhg-issuances-2026-01-01.json")
         #expect(fake.params(.historyExportIssuanceLog) == [#"{"path":"/out/rhg-issuances-2026-01-01.json"}"#])
         #expect(history.alert == AlertState(title: "Core Log Title", message: "Core says: copied."))
     }
 
     @Test("export with nothing signed: Nothing to Export with the core's message")
-    func exportNothing() async throws {
+    func exportNothing() async {
         let fake = FakeBridge()
         let message = "No credentials have been signed on this computer yet."
         fake.fail(.historyExportIssuanceLog, RPCError(code: .nothingToExport, message: message))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.exportIssuanceLog(path: "/out/x.json")
         #expect(history.alert == AlertState(title: "Nothing to Export", message: message))
     }
 
     @Test("any other export failure shows the core's error")
-    func exportFailure() async throws {
+    func exportFailure() async {
         let fake = FakeBridge()
         fake.fail(.historyExportIssuanceLog, RPCError(code: .failed, message: "Choose a folder outside the app's data folder."))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.exportIssuanceLog(path: "/data/x.json")
         #expect(history.alert == AlertState(title: "Error", message: "Choose a folder outside the app's data folder."))
     }
@@ -606,21 +1626,22 @@ struct HistoryModelTests {
     // MARK: Remove Duplicates
 
     @Test("a failed preview: Remove Duplicates Failed offering the error log")
-    func dedupePreviewFailure() async throws {
+    func dedupePreviewFailure() async {
         let fake = FakeBridge()
         fake.fail(.historyDuplicatePreview, RPCError(code: .failed, message: "unreadable log"))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.removeDuplicatesTapped()
         #expect(
             history.alert == AlertState(title: "Remove Duplicates Failed", message: "unreadable log", offersErrorLogExport: true))
         #expect(history.pendingConfirmation == nil)
+        #expect(!history.isAsking)
     }
 
     @Test("no duplicates: No Duplicates, nothing asked")
-    func dedupeNone() async throws {
+    func dedupeNone() async {
         let fake = FakeBridge()
         fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 0, confirmMessage: ""))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.removeDuplicatesTapped()
         #expect(history.alert == AlertState(title: "No Duplicates", message: "The issuance log has no duplicate entries."))
         #expect(history.pendingConfirmation == nil)
@@ -628,13 +1649,13 @@ struct HistoryModelTests {
     }
 
     @Test("duplicates found: the core's question, then its report; the list waits for history.changed")
-    func dedupeConfirmed() async throws {
+    func dedupeConfirmed() async {
         let fake = FakeBridge()
         fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 2, confirmMessage: "Core asks: remove two?"))
         fake.respond(
             .historyRemoveDuplicates,
             RemoveDuplicatesResult(removed: 2, backup: "/DATA/issuances.json.bak", message: "Core says: two gone."))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.removeDuplicatesTapped()
         #expect(
             history.pendingConfirmation
@@ -649,10 +1670,10 @@ struct HistoryModelTests {
     }
 
     @Test("duplicates found, declined: nothing is removed")
-    func dedupeDeclined() async throws {
+    func dedupeDeclined() async {
         let fake = FakeBridge()
         fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1, confirmMessage: "Core asks: remove one?"))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.removeDuplicatesTapped()
         history.dismissConfirmation()
         await history.confirm()
@@ -661,304 +1682,25 @@ struct HistoryModelTests {
     }
 
     @Test("the log changed after the preview: removed 0 is No Duplicates")
-    func dedupeRemovedNone() async throws {
+    func dedupeRemovedNone() async {
         let fake = FakeBridge()
         fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1, confirmMessage: "Core asks: remove one?"))
         fake.respond(.historyRemoveDuplicates, RemoveDuplicatesResult(removed: 0, backup: "", message: ""))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.removeDuplicatesTapped()
         await history.confirm()
         #expect(history.alert == AlertState(title: "No Duplicates", message: "The issuance log has no duplicate entries."))
     }
 
     @Test("a failed removal: Remove Duplicates Failed offering the error log")
-    func dedupeRemoveFailure() async throws {
+    func dedupeRemoveFailure() async {
         let fake = FakeBridge()
         fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1, confirmMessage: "Core asks: remove one?"))
         fake.fail(.historyRemoveDuplicates, RPCError(code: .failed, message: "backup failed"))
-        let history = try await loaded(fake)
+        let history = await loaded(fake)
         await history.removeDuplicatesTapped()
         await history.confirm()
         #expect(
             history.alert == AlertState(title: "Remove Duplicates Failed", message: "backup failed", offersErrorLogExport: true))
-    }
-
-    // MARK: Delete
-
-    @Test("Delete Entry… needs a selected row in range, revoked or not")
-    func canDelete() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake, list: historyList(count: 2, revoked: [2], revokeAvailable: false))
-        #expect(!history.canDelete)
-        await selecting(0, in: history, fake)
-        #expect(history.canDelete)
-        await selecting(1, in: history, fake)
-        #expect(history.canDelete)
-        fake.respond(.historyList, historyList(count: 1))
-        history.historyChanged()
-        await history.reread()
-        #expect(!history.canDelete)
-    }
-
-    @Test("Delete Entry… while it cannot delete calls nothing")
-    func deleteGated() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await history.deleteTapped()
-        #expect(history.pendingConfirmation == nil)
-        #expect(fake.count(.historyRecordText) == 0)
-    }
-
-    @Test("an unrevoked record: the core's question with Revoke Instead; Delete deletes the record and shows the core's report")
-    func deleteConfirmed() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        #expect(fake.params(.historyRecordText).last == (try recordParams(historyRecord(2))))
-        #expect(history.pendingConfirmation == deleteQuestion(recordText.deleteConfirm, offerRevoke: true))
-        #expect(fake.count(.historyDeleteEntry) == 0)
-        fake.respond(.historyDeleteEntry, deleted)
-        await history.confirm()
-        #expect(history.pendingConfirmation == nil)
-        #expect(fake.params(.historyDeleteEntry) == [try recordParams(historyRecord(2))])
-        #expect(history.alert == AlertState(title: "Core Deleted Title", message: "Core says: deleted."))
-        #expect(!history.isDeleting)
-        // The list reloads on the core's history.changed, not here.
-        #expect(fake.count(.historyList) == 1)
-        #expect(fake.count(.historyRevoke) == 0)
-        await history.alternate()
-        #expect(fake.count(.historyRecordText) == 2)
-    }
-
-    @Test("Revoke Instead asks the revoke question for the same record, and Revoke revokes it")
-    func revokeInstead() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        await history.alternate()
-        #expect(fake.params(.historyRecordText).suffix(2) == [try recordParams(historyRecord(2)), try recordParams(historyRecord(2))])
-        #expect(history.pendingConfirmation == revokeQuestion)
-        #expect(fake.count(.historyDeleteEntry) == 0)
-        let outcome = RevokeResult(status: .submitted, prNumber: 43, url: "u", title: "Core Revoked", message: "Core says: PR.")
-        fake.respond(.historyRevoke, outcome)
-        await history.confirm()
-        #expect(fake.params(.historyRevoke) == [#"{"payloadSha256":"\#(historyRecord(2).payloadSha256)"}"#])
-        #expect(fake.count(.historyDeleteEntry) == 0)
-        #expect(history.alert == AlertState(title: "Core Revoked", message: "Core says: PR."))
-    }
-
-    @Test("Revoke Instead, then Cancel: nothing is revoked or deleted")
-    func revokeInsteadDeclined() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        await history.alternate()
-        history.dismissConfirmation()
-        #expect(history.pendingConfirmation == nil)
-        await history.confirm()
-        await history.alternate()
-        #expect(fake.count(.historyRevoke) == 0 && fake.count(.historyDeleteEntry) == 0)
-    }
-
-    @Test("a record text failure on Revoke Instead shows the error and asks nothing")
-    func revokeInsteadTextFailure() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        fake.reset(.historyRecordText)
-        fake.fail(.historyRecordText, RPCError(code: .failed, message: "bad record"))
-        await history.alternate()
-        #expect(history.pendingConfirmation == nil)
-        #expect(history.alert == AlertState(title: "Error", message: "bad record"))
-    }
-
-    @Test("Delete declined: nothing is deleted, revoked or asked")
-    func deleteDeclined() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        history.dismissConfirmation()
-        #expect(history.pendingConfirmation == nil)
-        await history.confirm()
-        await history.alternate()
-        #expect(fake.count(.historyDeleteEntry) == 0 && fake.count(.historyRevoke) == 0)
-        #expect(fake.count(.historyRecordText) == 2)
-        #expect(history.pendingConfirmation == nil && history.alert == nil)
-    }
-
-    @Test("a revoked record: the core's question without Revoke Instead")
-    func deleteRevoked() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake, list: historyList(count: 2, revoked: [2]))
-        await selecting(1, in: history, fake)
-        fake.reset(.historyRecordText)
-        fake.respond(.historyRecordText, revokedText)
-        await history.deleteTapped()
-        #expect(history.pendingConfirmation == deleteQuestion(revokedText.deleteConfirm, offerRevoke: false))
-        #expect(history.pendingConfirmation?.alternateTitle == nil)
-        fake.respond(.historyDeleteEntry, deleted)
-        await history.confirm()
-        #expect(fake.params(.historyDeleteEntry) == [try recordParams(historyRecord(2))])
-        #expect(fake.count(.historyRevoke) == 0)
-    }
-
-    @Test("without Revoke Instead, alternate() only closes the question")
-    func deleteRevokedAlternate() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake, list: historyList(count: 2, revoked: [2]))
-        await selecting(1, in: history, fake)
-        fake.reset(.historyRecordText)
-        fake.respond(.historyRecordText, revokedText)
-        await history.deleteTapped()
-        let reads = fake.count(.historyRecordText)
-        await history.alternate()
-        #expect(history.pendingConfirmation == nil && history.alert == nil)
-        // No revoke question was asked: that would read the record text again.
-        #expect(fake.count(.historyRecordText) == reads)
-        #expect(fake.count(.historyRevoke) == 0 && fake.count(.historyDeleteEntry) == 0)
-    }
-
-    @Test("Revoke Instead while logged out: the revocation starts the login")
-    func revokeInsteadLoggedOut() async throws {
-        let fake = FakeBridge()
-        fake.fail(.historyRevoke, RPCError(code: .notLoggedIn, message: "Not logged in to GitHub."))
-        fake.respond(.authLogin, loggedIn)
-        let history = try await loaded(fake, auth: loggedOut)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        await history.alternate()
-        await history.confirm()
-        #expect(fake.methods.suffix(2) == ["history.revoke", "auth.login"])
-        #expect(history.alert == nil && !history.isRevoking)
-        #expect(fake.count(.historyDeleteEntry) == 0)
-    }
-
-    @Test("Revoke Instead before the revocation list loaded: Revocation Failed with the core's message")
-    func revokeInsteadRevocationsNotLoaded() async throws {
-        let fake = FakeBridge()
-        let message = "Core says: the revocation list has not loaded."
-        fake.fail(.historyRevoke, RPCError(code: .failed, message: message))
-        let history = try await loaded(fake, list: historyList(count: 3, revocationsUnavailable: true, revokeAvailable: false))
-        await selecting(1, in: history, fake)
-        #expect(!history.canRevoke)
-        await history.deleteTapped()
-        await history.alternate()
-        await history.confirm()
-        #expect(history.alert == AlertState(title: "Revocation Failed", message: message, offersErrorLogExport: true))
-        #expect(!history.isRevoking)
-    }
-
-    @Test("history.changed while the question is pending: Delete still deletes the record asked about")
-    func deleteAfterHistoryChanged() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        fake.respond(.historyList, historyList(count: 1))
-        history.historyChanged()
-        await history.reread()
-        #expect(history.selection == nil && history.snapshot == historyList(count: 1))
-        #expect(history.pendingConfirmation == deleteQuestion(recordText.deleteConfirm, offerRevoke: true))
-        fake.respond(.historyDeleteEntry, deleted)
-        await history.confirm()
-        #expect(fake.params(.historyDeleteEntry) == [try recordParams(historyRecord(2))])
-    }
-
-    @Test("history.changed while the question is pending: Revoke Instead still revokes the record asked about")
-    func revokeInsteadAfterHistoryChanged() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        fake.respond(.historyList, historyList(count: 1))
-        history.historyChanged()
-        await history.reread()
-        #expect(history.selection == nil)
-        await history.alternate()
-        #expect(fake.params(.historyRecordText).last == (try recordParams(historyRecord(2))))
-        #expect(history.pendingConfirmation == revokeQuestion)
-        await history.confirm()
-        #expect(fake.params(.historyRevoke) == [#"{"payloadSha256":"\#(historyRecord(2).payloadSha256)"}"#])
-    }
-
-    @Test("not found: Record Not Found with the core's message")
-    func deleteNotFound() async throws {
-        let fake = FakeBridge()
-        let message = "This record is no longer in the issuance log."
-        fake.fail(.historyDeleteEntry, RPCError(code: .notFound, message: message))
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        await history.confirm()
-        #expect(history.alert == AlertState(title: "Record Not Found", message: message))
-        #expect(!history.isDeleting && history.canDelete)
-    }
-
-    @Test(
-        "any other failure: Delete Failed with the core's message, offering the error log",
-        arguments: [RPCErrorCode.failed, .internal, .input, .busy, .unknown("future")])
-    func deleteFailed(_ code: RPCErrorCode) async throws {
-        let fake = FakeBridge()
-        fake.fail(.historyDeleteEntry, RPCError(code: code, message: "Core says: backup failed."))
-        let history = try await loaded(fake)
-        await selecting(1, in: history, fake)
-        await history.deleteTapped()
-        await history.confirm()
-        #expect(
-            history.alert == AlertState(title: "Delete Failed", message: "Core says: backup failed.", offersErrorLogExport: true))
-        #expect(!history.isDeleting)
-    }
-
-    @Test("a record text failure on Delete Entry… shows the error and asks nothing")
-    func deleteTextFailure() async throws {
-        let fake = FakeBridge()
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
-        fake.reset(.historyRecordText)
-        fake.fail(.historyRecordText, RPCError(code: .failed, message: "bad record"))
-        await history.deleteTapped()
-        #expect(history.pendingConfirmation == nil)
-        #expect(history.alert == AlertState(title: "Error", message: "bad record"))
-    }
-
-    @Test("Delete Entry… and Revoke stay disabled while a deletion is being made")
-    func deleting() async throws {
-        let fake = FakeBridge()
-        let held = fake.hold(.historyDeleteEntry)
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
-        await history.deleteTapped()
-        let confirm = Task { await history.confirm() }
-        #expect(await settle { fake.count(.historyDeleteEntry) == 1 })
-        #expect(history.isDeleting && !history.canDelete && !history.canRevoke)
-        await history.deleteTapped()
-        await history.revokeTapped()
-        #expect(fake.count(.historyRecordText) == 2)
-        held.release(deleted)
-        await confirm.value
-        #expect(!history.isDeleting && history.canDelete && history.canRevoke)
-    }
-
-    @Test("Delete Entry… stays disabled while a revocation started from Revoke Instead is submitted")
-    func revokingDisablesDelete() async throws {
-        let fake = FakeBridge()
-        let held = fake.hold(.historyRevoke)
-        let history = try await loaded(fake)
-        await selecting(0, in: history, fake)
-        await history.deleteTapped()
-        await history.alternate()
-        let confirm = Task { await history.confirm() }
-        #expect(await settle { fake.count(.historyRevoke) == 1 })
-        #expect(history.isRevoking && !history.canDelete && !history.canRevoke)
-        await history.deleteTapped()
-        #expect(fake.count(.historyRecordText) == 3)
-        held.release(failing: RPCError(code: .failed, message: "x"))
-        await confirm.value
-        #expect(!history.isRevoking && history.canDelete)
     }
 }

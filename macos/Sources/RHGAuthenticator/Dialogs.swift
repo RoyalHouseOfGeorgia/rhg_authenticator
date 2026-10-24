@@ -6,15 +6,15 @@ import SwiftUI
 /// dialog per model property at a time: a value set while one is up waits
 /// for it to close.
 @MainActor
-struct AppKitDialog<Value: Equatable & Sendable>: ViewModifier {
+struct AppKitDialog<Value: Equatable & Sendable, Answer: Sendable>: ViewModifier {
     /// The value as the view's body read it, so changes re-run `onChange`.
     let value: Value?
     /// The model's value now; the observed one is stale once a dialog is up.
     let current: @MainActor () -> Value?
     /// Shows the dialog and returns the operator's answer.
-    let present: @MainActor (Value) async -> Bool
+    let present: @MainActor (Value) async -> Answer
     /// Hands the answer to the model, which clears the value.
-    let respond: @MainActor (Bool) async -> Void
+    let respond: @MainActor (Answer) async -> Void
     @State private var isPresenting = false
 
     func body(content: Content) -> some View {
@@ -56,6 +56,18 @@ extension View {
                 value: value, current: current, present: { await FilePanel.confirm($0) }, respond: respond))
     }
 
+    /// Shows `value` while non-nil as `FilePanel.choose`, for a question that
+    /// may have an alternate button, then hands the button picked to
+    /// `respond`. `current` reads the same model property.
+    func appKitChoice(
+        _ value: Confirmation?, current: @escaping @MainActor () -> Confirmation?,
+        respond: @escaping @MainActor (ConfirmChoice) async -> Void
+    ) -> some View {
+        modifier(
+            AppKitDialog(
+                value: value, current: current, present: { await FilePanel.choose($0) }, respond: respond))
+    }
+
     /// Shows `value` while non-nil as `FilePanel.alert`, then calls
     /// `dismissed`, which clears it, and opens the error log's save panel
     /// when the operator chose Export Error Log…. `current` reads the same
@@ -67,7 +79,7 @@ extension View {
         modifier(
             AppKitDialog(
                 value: value, current: current, present: { await FilePanel.alert($0) },
-                respond: { exportErrorLog in
+                respond: { (exportErrorLog: Bool) in
                     await dismissed()
                     if exportErrorLog {
                         ErrorLogPanel.present(for: Shared.model)

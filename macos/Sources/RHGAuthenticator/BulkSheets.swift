@@ -67,6 +67,7 @@ struct BulkConfirmView: View {
                     Task { [bulk] in await bulk.confirm() }
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
             }
             .padding(.top, 8)
         }
@@ -135,6 +136,7 @@ struct BulkResultsView: View {
                     bulk.closeResults()
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
             }
             .padding(.top, 8)
         }

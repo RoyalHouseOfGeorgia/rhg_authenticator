@@ -17,6 +17,12 @@ public final class AppModel {
 
     /// The Help menu's one item.
     nonisolated public static let exportErrorLogTitle = "Export Error Log\u{2026}"
+    /// The tab picker's titles, in the tabs' order.
+    nonisolated public static let signTabTitle = "Sign"
+    nonisolated public static let historyTabTitle = "History"
+    nonisolated public static let registryTabTitle = "Registry"
+    nonisolated public static let auditTabTitle = "Audit"
+    nonisolated public static let yubiKeyTabTitle = "YubiKey"
 
     /// The quit confirmation with unsubmitted registry edits (`confirmDiscard`).
     nonisolated public static let quitConfirmation = Confirmation(

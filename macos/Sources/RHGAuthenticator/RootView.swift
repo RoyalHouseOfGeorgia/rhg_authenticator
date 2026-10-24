@@ -35,7 +35,7 @@ struct RootView: View {
     }
 }
 
-/// Startup failed: the error, then quit (the Fyne app exited the same way).
+/// Startup failed: the error, then quit; the app can't work without its core.
 @MainActor
 struct FatalErrorView: View {
     let message: String
@@ -52,30 +52,74 @@ struct FatalErrorView: View {
     }
 }
 
-/// The update banner, then the tabs in the Fyne app's order, over the status
-/// bar.
+/// A tab of the main window, in the order the picker shows them (the
+/// Windows app's tab order, Help aside).
+enum AppTab: CaseIterable, Hashable {
+    case sign
+    case history
+    case registry
+    case audit
+    case yubiKey
+
+    /// The tab picker's segment title.
+    var title: String {
+        switch self {
+        case .sign: AppModel.signTabTitle
+        case .history: AppModel.historyTabTitle
+        case .registry: AppModel.registryTabTitle
+        case .audit: AppModel.auditTabTitle
+        case .yubiKey: AppModel.yubiKeyTabTitle
+        }
+    }
+}
+
+/// The update banner, then the tab picked in the toolbar, over the status
+/// bar. Every tab's alerts and questions show from here, as AppKit alerts,
+/// whichever tab started them and over any sheet.
 @MainActor
 struct ReadyView: View {
     let model: AppModel
+    @State private var tab: AppTab = .sign
 
     var body: some View {
         VStack(spacing: 0) {
             UpdateBannerView(model: model)
-            TabView {
-                SignView(sign: model.sign, bulk: model.bulk, isSigningBusy: model.isSigningBusy)
-                    .tabItem { Text("Sign") }
-                HistoryView(history: model.history)
-                    .tabItem { Text("History") }
-                RegistryView(registry: model.registry, login: model.login)
-                    .tabItem { Text("Registry") }
-                AuditView(audit: model.audit)
-                    .tabItem { Text("Audit") }
-                YubiKeyView(model: model.yubiKey)
-                    .tabItem { Text("YubiKey") }
+            // Every tab stays mounted, so lists keep their scroll position and
+            // split views their divider; only the picked one shows and takes
+            // input (so only its keyboard shortcuts fire).
+            ZStack {
+                SignView(sign: sign, bulk: bulk, isSigningBusy: model.isSigningBusy)
+                    .tabVisible(tab == .sign)
+                HistoryView(history: history, login: login)
+                    .tabVisible(tab == .history)
+                RegistryView(registry: registry, login: login)
+                    .tabVisible(tab == .registry)
+                AuditView(audit: audit)
+                    .tabVisible(tab == .audit)
+                YubiKeyView(model: yubiKey)
+                    .tabVisible(tab == .yubiKey)
             }
-            .padding([.top, .horizontal])
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Here rather than on the Sign tab: the tab picker still works
+            // while the core loads the chosen file, so the sheet may come up
+            // with another tab picked, and a hidden tab is disabled. Only the
+            // model closes it, so the binding ignores writes.
+            .sheet(isPresented: .constant(bulk.isShowingSheet)) {
+                BulkSheet(bulk: bulk)
+            }
             Divider()
             StatusBar(items: model.statusItems)
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Tab", selection: $tab) {
+                    ForEach(AppTab.allCases, id: \.self) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
         }
         // An AppKit alert, so an internal error shows over a bulk sheet too.
         .onChange(of: model.internalErrorMessage, initial: true) { _, message in
@@ -85,8 +129,13 @@ struct ReadyView: View {
                 model.internalErrorMessage = nil
             }
         }
-        // The registry's, the history's and the login's alerts and questions,
-        // here so they show whichever tab started them, over any sheet.
+        .appKitAlert(sign.alert, current: { sign.alert }) { [sign] in
+            sign.alert = nil
+        }
+        // While a bulk sheet is up, BulkSheet shows the bulk alert over it.
+        .appKitAlert(bulkTabAlert, current: { bulkTabAlert }) { [bulk] in
+            bulk.dismissAlert()
+        }
         .appKitConfirmation(registry.pendingConfirmation, current: { registry.pendingConfirmation }) {
             [registry] confirmed in
             if confirmed {
@@ -98,13 +147,10 @@ struct ReadyView: View {
         .appKitAlert(registry.alert, current: { registry.alert }) { [registry] in
             await registry.alertDismissed()
         }
-        .appKitConfirmation(history.pendingConfirmation, current: { history.pendingConfirmation }) {
-            [history] confirmed in
-            if confirmed {
-                await history.confirm()
-            } else {
-                history.dismissConfirmation()
-            }
+        // Delete Entry…'s question may offer Revoke Instead.
+        .appKitChoice(history.pendingConfirmation, current: { history.pendingConfirmation }) {
+            [history] choice in
+            await history.answer(choice)
         }
         .appKitAlert(history.alert, current: { history.alert }) { [history] in
             await history.alertDismissed()
@@ -120,8 +166,8 @@ struct ReadyView: View {
         .appKitAlert(login.alert, current: { login.alert }) { [login] in
             login.alertDismissed()
         }
-        // Here rather than on the Registry tab, so switching tabs mid-login
-        // keeps it up. Only the model closes it (its Cancel button calls
+        // Here rather than on a tab, so switching tabs mid-login keeps it
+        // up. Only the model closes it (its Cancel button calls
         // cancelLogin), so a login that just ended can't cancel the next.
         .sheet(isPresented: .constant(login.deviceCode != nil)) {
             if let prompt = login.deviceCode {
@@ -131,13 +177,32 @@ struct ReadyView: View {
         }
     }
 
+    private var sign: SignModel { model.sign }
+    private var bulk: BulkModel { model.bulk }
     private var registry: RegistryModel { model.registry }
     private var history: HistoryModel { model.history }
     private var login: LoginModel { model.login }
+    private var audit: AuditModel { model.audit }
+    private var yubiKey: YubiKeyModel { model.yubiKey }
+
+    /// The bulk alert to show over the tabs: none while a bulk sheet is up.
+    private var bulkTabAlert: AlertState? { bulk.isShowingTabAlert ? bulk.alert : nil }
+}
+
+extension View {
+    /// Shows a tab's view while it is the picked tab; otherwise hides it and
+    /// keeps it from taking clicks, keyboard focus, keyboard shortcuts or
+    /// VoiceOver's attention, while it stays mounted.
+    func tabVisible(_ visible: Bool) -> some View {
+        opacity(visible ? 1 : 0)
+            .disabled(!visible)
+            .allowsHitTesting(visible)
+            .accessibilityHidden(!visible)
+    }
 }
 
 /// The status bar: the items spread across the window with flexible space
-/// between them, as in the Fyne app.
+/// between them.
 @MainActor
 struct StatusBar: View {
     let items: [String]
@@ -159,9 +224,11 @@ struct StatusBar: View {
 }
 
 extension View {
-    /// Shows `state` as an alert with an OK button while it is non-nil and
-    /// `visible`; closing it calls `onDismiss`, which clears the state. One
-    /// alert per view: put a second one on a different view.
+    /// Shows `state` as a SwiftUI alert with an OK button while it is non-nil
+    /// and `visible`; closing it calls `onDismiss`, which clears the state.
+    /// One alert per view: put a second one on a different view. For a
+    /// sheet's own alert (BulkSheet); the tabs' alerts are AppKit alerts
+    /// shown from ReadyView.
     func alert(
         _ state: AlertState?, when visible: Bool = true, onDismiss: @escaping @MainActor () -> Void
     ) -> some View {

@@ -4,91 +4,129 @@ import RHGModels
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The Sign tab, laid out as the Fyne app's: the credential form, Sign
-/// Credential, Bulk Sign from File…, the status line and the signed
-/// credential's QR code. The bulk flow's sheets and alert hang off it too.
+/// The Sign tab: Sign Credential and Bulk Sign from File… over two panes,
+/// the credential form with the status line on the left and the signed
+/// credential on the right. The bulk flow's sheet and every alert show
+/// from ReadyView.
 @MainActor
 struct SignView: View {
     @Bindable var sign: SignModel
     let bulk: BulkModel
     /// A signing or a bulk flow is under way (`AppModel.isSigningBusy`).
     let isSigningBusy: Bool
+    /// The date button's graphical picker is open.
+    @State private var isPickingDate = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                form
-                Button(SignModel.signTitle) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Button {
                     Task { [sign] in await sign.sign() }
+                } label: {
+                    Label(SignModel.signTitle, systemImage: "signature")
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(isSigningBusy)
-                .padding(.top, 8)
-                Button(BulkModel.bulkSignTitle) {
+                Button {
                     BulkPanels.chooseFile(for: bulk)
+                } label: {
+                    Label(BulkModel.bulkSignTitle, systemImage: "doc.on.doc")
                 }
                 .disabled(isSigningBusy)
+                Spacer(minLength: 0)
+            }
+            HSplitView {
+                inputPane
+                    .frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                resultPane
+                    .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The form, then the status line and Report Issue under it.
+    private var inputPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                form
                 Text(sign.status)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 if let reportTitle = sign.report.buttonTitle {
-                    Button(reportTitle) {
+                    Button {
                         Task { [sign] in await sign.reportIssue() }
+                    } label: {
+                        Label(reportTitle, systemImage: "exclamationmark.bubble")
                     }
                     .disabled(!sign.report.isButtonEnabled)
                 }
-                if let result = sign.result {
-                    ResultView(sign: sign, result: result)
-                        .frame(maxWidth: .infinity)
-                }
             }
-            .padding()
-            // On the VStack, not the ScrollView, so it does not share a view
-            // with the signing alert. Shown only while no bulk sheet is up;
-            // BulkSheet shows the same alert over itself otherwise.
-            .alert(bulk.alert, when: bulk.isShowingTabAlert) { bulk.dismissAlert() }
-            // Only the model closes the sheet, so the binding ignores writes.
-            .sheet(isPresented: .constant(bulk.isShowingSheet)) {
-                BulkSheet(bulk: bulk)
-            }
+            .padding(.trailing, 12)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .alert(sign.alert) { sign.alert = nil }
     }
 
-    @ViewBuilder
+    /// Labels beside their fields, right-aligned, as Mac forms have them.
     private var form: some View {
-        Text(SignModel.recipientLabel)
-        TextField(text: $sign.recipient, prompt: Text(SignModel.recipientPlaceholder)) {
-            Text(SignModel.recipientLabel)
-        }
-        .labelsHidden()
-        .textFieldStyle(.roundedBorder)
+        Form {
+            TextField(text: $sign.recipient, prompt: Text(SignModel.recipientPlaceholder)) {
+                Text(SignModel.recipientLabel)
+            }
+            .textFieldStyle(.roundedBorder)
 
-        Text(SignModel.honorLabel)
-        Picker(SignModel.honorLabel, selection: $sign.honor) {
-            Text(SignModel.honorPlaceholder).tag("")
-            ForEach(sign.honors, id: \.self) { honor in
-                Text(honor).tag(honor)
+            // A menu picker, at its natural width: its widest title's.
+            Picker(SignModel.honorLabel, selection: $sign.honor) {
+                Text(SignModel.honorPlaceholder).tag("")
+                ForEach(sign.honors, id: \.self) { honor in
+                    Text(honor).tag(honor)
+                }
+            }
+
+            TextField(text: $sign.detail, prompt: Text(SignModel.detailPlaceholder), axis: .vertical) {
+                Text(SignModel.detailLabel)
+            }
+            .textFieldStyle(.roundedBorder)
+            .lineLimit(3...6)
+
+            // The date shows once, as YYYY-Mon-DD; the button opens the
+            // picker. The signed date is the UTC calendar date
+            // (SignModel.dateString), so the picker shows and edits dates in
+            // UTC too.
+            LabeledContent(SignModel.dateLabel) {
+                Button(sign.displayDate) {
+                    isPickingDate = true
+                }
+                .monospacedDigit()
+                .popover(isPresented: $isPickingDate) {
+                    DatePicker(SignModel.dateLabel, selection: $sign.date, displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .utcCalendar()
+                        .padding(12)
+                }
             }
         }
-        .labelsHidden()
+        .formStyle(.columns)
+    }
 
-        Text(SignModel.detailLabel)
-        TextField(text: $sign.detail, prompt: Text(SignModel.detailPlaceholder), axis: .vertical) {
-            Text(SignModel.detailLabel)
-        }
-        .labelsHidden()
-        .textFieldStyle(.roundedBorder)
-        .lineLimit(3...6)
-
-        // The signed date is the UTC calendar date (SignModel.dateString), so
-        // the picker shows and edits dates in UTC too.
-        Text(SignModel.dateLabel)
-        HStack {
-            DatePicker(SignModel.dateLabel, selection: $sign.date, displayedComponents: .date)
-                .labelsHidden()
-                .utcCalendar()
-            Text(sign.displayDate)
-                .monospacedDigit()
+    /// The signed credential, or the muted empty state until there is one.
+    @ViewBuilder
+    private var resultPane: some View {
+        if let result = sign.result {
+            ScrollView {
+                ResultView(sign: sign, result: result)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: .infinity)
+            }
+        } else {
+            Text(SignModel.noResultText)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -102,7 +140,7 @@ struct ResultView: View {
     let result: SignResult
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
                 field(SignModel.recipientLabel, result.recipient)
                 field(SignModel.honorLabel, result.honor)
@@ -117,13 +155,23 @@ struct ResultView: View {
                     .frame(width: 256, height: 256)
             }
             Text(SignModel.printAdvisory)
-            HStack {
-                Button(SignModel.saveSVGTitle) { QRSavePanel.present(for: sign, format: .svg) }
-                Button(SignModel.savePNGTitle) { QRSavePanel.present(for: sign, format: .png) }
-                Button(SignModel.copyURLTitle) {
+            HStack(spacing: 8) {
+                Button {
+                    QRSavePanel.present(for: sign, format: .svg)
+                } label: {
+                    Label(SignModel.saveSVGTitle, systemImage: "square.and.arrow.down")
+                }
+                Button {
+                    QRSavePanel.present(for: sign, format: .png)
+                } label: {
+                    Label(SignModel.savePNGTitle, systemImage: "square.and.arrow.down")
+                }
+                Button {
                     let pasteboard = NSPasteboard.general
                     _ = pasteboard.clearContents()
                     _ = pasteboard.setString(result.url, forType: .string)
+                } label: {
+                    Label(SignModel.copyURLTitle, systemImage: "doc.on.clipboard")
                 }
             }
         }

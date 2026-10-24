@@ -90,6 +90,7 @@ struct EntryFormSheet: View {
                     Task { [registry] in await registry.submitEntryForm() }
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
                 .disabled(form.isSubmitting)
             }
             .padding(.top, 8)

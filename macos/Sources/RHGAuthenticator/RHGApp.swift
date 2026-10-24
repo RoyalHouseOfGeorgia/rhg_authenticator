@@ -18,7 +18,7 @@ enum Shared {
     static var openMainWindow: (@MainActor () -> Void)?
 }
 
-/// The app: one window, as the Fyne app had. Started from main.swift.
+/// The app: one window. Started from main.swift.
 @MainActor
 struct RHGApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -26,11 +26,14 @@ struct RHGApp: App {
     var body: some Scene {
         Window("RHG Authenticator", id: "main") {
             RootView(model: Shared.model)
-                .frame(minWidth: 600, minHeight: 450)
+                .frame(minWidth: 800, minHeight: 560)
         }
-        .defaultSize(width: 800, height: 600)
+        .defaultSize(width: 1100, height: 680)
+        // The tab picker sits in the toolbar, on the title bar's row.
+        .windowToolbarStyle(.unified)
         .commands {
-            // The Help menu holds only Export Error Log…, as in the Fyne app.
+            // The Help menu holds only Export Error Log…, the one command the
+            // app has outside its tabs.
             // Always enabled (menu items need not track the phase): its
             // result is an AppKit alert, shown over any window or sheet.
             CommandGroup(replacing: .help) {
@@ -67,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Shared.model.confirmDiscard = { await FilePanel.confirm(AppModel.quitConfirmation) }
     }
 
-    /// Closing the window quits, as in the Fyne app.
+    /// Closing the window quits: it is the app's only window.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }

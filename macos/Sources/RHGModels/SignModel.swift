@@ -61,6 +61,8 @@ public final class SignModel {
     nonisolated public static let detailPlaceholder = "Specific distinction or rank"
     nonisolated public static let dateLabel = "Date"
     nonisolated public static let signTitle = "Sign Credential"
+    /// The result pane's text until a credential is signed.
+    nonisolated public static let noResultText = "No credential signed yet."
     nonisolated public static let printAdvisory = "Print QR at minimum 3\u{00D7}3 cm"
     nonisolated public static let saveSVGTitle = "Save SVG"
     nonisolated public static let savePNGTitle = "Save PNG"

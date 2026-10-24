@@ -12,7 +12,7 @@ final class StatusRecorder {
     var last: String? { texts.last }
 
     func attach(_ login: LoginModel) {
-        login.onStatus = { [self] text in texts.append(text) }
+        login.addStatusHandler { [self] text in texts.append(text) }
     }
 }
 
@@ -355,5 +355,41 @@ struct LoginModelTests {
         await login.confirmLogout()
         #expect(login.alert == AlertState(title: "Error", message: "An internal error occurred — please restart"))
         #expect(status.texts.isEmpty)
+    }
+
+    @Test("a status text lands on both the Registry and the History tab's status line, and every handler gets it")
+    func statusReachesBothTabs() async {
+        let fake = FakeBridge()
+        let login = LoginModel(bridge: fake)
+        let registry = RegistryModel(bridge: fake, login: login)
+        let history = HistoryModel(bridge: fake, login: login)
+        let status = StatusRecorder()
+        status.attach(login)
+        let held = fake.hold(.authLogin)
+        let running = Task { await login.start() }
+        #expect(await settle { fake.count(.authLogin) == 1 })
+        #expect(registry.status == "Requesting device code...")
+        #expect(history.status == "Requesting device code...")
+        held.release(loggedIn)
+        await running.value
+        #expect(registry.status == "Logged in as @octocat")
+        #expect(history.status == "Logged in as @octocat")
+        #expect(status.texts == ["Requesting device code...", "Logged in as @octocat"])
+    }
+
+    // Handlers are never removed: the released model's still runs, and does
+    // nothing because it holds its model weakly.
+    @Test("a status text after a tab model is released still reaches the others")
+    func statusAfterATabModelIsReleasedStillReachesTheOthers() async {
+        let fake = FakeBridge()
+        fake.respond(.authLogin, loggedIn)
+        let login = LoginModel(bridge: fake)
+        var history: HistoryModel? = HistoryModel(bridge: fake, login: login)
+        weak let released = history
+        history = nil
+        #expect(released == nil)
+        let registry = RegistryModel(bridge: fake, login: login)
+        await login.start()
+        #expect(registry.status == "Logged in as @octocat")
     }
 }

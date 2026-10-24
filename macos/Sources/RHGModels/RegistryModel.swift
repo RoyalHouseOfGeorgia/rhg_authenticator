@@ -9,9 +9,11 @@ import RHGBridge
 @Observable
 public final class RegistryModel {
     nonisolated public static let fetchTitle = "Fetch from Server"
+    nonisolated public static let fetchTooltip = fetchTitle + " (\u{2318}R)"
     nonisolated public static let submitTitle = "Submit for Review"
     nonisolated public static let addEntryTitle = EntryFormModel.addTitle
     nonisolated public static let editEntryTitle = EntryFormModel.editTitle
+    nonisolated public static let editEntryTooltip = "Select an entry to edit it."
     nonisolated public static let loadedStatus = "Loaded from registry server"
     nonisolated public static let fetchingStatus = "Fetching..."
     nonisolated public static let loadFailedStatus = "Failed to load registry"
@@ -69,7 +71,7 @@ public final class RegistryModel {
         self.login = login
         self.clock = clock
         self.openURL = openURL
-        login.onStatus = { [weak self] text in self?.status = text }
+        login.addStatusHandler { [weak self] text in self?.status = text }
     }
 
     /// Loads the columns and the registry (registry.columns, registry.snapshot).
@@ -142,12 +144,16 @@ public final class RegistryModel {
         entryForm = EntryFormModel(bridge: bridge, clock: clock)
     }
 
-    /// Edit Entry: opens the selected entry's sheet, or says none is selected.
+    /// Edit Entry is enabled while the selected cell's row is an entry
+    /// (`editEntryTooltip` says why otherwise).
+    public var canEditEntry: Bool {
+        guard let selection else { return false }
+        return snapshot.entries.indices.contains(selection.row)
+    }
+
+    /// Edit Entry: opens the selected entry's sheet; nothing without one.
     public func editEntryTapped() {
-        guard let selection, snapshot.entries.indices.contains(selection.row) else {
-            show(AlertState(title: Self.editEntryTitle, message: "No entry selected"))
-            return
-        }
+        guard canEditEntry, let selection else { return }
         entryForm = EntryFormModel(
             bridge: bridge, index: selection.row, entry: snapshot.entries[selection.row], clock: clock)
     }

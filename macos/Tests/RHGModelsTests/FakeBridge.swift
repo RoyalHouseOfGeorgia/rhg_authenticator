@@ -204,8 +204,19 @@ func historyList(
     count: Int, revoked: Set<Int> = [], loadFailed: Bool = false, revocationsUnavailable: Bool = false,
     revokeAvailable: Bool = true
 ) -> HistoryListResult {
+    historyList(
+        records: (0..<count).map { $0 + 1 }, revoked: revoked, loadFailed: loadFailed,
+        revocationsUnavailable: revocationsUnavailable, revokeAvailable: revokeAvailable)
+}
+
+/// A history.list result of the rows of `records`, in order (repeats allowed),
+/// those in `revoked` revoked.
+func historyList(
+    records: [Int], revoked: Set<Int> = [], loadFailed: Bool = false, revocationsUnavailable: Bool = false,
+    revokeAvailable: Bool = true
+) -> HistoryListResult {
     HistoryListResult(
-        rows: (0..<count).map { historyRow($0 + 1, revoked: revoked.contains($0 + 1)) }, loadFailed: loadFailed,
+        rows: records.map { historyRow($0, revoked: revoked.contains($0)) }, loadFailed: loadFailed,
         revocationsUnavailable: revocationsUnavailable, revocationsLoaded: !revocationsUnavailable,
         revokeAvailable: revokeAvailable)
 }

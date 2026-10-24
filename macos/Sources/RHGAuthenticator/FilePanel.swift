@@ -80,19 +80,44 @@ enum FilePanel {
         return state.offersErrorLogExport && response == .alertSecondButtonReturn
     }
 
-    /// Asks `question` in an AppKit alert, shown as `alert` is: the confirm
-    /// button first (the default, Return), then the cancel button (Escape).
-    /// Returns whether the operator confirmed.
+    /// Asks `question` in an AppKit alert, shown as `alert` is (see
+    /// `choose`). Returns whether the operator confirmed.
     static func confirm(_ question: Confirmation) async -> Bool {
+        await choose(question) == .confirm
+    }
+
+    /// Asks `question` in an AppKit alert, shown as `alert` is, and returns
+    /// the button the operator picked. The buttons come in the question's
+    /// `buttonRoles` order: NSAlert gives the first one Return, so a
+    /// destructive question's Cancel has it and its other buttons get no key
+    /// equivalent; in the window-sheet presentation they read, left to
+    /// right, [alternate] [confirm] [Cancel]. A question that is not
+    /// destructive keeps Return on confirm and gives Cancel Escape.
+    static func choose(_ question: Confirmation) async -> ConfirmChoice {
         let alert = NSAlert()
         alert.messageText = question.title
         alert.informativeText = question.message
-        let confirmButton = alert.addButton(withTitle: question.confirmTitle)
-        confirmButton.hasDestructiveAction = question.isDestructive
-        // NSAlert gives Escape only to a button titled "Cancel".
-        let cancelButton = alert.addButton(withTitle: question.cancelTitle)
-        cancelButton.keyEquivalent = "\u{1b}"
-        return await present(alert) == .alertFirstButtonReturn
+        for role in question.buttonRoles {
+            let title =
+                switch role {
+                case .confirm: question.confirmTitle
+                case .alternate: question.alternateTitle ?? ""
+                case .cancel: question.cancelTitle
+                }
+            let button = alert.addButton(withTitle: title)
+            if question.isDestructive {
+                if role != .cancel {
+                    button.keyEquivalent = ""
+                }
+                button.hasDestructiveAction = role == .confirm
+            } else if role == .cancel {
+                // NSAlert gives Escape only to a button titled "Cancel".
+                button.keyEquivalent = "\u{1b}"
+            }
+        }
+        // The buttons answer by position, in the order they were added.
+        let index = await present(alert).rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        return question.choice(forButtonAt: index)
     }
 
     /// Shows `alert` as a sheet on `parentWindow` and returns the button

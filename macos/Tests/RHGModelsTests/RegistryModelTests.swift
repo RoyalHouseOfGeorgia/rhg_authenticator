@@ -39,6 +39,12 @@ struct RegistryModelTests {
         #expect(RegistryModel.discardConfirmation.isDestructive)
     }
 
+    @Test("tooltips")
+    func tooltips() {
+        #expect(RegistryModel.editEntryTooltip == "Select an entry to edit it.")
+        #expect(RegistryModel.fetchTooltip == "Fetch from Server (\u{2318}R)")
+    }
+
     @Test("load: columns, snapshot, and the loaded status")
     func load() async throws {
         let fake = FakeBridge()
@@ -196,28 +202,44 @@ struct RegistryModelTests {
         #expect(registry.entryForm == nil)
     }
 
-    @Test("Edit Entry with no selection: No entry selected")
+    @Test("Edit Entry with no selection does nothing")
     func editNoSelection() async throws {
         let registry = try await loaded(FakeBridge())
+        #expect(!registry.canEditEntry)
         registry.editEntryTapped()
         #expect(registry.entryForm == nil)
-        #expect(registry.alert == AlertState(title: "Edit Entry", message: "No entry selected"))
-        await registry.alertDismissed()
         #expect(registry.alert == nil)
     }
 
-    @Test("Edit Entry after the selected row went away: No entry selected")
+    @Test("Edit Entry is enabled for a selected entry, and disabled once a re-read leaves the selected row out")
     func editStaleSelection() async throws {
         let fake = FakeBridge()
         let registry = try await loaded(fake)
         registry.select(row: 1, column: 0)
+        #expect(registry.canEditEntry)
         fake.respond(.registrySnapshot, registrySnapshot(count: 1))
         registry.addEntryTapped()
         fake.respond(.registryAddEntry, Empty())
         await registry.submitEntryForm()
         #expect(registry.selection == nil)
+        #expect(!registry.canEditEntry)
         registry.editEntryTapped()
-        #expect(registry.alert == AlertState(title: "Edit Entry", message: "No entry selected"))
+        #expect(registry.entryForm == nil)
+        #expect(registry.alert == nil)
+    }
+
+    @Test("Edit Entry is disabled for a selected row past the entries")
+    func editRowPastEntries() async throws {
+        let fake = FakeBridge()
+        let two = registrySnapshot(count: 2)
+        let snapshot = RegistrySnapshot(entries: [two.entries[0]], rows: two.rows, dirty: false, loaded: true)
+        let registry = try await loaded(fake, snapshot: snapshot)
+        registry.select(row: 1, column: 0)
+        #expect(registry.selection == RegistryModel.Cell(row: 1, column: 0))
+        #expect(!registry.canEditEntry)
+        registry.editEntryTapped()
+        #expect(registry.entryForm == nil)
+        #expect(registry.alert == nil)
     }
 
     @Test("Edit Entry opens the selected entry's form")
