@@ -1,0 +1,1 @@
+{"error":{"code":"failed","message":"Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable.","offerReport":true,"reportId":"1"},"ok":false}

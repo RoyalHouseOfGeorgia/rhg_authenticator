@@ -1,0 +1,23 @@
+<Window x:Class="RhgAuthenticator.App.AlertDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
+        Title="{Binding Title}"
+        Width="440" SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        FocusManager.FocusedElement="{Binding ElementName=ExportButton}">
+    <Window.Resources>
+        <ResourceDictionary Source="TextStyles.xaml" />
+    </Window.Resources>
+    <StackPanel Margin="20">
+        <TextBox MaxHeight="400" VerticalScrollBarVisibility="Auto" Style="{StaticResource SelectableText}"
+                 Text="{Binding Message, Mode=OneWay}" />
+        <!-- Export Error Log… is the primary (Enter); OK, Escape and the close button dismiss with no export. -->
+        <StackPanel Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="ExportButton" MinWidth="80" IsDefault="True" Style="{StaticResource AccentButtonStyle}"
+                    Content="{x:Static vm:AppViewModel.ExportErrorLogTitle}" Click="OnExportClick" />
+            <Button MinWidth="80" Margin="8,0,0,0" IsCancel="True"
+                    Content="{x:Static vm:PinPromptViewModel.OkTitle}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Test support, never shipped: runs one LiveBridge scenario against the
+    rhgfake core library per process. RhgAuthenticator.Bridge.Tests spawns it.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/RhgAuthenticator.Bridge/RhgAuthenticator.Bridge.csproj" />
+  </ItemGroup>
+</Project>

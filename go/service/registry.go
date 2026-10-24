@@ -1,0 +1,476 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"golang.org/x/text/unicode/norm"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/registry"
+)
+
+// ErrRegistryChanged is returned by SubmitRegistry when upstream's registry no
+// longer matches the snapshot the local edits were based on.
+var ErrRegistryChanged = errors.New("The registry on GitHub doesn't match the copy you loaded (it changed since). Fetch the registry again, re-apply your edits, and submit again.")
+
+// errUpstreamInvalid marks a registry read from GitHub that fails validation.
+var errUpstreamInvalid = errors.New("upstream registry is invalid")
+
+// fetchRegistry loads the registry from main via the GitHub API when a client
+// is available, so the submit check compares like with like and isn't tripped
+// by the Pages deploy lag after a merge. Logged out (or if the API read fails)
+// it falls back to the published Pages copy.
+func (a *App) fetchRegistry(ctx context.Context, client *ghapi.Client) (core.Registry, error) {
+	if client != nil {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		up, err := client.FetchUpstreamFile(ctx, ghapi.RegistryFilePath)
+		if err == nil {
+			reg, err := core.ValidateRegistry(up)
+			if err != nil {
+				return core.Registry{}, fmt.Errorf("%w: %w", errUpstreamInvalid, err)
+			}
+			return reg, nil
+		}
+		a.logger.Logf("warning: registry fetch from GitHub failed, using site copy: %s", core.SanitizeForLog(err.Error()))
+	}
+	return registry.FetchRegistry(a.registryURL)
+}
+
+// submitIfUnchanged refuses to open a PR if upstream's registry no longer matches
+// the snapshot the edits were based on (base), so a stale fetch can't silently
+// undo another change. Both sides go through marshalRegistry, so whitespace and
+// line endings don't matter.
+func submitIfUnchanged(ctx context.Context, client *ghapi.Client, base, content []byte, title string) (ghapi.PRResult, error) {
+	up, err := client.FetchUpstreamFile(ctx, ghapi.RegistryFilePath)
+	if err != nil {
+		return ghapi.PRResult{}, fmt.Errorf("fetching upstream registry: %w", err)
+	}
+	reg, err := core.ValidateRegistry(up)
+	if err != nil {
+		return ghapi.PRResult{}, fmt.Errorf("validating upstream registry: %w", err)
+	}
+	upBytes, err := marshalRegistry(reg)
+	if err != nil {
+		return ghapi.PRResult{}, fmt.Errorf("re-marshaling upstream registry: %w", err)
+	}
+	if !bytes.Equal(upBytes, base) {
+		return ghapi.PRResult{}, ErrRegistryChanged
+	}
+	return client.CreateRegistryPR(ctx, content, title)
+}
+
+// allowedHonors reads a key's allowed_honors with the same rules as the
+// verify page (src/registry.ts). Unrestricted (absent, null, [] or all
+// blank) is (nil, true); a value the verify page rejects is (nil, false);
+// otherwise it returns the non-blank honors and true.
+func allowedHonors(entry core.KeyEntry) (honors []string, valid bool) {
+	raw, ok := entry.Extra["allowed_honors"]
+	if !ok {
+		return nil, true
+	}
+	var items []any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, false
+	}
+	for _, item := range items {
+		h, isString := item.(string)
+		if !isString {
+			return nil, false
+		}
+		if core.StripControlChars(h) != h {
+			return nil, false
+		}
+		trimmed := core.TrimJS(h)
+		if trimmed == "" {
+			continue
+		}
+		if h != trimmed {
+			return nil, false
+		}
+		honors = append(honors, h)
+	}
+	return honors, true
+}
+
+// restrictionsText renders a key's allowed_honors (see allowedHonors):
+// "(none)" when unrestricted, "(invalid)" when the verify page would reject
+// it, otherwise the honors joined by ", ".
+func restrictionsText(entry core.KeyEntry) string {
+	honors, valid := allowedHonors(entry)
+	switch {
+	case !valid:
+		return "(invalid)"
+	case len(honors) == 0:
+		return "(none)"
+	default:
+		return strings.Join(honors, ", ")
+	}
+}
+
+// entryCellText returns the display text for column col of entry, the
+// entryIdx-th (0-based) key; fp is its fingerprint, "" if the key is invalid.
+func entryCellText(entry core.KeyEntry, col, entryIdx int, fp string) string {
+	switch col {
+	case 0:
+		return fmt.Sprintf("%d", entryIdx+1)
+	case 1:
+		return entry.Authority
+	case 2:
+		return core.FormatDateDisplay(entry.From)
+	case 3:
+		if entry.To != nil {
+			return core.FormatDateDisplay(*entry.To)
+		}
+		return "(none)"
+	case 4:
+		return restrictionsText(entry)
+	case 5:
+		return entry.Note
+	case 6:
+		if fp != "" {
+			return fp
+		}
+		return "(invalid key)"
+	default:
+		return ""
+	}
+}
+
+// importKeyErrorMessage maps a YubiKey read error to a user-facing message for the
+// "Import from YubiKey" flow.
+func importKeyErrorMessage(err error) string {
+	switch core.ClassifyHardwareError(err) {
+	case core.HwErrSmartcard:
+		return "Smart card service not available."
+	case core.HwErrTransient:
+		return core.MsgYubiKeyReset
+	default:
+		return "No YubiKey detected — plug in and try again."
+	}
+}
+
+// buildEntry constructs a KeyEntry from form values.
+func buildEntry(authority, from string, to *string, publicKey, note string) core.KeyEntry {
+	return core.KeyEntry{
+		Authority: norm.NFC.String(strings.TrimSpace(authority)),
+		From:      from,
+		To:        to,
+		Algorithm: core.SupportedAlgorithm,
+		PublicKey: publicKey,
+		Note:      note,
+	}
+}
+
+// validateEntryForm validates common entry form fields.
+// Returns nil if valid, or an error with a user-facing message.
+func validateEntryForm(authority, from, key string, noExpiry bool, to string) error {
+	if strings.TrimSpace(authority) == "" {
+		return errors.New("Authority is required.")
+	}
+	if from == "" {
+		return errors.New("From date is required.")
+	}
+	if !core.IsValidDate(from) {
+		return errors.New("Invalid from date format.")
+	}
+	if !noExpiry && to == "" {
+		return errors.New("To date is required when 'No expiry' is not checked.")
+	}
+	if !noExpiry && to != "" && !core.IsValidDate(to) {
+		return errors.New("Invalid to date format.")
+	}
+	// To may be before From: from is informational, and revoking a key
+	// registered with a future From sets To to today.
+	if key == "" {
+		return errors.New("Import a public key first.")
+	}
+	return nil
+}
+
+// EntryForm holds the add/edit entry dialog inputs.
+type EntryForm struct {
+	Authority string `json:"authority"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Note      string `json:"note"`
+	NoExpiry  bool   `json:"noExpiry"`
+}
+
+// RegistryEntry is one key in the registry being edited. To is "" when
+// NoExpiry. PublicKey is the base64 Ed25519 key that UpdateEntry takes.
+type RegistryEntry struct {
+	Authority string `json:"authority"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	NoExpiry  bool   `json:"noExpiry"`
+	PublicKey string `json:"publicKey"`
+	Note      string `json:"note"`
+}
+
+// registryEntry returns the RegistryEntry for e.
+func registryEntry(e core.KeyEntry) RegistryEntry {
+	re := RegistryEntry{Authority: e.Authority, From: e.From, NoExpiry: e.To == nil, PublicKey: e.PublicKey, Note: e.Note}
+	if e.To != nil {
+		re.To = *e.To
+	}
+	return re
+}
+
+// RegistrySnapshot is a copy of the registry being edited. Rows[i] holds the
+// table cell texts for Entries[i]; Loaded is false until a fetch succeeds.
+type RegistrySnapshot struct {
+	Entries []RegistryEntry `json:"entries"`
+	Rows    [][]string      `json:"rows"`
+	Dirty   bool            `json:"dirty"`
+	Loaded  bool            `json:"loaded"`
+}
+
+// registryColumns are the table column headers.
+var registryColumns = []string{"#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"}
+
+// RegistryColumns returns the table column headers; RegistrySnapshot.Rows
+// cells follow this order. The slice is a copy.
+func RegistryColumns() []string { return append([]string(nil), registryColumns...) }
+
+// Registry returns a copy of the registry being edited.
+func (a *App) Registry() RegistrySnapshot {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	entries := make([]RegistryEntry, len(a.edit.Keys))
+	rows := make([][]string, len(a.edit.Keys))
+	for i, key := range a.edit.Keys {
+		entries[i] = registryEntry(key)
+		fp, _ := core.KeyFingerprint(key)
+		rows[i] = make([]string, len(registryColumns))
+		for col := range rows[i] {
+			rows[i][col] = entryCellText(key, col, i, fp)
+		}
+	}
+	return RegistrySnapshot{
+		Entries: entries,
+		Rows:    rows,
+		Dirty:   a.dirty,
+		Loaded:  a.baseBytes != nil,
+	}
+}
+
+// FetchRegistry replaces the edited registry with the live one (from main via
+// the API when logged in and online, else the published copy), discarding
+// local edits, and emits EventRegistryChanged. A failure leaves the edited
+// registry unchanged, is logged, and returns an error with user-facing text
+// that wraps the cause.
+func (a *App) FetchRegistry(ctx context.Context) error {
+	return a.loadEditRegistry(ctx, false)
+}
+
+// fetchErrorMessage is the user-facing text for a failed registry fetch.
+func fetchErrorMessage(err error) string {
+	if errors.Is(err, errUpstreamInvalid) {
+		return "The registry on GitHub is invalid. Please report this to the maintainer."
+	}
+	return "Could not load the registry from GitHub. Check your connection and try again."
+}
+
+// loadEditRegistry fetches the live registry and makes it the edited copy.
+// With onlyIfUnloaded it leaves a registry that got loaded meanwhile (a
+// FetchRegistry that finished first, perhaps edited since) untouched.
+func (a *App) loadEditRegistry(ctx context.Context, onlyIfUnloaded bool) error {
+	reg, err := a.fetchRegistry(ctx, a.githubClient())
+	var base []byte
+	if err == nil {
+		base, err = marshalRegistry(reg)
+	}
+	if err != nil {
+		a.logger.Logf("error: registry fetch failed: %s", core.SanitizeForLog(err.Error()))
+		return userErr(fetchErrorMessage(err), err)
+	}
+	a.mu.Lock()
+	if onlyIfUnloaded && a.baseBytes != nil {
+		a.mu.Unlock()
+		return nil
+	}
+	a.edit, a.baseBytes, a.dirty = reg, base, false
+	a.mu.Unlock()
+	a.events.Emit(EventRegistryChanged, nil)
+	return nil
+}
+
+// entry validates f and builds the entry it describes.
+func (f EntryForm) entry(publicKey string) (core.KeyEntry, error) {
+	if err := validateEntryForm(f.Authority, f.From, publicKey, f.NoExpiry, f.To); err != nil {
+		return core.KeyEntry{}, err
+	}
+	var to *string
+	if !f.NoExpiry && f.To != "" {
+		t := f.To
+		to = &t
+	}
+	return buildEntry(f.Authority, f.From, to, publicKey, f.Note), nil
+}
+
+// ErrRegistryNotLoaded is returned by AddEntry before the registry has
+// loaded: edits need a fetched base to be submitted against. (UpdateEntry
+// needs an existing entry, so it is refused by its index check.)
+var ErrRegistryNotLoaded = errors.New("The registry hasn't loaded yet. Fetch it again.")
+
+// AddEntry validates f and appends a new entry for publicKey. The error text
+// is user-facing.
+func (a *App) AddEntry(f EntryForm, publicKey string) error {
+	e, err := f.entry(publicKey)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.baseBytes == nil {
+		return ErrRegistryNotLoaded
+	}
+	a.edit.Keys = append(a.edit.Keys, e)
+	a.dirty = true
+	return nil
+}
+
+// UpdateEntry validates f and replaces entry index, keeping the fields of the
+// stored entry that RegistryEntry does not carry (such as allowed_honors).
+// publicKey is the entry's key as shown to the user; if it no longer matches,
+// a fetch replaced the list and the update is refused. The error text is
+// user-facing.
+func (a *App) UpdateEntry(index int, publicKey string, f EntryForm) error {
+	e, err := f.entry(publicKey)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if index < 0 || index >= len(a.edit.Keys) || a.edit.Keys[index].PublicKey != publicKey {
+		return errors.New("The registry was reloaded while you were editing. Cancel and edit the entry again.")
+	}
+	e.Extra = a.edit.Keys[index].Extra
+	a.edit.Keys[index] = e
+	a.dirty = true
+	return nil
+}
+
+// Dirty reports whether there are unsubmitted registry edits.
+func (a *App) Dirty() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.dirty
+}
+
+// ImportCertificate returns the base64 Ed25519 public key of the certificate
+// (.crt/.pem) at path. The error text is user-facing.
+func (a *App) ImportCertificate(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", userErr(sentence("Failed to read file: "+core.StripControlChars(err.Error())), err)
+	}
+	key, err := extractEd25519Key(data)
+	if err != nil {
+		return "", userErr(sentence(core.StripControlChars(err.Error())), err)
+	}
+	return key, nil
+}
+
+// ImportFromYubiKey returns the inserted YubiKey's base64 public key. The
+// error text is user-facing, except ErrBusy.
+func (a *App) ImportFromYubiKey() (string, error) {
+	if !a.busy.CompareAndSwap(false, true) {
+		return "", ErrBusy
+	}
+	defer a.busy.Store(false)
+
+	pub, err := a.readPublicKey()
+	if err != nil {
+		a.logger.Log("yubikey import: " + core.SanitizeForLog(err.Error()))
+		return "", userErr(importKeyErrorMessage(err), err)
+	}
+	return base64.StdEncoding.EncodeToString(pub[:]), nil
+}
+
+// readPublicKey reads the inserted YubiKey's slot-9c public key; no PIN is
+// needed, as reading it does not log in.
+func (a *App) readPublicKey() ([32]byte, error) {
+	adapter, closer, err := a.openAdapter(noPIN)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	defer closer.Close()
+	return adapter.ExportPublicKey()
+}
+
+// SubmitResult is the pull request a SubmitRegistry opened. URL is "" unless
+// an https github.com URL.
+type SubmitResult struct {
+	PRNumber int    `json:"prNumber"`
+	URL      string `json:"url"`
+}
+
+// SubmitRegistry opens a pull request with the edited registry and clears
+// the unsubmitted flag on success, unless the registry was edited while the
+// request ran. It returns ErrNotLoggedIn without a usable session, ErrBusy
+// while another submit runs, ErrRegistryChanged when main moved since the
+// fetch, and an error matching ErrSessionExpired when GitHub rejected the
+// session (it then logs out). Failures are logged; every error's text is
+// user-facing and GitHub errors stay wrapped.
+func (a *App) SubmitRegistry(ctx context.Context) (SubmitResult, error) {
+	if !a.submitting.CompareAndSwap(false, true) {
+		return SubmitResult{}, ErrBusy
+	}
+	defer a.submitting.Store(false)
+
+	a.mu.Lock()
+	canSave, client, base := len(a.edit.Keys) > 0, a.clientLocked(), a.baseBytes
+	var content []byte
+	var err error
+	if canSave && client != nil {
+		content, err = marshalRegistry(a.edit)
+	}
+	a.mu.Unlock()
+	switch {
+	case !canSave:
+		return SubmitResult{}, errors.New("The registry has no entries to submit.")
+	case client == nil:
+		return SubmitResult{}, ErrNotLoggedIn
+	case err != nil:
+		a.logger.Logf("error: registry marshal failed: %s", core.SanitizeForLog(err.Error()))
+		return SubmitResult{}, userErr(sentence("The edited registry is invalid and was not submitted: "+core.SanitizeForLog(err.Error())), err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	pr, err := submitIfUnchanged(ctx, client, base, content, "Registry update")
+	switch {
+	case ghapi.IsUnauthorized(err):
+		a.logger.Logf("warning: registry submit unauthorized, logging out: %s", core.SanitizeForLog(err.Error()))
+		a.Logout()
+		return SubmitResult{}, userErr("Your GitHub session expired. Log in again, then submit again.", ErrSessionExpired, err)
+	case errors.Is(err, ErrRegistryChanged):
+		a.logger.Log("warning: registry submit refused: upstream registry changed")
+		return SubmitResult{}, err
+	case err != nil:
+		a.logger.Logf("error: PR submission failed: %s", core.SanitizeForLog(err.Error()))
+		return SubmitResult{}, userErr(ghapi.UserMessage(err), err)
+	}
+	a.mu.Lock()
+	// Edits made while the request ran are not in the PR; keep them unsubmitted.
+	if cur, err := marshalRegistry(a.edit); err == nil && bytes.Equal(cur, content) {
+		a.dirty = false
+	}
+	a.mu.Unlock()
+	url := ghapi.GitHubURLOrEmpty(pr.HTMLURL)
+	if url == "" {
+		a.logger.Log("warning: registry PR URL is not a GitHub URL: " + core.SanitizeForLog(pr.HTMLURL))
+	}
+	return SubmitResult{PRNumber: pr.Number, URL: url}, nil
+}

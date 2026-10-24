@@ -1,9 +1,7 @@
 package regmgr
 
 import (
-	"fmt"
-	"os"
-	"strings"
+	"errors"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -14,34 +12,13 @@ import (
 	xwidget "fyne.io/x/fyne/widget"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
-	"golang.org/x/text/unicode/norm"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/safego"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 )
 
-// importKeyErrorMessage maps a YubiKey read error to a user-facing message for the
-// "Import from YubiKey" flow.
-func importKeyErrorMessage(err error) string {
-	switch core.ClassifyHardwareError(err) {
-	case core.HwErrSmartcard:
-		return "Smart card service not available"
-	case core.HwErrTransient:
-		return core.MsgYubiKeyReset
-	default:
-		return "No YubiKey detected — plug in and try again"
-	}
-}
-
-// buildEntry constructs a KeyEntry from form values.
-func buildEntry(authority, from string, to *string, publicKey, note string) core.KeyEntry {
-	return core.KeyEntry{
-		Authority: norm.NFC.String(strings.TrimSpace(authority)),
-		From:      from,
-		To:        to,
-		Algorithm: core.SupportedAlgorithm,
-		PublicKey: publicKey,
-		Note:      note,
-	}
-}
+// yubiKeyBusyMsg is shown when Import from YubiKey finds the card busy with a
+// signing or check.
+const yubiKeyBusyMsg = "The YubiKey is busy with another operation. Try again when it finishes."
 
 // datePickerRow holds widgets for a date input with calendar button.
 type datePickerRow struct {
@@ -85,34 +62,20 @@ func newExpirySection(window fyne.Window, initialTo string, hasExpiry bool) (dat
 	return dp, noExpiryCheck
 }
 
-// validateEntryForm validates common entry form fields.
-// Returns nil if valid, or an error with a user-facing message.
-func validateEntryForm(authority, from, key string, noExpiry bool, to string) error {
-	if strings.TrimSpace(authority) == "" {
-		return fmt.Errorf("Authority is required")
+// entryForm collects the entry dialog inputs.
+func entryForm(authority *widget.Entry, from, to datePickerRow, noExpiry *widget.Check, note *widget.Entry) service.EntryForm {
+	return service.EntryForm{
+		Authority: authority.Text,
+		From:      from.entry.Text,
+		To:        to.entry.Text,
+		Note:      note.Text,
+		NoExpiry:  noExpiry.Checked,
 	}
-	if from == "" {
-		return fmt.Errorf("From date is required")
-	}
-	if !core.IsValidDate(from) {
-		return fmt.Errorf("Invalid from date format")
-	}
-	if !noExpiry && to == "" {
-		return fmt.Errorf("To date is required when 'No expiry' is not checked")
-	}
-	if !noExpiry && to != "" && !core.IsValidDate(to) {
-		return fmt.Errorf("Invalid to date format")
-	}
-	// To may be before From: from is informational, and revoking a key
-	// registered with a future From sets To to today.
-	if key == "" {
-		return fmt.Errorf("Import a public key first")
-	}
-	return nil
 }
 
-// showAddDialog shows a dialog for adding a new key entry.
-func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
+// showAddDialog shows a dialog for adding a new key entry; onAdded runs after
+// svc accepted it.
+func showAddDialog(window fyne.Window, svc *service.App, onAdded func()) {
 	authorityEntry := widget.NewEntry()
 	authorityEntry.SetPlaceHolder("Authority name")
 
@@ -137,17 +100,9 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 			}
 			defer reader.Close()
 
-			data, err := os.ReadFile(reader.URI().Path())
+			key, err := svc.ImportCertificate(reader.URI().Path())
 			if err != nil {
-				errorLabel.SetText("Failed to read file: " + core.StripControlChars(err.Error()))
-				keyLabel.SetText("No key imported")
-				importedKey = ""
-				return
-			}
-
-			key, err := ExtractEd25519Key(data)
-			if err != nil {
-				errorLabel.SetText(core.StripControlChars(err.Error()))
+				errorLabel.SetText(err.Error())
 				keyLabel.SetText("No key imported")
 				importedKey = ""
 				return
@@ -162,16 +117,25 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	})
 
 	importYubiKeyBtn := widget.NewButton("Import from YubiKey", func() {
-		key, err := yubikey.ReadPublicKey()
-		if err != nil {
-			keyLabel.SetText(importKeyErrorMessage(err))
-			importedKey = ""
-			errorLabel.SetText("")
-			return
-		}
-		importedKey = key
-		keyLabel.SetText(key)
-		errorLabel.SetText("")
+		safego.Go(func() {
+			key, err := svc.ImportFromYubiKey()
+			fyne.Do(func() {
+				if errors.Is(err, service.ErrBusy) {
+					// Another card operation is running; leave the current key alone.
+					errorLabel.SetText(yubiKeyBusyMsg)
+					return
+				}
+				if err != nil {
+					keyLabel.SetText(err.Error())
+					importedKey = ""
+					errorLabel.SetText("")
+					return
+				}
+				importedKey = key
+				keyLabel.SetText(key)
+				errorLabel.SetText("")
+			})
+		})
 	})
 
 	noteEntry := widget.NewMultiLineEntry()
@@ -199,20 +163,12 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	d := dialog.NewCustomWithoutButtons("Add Entry", formContent, window)
 
 	confirmBtn := widget.NewButton("Add", func() {
-		if err := validateEntryForm(authorityEntry.Text, fromDP.entry.Text, importedKey, noExpiryCheck.Checked, toDP.entry.Text); err != nil {
+		if err := svc.AddEntry(entryForm(authorityEntry, fromDP, toDP, noExpiryCheck, noteEntry), importedKey); err != nil {
 			errorLabel.SetText(err.Error())
 			return
 		}
-
-		var to *string
-		if !noExpiryCheck.Checked && toDP.entry.Text != "" {
-			t := toDP.entry.Text
-			to = &t
-		}
-
-		entry := buildEntry(authorityEntry.Text, fromDP.entry.Text, to, importedKey, noteEntry.Text)
 		d.Hide()
-		onAdd(entry)
+		onAdded()
 	})
 	confirmBtn.Importance = widget.HighImportance
 
@@ -222,19 +178,15 @@ func showAddDialog(window fyne.Window, onAdd func(core.KeyEntry)) {
 	d.Show()
 }
 
-// showEditDialog shows a dialog for editing an existing key entry.
-func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.KeyEntry)) {
+// showEditDialog shows a dialog for editing entry, the registry entry at
+// index; onSaved runs after svc accepted the change.
+func showEditDialog(window fyne.Window, svc *service.App, index int, entry service.RegistryEntry, onSaved func()) {
 	authorityEntry := widget.NewEntry()
 	authorityEntry.SetText(entry.Authority)
 
 	fromDP := newDatePickerRow(window, entry.From)
 
-	hasExpiry := entry.To != nil
-	initialTo := ""
-	if hasExpiry {
-		initialTo = *entry.To
-	}
-	toDP, noExpiryCheck := newExpirySection(window, initialTo, hasExpiry)
+	toDP, noExpiryCheck := newExpirySection(window, entry.To, !entry.NoExpiry)
 
 	// Public key is read-only for edit.
 	keyLabel := widget.NewLabel(entry.PublicKey)
@@ -267,21 +219,12 @@ func showEditDialog(window fyne.Window, entry core.KeyEntry, onSave func(core.Ke
 	d := dialog.NewCustomWithoutButtons("Edit Entry", formContent, window)
 
 	confirmBtn := widget.NewButton("Save", func() {
-		if err := validateEntryForm(authorityEntry.Text, fromDP.entry.Text, entry.PublicKey, noExpiryCheck.Checked, toDP.entry.Text); err != nil {
+		if err := svc.UpdateEntry(index, entry.PublicKey, entryForm(authorityEntry, fromDP, toDP, noExpiryCheck, noteEntry)); err != nil {
 			errorLabel.SetText(err.Error())
 			return
 		}
-
-		var to *string
-		if !noExpiryCheck.Checked && toDP.entry.Text != "" {
-			t := toDP.entry.Text
-			to = &t
-		}
-
-		updated := buildEntry(authorityEntry.Text, fromDP.entry.Text, to, entry.PublicKey, noteEntry.Text)
-		updated.Extra = entry.Extra
 		d.Hide()
-		onSave(updated)
+		onSaved()
 	})
 	confirmBtn.Importance = widget.HighImportance
 

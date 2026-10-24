@@ -891,8 +891,8 @@ func TestPollForToken_Expired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "expired") {
-		t.Errorf("error = %v, want containing 'expired'", err)
+	if !errors.Is(err, ErrDeviceCodeExpired) {
+		t.Errorf("error = %v, want ErrDeviceCodeExpired", err)
 	}
 }
 
@@ -910,8 +910,8 @@ func TestPollForToken_Denied(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "denied") {
-		t.Errorf("error = %v, want containing 'denied'", err)
+	if !errors.Is(err, ErrAccessDenied) {
+		t.Errorf("error = %v, want ErrAccessDenied", err)
 	}
 }
 
@@ -983,12 +983,25 @@ func TestPollForToken_ExpiresInDeadline(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("error = %v, want context.DeadlineExceeded", err)
+	if !errors.Is(err, ErrDeviceCodeExpired) {
+		t.Errorf("error = %v, want ErrDeviceCodeExpired (the code's own expiry fired)", err)
 	}
 	// Should time out within ~2 seconds (1s expiresIn + slack).
 	if elapsed > 5*time.Second {
 		t.Errorf("elapsed = %v, should have timed out quickly", elapsed)
+	}
+}
+
+func TestPollForToken_CallerDeadlineIsNotExpiry(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	blockingSleep := func(ctx context.Context, _ time.Duration) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	_, err := pollForTokenInternal(ctx, "dc_123", 1, 600, blockingSleep)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrDeviceCodeExpired) {
+		t.Errorf("error = %v, want the caller's context.DeadlineExceeded", err)
 	}
 }
 
@@ -1364,8 +1377,8 @@ func TestPollForToken_WrongScope(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrong scope")
 	}
-	if !strings.Contains(err.Error(), "missing required scope") {
-		t.Errorf("error = %v, want containing 'missing required scope'", err)
+	if !errors.Is(err, ErrMissingScope) {
+		t.Errorf("error = %v, want ErrMissingScope", err)
 	}
 }
 

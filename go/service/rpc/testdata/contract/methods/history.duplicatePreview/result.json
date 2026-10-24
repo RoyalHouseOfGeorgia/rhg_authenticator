@@ -1,0 +1,1 @@
+{"ok":true,"result":{"confirmMessage":"Found 1 duplicate entry. The earliest valid entry of each credential is kept and later copies are removed. A backup of the current log is saved first. Continue?","count":1}}

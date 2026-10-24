@@ -30,6 +30,13 @@ dist/
 go/release/
 go/rsrc_windows_*.syso
 build/
+macos/.build/
+macos/.swiftpm/
+windows/**/bin/
+windows/**/obj/
+windows/**/TestResults/
+*.binlog
+/release/
 
 # OS artifacts
 .DS_Store
@@ -38,6 +45,9 @@ Desktop.ini
 ._*
 
 # IDE / editor state
+.vs/
+*.user
+*.suo
 .idea/
 .vscode/
 *.swp
@@ -66,9 +76,13 @@ issuances.json
 issuances.json.tmp.*
 issuances.json.bak-*
 rhg-issuances-*.json
+rhg-error-log-*.log
 *-urls.csv
 **/debug.log
 /go/rhg-authenticator
 
 # Python
 __pycache__/
+*.pyc
+.venv/
+venv/

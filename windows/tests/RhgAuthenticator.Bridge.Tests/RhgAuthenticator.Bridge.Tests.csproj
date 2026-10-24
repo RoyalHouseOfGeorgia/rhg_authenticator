@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageReference Include="coverlet.collector" Version="10.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/RhgAuthenticator.Bridge/RhgAuthenticator.Bridge.csproj" />
+    <ProjectReference Include="../RhgAuthenticator.FlowRunner/RhgAuthenticator.FlowRunner.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The core library under test and the RPC contract files, read at run time. -->
+    <AssemblyMetadata Include="RhgCoreLibDir" Value="$(RhgCoreLibDir)" />
+    <AssemblyMetadata Include="ContractDir" Value="$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../go/service/rpc/testdata/contract'))" />
+  </ItemGroup>
+
+  <!--
+    A stand-in for the app's embedded core library, hashed as the app's build
+    hashes rhgcore.dll, for CoreLibrary.ExtractEmbedded's tests.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="EmbeddedLibrary.txt" LogicalName="embedded-library" />
+  </ItemGroup>
+
+  <Target Name="EmbeddedLibraryHash" BeforeTargets="GetAssemblyAttributes">
+    <GetFileHash Files="EmbeddedLibrary.txt" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Hash" PropertyName="EmbeddedLibrarySha256" />
+    </GetFileHash>
+    <ItemGroup>
+      <AssemblyMetadata Include="RhgCoreSha256" Value="$(EmbeddedLibrarySha256)" />
+    </ItemGroup>
+  </Target>
+</Project>

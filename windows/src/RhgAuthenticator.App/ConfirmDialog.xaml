@@ -1,0 +1,27 @@
+<Window x:Class="RhgAuthenticator.App.ConfirmDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{Binding Title}"
+        Width="440" SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        FocusManager.FocusedElement="{Binding ElementName=ConfirmButton}">
+    <Window.Resources>
+        <ResourceDictionary Source="TextStyles.xaml" />
+    </Window.Resources>
+    <StackPanel Margin="20">
+        <TextBox MaxHeight="400" VerticalScrollBarVisibility="Auto" Style="{StaticResource SelectableText}"
+                 Text="{Binding Message, Mode=OneWay}" />
+        <!--
+          The confirm button is the primary (Enter); the cancel button, Escape and the close button decline.
+          A destructive question makes the cancel button the default instead (code-behind). The alternate
+          button, left of the confirm button, shows only for a question with an AlternateTitle (code-behind).
+        -->
+        <StackPanel Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="AlternateButton" MinWidth="80" Margin="0,0,8,0" Visibility="Collapsed"
+                    Click="OnAlternateClick" />
+            <Button x:Name="ConfirmButton" MinWidth="80" IsDefault="True" Style="{StaticResource AccentButtonStyle}"
+                    Content="{Binding ConfirmTitle}" Click="OnConfirmClick" />
+            <Button x:Name="CancelButton" MinWidth="80" Margin="8,0,0,0" IsCancel="True" Content="{Binding CancelTitle}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

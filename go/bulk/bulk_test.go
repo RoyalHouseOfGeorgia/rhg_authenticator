@@ -330,7 +330,7 @@ func TestRunNotLogged(t *testing.T) {
 	if err != notLogged {
 		t.Fatalf("err = %v, want original", err)
 	}
-	if res[1].Status != StatusSigned || res[1].URL == "" || res[1].Err != "signed but NOT recorded in audit log" {
+	if res[1].Status != StatusSigned || res[1].URL == "" || res[1].Err != "signed but NOT recorded in issuance log" {
 		t.Errorf("row 1 = %+v", res[1])
 	}
 	for _, r := range res[2:4] {

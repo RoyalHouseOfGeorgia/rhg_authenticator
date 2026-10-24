@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -436,6 +438,27 @@ func sigOf(b byte) string {
 	return core.Encode(bytes.Repeat([]byte{b}, ed25519.SignatureSize))
 }
 
+func TestIssuedKey(t *testing.T) {
+	for _, tc := range []struct {
+		name, hash, sig string
+		wantKey         string
+		wantOK          bool
+	}{
+		{"mixed-case hash lower-cased", "ABcd", sigOf(1), "abcd", true},
+		{"empty hash", "", sigOf(1), "", false},
+		{"malformed signature", "abcd", "c2ln", "", false},
+		{"empty signature", "abcd", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := recWithHash(tc.hash, "A")
+			rec.SignatureB64URL = tc.sig
+			if key, ok := IssuedKey(rec); key != tc.wantKey || ok != tc.wantOK {
+				t.Errorf("IssuedKey = (%q, %v), want (%q, %v)", key, ok, tc.wantKey, tc.wantOK)
+			}
+		})
+	}
+}
+
 func TestDedupe_None(t *testing.T) {
 	records := []IssuanceRecord{recWithHash("aa", "A"), recWithHash("bb", "B")}
 	kept, removed := Dedupe(records)
@@ -634,5 +657,316 @@ func TestRemoveDuplicates_InvalidJSON(t *testing.T) {
 	}
 	if baks := backupFiles(t, logPath); len(baks) != 0 {
 		t.Errorf("unexpected backup files: %v", baks)
+	}
+}
+
+func TestRemoveDuplicates_InvalidJSONIsUnreadable(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "issuance.json")
+	if err := os.WriteFile(logPath, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, _, err := RemoveDuplicates(logPath); !errors.Is(err, ErrLogUnreadable) {
+		t.Errorf("err = %v, want ErrLogUnreadable", err)
+	}
+}
+
+// writeLogBytes writes data as the log at logPath.
+func writeLogBytes(t *testing.T, logPath, data string) {
+	t.Helper()
+	if err := os.WriteFile(logPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+// assertUnchanged fails t unless the log at logPath holds want and no backup
+// was written.
+func assertUnchanged(t *testing.T, logPath, want string) {
+	t.Helper()
+	got, err := os.ReadFile(logPath)
+	if want == "" {
+		if !os.IsNotExist(err) {
+			t.Errorf("log should not exist, read err = %v", err)
+		}
+	} else if err != nil || string(got) != want {
+		t.Errorf("log = %q, %v; want %q unchanged", got, err, want)
+	}
+	if baks := backupFiles(t, logPath); len(baks) != 0 {
+		t.Errorf("unexpected backup files: %v", baks)
+	}
+}
+
+func TestRewriteWithBackup_BacksUpOriginalBytes(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "issuance.json")
+	original := "[\n" + `{"recipient":"A","payload_sha256":"aa"},` + "\n" + `{"recipient":"B"}]`
+	writeLogBytes(t, logPath, original)
+
+	var seen []IssuanceRecord
+	backup, err := rewriteWithBackup(logPath, func(records []IssuanceRecord) ([]IssuanceRecord, bool, error) {
+		seen = records
+		return records[1:], true, nil
+	})
+	if err != nil {
+		t.Fatalf("rewriteWithBackup: %v", err)
+	}
+	if len(seen) != 2 || seen[0].Recipient != "A" {
+		t.Errorf("transform got %+v", seen)
+	}
+	if !strings.HasPrefix(backup, logPath+".bak-") || len(backupFiles(t, logPath)) != 1 {
+		t.Errorf("backup = %q, files %v", backup, backupFiles(t, logPath))
+	}
+	bak, err := os.ReadFile(backup)
+	if err != nil || string(bak) != original {
+		t.Errorf("backup = %q, %v; want the original bytes", bak, err)
+	}
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(backup); err != nil || info.Mode().Perm() != 0o600 {
+			t.Errorf("backup mode = %v, %v; want 0600", info.Mode().Perm(), err)
+		}
+	}
+	got, err := ReadLog(logPath)
+	if err != nil || len(got) != 1 || got[0].Recipient != "B" {
+		t.Errorf("rewritten log = %+v, %v", got, err)
+	}
+}
+
+func TestRewriteWithBackup_NothingWritten(t *testing.T) {
+	errTransform := errors.New("transform failed")
+	for _, tc := range []struct {
+		name    string
+		content string // "" = no log
+		changed bool
+		err     error
+		wantErr error
+	}{
+		{"unchanged", `[{"recipient":"A"}]`, false, nil, nil},
+		{"transform error", `[{"recipient":"A"}]`, true, errTransform, errTransform},
+		{"missing log unchanged", "", false, nil, nil},
+		{"missing log transform error", "", false, errTransform, errTransform},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "issuance.json")
+			if tc.content != "" {
+				writeLogBytes(t, logPath, tc.content)
+			}
+			var seen []IssuanceRecord
+			backup, err := rewriteWithBackup(logPath, func(records []IssuanceRecord) ([]IssuanceRecord, bool, error) {
+				seen = records
+				return nil, tc.changed, tc.err
+			})
+			if err != tc.wantErr || backup != "" {
+				t.Errorf("got (%q, %v), want (\"\", %v)", backup, err, tc.wantErr)
+			}
+			if tc.content == "" && (seen == nil || len(seen) != 0) {
+				t.Errorf("missing log passed %#v, want an empty list", seen)
+			}
+			assertUnchanged(t, logPath, tc.content)
+		})
+	}
+}
+
+func TestRewriteWithBackup_Unreadable(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, logPath string)
+	}{
+		{"not json", func(t *testing.T, logPath string) { writeLogBytes(t, logPath, "not json") }},
+		{"empty file", func(t *testing.T, logPath string) { writeLogBytes(t, logPath, "") }},
+		{"directory", func(t *testing.T, logPath string) {
+			if err := os.Mkdir(logPath, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "issuance.json")
+			tc.setup(t, logPath)
+			called := false
+			_, err := rewriteWithBackup(logPath, func(records []IssuanceRecord) ([]IssuanceRecord, bool, error) {
+				called = true
+				return records, true, nil
+			})
+			if !errors.Is(err, ErrLogUnreadable) {
+				t.Errorf("err = %v, want ErrLogUnreadable", err)
+			}
+			if called {
+				t.Error("transform called on an unreadable log")
+			}
+			if baks := backupFiles(t, logPath); len(baks) != 0 {
+				t.Errorf("unexpected backup files: %v", baks)
+			}
+		})
+	}
+}
+
+func TestRewriteWithBackup_BackupFailureLeavesLog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "readonly")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "issuance.json")
+	const original = `[{"recipient":"A"}]`
+	writeLogBytes(t, logPath, original)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	_, err := rewriteWithBackup(logPath, func([]IssuanceRecord) ([]IssuanceRecord, bool, error) { return nil, true, nil })
+	if err == nil || errors.Is(err, ErrLogUnreadable) || !strings.Contains(err.Error(), "creating backup") {
+		t.Errorf("err = %v, want a backup failure", err)
+	}
+	assertUnchanged(t, logPath, original)
+}
+
+func TestCreateBackup_NeverOverwrites(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "issuance.json.bak-20260102T030405Z")
+	writeLogBytes(t, base, "existing")
+
+	got, err := createBackup(base, []byte("second"))
+	if err != nil || got != base+"-2" {
+		t.Fatalf("createBackup = %q, %v; want %q", got, err, base+"-2")
+	}
+	got, err = createBackup(base, []byte("third"))
+	if err != nil || got != base+"-3" {
+		t.Fatalf("createBackup = %q, %v; want %q", got, err, base+"-3")
+	}
+	for path, want := range map[string]string{base: "existing", base + "-2": "second", base + "-3": "third"} {
+		if data, err := os.ReadFile(path); err != nil || string(data) != want {
+			t.Errorf("%s = %q, %v; want %q", path, data, err, want)
+		}
+	}
+}
+
+func TestCreateBackup_CreateError(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "missing-dir", "issuance.json.bak-x")
+	if _, err := createBackup(base, []byte("x")); err == nil {
+		t.Fatal("expected an error creating a backup in a missing directory")
+	}
+}
+
+func TestRemoveRecord_RemovesFirstEqual(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "issuance.json")
+	target := recWithHash("aa", "Target")
+	other := recWithHash("bb", "Other")
+	for _, rec := range []IssuanceRecord{other, target, other, target} {
+		if err := AppendRecord(logPath, rec); err != nil {
+			t.Fatalf("AppendRecord: %v", err)
+		}
+	}
+	original, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	backup, err := RemoveRecord(logPath, target)
+	if err != nil {
+		t.Fatalf("RemoveRecord: %v", err)
+	}
+	if bak, err := os.ReadFile(backup); err != nil || string(bak) != string(original) {
+		t.Errorf("backup = %q, %v; want the original bytes", bak, err)
+	}
+	got, err := ReadLog(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []IssuanceRecord{other, other, target}; !reflect.DeepEqual(got, want) {
+		t.Errorf("log = %+v, want %+v", got, want)
+	}
+}
+
+func TestRemoveRecord_NotFound(t *testing.T) {
+	target := recWithHash(strings.Repeat("ab", 32), "Zoe\u0308")
+	logged, err := json.Marshal([]IssuanceRecord{target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nearMiss := func(f func(*IssuanceRecord)) IssuanceRecord {
+		rec := target
+		f(&rec)
+		return rec
+	}
+	for _, tc := range []struct {
+		name    string
+		content string // "" = no log
+		rec     IssuanceRecord
+	}{
+		{"missing log", "", target},
+		{"empty log", "[]", target},
+		{"null log", "null", target},
+		{"hash case", string(logged), nearMiss(func(r *IssuanceRecord) { r.PayloadSHA256 = strings.ToUpper(r.PayloadSHA256) })},
+		{"NFC recipient", string(logged), nearMiss(func(r *IssuanceRecord) { r.Recipient = "Zo\u00eb" })},
+		{"timestamp", string(logged), nearMiss(func(r *IssuanceRecord) { r.Timestamp = "2026-01-01T00:00:00Z" })},
+		{"trailing space", string(logged), nearMiss(func(r *IssuanceRecord) { r.Detail += " " })},
+		{"signature", string(logged), nearMiss(func(r *IssuanceRecord) { r.SignatureB64URL = sigOf(2) })},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "issuance.json")
+			if tc.content != "" {
+				writeLogBytes(t, logPath, tc.content)
+			}
+			backup, err := RemoveRecord(logPath, tc.rec)
+			if !errors.Is(err, ErrRecordNotFound) || backup != "" {
+				t.Errorf("got (%q, %v), want ErrRecordNotFound", backup, err)
+			}
+			assertUnchanged(t, logPath, tc.content)
+		})
+	}
+}
+
+func TestRemoveRecord_Unreadable(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "issuance.json")
+	writeLogBytes(t, logPath, "not json")
+	if _, err := RemoveRecord(logPath, sampleRecord()); !errors.Is(err, ErrLogUnreadable) || errors.Is(err, ErrRecordNotFound) {
+		t.Errorf("err = %v, want ErrLogUnreadable", err)
+	}
+	assertUnchanged(t, logPath, "not json")
+}
+
+// TestRemoveRecord_ConcurrentWithAppend checks that removals and appends
+// serialize on writeMu: no append is lost and nothing deadlocks.
+func TestRemoveRecord_ConcurrentWithAppend(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "issuance.json")
+	const n = 10
+	victims := make([]IssuanceRecord, n)
+	for i := range victims {
+		victims[i] = recWithHash(fmt.Sprintf("%064x", i), "victim")
+		if err := AppendRecord(logPath, victims[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, err := RemoveRecord(logPath, victims[i]); err != nil {
+				t.Errorf("RemoveRecord: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := AppendRecord(logPath, recWithHash(fmt.Sprintf("%064x", 100+i), "kept")); err != nil {
+				t.Errorf("AppendRecord: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	got, err := ReadLog(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("log has %d records, want %d", len(got), n)
+	}
+	if backups := backupFiles(t, logPath); len(backups) != n {
+		t.Errorf("%d backups, want one per removal (%d)", len(backups), n)
+	}
+	for _, rec := range got {
+		if rec.Recipient != "kept" {
+			t.Errorf("unexpected record %+v", rec)
+		}
 	}
 }

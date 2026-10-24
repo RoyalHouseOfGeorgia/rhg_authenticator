@@ -1,677 +1,369 @@
 package regmgr
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
-	"net/url"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/service"
 
-	"fyne.io/fyne/v2/widget"
+	"fyne.io/fyne/v2/test"
 )
 
-func TestCanSave_EmptyRegistry(t *testing.T) {
-	reg := core.Registry{Keys: nil}
-	if canSave(reg) {
-		t.Error("canSave should return false for empty registry")
+const unreachable = "http://127.0.0.1:1"
+
+func TestTableColumnWidths(t *testing.T) {
+	if len(service.RegistryColumns()) != len(tableColumnWidths) {
+		t.Errorf("RegistryColumns (%d) and tableColumnWidths (%d) length mismatch",
+			len(service.RegistryColumns()), len(tableColumnWidths))
 	}
 }
 
-func TestCanSave_EmptySlice(t *testing.T) {
-	reg := core.Registry{Keys: []core.KeyEntry{}}
-	if canSave(reg) {
-		t.Error("canSave should return false for zero-length Keys slice")
+func TestNewRegistryTab_LoadedAtStartup(t *testing.T) {
+	rt, _ := newTestRegistryTab(t, registryServer(t))
+	if rt.statusLabel.Text != "Loaded from registry server" {
+		t.Errorf("status = %q", rt.statusLabel.Text)
+	}
+	if rt.loginBtn.Text != "Login to GitHub" {
+		t.Errorf("loginBtn = %q", rt.loginBtn.Text)
+	}
+	if rows, cols := rt.table.Length(); rows != 2 || cols != len(service.RegistryColumns()) {
+		t.Errorf("table = %dx%d, want 2x%d", rows, cols, len(service.RegistryColumns()))
+	}
+	if got := rt.snap.Rows[0][1]; got != "Auth A" {
+		t.Errorf("authority cell = %q", got)
 	}
 }
 
-func TestCanSave_NonEmpty(t *testing.T) {
-	reg := core.Registry{Keys: []core.KeyEntry{{Authority: "A"}}}
-	if !canSave(reg) {
-		t.Error("canSave should return true for non-empty registry")
-	}
-}
-
-func TestAppState_InitialValues(t *testing.T) {
-	state := &appState{selected: -1}
-	if state.dirty {
-		t.Error("expected dirty = false initially")
-	}
-	if state.selected != -1 {
-		t.Errorf("expected selected = -1 initially, got %d", state.selected)
-	}
-	if len(state.registry.Keys) != 0 {
-		t.Errorf("expected empty registry initially, got %d keys", len(state.registry.Keys))
-	}
-	if state.loggedIn {
-		t.Error("expected loggedIn = false initially")
-	}
-	if state.offline {
-		t.Error("expected offline = false initially")
-	}
-	if state.githubUser != "" {
-		t.Errorf("expected empty githubUser initially, got %q", state.githubUser)
-	}
-	if state.githubToken.AccessToken != "" {
-		t.Error("expected empty githubToken initially")
-	}
-}
-
-func TestAppState_InitialGitHubState(t *testing.T) {
-	state := &appState{}
-	if state.loggedIn {
-		t.Error("loggedIn should default to false")
-	}
-	if state.offline {
-		t.Error("offline should default to false")
-	}
-	if state.githubUser != "" {
-		t.Errorf("githubUser should default to empty, got %q", state.githubUser)
-	}
-	if state.githubToken != (ghapi.Token{}) {
-		t.Error("githubToken should default to zero value")
-	}
-}
-
-func TestTableColumns(t *testing.T) {
-	if len(tableColumns) != len(tableColumnWidths) {
-		t.Errorf("tableColumns (%d) and tableColumnWidths (%d) length mismatch",
-			len(tableColumns), len(tableColumnWidths))
-	}
-	expected := []string{"#", "Authority", "From", "To", "Restrictions", "Note", "Fingerprint"}
-	for i, col := range expected {
-		if tableColumns[i] != col {
-			t.Errorf("tableColumns[%d] = %q, want %q", i, tableColumns[i], col)
+func TestRegistryChanged(t *testing.T) {
+	t.Run("loaded", func(t *testing.T) {
+		rt, _ := newTestRegistryTab(t, registryServer(t))
+		rt.selected = 0
+		rt.registryChanged()
+		if rt.statusLabel.Text != "Loaded from registry server" || rt.selected != -1 {
+			t.Errorf("status = %q, selected = %d", rt.statusLabel.Text, rt.selected)
 		}
-	}
+		if rows, _ := rt.table.Length(); rows != 2 {
+			t.Errorf("table rows = %d, want header + 1", rows)
+		}
+	})
+	t.Run("failed", func(t *testing.T) {
+		rt, _ := newTestRegistryTab(t, unreachable)
+		rt.selected = 3
+		rt.registryChanged()
+		if rt.statusLabel.Text != "Failed to load registry" || rt.selected != -1 {
+			t.Errorf("status = %q, selected = %d", rt.statusLabel.Text, rt.selected)
+		}
+	})
 }
 
-func TestIsDirty_InitiallyFalse(t *testing.T) {
-	state := &appState{selected: -1}
-	rt := &RegistryTab{state: state}
-	if rt.IsDirty() {
-		t.Error("expected IsDirty() = false initially")
-	}
-}
-
-func TestIsDirty_AfterMutation(t *testing.T) {
-	state := &appState{selected: -1, dirty: true}
-	rt := &RegistryTab{state: state}
-	if !rt.IsDirty() {
-		t.Error("expected IsDirty() = true after mutation")
-	}
-}
-
-func TestAppState_NotLoggedIn_Preconditions(t *testing.T) {
-	state := &appState{loggedIn: false}
-	if state.loggedIn {
-		t.Error("state should not be loggedIn")
-	}
-}
-
-func TestAppState_LoggedInOnline_Preconditions(t *testing.T) {
-	state := &appState{loggedIn: true, offline: false, githubUser: "testuser"}
-	if !state.loggedIn {
-		t.Error("state should be loggedIn")
-	}
-	if state.offline {
-		t.Error("state should not be offline")
-	}
-	if state.githubUser != "testuser" {
-		t.Errorf("expected githubUser = testuser, got %q", state.githubUser)
-	}
-}
-
-func TestAppState_LoggedInOffline_Preconditions(t *testing.T) {
-	state := &appState{loggedIn: true, offline: true, githubUser: ""}
-	if !state.loggedIn {
-		t.Error("state should be loggedIn")
-	}
-	if !state.offline {
-		t.Error("state should be offline")
-	}
-}
-
-func TestAppState_SubmitPreconditions_NotLoggedIn(t *testing.T) {
-	state := &appState{
-		registry: core.Registry{Keys: []core.KeyEntry{{Authority: "A"}}},
-		loggedIn: false,
-	}
-	rt := &RegistryTab{state: state}
-	// Verify the preconditions: canSave is true but not logged in.
-	if !canSave(rt.state.registry) {
-		t.Error("canSave should return true for non-empty registry")
-	}
-	if rt.state.loggedIn {
-		t.Error("should not be logged in")
-	}
-}
-
-func TestSubmitting_AtomicGuard(t *testing.T) {
-	rt := &RegistryTab{state: &appState{}}
-	// First swap should succeed.
-	if !rt.submitting.CompareAndSwap(false, true) {
-		t.Error("first CompareAndSwap should succeed")
-	}
-	// Second swap should fail (already submitting).
-	if rt.submitting.CompareAndSwap(false, true) {
-		t.Error("second CompareAndSwap should fail while submitting")
-	}
-	// Reset.
-	rt.submitting.Store(false)
-	if !rt.submitting.CompareAndSwap(false, true) {
-		t.Error("CompareAndSwap should succeed after reset")
-	}
-}
-
-func TestRegistryTab_FieldsExist(t *testing.T) {
-	// Verify that RegistryTab has all expected fields with correct types.
-	kr := ghapi.NewFakeKeyring()
-	state := &appState{selected: -1}
-	rt := &RegistryTab{
-		state:     state,
-		configDir: "/tmp/test",
-		kr:        kr,
-	}
-	if rt.configDir != "/tmp/test" {
-		t.Errorf("configDir = %q, want /tmp/test", rt.configDir)
-	}
-	if rt.kr == nil {
-		t.Error("kr should not be nil")
-	}
-}
-
-// --- resolveLoginState tests ---
-
-func TestResolveLoginState_Online(t *testing.T) {
-	loggedIn, offline, text := resolveLoginState(false, "myuser", false)
-	if !loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if offline {
-		t.Error("offline = true, want false")
-	}
-	if text != "Logged in as @myuser" {
-		t.Errorf("statusText = %q, want %q", text, "Logged in as @myuser")
-	}
-}
-
-func TestResolveLoginState_Unauthorized(t *testing.T) {
-	loggedIn, offline, text := resolveLoginState(true, "", true)
-	if loggedIn {
-		t.Error("loggedIn = true, want false")
-	}
-	if offline {
-		t.Error("offline = true, want false")
-	}
-	if text != "Not logged in" {
-		t.Errorf("statusText = %q, want %q", text, "Not logged in")
-	}
-}
-
-func TestResolveLoginState_Offline(t *testing.T) {
-	loggedIn, offline, text := resolveLoginState(false, "", true)
-	if !loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if !offline {
-		t.Error("offline = false, want true")
-	}
-	if text != "GitHub unreachable" {
-		t.Errorf("statusText = %q, want %q", text, "GitHub unreachable")
-	}
-}
-
-func TestResolveLoginState_EmptyUsername(t *testing.T) {
-	// No error but empty username — still logged in, just no name to display.
-	loggedIn, offline, text := resolveLoginState(false, "", false)
-	if !loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if offline {
-		t.Error("offline = true, want false")
-	}
-	if text != "Logged in as @" {
-		t.Errorf("statusText = %q, want %q", text, "Logged in as @")
-	}
-}
-
-// --- VerificationURI host allowlist tests ---
-// These test the URL validation logic used in showLoginDialog.
-
-func TestVerificationURI_ValidGitHub(t *testing.T) {
-	uri := "https://github.com/login/device"
-	parsedURL, err := url.Parse(uri)
-	if err != nil || parsedURL == nil || parsedURL.Scheme != "https" || parsedURL.Host != "github.com" {
-		t.Error("valid GitHub URI should pass all checks")
-	}
-}
-
-func TestVerificationURI_WrongHost(t *testing.T) {
-	uri := "https://evil.com/login/device"
-	parsedURL, err := url.Parse(uri)
-	invalid := err != nil || parsedURL == nil || parsedURL.Scheme != "https" || parsedURL.Host != "github.com"
-	if !invalid {
-		t.Error("wrong host should be rejected")
-	}
-}
-
-func TestVerificationURI_HTTPScheme(t *testing.T) {
-	uri := "http://github.com/login/device"
-	parsedURL, err := url.Parse(uri)
-	invalid := err != nil || parsedURL == nil || parsedURL.Scheme != "https" || parsedURL.Host != "github.com"
-	if !invalid {
-		t.Error("http scheme should be rejected")
-	}
-}
-
-func TestVerificationURI_SubdomainNotAllowed(t *testing.T) {
-	uri := "https://evil.github.com/login/device"
-	parsedURL, err := url.Parse(uri)
-	invalid := err != nil || parsedURL == nil || parsedURL.Scheme != "https" || parsedURL.Host != "github.com"
-	if !invalid {
-		t.Error("subdomain of github.com should be rejected")
-	}
-}
-
-func TestVerificationURI_EmptyString(t *testing.T) {
-	uri := ""
-	parsedURL, err := url.Parse(uri)
-	invalid := err != nil || parsedURL == nil || parsedURL.Scheme != "https" || parsedURL.Host != "github.com"
-	if !invalid {
-		t.Error("empty URI should be rejected")
-	}
-}
-
-func TestVerificationURI_JavaScriptScheme(t *testing.T) {
-	uri := "javascript:alert(1)"
-	parsedURL, err := url.Parse(uri)
-	invalid := err != nil || parsedURL == nil || parsedURL.Scheme != "https" || parsedURL.Host != "github.com"
-	if !invalid {
-		t.Error("javascript: scheme should be rejected")
-	}
-}
-
-func TestVerificationURI_GitHubWithPort(t *testing.T) {
-	uri := "https://github.com:8443/login/device"
-	parsedURL, err := url.Parse(uri)
-	invalid := err != nil || parsedURL == nil || parsedURL.Scheme != "https" || parsedURL.Host != "github.com"
-	if !invalid {
-		t.Error("github.com with non-standard port should be rejected")
-	}
-}
-
-// --- entryCellText tests ---
-
-func TestEntryCellText_Column0_RowNumber(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		To:        nil,
-		Algorithm: "Ed25519",
-		PublicKey: "dGVzdA==",
-		Note:      "test note",
-	}
-	got := entryCellText(entry, 0, 0, nil)
-	if got != "1" {
-		t.Errorf("col 0: got %q, want %q", got, "1")
-	}
-	// Also verify with a different index.
-	got = entryCellText(entry, 0, 4, nil)
-	if got != "5" {
-		t.Errorf("col 0 idx 4: got %q, want %q", got, "5")
-	}
-}
-
-func TestEntryCellText_Column1_Authority(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	got := entryCellText(entry, 1, 0, nil)
-	if got != "Test Auth" {
-		t.Errorf("col 1: got %q, want %q", got, "Test Auth")
-	}
-}
-
-func TestEntryCellText_Column2_From(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	got := entryCellText(entry, 2, 0, nil)
-	want := core.FormatDateDisplay("2026-01-15")
-	if got != want {
-		t.Errorf("col 2: got %q, want %q", got, want)
-	}
-}
-
-func TestEntryCellText_Column3_ToNil(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		To:        nil,
-		Note:      "test note",
-	}
-	got := entryCellText(entry, 3, 0, nil)
-	if got != "(none)" {
-		t.Errorf("col 3 nil To: got %q, want %q", got, "(none)")
-	}
-}
-
-func TestEntryCellText_Column3_ToNonNil(t *testing.T) {
-	toDate := "2027-06-30"
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		To:        &toDate,
-		Note:      "test note",
-	}
-	got := entryCellText(entry, 3, 0, nil)
-	want := core.FormatDateDisplay("2027-06-30")
-	if got != want {
-		t.Errorf("col 3 non-nil To: got %q, want %q", got, want)
-	}
-}
-
-func TestEntryCellText_Column4_Restrictions(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Extra:     map[string]json.RawMessage{"allowed_honors": json.RawMessage(`["Appointment"]`)},
-	}
-	got := entryCellText(entry, 4, 0, nil)
-	if got != "Appointment" {
-		t.Errorf("col 4: got %q, want %q", got, "Appointment")
-	}
-}
-
-func TestEntryCellText_Column5_Note(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	got := entryCellText(entry, 5, 0, nil)
-	if got != "test note" {
-		t.Errorf("col 5: got %q, want %q", got, "test note")
-	}
-}
-
-func TestEntryCellText_Column6_CacheHit(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	cache := map[int]string{0: "SHA256:abc123"}
-	got := entryCellText(entry, 6, 0, cache)
-	if got != "SHA256:abc123" {
-		t.Errorf("col 6 cache hit: got %q, want %q", got, "SHA256:abc123")
-	}
-}
-
-func TestEntryCellText_Column6_CacheMiss(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	cache := map[int]string{99: "SHA256:other"}
-	got := entryCellText(entry, 6, 0, cache)
-	if got != "(invalid key)" {
-		t.Errorf("col 6 cache miss: got %q, want %q", got, "(invalid key)")
-	}
-}
-
-func TestEntryCellText_Column6_NilCache(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	got := entryCellText(entry, 6, 0, nil)
-	if got != "(invalid key)" {
-		t.Errorf("col 6 nil cache: got %q, want %q", got, "(invalid key)")
-	}
-}
-
-func TestRestrictionsText(t *testing.T) {
-	tests := []struct {
-		name string
-		raw  string // "" means allowed_honors absent from Extra
+func TestUpdateLoginUI(t *testing.T) {
+	rt, _ := newTestRegistryTab(t, unreachable)
+	for _, tc := range []struct {
+		st   service.AuthState
 		want string
 	}{
-		{"absent", "", "(none)"},
-		{"null", `null`, "(none)"},
-		{"empty array", `[]`, "(none)"},
-		{"all blank", `["", "  "]`, "(none)"},
-		{"single honor", `["Appointment"]`, "Appointment"},
-		{"blank items skipped", `["A", "", "B"]`, "A, B"},
-		{"non-array string", `"Appointment"`, "(invalid)"},
-		{"non-array object", `{"a": 1}`, "(invalid)"},
-		{"malformed json", `[`, "(invalid)"},
-		{"non-string item", `[1]`, "(invalid)"},
-		{"null item", `["A", null]`, "(invalid)"},
-		{"leading whitespace", `[" A"]`, "(invalid)"},
-		{"trailing whitespace", `["A "]`, "(invalid)"},
-		{"bidi control char", `["A\u202e"]`, "(invalid)"},
-		{"C0 control char", `["A\u0001B"]`, "(invalid)"},
-		{"tab only is control not blank", `["\t"]`, "(invalid)"},
-		// U+FEFF: JS trim() strips it, so the verify page treats these as blank / untrimmed.
-		{"BOM only is blank like JS trim", `["\ufeff"]`, "(none)"},
-		{"trailing BOM is untrimmed like JS trim", `["Medal\ufeff"]`, "(invalid)"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entry := core.KeyEntry{Authority: "Test Auth", From: "2026-01-15"}
-			if tt.raw != "" {
-				entry.Extra = map[string]json.RawMessage{"allowed_honors": json.RawMessage(tt.raw)}
-			}
-			if got := restrictionsText(entry); got != tt.want {
-				t.Errorf("restrictionsText(%s) = %q, want %q", tt.raw, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEntryCellText_InvalidColumn(t *testing.T) {
-	entry := core.KeyEntry{
-		Authority: "Test Auth",
-		From:      "2026-01-15",
-		Note:      "test note",
-	}
-	for _, col := range []int{-1, len(tableColumns), 100} {
-		got := entryCellText(entry, col, 0, nil)
-		if got != "" {
-			t.Errorf("col %d: got %q, want empty string", col, got)
+		{service.AuthState{}, "Login to GitHub"},
+		{service.AuthState{LoggedIn: true, Offline: true}, "Offline — Reconnect"},
+		{service.AuthState{LoggedIn: true, User: "octocat"}, "@octocat ▾"},
+	} {
+		rt.UpdateLoginUI(tc.st)
+		if rt.loginBtn.Text != tc.want {
+			t.Errorf("%+v: loginBtn = %q, want %q", tc.st, rt.loginBtn.Text, tc.want)
 		}
 	}
 }
 
-// --- GitHubClient tests ---
-
-func TestGitHubClient_NotLoggedIn(t *testing.T) {
-	rt := &RegistryTab{state: &appState{loggedIn: false}}
-	if rt.GitHubClient() != nil {
-		t.Error("expected nil when not logged in")
-	}
-}
-
-func TestGitHubClient_EmptyAccessToken(t *testing.T) {
-	rt := &RegistryTab{state: &appState{
-		loggedIn:    true,
-		githubUser:  "testuser",
-		githubToken: ghapi.Token{AccessToken: ""},
-	}}
-	if rt.GitHubClient() != nil {
-		t.Error("expected nil when AccessToken is empty")
-	}
-}
-
-func TestGitHubClient_Offline(t *testing.T) {
-	rt := &RegistryTab{state: &appState{
-		loggedIn:    true,
-		offline:     true,
-		githubToken: ghapi.Token{AccessToken: "tok-123"},
-	}}
-	if rt.GitHubClient() != nil {
-		t.Error("expected nil when offline")
-	}
-}
-
-// The display name is not needed to build a client: PRs are same-repo.
-func TestGitHubClient_EmptyUsername(t *testing.T) {
-	rt := &RegistryTab{state: &appState{
-		loggedIn:    true,
-		githubUser:  "",
-		githubToken: ghapi.Token{AccessToken: "tok-123"},
-	}}
-	if rt.GitHubClient() == nil {
-		t.Error("expected a client when githubUser is empty")
-	}
-}
-
-func TestGitHubClient_AllConditionsMet(t *testing.T) {
-	rt := &RegistryTab{state: &appState{
-		loggedIn:    true,
-		githubUser:  "testuser",
-		githubToken: ghapi.Token{AccessToken: "tok-123"},
-	}}
-	client := rt.GitHubClient()
-	if client == nil {
-		t.Fatal("expected non-nil client when all conditions met")
-	}
-	if client.Owner != ghapi.DefaultOwner {
-		t.Errorf("Owner = %q, want %q", client.Owner, ghapi.DefaultOwner)
-	}
-	if client.Repo != ghapi.DefaultRepo {
-		t.Errorf("Repo = %q, want %q", client.Repo, ghapi.DefaultRepo)
-	}
-}
-
-// --- onLoginChanged observer tests ---
-
-// TestUpdateLoginUI_FiresObserver verifies the login-state choke point invokes a
-// registered observer, so other tabs (History) react to auth changes.
-func TestUpdateLoginUI_FiresObserver(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	fired := 0
-	rt.SetOnLoginChanged(func() { fired++ })
-
-	rt.updateLoginUI()
-
-	if fired != 1 {
-		t.Fatalf("onLoginChanged fired %d times, want 1", fired)
-	}
-}
-
-// TestUpdateLoginUI_NilObserverNoPanic verifies updateLoginUI is safe when no
-// observer is registered (the test / early-construction case) and still runs its
-// primary work (setting the login button text for the logged-out state).
-func TestUpdateLoginUI_NilObserverNoPanic(t *testing.T) {
-	rt := newTestRegistryTab(t)
-	// Seed a distinct value so the post-call assertion can only pass if
-	// updateLoginUI genuinely rewrote the button text.
+// The tab leaves EventAuthChanged to the host; a host handler calling
+// UpdateLoginUI (as main registers it) sees every login-state change.
+func TestAuthChangedEvent_HostHandler(t *testing.T) {
+	rt, _, events := newTestRegistryTabWithEvents(t, unreachable)
 	rt.loginBtn.SetText("stale")
-	// onLoginChanged is nil (never set) — must not panic.
-	rt.updateLoginUI()
-	if rt.loginBtn.Text != "Login to GitHub" {
-		t.Errorf("loginBtn.Text = %q, want %q (method must run its work path)",
-			rt.loginBtn.Text, "Login to GitHub")
+	rt.svc.Logout()
+	if rt.loginBtn.Text != "stale" {
+		t.Fatalf("the tab handled EventAuthChanged itself: loginBtn = %q", rt.loginBtn.Text)
+	}
+
+	fired := 0
+	events.On(service.EventAuthChanged, func(any) { fired++; rt.UpdateLoginUI(rt.svc.AuthState()) })
+	rt.svc.Logout()
+	if fired != 1 || rt.loginBtn.Text != "Login to GitHub" {
+		t.Errorf("fired = %d, loginBtn = %q", fired, rt.loginBtn.Text)
 	}
 }
 
-// TestCompleteLogin_FiresObserver locks the load-bearing invariant that the
-// login-state transitions route through updateLoginUI (and therefore fire the
-// observer). Testing updateLoginUI directly is not enough: a future transition
-// that mutates login state without calling updateLoginUI would leave the History
-// tab stale. Driving the real completeLogin path pins that guarantee for the
-// online, offline, and unauthorized outcomes.
-func TestCompleteLogin_FiresObserver(t *testing.T) {
-	tests := []struct {
-		name         string
-		username     string
-		valErr       error
-		wantLoggedIn bool
-		wantOffline  bool
-		wantToken    string // expected persisted AccessToken ("" = cleared)
+func TestStartLogin(t *testing.T) {
+	for _, tc := range []struct {
+		st   service.AuthState
+		want string
 	}{
-		{"online", "octocat", nil, true, false, "tok-123"},
-		{"offline (non-401 error)", "octocat", errors.New("network unreachable"), true, true, "tok-123"},
-		{"unauthorized (401)", "", &ghapi.APIError{StatusCode: 401, Message: "bad credentials"}, false, false, ""},
+		{service.AuthState{}, "Requesting device code..."},
+		{service.AuthState{LoggedIn: true, Offline: true}, "Reconnecting to GitHub..."},
+		{service.AuthState{LoggedIn: true, User: "octocat"}, "Requesting device code..."},
+	} {
+		rt, logins := newTestRegistryTab(t, unreachable)
+		rt.startLogin(tc.st)
+		if rt.statusLabel.Text != tc.want || len(logins) != 1 {
+			t.Errorf("%+v: status = %q, logins = %d", tc.st, rt.statusLabel.Text, len(logins))
+		}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rt := newTestRegistryTab(t)
-			fired := 0
-			rt.SetOnLoginChanged(func() { fired++ })
 
-			rt.completeLogin(ghapi.Token{AccessToken: "tok-123"}, tt.username, tt.valErr, func() {})
+	rt, logins := newTestRegistryTab(t, unreachable)
+	rt.StartLogin() // the service is logged out
+	if rt.statusLabel.Text != "Requesting device code..." || len(logins) != 1 {
+		t.Errorf("StartLogin: status = %q, logins = %d", rt.statusLabel.Text, len(logins))
+	}
+}
 
-			if fired != 1 {
-				t.Errorf("onLoginChanged fired %d times, want 1", fired)
+func TestLoginButton_LoggedOutStartsLogin(t *testing.T) {
+	rt, logins := newTestRegistryTab(t, unreachable)
+	test.Tap(rt.loginBtn)
+	if rt.statusLabel.Text != "Requesting device code..." || len(logins) != 1 {
+		t.Errorf("status = %q, logins = %d", rt.statusLabel.Text, len(logins))
+	}
+}
+
+func TestShowLoginDialog(t *testing.T) {
+	rt, _ := newTestRegistryTab(t, unreachable)
+	rt.showLoginDialog(service.DeviceCode{UserCode: "ABCD-1234", VerificationURI: "https://github.com/login/device"})
+	top := topOverlay(t, rt)
+	if !overlayHasText(top, "ABCD-1234") || rt.statusLabel.Text != "Waiting for GitHub authorization..." {
+		t.Errorf("status = %q", rt.statusLabel.Text)
+	}
+	if findButton(t, top, "Copy Code").Disabled() || findButton(t, top, "Open GitHub").Disabled() {
+		t.Error("buttons disabled for a valid URI")
+	}
+	test.Tap(findButton(t, top, "Cancel"))
+	if rt.loginDialog != nil {
+		t.Error("Cancel did not clear the dialog")
+	}
+
+	rt.showLoginDialog(service.DeviceCode{UserCode: "WXYZ-0000"})
+	top = topOverlay(t, rt)
+	if findButton(t, top, "Copy Code").Disabled() || !findButton(t, top, "Open GitHub").Disabled() {
+		t.Error("without a verification URI, want Copy Code enabled and Open GitHub disabled")
+	}
+	rt.hideLoginDialog()
+	if rt.loginDialog != nil || rt.window.Canvas().Overlays().Top() == top {
+		t.Error("hideLoginDialog did not dismiss the dialog")
+	}
+	rt.hideLoginDialog() // no dialog: no-op
+}
+
+func TestLoginDone(t *testing.T) {
+	t.Run("busy keeps the running login's dialog", func(t *testing.T) {
+		rt, _ := newTestRegistryTab(t, unreachable)
+		rt.showLoginDialog(service.DeviceCode{UserCode: "ABCD-1234"})
+		rt.loginDone(service.AuthState{}, service.ErrBusy)
+		if rt.statusLabel.Text != "Login already in progress" || rt.loginDialog == nil {
+			t.Errorf("status = %q, dialog = %v", rt.statusLabel.Text, rt.loginDialog)
+		}
+	})
+	t.Run("cancelled shows no error", func(t *testing.T) {
+		rt, _ := newTestRegistryTab(t, unreachable)
+		rt.showLoginDialog(service.DeviceCode{UserCode: "ABCD-1234"})
+		rt.loginDone(service.AuthState{}, fmt.Errorf("login failed: %w", context.Canceled))
+		if rt.statusLabel.Text != "" || rt.loginDialog != nil {
+			t.Errorf("status = %q", rt.statusLabel.Text)
+		}
+		if rt.window.Canvas().Overlays().Top() != nil {
+			t.Error("a dialog is shown after cancel")
+		}
+	})
+	t.Run("error", func(t *testing.T) {
+		rt, _ := newTestRegistryTab(t, unreachable)
+		rt.loginDone(service.AuthState{}, errors.New("An error occurred. Please try again later."))
+		if top := topOverlay(t, rt); rt.statusLabel.Text != "" || !overlayHasText(top, "Error") || !overlayHasText(top, "An error occurred. Please try again later.") {
+			t.Errorf("status = %q", rt.statusLabel.Text)
+		}
+	})
+	t.Run("still offline", func(t *testing.T) {
+		rt, logins := newTestRegistryTab(t, unreachable)
+		rt.statusLabel.SetText("Reconnecting to GitHub...")
+		rt.showLoginDialog(service.DeviceCode{UserCode: "ABCD-1234"})
+		rt.loginDone(service.AuthState{LoggedIn: true, Offline: true}, nil)
+		if rt.statusLabel.Text != "" || rt.loginDialog != nil || len(logins) != 0 {
+			t.Errorf("status = %q, dialog = %v, logins = %d", rt.statusLabel.Text, rt.loginDialog, len(logins))
+		}
+		if top := topOverlay(t, rt); !overlayHasText(top, "GitHub Unreachable") ||
+			!overlayHasText(top, "Still can't reach GitHub. Check your connection and try again.") {
+			t.Error("GitHub Unreachable dialog not shown")
+		}
+	})
+	t.Run("outcomes", func(t *testing.T) {
+		rt, _ := newTestRegistryTab(t, unreachable)
+		for _, tc := range []struct {
+			st   service.AuthState
+			want string
+		}{
+			{service.AuthState{LoggedIn: true, User: "octocat"}, "Logged in as @octocat"},
+			{service.AuthState{}, "Not logged in"},
+		} {
+			rt.loginDone(tc.st, nil)
+			if rt.statusLabel.Text != tc.want {
+				t.Errorf("%+v: status = %q, want %q", tc.st, rt.statusLabel.Text, tc.want)
 			}
-			if rt.state.loggedIn != tt.wantLoggedIn {
-				t.Errorf("loggedIn = %v, want %v", rt.state.loggedIn, tt.wantLoggedIn)
+		}
+	})
+}
+
+func TestHandleSubmitError(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		err        error
+		wantDialog string
+		wantLogins int
+	}{
+		{"session expired", fmt.Errorf("submit: %w", service.ErrSessionExpired), "Session Expired", 1},
+		{"registry changed", fmt.Errorf("submit: %w", service.ErrRegistryChanged), "Registry Changed", 0},
+		{"generic", errors.New("GitHub rate limit reached. Try again in a few minutes."), "Submission Failed", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, logins := newTestRegistryTab(t, unreachable)
+			rt.statusLabel.SetText("Creating pull request...")
+			rt.handleSubmitError(tc.err)
+			if top := topOverlay(t, rt); !overlayHasText(top, tc.wantDialog) || !overlayHasText(top, tc.err.Error()) {
+				t.Errorf("want the %q dialog", tc.wantDialog)
 			}
-			if rt.state.offline != tt.wantOffline {
-				t.Errorf("offline = %v, want %v", rt.state.offline, tt.wantOffline)
+			if len(logins) != tc.wantLogins {
+				t.Errorf("logins = %d, want %d", len(logins), tc.wantLogins)
 			}
-			if rt.state.githubToken.AccessToken != tt.wantToken {
-				t.Errorf("githubToken.AccessToken = %q, want %q (persist/clear invariant)",
-					rt.state.githubToken.AccessToken, tt.wantToken)
+			wantStatus := ""
+			if tc.wantLogins > 0 {
+				wantStatus = "Requesting device code..."
+			}
+			if rt.statusLabel.Text != wantStatus {
+				t.Errorf("status = %q, want %q", rt.statusLabel.Text, wantStatus)
 			}
 		})
 	}
 }
 
-// --- isSafeGitHubURL tests ---
-
-func TestIsSafeGitHubURL_GitHubHTTPS(t *testing.T) {
-	_, ok := isSafeGitHubURL("https://github.com/org/repo/pull/1")
-	if !ok {
-		t.Error("expected true for https://github.com URL")
+func TestHandleSubmitSuccess(t *testing.T) {
+	for _, u := range []string{"https://github.com/owner/repo/pull/42", "http://insecure.example.com/pull/42", "", "://bad-url"} {
+		rt, _ := newTestRegistryTab(t, unreachable)
+		rt.handleSubmitSuccess(service.SubmitResult{PRNumber: 42, URL: u})
+		if rt.statusLabel.Text != "PR #42 created" {
+			t.Errorf("%q: status = %q", u, rt.statusLabel.Text)
+		}
+		want := "PR #42 has been created."
+		if strings.HasPrefix(u, "https://") {
+			want += "\n\nOpen in browser?"
+		}
+		if !overlayHasText(topOverlay(t, rt), want) {
+			t.Errorf("%q: dialog text %q not shown", u, want)
+		}
 	}
 }
 
-func TestIsSafeGitHubURL_GitHubSubdomain(t *testing.T) {
-	_, ok := isSafeGitHubURL("https://gist.github.com/user/123")
-	if !ok {
-		t.Error("expected true for https://gist.github.com URL")
+func TestSubmitForReview(t *testing.T) {
+	t.Run("empty registry does nothing", func(t *testing.T) {
+		rt, logins := newTestRegistryTab(t, unreachable)
+		rt.statusLabel.SetText("Failed to load registry")
+		rt.submitForReview()
+		if rt.statusLabel.Text != "Failed to load registry" || len(logins) != 0 {
+			t.Errorf("status = %q, logins = %d", rt.statusLabel.Text, len(logins))
+		}
+	})
+	t.Run("logged out starts login", func(t *testing.T) {
+		rt, logins := newTestRegistryTab(t, registryServer(t))
+		rt.submitForReview()
+		select {
+		case <-logins:
+		case <-time.After(5 * time.Second):
+			t.Fatal("login not started")
+		}
+	})
+}
+
+func TestFetchButton_ConfirmsDiscardingEdits(t *testing.T) {
+	rt, _, events := newTestRegistryTabWithEvents(t, registryServer(t))
+	if err := rt.svc.AddEntry(service.EntryForm{Authority: "B", From: "2026-01-01", NoExpiry: true}, rt.snap.Entries[0].PublicKey); err != nil {
+		t.Fatal(err)
+	}
+	test.Tap(findButton(t, rt.Content, "Fetch from Server"))
+	top := topOverlay(t, rt)
+	if !overlayHasText(top, "Discard Local Edits?") {
+		t.Fatal("no discard confirm with unsubmitted edits")
+	}
+	// The refetch runs in the background; wait until its event handler has
+	// finished with the widgets before checking or tearing down.
+	done := make(chan struct{})
+	events.On(service.EventRegistryChanged, func(any) { rt.registryChanged(); close(done) })
+	test.Tap(findButton(t, top, "Yes"))
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("refetch did not finish")
+	}
+	if rt.svc.Dirty() || len(rt.snap.Entries) != 1 || rt.statusLabel.Text != "Loaded from registry server" {
+		t.Errorf("edits not discarded: dirty %v, %d entries, status %q", rt.svc.Dirty(), len(rt.snap.Entries), rt.statusLabel.Text)
 	}
 }
 
-func TestIsSafeGitHubURL_NonGitHub(t *testing.T) {
-	_, ok := isSafeGitHubURL("https://evil.com/phishing")
-	if ok {
-		t.Error("expected false for non-GitHub host")
+func TestEditDialog_SaveMarksDirty(t *testing.T) {
+	rt, _ := newTestRegistryTab(t, registryServer(t))
+	showEditDialog(rt.window, rt.svc, 0, rt.snap.Entries[0], rt.refreshTable)
+	top := topOverlay(t, rt)
+	test.Tap(findButton(t, top, "Save"))
+	if !rt.snap.Dirty || !rt.svc.Dirty() {
+		t.Error("save did not mark the registry dirty")
+	}
+	if rt.window.Canvas().Overlays().Top() == top {
+		t.Error("dialog still open after a successful save")
 	}
 }
 
-func TestIsSafeGitHubURL_HTTP(t *testing.T) {
-	_, ok := isSafeGitHubURL("http://github.com/org/repo/pull/1")
-	if ok {
-		t.Error("expected false for http scheme")
+// TestEditDialog_PrefillsExpiry saves the dialog unchanged: the To date or
+// no-expiry choice it was opened with must come back, and the entry's
+// allowed_honors must survive.
+func TestEditDialog_PrefillsExpiry(t *testing.T) {
+	rt, _ := newTestRegistryTab(t, registryServer(t))
+	original := rt.snap.Entries[0]
+	if !original.NoExpiry || original.To != "" {
+		t.Fatalf("served entry = %+v, want no expiry", original)
+	}
+	dated := original
+	dated.To, dated.NoExpiry = "2027-01-01", false
+	for _, entry := range []service.RegistryEntry{dated, original} {
+		showEditDialog(rt.window, rt.svc, 0, entry, rt.refreshTable)
+		test.Tap(findButton(t, topOverlay(t, rt), "Save"))
+		if got := rt.snap.Entries[0]; got != entry {
+			t.Errorf("saved %+v, want %+v", got, entry)
+		}
+		if got := rt.snap.Rows[0][4]; got != "Other" {
+			t.Errorf("restrictions cell = %q, want Other", got)
+		}
 	}
 }
 
-func TestIsSafeGitHubURL_Empty(t *testing.T) {
-	_, ok := isSafeGitHubURL("")
-	if ok {
-		t.Error("expected false for empty URL")
+func TestEditDialog_StaleEntryShowsError(t *testing.T) {
+	rt, _ := newTestRegistryTab(t, registryServer(t))
+	stale := rt.snap.Entries[0]
+	stale.PublicKey = "replaced"
+	showEditDialog(rt.window, rt.svc, 0, stale, rt.refreshTable)
+	top := topOverlay(t, rt)
+	test.Tap(findButton(t, top, "Save"))
+	if rt.svc.Dirty() || rt.window.Canvas().Overlays().Top() != top {
+		t.Error("stale save was applied or closed the dialog")
+	}
+	if !overlayHasText(top, "The registry was reloaded while you were editing. Cancel and edit the entry again.") {
+		t.Error("stale-entry error not shown")
 	}
 }
 
-func TestIsSafeGitHubURL_SuffixConfusion(t *testing.T) {
-	_, ok := isSafeGitHubURL("https://evil-github.com/fake")
-	if ok {
-		t.Error("expected false for evil-github.com (suffix confusion)")
+func TestAddDialog_ValidationError(t *testing.T) {
+	rt, _ := newTestRegistryTab(t, unreachable)
+	showAddDialog(rt.window, rt.svc, rt.refreshTable)
+	top := topOverlay(t, rt)
+	test.Tap(findButton(t, top, "Add"))
+	if !overlayHasText(top, "Authority is required.") {
+		t.Error("validation error not shown")
+	}
+	if rt.window.Canvas().Overlays().Top() != top || len(rt.snap.Entries) != 0 {
+		t.Error("invalid add closed the dialog or added an entry")
 	}
 }
-
-// Verify widget.Button type is accessible (compile-time check for RegistryTab.loginBtn field).
-var _ *widget.Button
