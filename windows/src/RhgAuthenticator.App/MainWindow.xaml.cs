@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using RhgAuthenticator.ViewModels;
 
 namespace RhgAuthenticator.App;
@@ -60,6 +61,15 @@ public partial class MainWindow : Window
     {
         Loaded -= OnLoaded;
         await _model.StartAsync();
+    }
+
+    /// <summary>Holding F5 refreshes once: its key repeats never reach the F5 binding.</summary>
+    private void OnPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F5 && e.IsRepeat)
+        {
+            e.Handled = true;
+        }
     }
 
     private void OnModelChanged(object? sender, PropertyChangedEventArgs e)

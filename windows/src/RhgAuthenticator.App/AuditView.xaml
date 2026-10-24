@@ -12,6 +12,8 @@
             <Button Style="{StaticResource AccentButtonStyle}" ContentTemplate="{StaticResource CommandContent}"
                     Tag="&#xE72C;" Content="{x:Static vm:AuditViewModel.RefreshTitle}"
                     AutomationProperties.Name="{x:Static vm:AuditViewModel.RefreshTitle}"
+                    AutomationProperties.AcceleratorKey="F5"
+                    ToolTip="{x:Static vm:AuditViewModel.RefreshTooltip}"
                     Command="{Binding RefreshCommand}" />
             <!-- Its tooltip says why it is disabled, so it shows only then. -->
             <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"

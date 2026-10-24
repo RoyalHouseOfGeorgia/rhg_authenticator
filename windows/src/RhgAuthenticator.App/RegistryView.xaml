@@ -31,6 +31,8 @@
                 <Button ContentTemplate="{StaticResource CommandContent}"
                         Tag="&#xE72C;" Content="{x:Static vm:RegistryViewModel.FetchTitle}"
                         AutomationProperties.Name="{x:Static vm:RegistryViewModel.FetchTitle}"
+                        AutomationProperties.AcceleratorKey="F5"
+                        ToolTip="{x:Static vm:RegistryViewModel.FetchTooltip}"
                         Command="{Binding FetchCommand}" />
                 <!-- The entry dialog is MainWindow's (EntryFormDialog). -->
                 <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"

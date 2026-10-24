@@ -14,10 +14,12 @@ public sealed partial class HistoryViewModel : ObservableObject
 {
 #pragma warning disable CS1591 // UI copy; each constant's name says where it shows.
     public const string SearchPlaceholder = "Search by recipient...";
+    public const string SearchTooltip = "Search (Ctrl+F)";
     public const string RefreshTitle = "Refresh";
+    public const string RefreshTooltip = RefreshTitle + " (F5)";
     public const string RevokeTitle = "Revoke";
     public const string DeleteEntryTitle = "Delete Entry…";
-    public const string DeleteEntryTooltip = "Select a record to delete it.";
+    public const string DeleteEntryTooltip = "Select a record to delete it. In the list, Del deletes the selected record.";
     public const string ExportTitle = "Export Issuance Log…";
     public const string RemoveDuplicatesTitle = "Remove Duplicates…";
     public const string RevocationUnavailableStatus = "Revocation unavailable";
@@ -71,6 +73,15 @@ public sealed partial class HistoryViewModel : ObservableObject
 
     /// <summary>history.changed: the next read applied reports a log that failed to load.</summary>
     private bool _reportLoadFailure;
+
+    /// <summary>
+    /// A deletion is pending: the deleted record's position in the rows shown
+    /// when it was sent, and those rows. The first read applied that replaces
+    /// the rows and holds different rows than those takes it and selects the
+    /// row now at that position (clamped to the last). A failed deletion or a
+    /// new search drops it.
+    /// </summary>
+    private (int Position, HistoryListResult Rows)? _pendingDelete;
 
     /// <summary>Cancels the pending debounced search.</summary>
     private CancellationTokenSource? _searchCancel;
@@ -197,7 +208,11 @@ public sealed partial class HistoryViewModel : ObservableObject
     /// re-read when its record changed. Only the latest read is applied; a
     /// failed one keeps the current rows and leaves a pending replacement and
     /// load-failure report to the next read applied. A read equal to the rows
-    /// shown keeps <see cref="Snapshot"/>, so the list is not rebuilt.
+    /// shown keeps <see cref="Snapshot"/>, so the list is not rebuilt. After a
+    /// deletion, the first read applied that replaces the rows selects the row
+    /// that took the deleted one's place (the last row when it was last;
+    /// nothing when the rows are empty) and reads its detail — once its rows
+    /// differ from those shown when the deletion was sent.
     /// </summary>
     internal async Task RereadAsync()
     {
@@ -219,14 +234,12 @@ public sealed partial class HistoryViewModel : ObservableObject
         // never shows a stale selection on the new rows. Rows equal to those
         // shown replace nothing: a row picked meanwhile is the same record.
         var same = SameList(latest, Snapshot);
+        var replaced = _rowsReplaced;
+        _rowsReplaced = false;
         int? reread = null;
-        if (_rowsReplaced)
+        if (replaced && !same)
         {
-            _rowsReplaced = false;
-            if (!same)
-            {
-                ClearSelection();
-            }
+            ClearSelection();
         }
         if (SelectedIndex is { } index)
         {
@@ -242,6 +255,23 @@ public sealed partial class HistoryViewModel : ObservableObject
         if (!same)
         {
             Snapshot = latest;
+        }
+        // A replacing read starts with no selection (BeginRowsReplacement),
+        // so the new rows show first with none, then with the row that took
+        // the deleted one's place — unless the operator picked a row while
+        // the read ran (rows equal to those shown keep it), which wins.
+        // Compared with the rows at the deletion, not those shown: a read in
+        // between (revocations, login) may already show the rows without the
+        // deleted record.
+        if (replaced && _pendingDelete is { } pending && !SameList(latest, pending.Rows))
+        {
+            _pendingDelete = null;
+            if (latest.Rows.Count > 0 && SelectedIndex is null)
+            {
+                var next = Math.Min(pending.Position, latest.Rows.Count - 1);
+                SelectedIndex = next;
+                reread = next;
+            }
         }
         if (_reportLoadFailure)
         {
@@ -259,8 +289,10 @@ public sealed partial class HistoryViewModel : ObservableObject
 
     partial void OnQueryChanged(string value)
     {
-        // Any read from now on is for the new search, so its rows reorder.
+        // Any read from now on is for the new search, so its rows reorder,
+        // and they are not the rows a pending deletion was counted in.
         BeginRowsReplacement();
+        _pendingDelete = null;
         var previous = _searchCancel;
         _searchCancel = new CancellationTokenSource();
         previous?.Cancel();
@@ -392,7 +424,9 @@ public sealed partial class HistoryViewModel : ObservableObject
     /// it could revoke), then deletes the record (history.deleteEntry) or
     /// revokes it (<see cref="RevokeRecordAsync"/>). The record is captured
     /// before asking, so a history.changed meanwhile does not move the action
-    /// to another row; the list reloads on the core's history.changed.
+    /// to another row; the list reloads on the core's history.changed, and
+    /// once it does the row that took the deleted one's place is selected
+    /// (<see cref="RereadAsync"/>). A failed deletion selects nothing then.
     /// Enabled for a selected row while no revocation or deletion runs
     /// (<see cref="DeleteEntryTooltip"/> otherwise).
     /// </summary>
@@ -431,6 +465,13 @@ public sealed partial class HistoryViewModel : ObservableObject
             default:
                 return;
         }
+        // Stored before the call: the core's history.changed may be handled
+        // before its reply. None while a replacement is pending (a search or
+        // a history.changed still reading): the rows shown are not those the
+        // next read replaces.
+        _pendingDelete = !_rowsReplaced && PositionOf(record) is { } position
+            ? (position, Snapshot)
+            : null;
         IsDeleting = true;
         DeleteEntryResult result;
         try
@@ -439,6 +480,7 @@ public sealed partial class HistoryViewModel : ObservableObject
         }
         catch (RpcException error)
         {
+            _pendingDelete = null;
             _alerts.Show(error.Code == RpcErrorCode.NotFound
                 ? new AlertState(RecordNotFoundTitle, error.Message)
                 : new AlertState(DeleteFailedTitle, error.Message, OffersErrorLogExport: true));
@@ -549,6 +591,29 @@ public sealed partial class HistoryViewModel : ObservableObject
         {
             SelectedDetail = text.Detail;
         }
+    }
+
+    /// <summary>
+    /// <paramref name="record"/>'s position in the rows shown: the selected
+    /// row while it still holds the record (so of identical duplicates the one
+    /// selected counts), else the first row holding it; null when none does
+    /// (a history.changed while the question was open can move the rows).
+    /// </summary>
+    private int? PositionOf(HistoryRecord record)
+    {
+        var rows = Snapshot.Rows;
+        if (SelectedIndex is { } shown && shown < rows.Count && rows[shown].Record == record)
+        {
+            return shown;
+        }
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (rows[i].Record == record)
+            {
+                return i;
+            }
+        }
+        return null;
     }
 
     /// <summary>No row is selected and no detail shown; detail reads still running are dropped.</summary>

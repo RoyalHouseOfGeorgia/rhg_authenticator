@@ -34,6 +34,7 @@ public sealed class AuditViewModelTests
     public void Copy()
     {
         Assert.Equal("Refresh", AuditViewModel.RefreshTitle);
+        Assert.Equal("Refresh (F5)", AuditViewModel.RefreshTooltip);
         Assert.Equal("Open on GitHub", AuditViewModel.OpenTitle);
         Assert.Equal("Select a commit to open it.", AuditViewModel.OpenTooltip);
         Assert.Equal("Fetching...", AuditViewModel.FetchingStatus);

@@ -5,7 +5,16 @@
         xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
         Title="{x:Static vm:AppViewModel.WindowTitle}"
         Icon="app.ico"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        PreviewKeyDown="OnPreviewKeyDown">
+    <!--
+      F5 refreshes the shown tab, as its Refresh (or Fetch) button does; nothing
+      on a tab without one. Ctrl+F is added by HistoryView while it is shown
+      (ApplicationCommands.Find).
+    -->
+    <Window.InputBindings>
+        <KeyBinding Key="F5" Command="{Binding RefreshTabCommand}" />
+    </Window.InputBindings>
     <Window.Resources>
         <DataTemplate DataType="{x:Type vm:SignViewModel}">
             <local:SignView />

@@ -719,6 +719,121 @@ public sealed class AppViewModelTests
     }
 
     [Fact]
+    public async Task RefreshTabOnHistoryRefreshesTheLog()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        app.SelectedTab = app.Tabs[1];
+        Assert.True(app.RefreshTabCommand.CanExecute(null));
+        app.RefreshTabCommand.Execute(null);
+        Assert.True(await Fixtures.Settle(() => !app.History.RefreshCommand.IsRunning));
+        Assert.Equal(1, _fake.Count(RpcMethod.HistoryRefresh));
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryList));
+    }
+
+    [Fact]
+    public async Task RefreshTabOnRegistryFetches()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        Assert.False(app.Registry.Snapshot.Dirty);
+        app.SelectedTab = app.Tabs[2];
+        Assert.True(app.RefreshTabCommand.CanExecute(null));
+        app.RefreshTabCommand.Execute(null);
+        Assert.True(await Fixtures.Settle(() => !app.Registry.FetchCommand.IsRunning));
+        Assert.Equal(1, _fake.Count(RpcMethod.RegistryFetch));
+        Assert.Empty(_confirm.Questions);
+    }
+
+    [Fact]
+    public async Task RefreshTabOnAuditRefetchesTheCommits()
+    {
+        // audit.commits stays unscripted: the tab swallows the bad response.
+        var app = await Fixtures.StartedApp(_fake);
+        Assert.True(await Fixtures.Settle(() => !app.Audit.IsRefreshing));
+        Assert.Equal(1, _fake.Count(RpcMethod.AuditCommits));
+        app.SelectedTab = app.Tabs[3];
+        Assert.True(app.RefreshTabCommand.CanExecute(null));
+        app.RefreshTabCommand.Execute(null);
+        Assert.True(await Fixtures.Settle(() => !app.Audit.IsRefreshing));
+        Assert.Equal(2, _fake.Count(RpcMethod.AuditCommits));
+    }
+
+    [Fact]
+    public async Task RefreshTabDoesNothingWhileAuditIsRefreshing()
+    {
+        var held = _fake.Hold(RpcMethod.AuditCommits);
+        var app = await Fixtures.StartedApp(_fake);
+        app.SelectedTab = app.Tabs[3];
+        Assert.True(app.Audit.IsRefreshing);
+        Assert.False(app.RefreshTabCommand.CanExecute(null));
+        app.RefreshTabCommand.Execute(null);
+        Assert.Equal(1, _fake.Count(RpcMethod.AuditCommits));
+        held.Release(new AuditResult([], "No commits"));
+        Assert.True(await Fixtures.Settle(() => !app.Audit.IsRefreshing));
+    }
+
+    [Fact]
+    public async Task RefreshTabDoesNothingWhileHistoryIsRefreshing()
+    {
+        // History's Refresh has no guard of its own: only its running state
+        // keeps a second F5 from sending a second refresh.
+        var app = await Fixtures.StartedApp(_fake);
+        var held = _fake.Hold(RpcMethod.HistoryRefresh);
+        app.History.RefreshCommand.Execute(null);
+        app.SelectedTab = app.Tabs[1];
+        Assert.False(app.RefreshTabCommand.CanExecute(null));
+        app.RefreshTabCommand.Execute(null);
+        Assert.Equal(1, _fake.Count(RpcMethod.HistoryRefresh));
+        held.Release(Empty.Value);
+        Assert.True(await Fixtures.Settle(() => !app.History.RefreshCommand.IsRunning));
+    }
+
+    [Fact]
+    public async Task ASlowFetchOnOneTabDoesNotHoldRefreshTabOnAnother()
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        Assert.True(await Fixtures.Settle(() => !app.Audit.IsRefreshing));
+        var held = _fake.Hold(RpcMethod.RegistryFetch);
+        app.SelectedTab = app.Tabs[2];
+        app.RefreshTabCommand.Execute(null);
+        Assert.True(app.Registry.FetchCommand.IsRunning);
+        app.SelectedTab = app.Tabs[3];
+        Assert.True(app.RefreshTabCommand.CanExecute(null));
+        app.RefreshTabCommand.Execute(null);
+        Assert.True(await Fixtures.Settle(() => !app.Audit.IsRefreshing));
+        Assert.Equal(2, _fake.Count(RpcMethod.AuditCommits));
+        held.Release(Empty.Value);
+        Assert.True(await Fixtures.Settle(() => !app.Registry.FetchCommand.IsRunning));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public async Task RefreshTabDoesNothingOnTabsWithoutARefresh(int tab)
+    {
+        var app = await Fixtures.StartedApp(_fake);
+        Assert.True(await Fixtures.Settle(() => !app.Audit.IsRefreshing));
+        var calls = _fake.Calls.Count;
+        app.SelectedTab = app.Tabs[tab];
+        Assert.False(app.RefreshTabCommand.CanExecute(null));
+        app.RefreshTabCommand.Execute(null);
+        Assert.Equal(calls, _fake.Calls.Count);
+    }
+
+    [Fact]
+    public async Task RefreshTabDoesNothingOnADisabledTab()
+    {
+        _fake.Fail(RpcMethod.AppInit, new RpcException(RpcErrorCode.Failed, "x"));
+        var app = NewApp();
+        await app.StartAsync();
+        Assert.Equal(AppPhase.Fatal, app.Phase);
+        app.SelectedTab = app.Tabs[1];
+        Assert.False(app.RefreshTabCommand.CanExecute(null));
+        app.RefreshTabCommand.Execute(null);
+        Assert.Equal(0, _fake.Count(RpcMethod.HistoryRefresh));
+    }
+
+    [Fact]
     public async Task HistoryChangedClearsTheSelectionAndReReadsTheLog()
     {
         var app = await AppWithHistorySelection(2);

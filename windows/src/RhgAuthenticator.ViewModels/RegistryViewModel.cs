@@ -18,6 +18,7 @@ public sealed partial class RegistryViewModel : ObservableObject
 {
 #pragma warning disable CS1591 // UI copy; each constant's name says where it shows.
     public const string FetchTitle = "Fetch from Server";
+    public const string FetchTooltip = FetchTitle + " (F5)";
     public const string SubmitTitle = "Submit for Review";
     public const string AddEntryTitle = EntryFormViewModel.AddTitle;
     public const string EditEntryTitle = EntryFormViewModel.EditTitle;

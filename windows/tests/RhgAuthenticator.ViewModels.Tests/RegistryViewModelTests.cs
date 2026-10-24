@@ -33,6 +33,7 @@ public sealed class RegistryViewModelTests
     public void Copy()
     {
         Assert.Equal("Fetch from Server", RegistryViewModel.FetchTitle);
+        Assert.Equal("Fetch from Server (F5)", RegistryViewModel.FetchTooltip);
         Assert.Equal("Submit for Review", RegistryViewModel.SubmitTitle);
         Assert.Equal(["Add Entry", "Edit Entry"], [RegistryViewModel.AddEntryTitle, RegistryViewModel.EditEntryTitle]);
         Assert.Equal("Select an entry to edit it.", RegistryViewModel.EditEntryTooltip);

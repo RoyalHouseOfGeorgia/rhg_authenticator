@@ -17,13 +17,19 @@
                 <Button Style="{StaticResource AccentButtonStyle}" ContentTemplate="{StaticResource CommandContent}"
                         Tag="&#xE72C;" Content="{x:Static vm:HistoryViewModel.RefreshTitle}"
                         AutomationProperties.Name="{x:Static vm:HistoryViewModel.RefreshTitle}"
+                        AutomationProperties.AcceleratorKey="F5"
+                        ToolTip="{x:Static vm:HistoryViewModel.RefreshTooltip}"
                         Command="{Binding RefreshCommand}" />
                 <!-- Destructive, so never the accent; its confirmation is the ConfirmService's, defaulting to Cancel. -->
                 <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
                         Tag="&#xE711;" Content="{x:Static vm:HistoryViewModel.RevokeTitle}"
                         AutomationProperties.Name="{x:Static vm:HistoryViewModel.RevokeTitle}"
                         Command="{Binding RevokeCommand}" />
-                <!-- Destructive too; the core's question may offer Revoke Instead. Its tooltip shows only while disabled. -->
+                <!--
+                  Destructive too; the core's question may offer Revoke Instead.
+                  Its tooltip shows only while disabled, and names Del, which
+                  works in the list (the list carries its AcceleratorKey).
+                -->
                 <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
                         Tag="&#xE74D;" Content="{x:Static vm:HistoryViewModel.DeleteEntryTitle}"
                         AutomationProperties.Name="{x:Static vm:HistoryViewModel.DeleteEntryTitle}"
@@ -36,7 +42,7 @@
                         AutomationProperties.Name="{x:Static vm:HistoryViewModel.ExportTitle}"
                         Command="{Binding ExportIssuanceLogCommand}" />
                 <Button Margin="8,0,0,0" ContentTemplate="{StaticResource CommandContent}"
-                        Tag="&#xE738;" Content="{x:Static vm:HistoryViewModel.RemoveDuplicatesTitle}"
+                        Tag="&#xEA99;" Content="{x:Static vm:HistoryViewModel.RemoveDuplicatesTitle}"
                         AutomationProperties.Name="{x:Static vm:HistoryViewModel.RemoveDuplicatesTitle}"
                         Command="{Binding RemoveDuplicatesCommand}" />
             </StackPanel>
@@ -52,7 +58,10 @@
             <!-- The search, the records, the revocation list's state and the status line. -->
             <DockPanel Grid.Column="0" Margin="24,0,16,16">
                 <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+                    <!-- Ctrl+F focuses it from anywhere in the window (code-behind's Find binding). -->
                     <TextBox x:Name="SearchBox" AutomationProperties.Name="{x:Static vm:HistoryViewModel.SearchPlaceholder}"
+                             AutomationProperties.AcceleratorKey="Ctrl+F"
+                             ToolTip="{x:Static vm:HistoryViewModel.SearchTooltip}"
                              Text="{Binding Query, UpdateSourceTrigger=PropertyChanged}" />
                     <TextBlock Style="{StaticResource Placeholder}" Text="{x:Static vm:HistoryViewModel.SearchPlaceholder}"
                                Visibility="{Binding Text, ElementName=SearchBox, Converter={StaticResource EmptyToVisibility}}" />
@@ -68,11 +77,16 @@
                   Snapshot.Rows), the row index being what the view model
                   selects: duplicate rows are equal records. A long summary
                   trims (no sideways scrolling), its tooltip holding it whole.
+                  Del deletes the selected record, on the list only, so Del in
+                  the search box still edits its text.
                 -->
-                <ListBox x:Name="Records" SelectionMode="Single"
+                <ListBox x:Name="Records" SelectionMode="Single" AutomationProperties.AcceleratorKey="Del"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                          SelectionChanged="OnRecordsSelectionChanged">
+                    <ListBox.InputBindings>
+                        <KeyBinding Key="Delete" Command="{Binding DeleteEntryCommand}" />
+                    </ListBox.InputBindings>
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding Summary}" ToolTip="{Binding Summary}" />

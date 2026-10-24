@@ -108,7 +108,8 @@ public sealed class HistoryViewModelTests
         Assert.Equal("Search by recipient...", HistoryViewModel.SearchPlaceholder);
         Assert.Equal(["Refresh", "Revoke"], [HistoryViewModel.RefreshTitle, HistoryViewModel.RevokeTitle]);
         Assert.Equal([.. "Delete Entry"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(HistoryViewModel.DeleteEntryTitle));
-        Assert.Equal("Select a record to delete it.", HistoryViewModel.DeleteEntryTooltip);
+        Assert.Equal("Select a record to delete it. In the list, Del deletes the selected record.", HistoryViewModel.DeleteEntryTooltip);
+        Assert.Equal(["Refresh (F5)", "Search (Ctrl+F)"], [HistoryViewModel.RefreshTooltip, HistoryViewModel.SearchTooltip]);
         Assert.Equal(
             ["Delete Issuance Record", "Delete", "Revoke Instead", "Record Not Found", "Delete Failed"],
             [
@@ -1017,6 +1018,12 @@ public sealed class HistoryViewModelTests
         Assert.Null(history.SelectedIndex);
         Assert.Equal([RecordJson(2)], _fake.Params(RpcMethod.HistoryDeleteEntry));
         Assert.Equal(new AlertState("Core Deleted Title", "Core says: deleted it."), _alerts.Current);
+        // The deletion's own history.changed: the record was found in the
+        // moved rows, so the row now in its place is selected.
+        _fake.Reset(RpcMethod.HistoryList);
+        _fake.Respond(RpcMethod.HistoryList, List([4, 1, 3]));
+        await history.HistoryChangedAsync();
+        Assert.Equal(2, history.SelectedIndex);
     }
 
     [Fact]
@@ -1075,6 +1082,202 @@ public sealed class HistoryViewModelTests
         Assert.Equal(new AlertState("Delete Failed", Message, OffersErrorLogExport: true), _alerts.Current);
         Assert.False(history.IsDeleting);
         Assert.True(history.DeleteEntryCommand.CanExecute(null));
+    }
+
+    /// <summary>
+    /// A model with <paramref name="row"/> of <paramref name="list"/> deleted
+    /// (row n holding record n + 1); its history.changed is not raised yet.
+    /// </summary>
+    private async Task<HistoryViewModel> DeletedRow(int row, HistoryListResult? list = null)
+    {
+        var history = await Selected(row, list);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(row + 1));
+        _fake.Respond(RpcMethod.HistoryDeleteEntry, s_deleted);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        _fake.Reset(RpcMethod.HistoryRecordText);
+        return history;
+    }
+
+    [Fact]
+    public async Task AfterADeletionTheRowInItsPlaceIsSelectedWithItsDetail()
+    {
+        var history = await DeletedRow(1);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(3));
+        _fake.Respond(RpcMethod.HistoryList, List([1, 3]));
+        await history.HistoryChangedAsync();
+        Assert.Equal(1, history.SelectedIndex);
+        Assert.Equal(RecordJson(3), _fake.Params(RpcMethod.HistoryRecordText)[^1]);
+        Assert.Equal("Detail of record 3", history.SelectedDetail);
+    }
+
+    [Fact]
+    public async Task AfterDeletingTheLastRowTheNewLastRowIsSelected()
+    {
+        var history = await DeletedRow(2);
+        _fake.Respond(RpcMethod.HistoryList, List([1, 2]));
+        await history.HistoryChangedAsync();
+        Assert.Equal(1, history.SelectedIndex);
+    }
+
+    [Fact]
+    public async Task AfterDeletingTheOnlyRowNothingIsSelected()
+    {
+        var history = await DeletedRow(0, List([1]));
+        var empty = List([]);
+        _fake.Respond(RpcMethod.HistoryList, empty);
+        await history.HistoryChangedAsync();
+        Assert.Same(empty, history.Snapshot);
+        Assert.Null(history.SelectedIndex);
+        Assert.Null(history.SelectedDetail);
+        // Taken by that read: a later issuance selects nothing.
+        _fake.Respond(RpcMethod.HistoryList, List([5]));
+        await history.HistoryChangedAsync();
+        Assert.Null(history.SelectedIndex);
+    }
+
+    [Fact]
+    public async Task ARereadShowingTheDeletionFirstStillSelectsTheRowInItsPlace()
+    {
+        // A revocations or login re-read lands after the core's write but
+        // before its history.changed: that one then reads the same rows.
+        var history = await DeletedRow(1);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(3));
+        var rows = List([1, 3]);
+        _fake.Respond(RpcMethod.HistoryList, rows);
+        await history.RereadAsync();
+        Assert.Same(rows, history.Snapshot);
+        await history.HistoryChangedAsync();
+        Assert.Equal(1, history.SelectedIndex);
+        Assert.Equal(RecordJson(3), _fake.Params(RpcMethod.HistoryRecordText)[^1]);
+        Assert.Equal("Detail of record 3", history.SelectedDetail);
+        // Taken: a later change selects nothing.
+        _fake.Reset(RpcMethod.HistoryList);
+        _fake.Respond(RpcMethod.HistoryList, List([1, 3, 4]));
+        await history.HistoryChangedAsync();
+        Assert.Null(history.SelectedIndex);
+    }
+
+    [Fact]
+    public async Task AHistoryChangedStillHoldingTheDeletedRecordDoesNotTakeItsPlace()
+    {
+        // An unrelated history.changed read before the core's write.
+        var history = await DeletedRow(1);
+        _fake.Respond(RpcMethod.HistoryList, List([1, 2, 3]));
+        await history.HistoryChangedAsync();
+        Assert.Null(history.SelectedIndex);
+        _fake.Reset(RpcMethod.HistoryList);
+        _fake.Respond(RpcMethod.HistoryList, List([1, 3]));
+        await history.HistoryChangedAsync();
+        Assert.Equal(1, history.SelectedIndex);
+    }
+
+    [Fact]
+    public async Task ADeletionDuringAPendingSearchSelectsNothingAfterIt()
+    {
+        // A row picked from the old rows while the search waits for typing to
+        // pause: its position is not in the rows the search reads.
+        var history = await Selected(1);
+        history.Query = "Recipient";
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(2));
+        await history.SelectAsync(1);
+        Assert.Equal(1, history.SelectedIndex);
+        _fake.Respond(RpcMethod.HistoryDeleteEntry, s_deleted);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.Equal(1, _fake.Count(RpcMethod.HistoryDeleteEntry));
+        var rows = List([1, 3]);
+        _fake.Respond(RpcMethod.HistoryList, rows);
+        await history.HistoryChangedAsync();
+        Assert.Same(rows, history.Snapshot);
+        Assert.Null(history.SelectedIndex);
+    }
+
+    [Fact]
+    public async Task HistoryChangedBeforeTheDeleteReplyStillSelectsTheRowInItsPlace()
+    {
+        var history = await Selected(1);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(2));
+        var held = _fake.Hold(RpcMethod.HistoryDeleteEntry);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        var deleting = history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.True(await Fixtures.Settle(() => _fake.Count(RpcMethod.HistoryDeleteEntry) == 1));
+        _fake.Reset(RpcMethod.HistoryRecordText);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(3));
+        _fake.Respond(RpcMethod.HistoryList, List([1, 3]));
+        await history.HistoryChangedAsync();
+        held.Release(s_deleted);
+        await Bounded(deleting);
+        Assert.Equal(1, history.SelectedIndex);
+        Assert.Equal(RecordJson(3), _fake.Params(RpcMethod.HistoryRecordText)[^1]);
+        Assert.Equal("Detail of record 3", history.SelectedDetail);
+    }
+
+    [Fact]
+    public async Task DeletingTheLaterOfTwoIdenticalDuplicatesKeepsTheSelectionInPlace()
+    {
+        // The first identical copy is row 0: the first-match rule alone would give 0.
+        var history = await DeletedRow(1, List([2, 2, 3]));
+        Assert.Equal([RecordJson(2)], _fake.Params(RpcMethod.HistoryDeleteEntry));
+        _fake.Respond(RpcMethod.HistoryList, List([2, 3]));
+        await history.HistoryChangedAsync();
+        Assert.Equal(1, history.SelectedIndex);
+    }
+
+    [Fact]
+    public async Task OnlyTheAppliedReadAfterADeletionTakesItsPlace()
+    {
+        var history = await DeletedRow(3, List([1, 2, 3, 4, 5]));
+        var shown = history.Snapshot;
+        var superseded = _fake.Hold(RpcMethod.HistoryList);
+        var latest = _fake.Hold(RpcMethod.HistoryList);
+        var first = history.HistoryChangedAsync();
+        var second = history.HistoryChangedAsync();
+        superseded.Release(List([1, 2]));
+        await Bounded(first);
+        Assert.Same(shown, history.Snapshot);
+        Assert.Null(history.SelectedIndex);
+        var rows = List([1, 2, 3, 5]);
+        latest.Release(rows);
+        await Bounded(second);
+        Assert.Same(rows, history.Snapshot);
+        Assert.Equal(3, history.SelectedIndex);
+    }
+
+    [Theory]
+    [InlineData("notFound")]
+    [InlineData("failed")]
+    public async Task AFailedDeletionSelectsNothingOnTheNextHistoryChanged(string code)
+    {
+        var history = await Selected(1);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(2));
+        _fake.Fail(RpcMethod.HistoryDeleteEntry, new RpcException(code, "no"));
+        _confirm.Answer(ConfirmChoice.Confirm);
+        await history.DeleteEntryCommand.ExecuteAsync(null);
+        var rows = List([1, 3]);
+        _fake.Respond(RpcMethod.HistoryList, rows);
+        await history.HistoryChangedAsync();
+        Assert.Same(rows, history.Snapshot);
+        Assert.Null(history.SelectedIndex);
+    }
+
+    [Fact]
+    public async Task ASearchChangedWhileDeletingSelectsNothingAfterIt()
+    {
+        var history = await Selected(1);
+        _fake.Respond(RpcMethod.HistoryRecordText, Text(2));
+        var held = _fake.Hold(RpcMethod.HistoryDeleteEntry);
+        _confirm.Answer(ConfirmChoice.Confirm);
+        var deleting = history.DeleteEntryCommand.ExecuteAsync(null);
+        Assert.True(await Fixtures.Settle(() => _fake.Count(RpcMethod.HistoryDeleteEntry) == 1));
+        history.Query = "Recipient";
+        held.Release(s_deleted);
+        await Bounded(deleting);
+        var rows = List([1, 3]);
+        _fake.Respond(RpcMethod.HistoryList, rows);
+        await history.HistoryChangedAsync();
+        Assert.Same(rows, history.Snapshot);
+        Assert.Null(history.SelectedIndex);
     }
 
     [Fact]

@@ -321,6 +321,44 @@ public sealed partial class AppViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// The selected tab's refresh command when it can run: History's Refresh,
+    /// Registry's Fetch, Audit's Refresh; null for every other tab, for none,
+    /// for a disabled one (selected only at Fatal, where the core is not
+    /// running) and while the command cannot run.
+    /// </summary>
+    private IAsyncRelayCommand? RunnableTabRefresh()
+    {
+        if (SelectedTab is not { IsEnabled: true } tab)
+        {
+            return null;
+        }
+        IAsyncRelayCommand? refresh = tab.Content switch
+        {
+            HistoryViewModel history => history.RefreshCommand,
+            RegistryViewModel registry => registry.FetchCommand,
+            AuditViewModel audit => audit.RefreshCommand,
+            _ => null,
+        };
+        return refresh is not null && refresh.CanExecute(null) ? refresh : null;
+    }
+
+    private bool CanRefreshTab() => RunnableTabRefresh() is not null;
+
+    /// <summary>
+    /// F5: runs the selected tab's refresh command (<see cref="RunnableTabRefresh"/>;
+    /// Registry's Fetch asks first with unsubmitted edits) as a click on its
+    /// button would, so each tab's command keeps its own busy state and a slow
+    /// refresh on one tab does not hold F5 on another. Its enabled state is
+    /// checked at key time, so tab changes do not notify it.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanRefreshTab))]
+    private void RefreshTab()
+    {
+        // The toolkit's commands run without checking CanExecute.
+        RunnableTabRefresh()?.Execute(null);
+    }
+
     partial void OnPhaseChanged(AppPhase value)
     {
         ApplyPhase();

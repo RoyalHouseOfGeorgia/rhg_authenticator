@@ -13,6 +13,7 @@ public sealed partial class AuditViewModel : ObservableObject
 {
 #pragma warning disable CS1591 // UI copy; each constant's name says where it shows.
     public const string RefreshTitle = "Refresh";
+    public const string RefreshTooltip = RefreshTitle + " (F5)";
     public const string OpenTitle = "Open on GitHub";
     public const string OpenTooltip = "Select a commit to open it.";
     public const string FetchingStatus = "Fetching...";
