@@ -11,7 +11,8 @@ import UniformTypeIdentifiers
 struct HistoryView: View {
     let history: HistoryModel
     let login: LoginModel
-    @FocusState private var isSearchFocused: Bool
+    /// `AppModel.findRequests`: Find… focuses the search field.
+    let findRequests: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -36,7 +37,6 @@ struct HistoryView: View {
                 Label(HistoryModel.refreshTitle, systemImage: "arrow.clockwise")
             }
             .buttonStyle(.borderedProminent)
-            .keyboardShortcut("r")
             .help(HistoryModel.refreshTooltip)
             Button {
                 Task { [history] in await history.revokeTapped() }
@@ -50,11 +50,9 @@ struct HistoryView: View {
                 Label(HistoryModel.deleteTitle, systemImage: "trash")
             }
             .disabled(!history.canDelete)
-            .help(HistoryModel.deleteTooltip)
+            .help(history.deleteTooltip)
             Button {
-                FilePanel.save(name: history.suggestedExportFilename, type: .json) { [history] path in
-                    await history.exportIssuanceLog(path: path)
-                }
+                HistoryExportPanel.present(for: history)
             } label: {
                 Label(HistoryModel.exportTitle, systemImage: "square.and.arrow.up")
             }
@@ -72,26 +70,8 @@ struct HistoryView: View {
     /// line under it.
     private var listPane: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField(
-                HistoryModel.searchPlaceholder,
-                text: Binding(get: { history.query }, set: { history.setQuery($0) })
-            )
-            .textFieldStyle(.roundedBorder)
-            .focused($isSearchFocused)
-            .help(HistoryModel.searchTooltip)
-            .background {
-                // Gives ⌘F, which puts the focus in the search field. Present
-                // but invisible: hidden() would drop the keyboard shortcut,
-                // and as a background it takes no room.
-                Button(HistoryModel.searchTooltip) {
-                    isSearchFocused = true
-                }
-                .keyboardShortcut("f")
-                .frame(width: 0, height: 0)
-                .opacity(0)
-                .focusable(false)
-                .accessibilityHidden(true)
-            }
+            SearchField(history: history, findRequests: findRequests)
+                .frame(maxWidth: .infinity)
             HistoryList(history: history)
             if !history.revocationStatus.isEmpty {
                 Text(history.revocationStatus)
@@ -106,7 +86,8 @@ struct HistoryView: View {
         }
     }
 
-    /// The selected record's detail, or the muted empty state.
+    /// The selected record's detail (or why it can't be shown), or the empty
+    /// state.
     @ViewBuilder
     private var detailPane: some View {
         if let detail = history.selectedDetail {
@@ -118,11 +99,19 @@ struct HistoryView: View {
                     .padding(.horizontal, 16)
             }
         } else {
-            Text(HistoryModel.emptyDetailText)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(16)
+            ContentUnavailableView(HistoryModel.emptyDetailText, systemImage: "doc.text.magnifyingglass")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+/// Export Issuance Log… (the button and the File menu item): asks where to
+/// save, then writes the issuance log there through the core.
+@MainActor
+enum HistoryExportPanel {
+    static func present(for history: HistoryModel) {
+        FilePanel.save(name: history.suggestedExportFilename, type: .json) { path in
+            await history.exportIssuanceLog(path: path)
         }
     }
 }

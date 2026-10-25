@@ -22,7 +22,7 @@ struct SignModelTests {
     let credentialJSON =
         #"{"date":"2026-01-01","detail":"Knight","honor":"Order of the Eagle","recipient":"Jose\#u{301}"}"#
 
-    @Test("UI copy matches the Fyne app")
+    @Test("UI copy")
     func copy() {
         #expect(SignModel.honorPlaceholder == "Select honor title")
         #expect(SignModel.recipientPlaceholder == "Full name of recipient")
@@ -31,7 +31,12 @@ struct SignModelTests {
         #expect(SignModel.noResultText == "No credential signed yet.")
         let advisory: [UInt8] = Array("Print QR at minimum 3".utf8) + [0xC3, 0x97] + Array("3 cm".utf8)  // U+00D7
         #expect(Array(SignModel.printAdvisory.utf8) == advisory)
-        #expect([SignModel.saveSVGTitle, SignModel.savePNGTitle, SignModel.copyURLTitle] == ["Save SVG", "Save PNG", "Copy URL"])
+        #expect(
+            [SignModel.saveSVGTitle, SignModel.savePNGTitle, SignModel.copyURLTitle]
+                == ["Save SVG\u{2026}", "Save PNG\u{2026}", "Copy URL"])
+        #expect(SignModel.preparingStatus == "Preparing to sign\u{2026}")
+        #expect(SignModel.alreadyIssuedStatus == "Credential previously generated; no new record created.")
+        #expect(SignModel.connectingStatus == "Connecting to YubiKey\u{2026}")
         let reporting: [UInt8] = Array("Reporting".utf8) + [0xE2, 0x80, 0xA6]  // U+2026
         #expect(Array(SignModel.reportingTitle.utf8) == reporting)
     }
@@ -67,16 +72,14 @@ struct SignModelTests {
         #expect(model.report == .unavailable)
     }
 
-    @Test("an existing credential: status and Already Issued alert")
+    @Test("an existing credential: the status line says so, no alert")
     func existing() async {
         let fake = FakeBridge()
         fake.respond(.signSign, signResult(existing: true, warning: "ignored"))
         let model = filledModel(fake)
         await model.sign()
-        #expect(model.status == "Credential previously generated.")
-        #expect(
-            model.alert
-                == AlertState(title: "Already Issued", message: "Credential previously generated, no new record created."))
+        #expect(model.status == SignModel.alreadyIssuedStatus)
+        #expect(model.alert == nil)
         #expect(model.result?.existing == true)
     }
 
@@ -183,14 +186,14 @@ struct SignModelTests {
         await model.reportIssue()
         #expect(urls.opened.isEmpty)
         #expect(model.report == .available(reportId: "r3"))
-        #expect(model.alert == AlertState(title: "Error", message: "offline"))
+        #expect(model.alert == AlertState(title: "Unable to Report Issue", message: "offline"))
     }
 
     @Test("a new signing during a report keeps its own report state")
     func reportOverlappedBySign() async {
         let fake = FakeBridge()
         fake.fail(.signSign, RPCError(code: .failed, message: "m", offerReport: true, reportId: "r4"))
-        fake.respond(.signSign, signResult(existing: true))  // the second signing
+        fake.respond(.signSign, signResult(warning: "Not written."))  // the second signing
         let held = fake.hold(.signReportError)
         let model = filledModel(fake)
         await model.sign()
@@ -198,12 +201,12 @@ struct SignModelTests {
         #expect(await settle { fake.count(.signReportError) == 1 })
         await model.sign()
         #expect(model.report == .unavailable)
-        let alreadyIssued = model.alert
-        #expect(alreadyIssued?.title == "Already Issued")
+        let notRecorded = AlertState(title: "Not Recorded", message: "Not written.")
+        #expect(model.alert == notRecorded)
         held.release(failing: RPCError(code: .failed, message: "offline"))
         await reporting.value
         #expect(model.report == .unavailable)
-        #expect(model.alert == alreadyIssued)  // the stale report failure doesn't replace it
+        #expect(model.alert == notRecorded)  // the stale report failure doesn't replace it
     }
 
     @Test("busy: a second sign is ignored; connecting shows only while busy")
@@ -216,12 +219,12 @@ struct SignModelTests {
         let signing = Task { await model.sign() }
         #expect(await settle { fake.count(.signSign) == 1 })
         #expect(model.isBusy)
-        #expect(model.status == "Preparing to sign...")
+        #expect(model.status == SignModel.preparingStatus)
         await model.sign()
         #expect(fake.count(.signValidate) == 1)
 
         fake.emit(.signConnecting)
-        #expect(await settle { model.status == "Connecting to YubiKey..." })
+        #expect(await settle { model.status == SignModel.connectingStatus })
         held.release(signResult())
         await signing.value
         #expect(!model.isBusy)
@@ -322,7 +325,8 @@ struct SignModelTests {
         let model = filledModel(fake)
         await model.sign()
         await model.saveQR(format: format, path: "/out/a")
-        #expect(model.alert == AlertState(title: "Error", message: "Choose a folder outside the app's data folder."))
+        #expect(
+            model.alert == AlertState(title: "Unable to Save QR Code", message: "Choose a folder outside the app's data folder."))
     }
 
     @Test("loadHonors fills the picker")

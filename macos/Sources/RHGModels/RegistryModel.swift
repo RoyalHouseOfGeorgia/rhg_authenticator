@@ -9,13 +9,17 @@ import RHGBridge
 @Observable
 public final class RegistryModel {
     nonisolated public static let fetchTitle = "Fetch from Server"
-    nonisolated public static let fetchTooltip = fetchTitle + " (\u{2318}R)"
+    nonisolated public static let fetchTooltip = "Download the latest registry (\u{2318}R)"
     nonisolated public static let submitTitle = "Submit for Review"
-    nonisolated public static let addEntryTitle = EntryFormModel.addTitle
-    nonisolated public static let editEntryTitle = EntryFormModel.editTitle
+    /// The buttons that open the entry sheet (titled `EntryFormModel.addTitle`
+    /// / `editTitle`).
+    nonisolated public static let addEntryTitle = "Add Entry\u{2026}"
+    nonisolated public static let editEntryTitle = "Edit Entry\u{2026}"
     nonisolated public static let editEntryTooltip = "Select an entry to edit it."
     nonisolated public static let loadedStatus = "Loaded from registry server"
-    nonisolated public static let fetchingStatus = "Fetching..."
+    nonisolated public static let fetchingStatus = "Fetching registry\u{2026}"
+    nonisolated public static let submittingStatus = "Creating pull request\u{2026}"
+    nonisolated public static let submitBusyStatus = "Submit already in progress"
     nonisolated public static let loadFailedStatus = "Failed to load registry"
 
     /// Fetch from Server with unsubmitted edits.
@@ -24,24 +28,26 @@ public final class RegistryModel {
         message: "This will re-fetch the live registry from the server, discarding your local edits. Continue?",
         confirmTitle: "Discard and Fetch", isDestructive: true)
 
-    /// A selected table cell: `row` indexes the snapshot's entries and rows.
-    public struct Cell: Sendable, Equatable {
-        public var row: Int
-        public var column: Int
-
-        public init(row: Int, column: Int) {
-            self.row = row
-            self.column = column
-        }
-    }
+    /// The table's column count: the core's column set (#, Authority, From,
+    /// To, Restrictions, Note, Fingerprint; go/service/registry.go
+    /// `registryColumns`) is fixed.
+    nonisolated public static let columnCount = 7
 
     /// The table's column headings.
     public private(set) var columns: [String] = []
     /// The registry as edited.
     public private(set) var snapshot = RegistrySnapshot(entries: [], rows: [], dirty: false, loaded: false)
-    public private(set) var selection: Cell?
+    /// The selected row's index in the snapshot's entries and rows; cleared by
+    /// registry.changed, kept by the model's own re-reads while its row exists.
+    public private(set) var selection: Int?
     /// The status line; `login`'s status texts land here too.
     public private(set) var status = ""
+    /// The registry is being fetched: the startup load, or Fetch from Server
+    /// until its registry.changed (or its failure).
+    public private(set) var isFetching = false
+    /// Submit for Review's registry.submit is running (not the login it may
+    /// start).
+    public private(set) var isSubmitting = false
     /// Show the entry sheet while non-nil; its buttons call
     /// `submitEntryForm()` and `cancelEntryForm()`.
     public private(set) var entryForm: EntryFormModel?
@@ -76,15 +82,22 @@ public final class RegistryModel {
 
     /// Loads the columns and the registry (registry.columns, registry.snapshot).
     /// The registry may still be loading: app.start finishes it, ending in
-    /// registry.changed.
+    /// registry.changed. A snapshot read overtaken by a newer one (or by
+    /// registry.changed) is dropped.
     func load() async throws(RPCError) {
         columns = try await bridge.registryColumns()
-        snapshot = try await bridge.registrySnapshot()
-        status = snapshot.loaded ? Self.loadedStatus : Self.fetchingStatus
+        snapshotReads += 1
+        let read = snapshotReads
+        let latest = try await bridge.registrySnapshot()
+        guard read == snapshotReads else { return }
+        snapshot = latest
+        isFetching = !latest.loaded
+        status = latest.loaded ? Self.loadedStatus : Self.fetchingStatus
     }
 
     /// registry.changed: a fetch (or the startup load) replaced the registry.
     func registryChanged() async {
+        isFetching = false
         selection = nil
         guard await refresh() else { return }
         status = snapshot.loaded ? Self.loadedStatus : Self.loadFailedStatus
@@ -101,26 +114,47 @@ public final class RegistryModel {
         guard read == snapshotReads else { return false }
         if let latest {
             snapshot = latest
-            if let selection, selection.row >= snapshot.rows.count {
+            if let selection, selection >= snapshot.rows.count {
                 self.selection = nil
             }
         }
         return true
     }
 
-    /// The operator selected a table cell: its text, if any, goes to the
-    /// status line.
-    public func select(row: Int, column: Int) {
-        guard snapshot.rows.indices.contains(row), snapshot.rows[row].indices.contains(column) else { return }
-        selection = Cell(row: row, column: column)
-        let text = snapshot.rows[row][column]
-        if !text.isEmpty {
-            status = text
+    /// The operator selected a row; nil or out of range clears the selection.
+    public func select(row: Int?) {
+        guard let row, snapshot.rows.indices.contains(row) else {
+            selection = nil
+            return
         }
+        selection = row
     }
 
+    /// A table cell's text; "" when the row or column is out of range.
+    public func cell(row: Int, column: Int) -> String {
+        guard snapshot.rows.indices.contains(row), snapshot.rows[row].indices.contains(column) else { return "" }
+        return snapshot.rows[row][column]
+    }
+
+    /// Copy: a row's `columnCount` cells joined by tabs; "" when the row is
+    /// out of range.
+    public func copyText(row: Int) -> String {
+        guard snapshot.rows.indices.contains(row) else { return "" }
+        return (0..<Self.columnCount).map { cell(row: row, column: $0) }.joined(separator: "\t")
+    }
+
+    /// A fetch or a submit is running: the spinner shows, and Fetch from
+    /// Server and Submit for Review do nothing.
+    public var isBusy: Bool { isFetching || isSubmitting }
+
+    /// Fetch from Server is enabled (its button and View → Refresh): not
+    /// busy.
+    public var canFetch: Bool { !isBusy }
+
     /// Fetch from Server: asks first when there are unsubmitted edits.
+    /// Nothing while busy.
     public func fetchTapped() async {
+        guard !isBusy else { return }
         if snapshot.dirty {
             ask(Self.discardConfirmation) { [weak self] in await self?.fetch() }
         } else {
@@ -132,30 +166,51 @@ public final class RegistryModel {
     /// registry.changed.
     private func fetch() async {
         status = Self.fetchingStatus
+        isFetching = true
         do {
             try await bridge.fetchRegistry()
         } catch {
+            isFetching = false
             status = Self.loadFailedStatus
         }
     }
 
-    /// Add Entry: opens an empty entry sheet.
+    /// Add Entry: opens an empty entry sheet; nothing while a fetch is under
+    /// way.
     public func addEntryTapped() {
+        guard canAddEntry else { return }
         entryForm = EntryFormModel(bridge: bridge, clock: clock)
     }
 
-    /// Edit Entry is enabled while the selected cell's row is an entry
+    /// Add Entry is enabled unless a fetch is under way: the fetched registry
+    /// replaces the core's edits, so an entry added meanwhile would be lost.
+    public var canAddEntry: Bool { !isFetching }
+
+    /// Edit Entry is enabled while the selected row is an entry and no fetch
+    /// is under way
     /// (`editEntryTooltip` says why otherwise).
     public var canEditEntry: Bool {
         guard let selection else { return false }
-        return snapshot.entries.indices.contains(selection.row)
+        return canEditEntry(row: selection)
+    }
+
+    /// Whether `row` is an entry that Edit Entry can open now.
+    public func canEditEntry(row: Int) -> Bool {
+        // A fetch under way replaces the core's edits, and the entry at the
+        // row with them.
+        !isFetching && snapshot.entries.indices.contains(row)
     }
 
     /// Edit Entry: opens the selected entry's sheet; nothing without one.
     public func editEntryTapped() {
-        guard canEditEntry, let selection else { return }
-        entryForm = EntryFormModel(
-            bridge: bridge, index: selection.row, entry: snapshot.entries[selection.row], clock: clock)
+        guard let selection else { return }
+        editEntry(row: selection)
+    }
+
+    /// Opens `row`'s entry sheet; nothing when the row is not an entry.
+    public func editEntry(row: Int) {
+        guard canEditEntry(row: row) else { return }
+        entryForm = EntryFormModel(bridge: bridge, index: row, entry: snapshot.entries[row], clock: clock)
     }
 
     /// Add / Save on the entry sheet: closes it and re-reads the registry once
@@ -175,19 +230,22 @@ public final class RegistryModel {
 
     /// Submit for Review: opens a pull request with the edited registry
     /// (registry.submit), logging in first without a session. Nothing with
-    /// no entries.
+    /// no entries or while busy.
     public func submitForReview() async {
-        guard !snapshot.entries.isEmpty else { return }
-        status = "Creating pull request..."
+        guard !isBusy, !snapshot.entries.isEmpty else { return }
+        status = Self.submittingStatus
+        isSubmitting = true
         let result: SubmitResult
         do {
             result = try await bridge.submitRegistry()
+            isSubmitting = false
         } catch {
+            isSubmitting = false
             switch error.code {
             case .notLoggedIn:
                 await login.start()
             case .busy:
-                status = "Submit already in progress"
+                status = Self.submitBusyStatus
             case .sessionExpired:
                 // The core has logged out; log in again once the alert closes.
                 status = ""

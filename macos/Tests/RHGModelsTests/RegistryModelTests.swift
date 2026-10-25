@@ -24,14 +24,17 @@ struct RegistryModelTests {
         return registry
     }
 
-    @Test("UI copy matches the Fyne app")
+    @Test("UI copy")
     func copy() {
         #expect(RegistryModel.fetchTitle == "Fetch from Server")
         #expect(RegistryModel.submitTitle == "Submit for Review")
-        #expect([RegistryModel.addEntryTitle, RegistryModel.editEntryTitle] == ["Add Entry", "Edit Entry"])
+        #expect([RegistryModel.addEntryTitle, RegistryModel.editEntryTitle] == ["Add Entry\u{2026}", "Edit Entry\u{2026}"])
         #expect(
             [RegistryModel.loadedStatus, RegistryModel.fetchingStatus, RegistryModel.loadFailedStatus]
-                == ["Loaded from registry server", "Fetching...", "Failed to load registry"])
+                == ["Loaded from registry server", "Fetching registry\u{2026}", "Failed to load registry"])
+        #expect(
+            [RegistryModel.submittingStatus, RegistryModel.submitBusyStatus]
+                == ["Creating pull request\u{2026}", "Submit already in progress"])
         #expect(RegistryModel.discardConfirmation.title == "Discard Local Edits?")
         #expect(
             RegistryModel.discardConfirmation.message
@@ -42,7 +45,7 @@ struct RegistryModelTests {
     @Test("tooltips")
     func tooltips() {
         #expect(RegistryModel.editEntryTooltip == "Select an entry to edit it.")
-        #expect(RegistryModel.fetchTooltip == "Fetch from Server (\u{2318}R)")
+        #expect(RegistryModel.fetchTooltip == "Download the latest registry (\u{2318}R)")
     }
 
     @Test("load: columns, snapshot, and the loaded status")
@@ -56,10 +59,10 @@ struct RegistryModelTests {
         #expect(fake.methods == ["registry.columns", "registry.snapshot"])
     }
 
-    @Test("load before the registry arrived: Fetching...")
+    @Test("load before the registry arrived: fetching")
     func loadNotLoaded() async throws {
         let registry = try await loaded(FakeBridge(), snapshot: registrySnapshot(count: 0, loaded: false))
-        #expect(registry.status == "Fetching...")
+        #expect(registry.status == RegistryModel.fetchingStatus)
     }
 
     @Test("load failures throw the core's error", arguments: [RPCMethod.registryColumns, .registrySnapshot])
@@ -75,26 +78,61 @@ struct RegistryModelTests {
 
     // MARK: Selection
 
-    @Test("selecting a cell shows its text; an empty cell leaves the status; out of range is ignored")
+    @Test("selecting a row selects it and leaves the status")
     func select() async throws {
         let registry = try await loaded(FakeBridge())
-        registry.select(row: 1, column: 1)
-        #expect(registry.selection == RegistryModel.Cell(row: 1, column: 1))
-        #expect(registry.status == "Authority 2")
-        registry.select(row: 0, column: 5)  // the note column is empty
-        #expect(registry.selection == RegistryModel.Cell(row: 0, column: 5))
-        #expect(registry.status == "Authority 2")
-        registry.select(row: 2, column: 0)
-        registry.select(row: 0, column: 7)
-        registry.select(row: -1, column: 0)
-        #expect(registry.selection == RegistryModel.Cell(row: 0, column: 5))
+        registry.select(row: 1)
+        #expect(registry.selection == 1)
+        #expect(registry.status == "Loaded from registry server")
+        registry.select(row: 0)
+        #expect(registry.selection == 0)
+    }
+
+    @Test("selecting nil or a row out of range clears the selection", arguments: [nil, 2, -1] as [Int?])
+    func selectClears(_ row: Int?) async throws {
+        let registry = try await loaded(FakeBridge())
+        registry.select(row: 1)
+        registry.select(row: row)
+        #expect(registry.selection == nil)
+        #expect(!registry.canEditEntry)
+    }
+
+    @Test("cells: the core's text; \"\" past a short row's end or for a row or column out of range")
+    func cells() async throws {
+        let fake = FakeBridge()
+        let (entry, row) = registryEntry(1)
+        let short = Array(row.prefix(3))
+        let snapshot = RegistrySnapshot(entries: [entry], rows: [row, short], dirty: false, loaded: true)
+        let registry = try await loaded(fake, snapshot: snapshot)
+        #expect(registry.cell(row: 0, column: 1) == "Authority 1")
+        #expect(registry.cell(row: 0, column: 6) == "fp1")
+        #expect(registry.cell(row: 1, column: 2) == "2025-Jan-01")
+        #expect(registry.cell(row: 1, column: 3) == "")
+        #expect(registry.cell(row: 0, column: 7) == "")
+        #expect(registry.cell(row: 0, column: -1) == "")
+        #expect(registry.cell(row: 2, column: 0) == "")
+        #expect(registry.cell(row: -1, column: 0) == "")
+    }
+
+    @Test("Copy: a row's seven cells joined by tabs, a short row padded; \"\" out of range")
+    func copyText() async throws {
+        let fake = FakeBridge()
+        let (entry, row) = registryEntry(1)
+        let snapshot = RegistrySnapshot(
+            entries: [entry], rows: [row, Array(row.prefix(2))], dirty: false, loaded: true)
+        let registry = try await loaded(fake, snapshot: snapshot)
+        #expect(RegistryModel.columnCount == registryColumns.count)
+        #expect(registry.copyText(row: 0) == "1\tAuthority 1\t2025-Jan-01\t2030-Dec-21\t(none)\t\tfp1")
+        #expect(registry.copyText(row: 1) == "1\tAuthority 1\t\t\t\t\t")
+        #expect(registry.copyText(row: 2) == "")
+        #expect(registry.copyText(row: -1) == "")
     }
 
     @Test("registry.changed clears the selection and re-reads the registry")
     func registryChanged() async throws {
         let fake = FakeBridge()
         let registry = try await loaded(fake)
-        registry.select(row: 0, column: 0)
+        registry.select(row: 0)
         fake.respond(.registrySnapshot, registrySnapshot(count: 3))
         await registry.registryChanged()
         #expect(registry.selection == nil)
@@ -133,12 +171,201 @@ struct RegistryModelTests {
         await registry.registryChanged()
         #expect(registry.snapshot == registrySnapshot(count: 4))
         // A status set after the newer read stays when the older one lands.
-        registry.select(row: 3, column: 1)
-        #expect(registry.status == "Authority 4")
+        fake.fail(.registrySubmit, RPCError(code: .busy, message: "Another operation is in progress."))
+        await registry.submitForReview()
+        #expect(registry.status == RegistryModel.submitBusyStatus)
         first.release(registrySnapshot(count: 1))
         await older.value
         #expect(registry.snapshot == registrySnapshot(count: 4))
-        #expect(registry.status == "Authority 4")
+        #expect(registry.status == RegistryModel.submitBusyStatus)
+    }
+
+    @Test("registry.changed during load's snapshot read: the late read is dropped and fetching ends")
+    func registryChangedDuringLoad() async throws {
+        let fake = FakeBridge()
+        fake.respond(.registryColumns, ColumnsResult(columns: registryColumns))
+        let first = fake.hold(.registrySnapshot)
+        fake.respond(.registrySnapshot, registrySnapshot(count: 3))
+        let registry = RegistryModel(bridge: fake, login: LoginModel(bridge: fake))
+        let load = Task { try await registry.load() }
+        #expect(await settle { fake.count(.registrySnapshot) == 1 })
+        await registry.registryChanged()
+        #expect(registry.snapshot == registrySnapshot(count: 3))
+        #expect(registry.status == "Loaded from registry server")
+        #expect(!registry.isFetching)
+        first.release(registrySnapshot(count: 0, loaded: false))
+        try await load.value
+        #expect(registry.columns == registryColumns)
+        #expect(registry.snapshot == registrySnapshot(count: 3))
+        #expect(registry.status == "Loaded from registry server")
+        #expect(!registry.isFetching)
+    }
+
+    // MARK: Busy
+
+    @Test("fetching during the startup load until registry.changed")
+    func fetchingDuringStartupLoad() async throws {
+        let fake = FakeBridge()
+        let registry = try await loaded(fake, snapshot: registrySnapshot(count: 0, loaded: false))
+        #expect(registry.isFetching && registry.isBusy)
+        fake.respond(.registrySnapshot, registrySnapshot(count: 2))
+        await registry.registryChanged()
+        #expect(!registry.isFetching && !registry.isBusy)
+    }
+
+    @Test("a loaded registry is not fetching")
+    func notFetchingWhenLoaded() async throws {
+        let registry = try await loaded(FakeBridge())
+        #expect(!registry.isFetching && !registry.isSubmitting && !registry.isBusy)
+    }
+
+    @Test("fetching while Fetch runs and until its registry.changed")
+    func fetchingDuringFetch() async throws {
+        let fake = FakeBridge()
+        let held = fake.hold(.registryFetch)
+        let registry = try await loaded(fake)
+        let fetch = Task { await registry.fetchTapped() }
+        #expect(await settle { fake.count(.registryFetch) == 1 })
+        #expect(registry.isFetching && registry.isBusy)
+        held.release(Empty())
+        await fetch.value
+        // Success arrives as registry.changed.
+        #expect(registry.isFetching)
+        fake.respond(.registrySnapshot, registrySnapshot(count: 3))
+        await registry.registryChanged()
+        #expect(!registry.isFetching)
+    }
+
+    @Test("a failed fetch stops fetching")
+    func fetchingEndsOnFailure() async throws {
+        let fake = FakeBridge()
+        let held = fake.hold(.registryFetch)
+        let registry = try await loaded(fake)
+        let fetch = Task { await registry.fetchTapped() }
+        #expect(await settle { fake.count(.registryFetch) == 1 })
+        #expect(registry.isFetching)
+        held.release(failing: RPCError(code: .failed, message: "offline"))
+        await fetch.value
+        #expect(!registry.isFetching && !registry.isBusy)
+        #expect(registry.status == "Failed to load registry")
+    }
+
+    @Test("registry.changed whose re-read loses to a newer one still stops fetching")
+    func fetchingEndsOnStaleRegistryChanged() async throws {
+        let fake = FakeBridge()
+        let registry = try await loaded(fake)
+        await registry.fetchTapped()
+        #expect(registry.isFetching)
+        let first = fake.hold(.registrySnapshot)
+        fake.respond(.registrySnapshot, registrySnapshot(count: 4))
+        let changed = Task { await registry.registryChanged() }
+        #expect(await settle { fake.count(.registrySnapshot) == 2 })
+        #expect(!registry.isFetching)
+        // A newer read (an accepted add's) overtakes registry.changed's.
+        registry.addEntryTapped()
+        await registry.submitEntryForm()
+        first.release(registrySnapshot(count: 1))
+        await changed.value
+        #expect(!registry.isFetching)
+        #expect(registry.snapshot == registrySnapshot(count: 4))
+    }
+
+    @Test("submitting while registry.submit runs, and no longer once it returns")
+    func submittingDuringSubmit() async throws {
+        let fake = FakeBridge()
+        let held = fake.hold(.registrySubmit)
+        let registry = try await loaded(fake)
+        let submit = Task { await registry.submitForReview() }
+        #expect(await settle { fake.count(.registrySubmit) == 1 })
+        #expect(registry.isSubmitting && registry.isBusy)
+        held.release(SubmitResult(prNumber: 3, url: ""))
+        await submit.value
+        #expect(!registry.isSubmitting && !registry.isBusy)
+    }
+
+    @Test("not logged in: submitting has ended before the login starts")
+    func submittingEndsBeforeLogin() async throws {
+        let fake = FakeBridge()
+        fake.fail(.registrySubmit, RPCError(code: .notLoggedIn, message: "Not logged in to GitHub."))
+        let login = fake.hold(.authLogin)
+        let registry = try await loaded(fake)
+        let submit = Task { await registry.submitForReview() }
+        #expect(await settle { fake.count(.authLogin) == 1 })
+        #expect(!registry.isSubmitting && !registry.isBusy)
+        login.release(loggedIn)
+        await submit.value
+        #expect(!registry.isSubmitting)
+    }
+
+    @Test("a failed submit stops submitting before its alert")
+    func submittingEndsOnFailure() async throws {
+        let fake = FakeBridge()
+        fake.fail(.registrySubmit, RPCError(code: .failed, message: "GitHub returned an error."))
+        let registry = try await loaded(fake)
+        await registry.submitForReview()
+        #expect(registry.alert != nil)
+        #expect(!registry.isSubmitting)
+    }
+
+    @Test("while a fetch runs, Fetch and Submit do nothing")
+    func busyDuringFetch() async throws {
+        let fake = FakeBridge()
+        let held = fake.hold(.registryFetch)
+        let registry = try await loaded(fake, snapshot: registrySnapshot(count: 2, dirty: true))
+        await registry.fetchTapped()
+        let fetch = Task { await registry.confirm() }
+        #expect(await settle { fake.count(.registryFetch) == 1 })
+        await registry.submitForReview()
+        #expect(fake.count(.registrySubmit) == 0)
+        await registry.fetchTapped()
+        #expect(registry.pendingConfirmation == nil)
+        #expect(fake.count(.registryFetch) == 1)
+        held.release(Empty())
+        await fetch.value
+    }
+
+    @Test("while a submit runs, Fetch and Submit do nothing")
+    func busyDuringSubmit() async throws {
+        let fake = FakeBridge()
+        let held = fake.hold(.registrySubmit)
+        let registry = try await loaded(fake)
+        let submit = Task { await registry.submitForReview() }
+        #expect(await settle { fake.count(.registrySubmit) == 1 })
+        await registry.submitForReview()
+        await registry.fetchTapped()
+        #expect(fake.count(.registrySubmit) == 1)
+        #expect(fake.count(.registryFetch) == 0)
+        held.release(SubmitResult(prNumber: 3, url: ""))
+        await submit.value
+    }
+
+    @Test("while a fetch runs, Add Entry and Edit Entry do nothing: the fetch replaces the core's edits")
+    func noEntryFormDuringFetch() async throws {
+        let fake = FakeBridge()
+        let held = fake.hold(.registryFetch)
+        let registry = try await loaded(fake)
+        registry.select(row: 0)
+        #expect(registry.canAddEntry && registry.canEditEntry)
+        let fetch = Task { await registry.fetchTapped() }
+        #expect(await settle { fake.count(.registryFetch) == 1 })
+        #expect(!registry.canAddEntry && !registry.canEditEntry && !registry.canEditEntry(row: 1))
+        registry.addEntryTapped()
+        registry.editEntryTapped()
+        registry.editEntry(row: 1)
+        #expect(registry.entryForm == nil)
+        held.release(Empty())
+        await fetch.value
+        await registry.registryChanged()
+        #expect(registry.canAddEntry && registry.canEditEntry(row: 1))
+    }
+
+    @Test("during the startup load, Fetch and Submit do nothing")
+    func busyDuringStartupLoad() async throws {
+        let fake = FakeBridge()
+        let registry = try await loaded(fake, snapshot: registrySnapshot(count: 2, loaded: false))
+        await registry.fetchTapped()
+        await registry.submitForReview()
+        #expect(fake.count(.registryFetch) == 0 && fake.count(.registrySubmit) == 0)
     }
 
     // MARK: Fetch
@@ -150,7 +377,7 @@ struct RegistryModelTests {
         await registry.fetchTapped()
         #expect(registry.pendingConfirmation == nil)
         #expect(fake.params(.registryFetch) == ["{}"])
-        #expect(registry.status == "Fetching...")
+        #expect(registry.status == RegistryModel.fetchingStatus)
     }
 
     @Test("Fetch with edits asks first; confirming fetches")
@@ -215,7 +442,7 @@ struct RegistryModelTests {
     func editStaleSelection() async throws {
         let fake = FakeBridge()
         let registry = try await loaded(fake)
-        registry.select(row: 1, column: 0)
+        registry.select(row: 1)
         #expect(registry.canEditEntry)
         fake.respond(.registrySnapshot, registrySnapshot(count: 1))
         registry.addEntryTapped()
@@ -234,8 +461,8 @@ struct RegistryModelTests {
         let two = registrySnapshot(count: 2)
         let snapshot = RegistrySnapshot(entries: [two.entries[0]], rows: two.rows, dirty: false, loaded: true)
         let registry = try await loaded(fake, snapshot: snapshot)
-        registry.select(row: 1, column: 0)
-        #expect(registry.selection == RegistryModel.Cell(row: 1, column: 0))
+        registry.select(row: 1)
+        #expect(registry.selection == 1)
         #expect(!registry.canEditEntry)
         registry.editEntryTapped()
         #expect(registry.entryForm == nil)
@@ -245,24 +472,57 @@ struct RegistryModelTests {
     @Test("Edit Entry opens the selected entry's form")
     func editEntry() async throws {
         let registry = try await loaded(FakeBridge())
-        registry.select(row: 1, column: 3)
+        registry.select(row: 1)
         registry.editEntryTapped()
         let form = registry.entryForm
         #expect(form?.mode == .edit(index: 1, publicKey: "KEY2="))
         #expect(form?.form == EntryForm(authority: "Authority 2", from: "2025-01-02", to: "2030-12-22", note: "", noExpiry: false))
     }
 
+    @Test("editing a given row opens that row's form, whatever is selected")
+    func editEntryRow() async throws {
+        let registry = try await loaded(FakeBridge())
+        registry.select(row: 1)
+        #expect(registry.canEditEntry(row: 0))
+        registry.editEntry(row: 0)
+        #expect(registry.entryForm?.mode == .edit(index: 0, publicKey: "KEY1="))
+        #expect(registry.selection == 1)
+    }
+
+    @Test("editing a row that is not an entry does nothing", arguments: [1, 2, -1])
+    func editEntryRowNotEntry(_ row: Int) async throws {
+        let fake = FakeBridge()
+        let two = registrySnapshot(count: 2)
+        let snapshot = RegistrySnapshot(entries: [two.entries[0]], rows: two.rows, dirty: false, loaded: true)
+        let registry = try await loaded(fake, snapshot: snapshot)
+        #expect(!registry.canEditEntry(row: row))
+        registry.editEntry(row: row)
+        #expect(registry.entryForm == nil)
+    }
+
+    @Test("a successful submit's re-read keeps the selection")
+    func submitKeepsSelection() async throws {
+        let fake = FakeBridge()
+        fake.respond(.registrySubmit, SubmitResult(prNumber: 5, url: ""))
+        let registry = try await loaded(fake, snapshot: registrySnapshot(count: 2, dirty: true))
+        registry.select(row: 1)
+        fake.respond(.registrySnapshot, registrySnapshot(count: 2))
+        await registry.submitForReview()
+        #expect(registry.snapshot == registrySnapshot(count: 2))
+        #expect(registry.selection == 1)
+    }
+
     @Test("an accepted add closes the sheet and re-reads the registry, keeping the selection")
     func addAccepted() async throws {
         let fake = FakeBridge()
         let registry = try await loaded(fake)
-        registry.select(row: 1, column: 1)
+        registry.select(row: 1)
         registry.addEntryTapped()
         fake.respond(.registrySnapshot, registrySnapshot(count: 3, dirty: true))
         await registry.submitEntryForm()
         #expect(registry.entryForm == nil)
         #expect(registry.snapshot == registrySnapshot(count: 3, dirty: true))
-        #expect(registry.selection == RegistryModel.Cell(row: 1, column: 1))
+        #expect(registry.selection == 1)
         #expect(fake.count(.registryAddEntry) == 1)
     }
 
@@ -271,7 +531,7 @@ struct RegistryModelTests {
         let fake = FakeBridge()
         fake.fail(.registryUpdateEntry, RPCError(code: .failed, message: "The entry's key no longer matches; fetch again."))
         let registry = try await loaded(fake)
-        registry.select(row: 0, column: 0)
+        registry.select(row: 0)
         registry.editEntryTapped()
         let form = registry.entryForm
         await registry.submitEntryForm()
@@ -285,14 +545,14 @@ struct RegistryModelTests {
     func editAccepted() async throws {
         let fake = FakeBridge()
         let registry = try await loaded(fake, snapshot: registrySnapshot(count: 2))
-        registry.select(row: 0, column: 1)
+        registry.select(row: 0)
         registry.editEntryTapped()
         registry.entryForm?.authority = "Renamed"
         fake.respond(.registrySnapshot, registrySnapshot(count: 2, dirty: true))
         await registry.submitEntryForm()
         #expect(registry.entryForm == nil)
         #expect(registry.snapshot.dirty)
-        #expect(registry.selection == RegistryModel.Cell(row: 0, column: 1))
+        #expect(registry.selection == 0)
         #expect(fake.params(.registryUpdateEntry).first?.contains(#""authority":"Renamed""#) == true)
     }
 
@@ -341,7 +601,7 @@ struct RegistryModelTests {
         let registry = try await loaded(fake, openURL: urls.open)
         let submit = Task { await registry.submitForReview() }
         #expect(await settle { fake.count(.registrySubmit) == 1 })
-        #expect(registry.status == "Creating pull request...")
+        #expect(registry.status == RegistryModel.submittingStatus)
         held.release(SubmitResult(prNumber: 42, url: prURL))
         await submit.value
         #expect(registry.status == "PR #42 created")
@@ -416,7 +676,7 @@ struct RegistryModelTests {
         fake.fail(.registrySubmit, RPCError(code: .busy, message: "Another operation is in progress."))
         let registry = try await loaded(fake)
         await registry.submitForReview()
-        #expect(registry.status == "Submit already in progress")
+        #expect(registry.status == RegistryModel.submitBusyStatus)
         #expect(registry.alert == nil)
     }
 

@@ -137,7 +137,7 @@ struct HistoryModelTests {
 
     @Test("UI copy")
     func copy() {
-        #expect(HistoryModel.searchPlaceholder == "Search by recipient...")
+        #expect(HistoryModel.searchPlaceholder == "Search by recipient")
         #expect([HistoryModel.refreshTitle, HistoryModel.revokeTitle] == ["Refresh", "Revoke"])
         #expect(HistoryModel.exportTitle == "Export Issuance Log…")
         #expect(HistoryModel.removeDuplicatesTitle == "Remove Duplicates…")
@@ -153,10 +153,11 @@ struct HistoryModelTests {
 
     @Test("tooltips")
     func tooltips() {
-        #expect(HistoryModel.refreshTooltip == "Refresh (\u{2318}R)")
-        #expect(HistoryModel.searchTooltip == "Search (\u{2318}F)")
-        #expect(
-            HistoryModel.deleteTooltip == "Select a record to delete it. In the list, Delete deletes the selected record.")
+        #expect(HistoryModel.refreshTooltip == "Reread the issuance log and revocations (\u{2318}R)")
+        #expect(HistoryModel.searchTooltip == "Filter the list by recipient (\u{2318}F)")
+        #expect(HistoryModel.deleteDisabledTooltip == "Select a record to delete it.")
+        #expect(HistoryModel.deleteEnabledTooltip == "Remove the selected record from the issuance log (\u{232B})")
+        #expect(HistoryModel.noDuplicatesStatus == "The issuance log has no duplicate entries.")
     }
 
     @Test("ANewModelIsEmptyAndNotLoaded")
@@ -348,7 +349,7 @@ struct HistoryModelTests {
         fake.respond(.historyList, historyList(records: [], loadFailed: true))
         await history.reread()  // as history.revocationsChanged does
         #expect(history.selection == nil)
-        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
+        #expect(history.alert == AlertState(title: "Unable to Load History", message: "The issuance log couldn't be read."))
     }
 
     @Test("TheLoadFailureIsReportedOncePerHistoryChanged")
@@ -357,12 +358,12 @@ struct HistoryModelTests {
         fake.respond(.historyList, historyList(records: [], loadFailed: true))
         let history = await model(fake)
         await changed(history)
-        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
+        #expect(history.alert == AlertState(title: "Unable to Load History", message: "The issuance log couldn't be read."))
         await history.alertDismissed()
         await history.reread()
         #expect(history.alert == nil)
         await changed(history)
-        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
+        #expect(history.alert == AlertState(title: "Unable to Load History", message: "The issuance log couldn't be read."))
     }
 
     @Test("AFailedLoadIsNotReportedWithoutHistoryChangedNorAfterALoadThatWorked")
@@ -414,14 +415,14 @@ struct HistoryModelTests {
         let history = await loaded(fake)
         fake.fail(.historyRefresh, RPCError(code: .busy, message: "Already refreshing."))
         await history.refreshTapped()
-        let blocking = AlertState(title: "Error", message: "Already refreshing.")
+        let blocking = AlertState(title: "Unable to Refresh History", message: "Already refreshing.")
         #expect(history.alert == blocking)
         fake.respond(.historyList, historyList(count: 0, loadFailed: true))
         await changed(history)
         #expect(history.alert == blocking)
         await history.alertDismissed()
         await history.reread()
-        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
+        #expect(history.alert == AlertState(title: "Unable to Load History", message: "The issuance log couldn't be read."))
     }
 
     @Test("history.changed overtaken by a newer read: the newer read reports the load failure")
@@ -432,7 +433,7 @@ struct HistoryModelTests {
         fake.respond(.historyList, historyList(count: 0, loadFailed: true))
         let older = await changing(history, fake, count: 2)
         await history.reread()
-        #expect(history.alert == AlertState(title: "Error", message: "unable to load history"))
+        #expect(history.alert == AlertState(title: "Unable to Load History", message: "The issuance log couldn't be read."))
         first.release(historyList(count: 3))
         await older.value
         #expect(history.snapshot == historyList(count: 0, loadFailed: true))
@@ -712,7 +713,7 @@ struct HistoryModelTests {
         fake.fail(.historyRefresh, RPCError(code: .internal, message: "x"))
         let history = await loaded(fake)
         await history.refreshTapped()
-        #expect(history.alert == AlertState(title: "Error", message: "x"))
+        #expect(history.alert == AlertState(title: "Unable to Refresh History", message: "x"))
     }
 
     // MARK: Revoke
@@ -823,7 +824,7 @@ struct HistoryModelTests {
         await history.revokeTapped()
         #expect(history.pendingConfirmation == nil)
         #expect(fake.count(.historyRevoke) == 0)
-        #expect(history.alert == AlertState(title: "Error", message: "no text"))
+        #expect(history.alert == AlertState(title: "Unable to Revoke Record", message: "no text"))
         #expect(!history.isAsking)
     }
 
@@ -958,6 +959,28 @@ struct HistoryModelTests {
         await history.reread()  // the selected row is gone
         #expect(history.selection == nil)
         #expect(!history.canDelete)
+    }
+
+    @Test("Delete Entry's tooltip: how to enable it while disabled, what it does while enabled")
+    func deleteTooltip() async {
+        let fake = FakeBridge()
+        let held = fake.hold(.historyDeleteEntry)
+        let history = await loaded(fake, list: historyList(records: [1, 2, 3]))
+        #expect(history.deleteTooltip == "Select a record to delete it.")
+        fake.respond(.historyRecordText, text(1))
+        history.select(row: 0)
+        await history.pendingDetail?.value
+        #expect(history.deleteTooltip == "Remove the selected record from the issuance log (\u{232B})")
+        await history.deleteTapped()
+        let deleting = Task { await history.confirm() }
+        #expect(await settle { fake.count(.historyDeleteEntry) == 1 })
+        // A deletion under way disables Delete Entry… with a row selected.
+        #expect(history.deleteTooltip == HistoryModel.deleteDisabledTooltip)
+        held.release(deleted)
+        await deleting.value
+        #expect(history.deleteTooltip == HistoryModel.deleteEnabledTooltip)
+        history.select(row: nil)
+        #expect(history.deleteTooltip == HistoryModel.deleteDisabledTooltip)
     }
 
     @Test("ASnapshotChangeReRaisesDeleteEntrysCanExecute")
@@ -1278,7 +1301,7 @@ struct HistoryModelTests {
         await history.deleteTapped()
         #expect(history.pendingConfirmation == nil)
         #expect(fake.count(.historyDeleteEntry) == 0)
-        #expect(history.alert == AlertState(title: "Error", message: "no text"))
+        #expect(history.alert == AlertState(title: "Unable to Delete Record", message: "no text"))
         #expect(!history.isAsking)
     }
 
@@ -1292,7 +1315,7 @@ struct HistoryModelTests {
         fake.fail(.historyRecordText, RPCError(code: .failed, message: "bad record"))
         await history.alternate()
         #expect(history.pendingConfirmation == nil)
-        #expect(history.alert == AlertState(title: "Error", message: "bad record"))
+        #expect(history.alert == AlertState(title: "Unable to Revoke Record", message: "bad record"))
         #expect(!history.isAsking)
     }
 
@@ -1620,7 +1643,9 @@ struct HistoryModelTests {
         fake.fail(.historyExportIssuanceLog, RPCError(code: .failed, message: "Choose a folder outside the app's data folder."))
         let history = await loaded(fake)
         await history.exportIssuanceLog(path: "/data/x.json")
-        #expect(history.alert == AlertState(title: "Error", message: "Choose a folder outside the app's data folder."))
+        #expect(
+            history.alert
+                == AlertState(title: "Unable to Export Issuance Log", message: "Choose a folder outside the app's data folder."))
     }
 
     // MARK: Remove Duplicates
@@ -1637,18 +1662,19 @@ struct HistoryModelTests {
         #expect(!history.isAsking)
     }
 
-    @Test("no duplicates: No Duplicates, nothing asked")
+    @Test("no duplicates: the status line says so, no alert, nothing asked")
     func dedupeNone() async {
         let fake = FakeBridge()
         fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 0, confirmMessage: ""))
         let history = await loaded(fake)
         await history.removeDuplicatesTapped()
-        #expect(history.alert == AlertState(title: "No Duplicates", message: "The issuance log has no duplicate entries."))
+        #expect(history.status == HistoryModel.noDuplicatesStatus)
+        #expect(history.alert == nil)
         #expect(history.pendingConfirmation == nil)
         #expect(fake.count(.historyRemoveDuplicates) == 0)
     }
 
-    @Test("duplicates found: the core's question, then its report; the list waits for history.changed")
+    @Test("duplicates found: the core's question, then its report on the status line; the list waits for history.changed")
     func dedupeConfirmed() async {
         let fake = FakeBridge()
         fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 2, confirmMessage: "Core asks: remove two?"))
@@ -1665,7 +1691,8 @@ struct HistoryModelTests {
         #expect(fake.count(.historyRemoveDuplicates) == 0)
         await history.confirm()
         #expect(fake.params(.historyRemoveDuplicates) == ["{}"])
-        #expect(history.alert == AlertState(title: "Duplicates Removed", message: "Core says: two gone."))
+        #expect(history.status == "Core says: two gone.")
+        #expect(history.alert == nil)
         #expect(fake.count(.historyList) == 1)
     }
 
@@ -1681,7 +1708,7 @@ struct HistoryModelTests {
         #expect(history.alert == nil)
     }
 
-    @Test("the log changed after the preview: removed 0 is No Duplicates")
+    @Test("the log changed after the preview: removed 0 says there are no duplicates, no alert")
     func dedupeRemovedNone() async {
         let fake = FakeBridge()
         fake.respond(.historyDuplicatePreview, DuplicatePreviewResult(count: 1, confirmMessage: "Core asks: remove one?"))
@@ -1689,7 +1716,8 @@ struct HistoryModelTests {
         let history = await loaded(fake)
         await history.removeDuplicatesTapped()
         await history.confirm()
-        #expect(history.alert == AlertState(title: "No Duplicates", message: "The issuance log has no duplicate entries."))
+        #expect(history.status == HistoryModel.noDuplicatesStatus)
+        #expect(history.alert == nil)
     }
 
     @Test("a failed removal: Remove Duplicates Failed offering the error log")

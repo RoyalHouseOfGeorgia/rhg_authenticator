@@ -32,22 +32,15 @@ struct RHGApp: App {
         // The tab picker sits in the toolbar, on the title bar's row.
         .windowToolbarStyle(.unified)
         .commands {
-            // The Help menu holds only Export Error Log…, the one command the
-            // app has outside its tabs.
-            // Always enabled (menu items need not track the phase): its
-            // result is an AppKit alert, shown over any window or sheet.
-            CommandGroup(replacing: .help) {
-                Button(AppModel.exportErrorLogTitle) {
-                    ErrorLogPanel.present(for: Shared.model)
-                }
-            }
+            MenuCommands(model: Shared.model)
         }
     }
 }
 
-/// Help → Export Error Log…: asks where to save, writes the core's
-/// diagnostic log there, then says where it went (or why it failed) in an
-/// AppKit alert on the topmost window, so it shows over a bulk sheet too.
+/// Export Error Log… (Help, and alerts that offer it): asks where to save,
+/// writes the core's diagnostic log there, then says where it went (or why
+/// it failed) in an AppKit alert on the topmost window, so it shows over a
+/// bulk sheet too.
 @MainActor
 enum ErrorLogPanel {
     static func present(for model: AppModel) {

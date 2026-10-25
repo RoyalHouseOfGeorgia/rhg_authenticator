@@ -162,12 +162,17 @@ struct BulkRowsView: View {
             }
             .frame(minWidth: 480, minHeight: 150, maxHeight: 150)
             .background(Color(nsColor: .textBackgroundColor))
-            .border(Color(nsColor: .separatorColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(.separator)
+            }
         }
     }
 }
 
-/// Bulk Sign from File…'s file picker and Export Results CSV…'s save panel.
+/// Bulk Sign from File…'s file picker (the Sign tab's button and the File
+/// menu item) and Export Results CSV…'s save panel.
 @MainActor
 enum BulkPanels {
     /// Starts the bulk flow and asks for the CSV to sign. Does nothing while

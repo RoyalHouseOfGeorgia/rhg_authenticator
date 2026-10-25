@@ -13,13 +13,13 @@ struct PINPromptModelTests {
         return model
     }
 
-    @Test("UI copy matches the Fyne app")
+    @Test("UI copy")
     func copy() {
         #expect(PINPromptModel.title == "YubiKey PIN")
         #expect(PINPromptModel.prompt == "Enter your YubiKey PIN to sign:")
         #expect(PINPromptModel.placeholder == "YubiKey PIN")
         #expect(PINPromptModel.rememberLabel == "Remember PIN for this session")
-        #expect(PINPromptModel.okTitle == "OK")
+        #expect(PINPromptModel.okTitle == "Sign")
         #expect(PINPromptModel.cancelTitle == "Cancel")
     }
 

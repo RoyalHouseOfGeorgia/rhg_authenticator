@@ -8,6 +8,8 @@ import RHGBridge
 @Observable
 public final class YubiKeyModel {
     nonisolated public static let checkTitle = "Check YubiKey"
+    /// The status line while a check runs.
+    nonisolated public static let checkingStatus = "Checking YubiKey\u{2026}"
 
     /// The status line; "" until the first check.
     public private(set) var status = ""
@@ -27,7 +29,7 @@ public final class YubiKeyModel {
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
-        status = "Checking..."
+        status = Self.checkingStatus
         details = []
         do {
             let result = try await bridge.checkYubiKey()

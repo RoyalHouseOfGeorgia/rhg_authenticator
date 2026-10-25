@@ -12,7 +12,7 @@ public enum UpdateBanner: Sendable, Equatable {
     /// is the line under it, or nil.
     case manualOnly(text: String, releaseURL: URL, moveToApplicationsHint: String?)
 
-    public static let restartNowTitle = "Restart now"
+    public static let restartNowTitle = "Restart Now"
     public static let downloadTitle = "Download"
     public static let readyDetail = "It will also install the next time you close the app."
     public static let moveToApplicationsHint =
@@ -38,7 +38,7 @@ public enum UpdateBanner: Sendable, Equatable {
 /// The one-time "Updated to" notice, shown above the status slot until the
 /// operator closes it. `whatsNewURL` is the What's new link, or nil.
 public struct UpdatedBanner: Sendable, Equatable {
-    public static let whatsNewTitle = "What's new"
+    public static let whatsNewTitle = "What's New"
     public static let closeLabel = "Close"
 
     public let text: String

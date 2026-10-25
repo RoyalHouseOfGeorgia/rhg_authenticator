@@ -44,7 +44,7 @@ struct FatalErrorView: View {
     var body: some View {
         Color.clear
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .alert("Error", isPresented: $isPresented) {
+            .alert(AppModel.fatalErrorTitle, isPresented: $isPresented) {
                 Button("OK") { NSApp.terminate(nil) }
             } message: {
                 Text(message)
@@ -52,34 +52,13 @@ struct FatalErrorView: View {
     }
 }
 
-/// A tab of the main window, in the order the picker shows them (the
-/// Windows app's tab order, Help aside).
-enum AppTab: CaseIterable, Hashable {
-    case sign
-    case history
-    case registry
-    case audit
-    case yubiKey
-
-    /// The tab picker's segment title.
-    var title: String {
-        switch self {
-        case .sign: AppModel.signTabTitle
-        case .history: AppModel.historyTabTitle
-        case .registry: AppModel.registryTabTitle
-        case .audit: AppModel.auditTabTitle
-        case .yubiKey: AppModel.yubiKeyTabTitle
-        }
-    }
-}
-
-/// The update banner, then the tab picked in the toolbar, over the status
-/// bar. Every tab's alerts and questions show from here, as AppKit alerts,
-/// whichever tab started them and over any sheet.
+/// The update banner, then the tab picked in the toolbar (or the View menu),
+/// over the status bar; the window's title is the tab's. Every tab's alerts
+/// and questions show from here, as AppKit alerts, whichever tab started them
+/// and over any sheet.
 @MainActor
 struct ReadyView: View {
-    let model: AppModel
-    @State private var tab: AppTab = .sign
+    @Bindable var model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -88,9 +67,9 @@ struct ReadyView: View {
             // split views their divider; only the picked one shows and takes
             // input (so only its keyboard shortcuts fire).
             ZStack {
-                SignView(sign: sign, bulk: bulk, isSigningBusy: model.isSigningBusy)
+                SignView(sign: sign, bulk: bulk, isSigningBusy: model.isSigningBusy, canSaveQR: model.canSaveQR)
                     .tabVisible(tab == .sign)
-                HistoryView(history: history, login: login)
+                HistoryView(history: history, login: login, findRequests: model.findRequests)
                     .tabVisible(tab == .history)
                 RegistryView(registry: registry, login: login)
                     .tabVisible(tab == .registry)
@@ -110,11 +89,14 @@ struct ReadyView: View {
             Divider()
             StatusBar(items: model.statusItems)
         }
+        .navigationTitle(tab.title)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Picker("Tab", selection: $tab) {
+                Picker("Tab", selection: $model.selectedTab) {
                     ForEach(AppTab.allCases, id: \.self) { item in
-                        Text(item.title).tag(item)
+                        Text(item.title)
+                            .help(item.title)
+                            .tag(item)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -125,7 +107,7 @@ struct ReadyView: View {
         .onChange(of: model.internalErrorMessage, initial: true) { _, message in
             guard let message else { return }
             Task {
-                _ = await FilePanel.alert(AlertState(title: "Error", message: message))
+                _ = await FilePanel.alert(AlertState(title: AppModel.internalErrorTitle, message: message))
                 model.internalErrorMessage = nil
             }
         }
@@ -177,6 +159,7 @@ struct ReadyView: View {
         }
     }
 
+    private var tab: AppTab { model.selectedTab }
     private var sign: SignModel { model.sign }
     private var bulk: BulkModel { model.bulk }
     private var registry: RegistryModel { model.registry }

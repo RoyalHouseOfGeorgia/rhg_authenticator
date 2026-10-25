@@ -87,12 +87,13 @@ enum FilePanel {
     }
 
     /// Asks `question` in an AppKit alert, shown as `alert` is, and returns
-    /// the button the operator picked. The buttons come in the question's
-    /// `buttonRoles` order: NSAlert gives the first one Return, so a
-    /// destructive question's Cancel has it and its other buttons get no key
-    /// equivalent; in the window-sheet presentation they read, left to
-    /// right, [alternate] [confirm] [Cancel]. A question that is not
-    /// destructive keeps Return on confirm and gives Cancel Escape.
+    /// the button the operator picked. The buttons are added in the
+    /// question's `buttonRoles` order, confirm first. NSAlert puts the first
+    /// button rightmost and each later one to its left, so the window sheet
+    /// reads, left to right, [alternate] [Cancel] [confirm] (Delete Entry…:
+    /// [Revoke Instead] [Cancel] [Delete]). In a destructive question no
+    /// button has Return, the confirm button is marked destructive and Cancel
+    /// has Escape; otherwise confirm keeps Return and Cancel has Escape.
     static func choose(_ question: Confirmation) async -> ConfirmChoice {
         let alert = NSAlert()
         alert.messageText = question.title
@@ -105,15 +106,10 @@ enum FilePanel {
                 case .cancel: question.cancelTitle
                 }
             let button = alert.addButton(withTitle: title)
-            if question.isDestructive {
-                if role != .cancel {
-                    button.keyEquivalent = ""
-                }
-                button.hasDestructiveAction = role == .confirm
-            } else if role == .cancel {
-                // NSAlert gives Escape only to a button titled "Cancel".
-                button.keyEquivalent = "\u{1b}"
+            if let key = question.keyEquivalent(for: role) {
+                button.keyEquivalent = key
             }
+            button.hasDestructiveAction = question.hasDestructiveAction(for: role)
         }
         // The buttons answer by position, in the order they were added.
         let index = await present(alert).rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
@@ -129,5 +125,16 @@ enum FilePanel {
         }
         NSApp.activate()
         return alert.runModal()
+    }
+}
+
+/// The general pasteboard.
+@MainActor
+enum Pasteboard {
+    /// Replaces the pasteboard's contents with `text`.
+    static func copy(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        _ = pasteboard.clearContents()
+        _ = pasteboard.setString(text, forType: .string)
     }
 }

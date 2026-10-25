@@ -9,17 +9,17 @@ import Testing
 struct AuditModelTests {
     let commitURL = "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/commit/0123456789012345678901234567890123456789"
 
-    @Test("UI copy matches the Fyne app")
+    @Test("UI copy")
     func copy() {
         #expect(AuditModel.refreshTitle == "Refresh")
-        #expect(AuditModel.fetchingStatus == "Fetching...")
+        #expect(AuditModel.fetchingStatus == "Fetching commits\u{2026}")
         #expect(AuditModel.openTitle == "Open on GitHub")
     }
 
     @Test("tooltips")
     func tooltips() {
         #expect(AuditModel.openTooltip == "Select a commit to open it.")
-        #expect(AuditModel.refreshTooltip == "Refresh (\u{2318}R)")
+        #expect(AuditModel.refreshTooltip == "Reload the latest commits (\u{2318}R)")
     }
 
     /// A model whose fetch returned rows with `urls`, and its URL recorder.
@@ -41,14 +41,14 @@ struct AuditModelTests {
         #expect(audit.selection == nil && !audit.canOpen)
     }
 
-    @Test("Refresh: Fetching... while it runs, then the rows and the core's status")
+    @Test("Refresh: fetching while it runs, then the rows and the core's status")
     func refresh() async {
         let fake = FakeBridge()
         let held = fake.hold(.auditCommits)
         let audit = AuditModel(bridge: fake)
         let running = Task { await audit.refresh() }
         #expect(await settle { fake.count(.auditCommits) == 1 })
-        #expect(audit.isRefreshing && audit.status == "Fetching...")
+        #expect(audit.isRefreshing && audit.status == AuditModel.fetchingStatus)
         let rows = [AuditRow(summary: "2026-Jan-02  Jane Doe — Add key for A", url: commitURL)]
         held.release(AuditResult(rows: rows, status: "Loaded 1 commits"))
         await running.value

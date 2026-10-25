@@ -21,9 +21,7 @@ struct DeviceCodeSheet: View {
                 .multilineTextAlignment(.center)
             HStack {
                 Button(LoginModel.copyCodeTitle) {
-                    let pasteboard = NSPasteboard.general
-                    _ = pasteboard.clearContents()
-                    _ = pasteboard.setString(prompt.userCode, forType: .string)
+                    Pasteboard.copy(prompt.userCode)
                 }
                 // The core validated the URL; without one the code can still
                 // be entered by hand.

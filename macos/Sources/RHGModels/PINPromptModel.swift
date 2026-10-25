@@ -13,7 +13,8 @@ public final class PINPromptModel {
     nonisolated public static let prompt = "Enter your YubiKey PIN to sign:"
     nonisolated public static let placeholder = "YubiKey PIN"
     nonisolated public static let rememberLabel = "Remember PIN for this session"
-    nonisolated public static let okTitle = "OK"
+    /// The confirm button: both callers, Sign and Bulk Sign, sign.
+    nonisolated public static let okTitle = "Sign"
     nonisolated public static let cancelTitle = "Cancel"
 
     /// The pending pin.request; non-nil shows the prompt.

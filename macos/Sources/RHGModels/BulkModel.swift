@@ -21,7 +21,7 @@ public final class BulkModel {
     nonisolated public static let exportTitle = "Export Results CSV\u{2026}"
     nonisolated public static let regenerateNote = "Re-open the same file to regenerate results later."
     nonisolated public static let closeTitle = "Close"
-    nonisolated public static let connectingLabel = "Connecting to YubiKey..."
+    nonisolated public static let connectingLabel = "Connecting to YubiKey\u{2026}"
     nonisolated public static let stoppingLabel = "Stopping after current row\u{2026}"
 
     /// A running bulk.run, as the progress sheet shows it. The sheet stays up
@@ -141,7 +141,7 @@ public final class BulkModel {
             plan = try await bridge.loadBulk(path: path)
         } catch {
             phase = .idle
-            alert = .error(error)
+            alert = .error(error, title: "Unable to Open File")
             return
         }
         if plan.toSign == 0 {
@@ -187,7 +187,7 @@ public final class BulkModel {
         do {
             try await bridge.exportBulkResults(path: path)
         } catch {
-            alert = .error(error)
+            alert = .error(error, title: "Unable to Export Results")
         }
     }
 
@@ -221,7 +221,7 @@ public final class BulkModel {
             if !isShowingSheet {
                 phase = .idle
             }
-            alert = .error(error)
+            alert = .error(error, title: "Bulk Signing Stopped")
         }
     }
 }

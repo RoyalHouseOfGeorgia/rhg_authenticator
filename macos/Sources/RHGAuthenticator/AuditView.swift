@@ -18,22 +18,28 @@ struct AuditView: View {
                     Label(AuditModel.refreshTitle, systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut("r")
-                .disabled(audit.isRefreshing)
+                .disabled(!audit.canRefresh)
                 .help(AuditModel.refreshTooltip)
                 Button {
                     audit.openSelected()
                 } label: {
-                    Label(AuditModel.openTitle, systemImage: "safari")
+                    Label(AuditModel.openTitle, systemImage: "arrow.up.right.square")
                 }
                 .disabled(!audit.canOpen)
                 .help(AuditModel.openTooltip)
                 Spacer(minLength: 0)
             }
-            Text(audit.status)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .help(audit.status)
+            // A spinner before the status while a refresh runs.
+            HStack(spacing: 6) {
+                if audit.isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(audit.status)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(audit.status)
+            }
             List(selection: Binding(get: { audit.selection }, set: { audit.select(row: $0) })) {
                 ForEach(rows.indices, id: \.self) { index in
                     Text(rows[index].summary)

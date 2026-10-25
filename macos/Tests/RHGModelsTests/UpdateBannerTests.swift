@@ -14,7 +14,7 @@ private func status(
 
 @Suite("UpdateBanner")
 struct UpdateBannerTests {
-    @Test("ready: the Fyne app's title, whatever the link")
+    @Test("ready: the title, whatever the link")
     func ready() {
         let expected = UpdateBanner.ready(title: "Version 1.3.0 is ready to install.")
         #expect(UpdateBanner(status(.ready)) == expected)
@@ -43,6 +43,14 @@ struct UpdateBannerTests {
     @Test("manualOnly without a release link shows nothing", arguments: [false, true])
     func manualOnlyNoLink(moveToApplications: Bool) {
         #expect(UpdateBanner(status(.manualOnly, releaseUrl: "", moveToApplications: moveToApplications)) == nil)
+    }
+
+    @Test("the banners' button titles")
+    func buttonTitles() {
+        #expect(UpdateBanner.restartNowTitle == "Restart Now")
+        #expect(UpdateBanner.downloadTitle == "Download")
+        #expect(UpdatedBanner.whatsNewTitle == "What's New")
+        #expect(UpdatedBanner.closeLabel == "Close")
     }
 
     @Test("idle and an unknown state show nothing", arguments: [UpdateState.idle, .unknown("downloading")])

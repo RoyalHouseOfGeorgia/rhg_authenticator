@@ -15,9 +15,10 @@ public struct AlertState: Sendable, Equatable {
         self.offersErrorLogExport = offersErrorLogExport
     }
 
-    /// A core error, shown as-is under the title "Error".
-    public static func error(_ error: RPCError) -> AlertState {
-        AlertState(title: "Error", message: error.message)
+    /// A core error, its message shown as-is under `title`, which says what
+    /// failed.
+    public static func error(_ error: RPCError, title: String) -> AlertState {
+        AlertState(title: title, message: error.message)
     }
 }
 
@@ -64,12 +65,18 @@ public final class SignModel {
     /// The result pane's text until a credential is signed.
     nonisolated public static let noResultText = "No credential signed yet."
     nonisolated public static let printAdvisory = "Print QR at minimum 3\u{00D7}3 cm"
-    nonisolated public static let saveSVGTitle = "Save SVG"
-    nonisolated public static let savePNGTitle = "Save PNG"
+    nonisolated public static let saveSVGTitle = "Save SVG\u{2026}"
+    nonisolated public static let savePNGTitle = "Save PNG\u{2026}"
     nonisolated public static let copyURLTitle = "Copy URL"
     nonisolated public static let reportIssueTitle = "Report Issue"
     nonisolated public static let reportingTitle = "Reporting\u{2026}"
     nonisolated public static let issueReportedTitle = "Issue Reported"
+    /// The status line while a signing runs: before the PIN is resolved, then
+    /// while the card is being opened.
+    /// The status after signing a credential that was already issued.
+    nonisolated public static let alreadyIssuedStatus = "Credential previously generated; no new record created."
+    nonisolated public static let preparingStatus = "Preparing to sign\u{2026}"
+    nonisolated public static let connectingStatus = "Connecting to YubiKey\u{2026}"
 
     public var recipient = ""
     /// The selected honor title; "" while none is selected.
@@ -125,7 +132,7 @@ public final class SignModel {
             status = error.message
             return
         }
-        status = "Preparing to sign..."
+        status = Self.preparingStatus
         let signed: SignResult
         do {
             signed = try await bridge.sign(credential)
@@ -138,8 +145,10 @@ public final class SignModel {
             return
         }
         if signed.existing {
-            status = "Credential previously generated."
-            alert = AlertState(title: "Already Issued", message: "Credential previously generated, no new record created.")
+            // An outcome, not a problem: the status line says it, with no
+            // alert. Windows shows an alert here; a modal for a non-problem
+            // is not the Mac idiom.
+            status = Self.alreadyIssuedStatus
         } else if !signed.warning.isEmpty {
             status = signed.warning
             alert = AlertState(title: "Not Recorded", message: signed.warning)
@@ -152,7 +161,7 @@ public final class SignModel {
     /// sign.connecting: the PIN is resolved and the card is being opened.
     func signConnecting() {
         if isBusy {
-            status = "Connecting to YubiKey..."
+            status = Self.connectingStatus
         }
     }
 
@@ -178,7 +187,7 @@ public final class SignModel {
         guard report == .reporting(reportId: reportId) else { return }
         report = filed ? .reported : .available(reportId: reportId)
         if let failure {
-            alert = .error(failure)
+            alert = .error(failure, title: "Unable to Report Issue")
         }
     }
 
@@ -197,7 +206,7 @@ public final class SignModel {
         do {
             try await bridge.saveQR(url: result.url, format: format, path: path)
         } catch {
-            alert = .error(error)
+            alert = .error(error, title: "Unable to Save QR Code")
         }
     }
 }

@@ -14,6 +14,97 @@ struct AppModelTests {
             AppModel.yubiKeyTabTitle,
         ]
         #expect(titles == ["Sign", "History", "Registry", "Audit", "YubiKey"])
+        #expect(AppTab.allCases.map(\.title) == titles)
+    }
+
+    @Test("the window opens on the Sign tab")
+    func defaultTab() {
+        let app = AppModel(bridge: FakeBridge())
+        #expect(app.selectedTab == .sign)
+        #expect(app.findRequests == 0)
+    }
+
+    @Test("Find… selects the History tab from any tab and bumps the find counter each time")
+    func requestFind() {
+        let app = AppModel(bridge: FakeBridge())
+        app.selectedTab = .registry
+        app.requestFind()
+        #expect(app.selectedTab == .history)
+        #expect(app.findRequests == 1)
+        app.requestFind()
+        #expect(app.selectedTab == .history)
+        #expect(app.findRequests == 2)
+    }
+
+    @Test("Save QR Code: a signed result, and no signing under way")
+    func canSaveQR() async {
+        let fake = FakeBridge()
+        let app = await startedApp(fake)
+        #expect(!app.canSaveQR)
+        fake.respond(.signSign, signResult())
+        await app.sign.sign()
+        #expect(app.canSaveQR)
+        app.bulk.begin()
+        #expect(!app.canSaveQR)
+        app.bulk.pickerCancelled()
+        #expect(app.canSaveQR)
+    }
+
+    @Test("View → Refresh follows the visible tab: its title, whether it can run, and what it runs")
+    func refreshFollowsTab() async {
+        let fake = FakeBridge()
+        let app = await startedApp(fake)
+        for tab in [AppTab.sign, .yubiKey] {
+            app.selectedTab = tab
+            #expect(app.refreshTitle == AppModel.refreshMenuTitle)
+            #expect(!app.canRefresh)
+            await app.refresh()
+        }
+        #expect(fake.count(.historyRefresh) == 0)
+        #expect(fake.count(.registryFetch) == 0)
+        #expect(fake.count(.auditCommits) == 1)
+
+        app.selectedTab = .history
+        #expect(app.refreshTitle == HistoryModel.refreshTitle)
+        #expect(app.canRefresh)
+        await app.refresh()
+        #expect(fake.count(.historyRefresh) == 1)
+
+        app.selectedTab = .audit
+        #expect(app.refreshTitle == AuditModel.refreshTitle)
+        fake.reset(.auditCommits)
+        let auditHeld = fake.hold(.auditCommits)
+        #expect(app.canRefresh)
+        let auditRefresh = Task { await app.refresh() }
+        #expect(await settle { fake.count(.auditCommits) == 2 })
+        #expect(!app.canRefresh)
+        await app.refresh()
+        #expect(fake.count(.auditCommits) == 2)
+        auditHeld.release(startupAudit)
+        await auditRefresh.value
+        #expect(app.canRefresh)
+
+        app.selectedTab = .registry
+        #expect(app.refreshTitle == RegistryModel.fetchTitle)
+        let fetchHeld = fake.hold(.registryFetch)
+        #expect(app.canRefresh)
+        let fetch = Task { await app.refresh() }
+        #expect(await settle { fake.count(.registryFetch) == 1 })
+        #expect(!app.canRefresh)
+        await app.refresh()
+        #expect(fake.count(.registryFetch) == 1)
+        fetchHeld.release(Empty())
+        await fetch.value
+        // Fetch from Server stays busy until its registry.changed.
+        #expect(!app.canRefresh)
+        await app.registry.registryChanged()
+        #expect(app.canRefresh)
+    }
+
+    @Test("the titles of the alerts the view words")
+    func alertTitles() {
+        #expect(AppModel.fatalErrorTitle == "RHG Authenticator Can't Start")
+        #expect(AppModel.internalErrorTitle == "Something Went Wrong")
     }
 
     @Test("startup online: init, honors, login state, registry, history, start in order; ready; status bar; audit")
@@ -58,7 +149,7 @@ struct AppModelTests {
         await app.start()
         #expect(app.phase == .ready)
         #expect(app.statusItems == ["Core offline", "Core version 2.0"])
-        #expect(app.registry.status == "Fetching...")
+        #expect(app.registry.status == RegistryModel.fetchingStatus)
         #expect(fake.params(.appInit) == ["{}"])
     }
 
@@ -143,7 +234,7 @@ struct AppModelTests {
         #expect(app.phase == .ready)
         #expect(await settle { fake.count(.auditCommits) == 1 })
         #expect(app.phase == .ready)
-        #expect(app.audit.isRefreshing && app.audit.status == "Fetching...")
+        #expect(app.audit.isRefreshing && app.audit.status == AuditModel.fetchingStatus)
         held.release(AuditResult(rows: [AuditRow(summary: "c", url: commit)], status: "Loaded 1 commits"))
         #expect(await settle { !app.audit.isRefreshing })
         #expect(app.audit.rows == [AuditRow(summary: "c", url: commit)])
@@ -208,7 +299,7 @@ struct AppModelTests {
         let app = await startedApp(fake)
         let login = Task { await app.login.start() }
         // One LoginModel serves both tabs (LoginModelTests covers the routing).
-        #expect(await settle { app.history.status == "Requesting device code..." })
+        #expect(await settle { app.history.status == LoginModel.requestingCodeStatus })
         held.release(loggedIn)
         await login.value
         #expect(app.history.status == "Logged in as @octocat")
@@ -243,7 +334,7 @@ struct AppModelTests {
     func authAndRegistryEvents() async {
         let fake = FakeBridge()
         let app = await startedApp(fake)
-        app.registry.select(row: 0, column: 1)
+        app.registry.select(row: 0)
         #expect(app.registry.selection != nil)
         fake.reset(.registrySnapshot)
         fake.respond(.registrySnapshot, registrySnapshot(count: 3))
@@ -416,7 +507,7 @@ struct AppModelTests {
         fake.fail(.appExportErrorLog, RPCError(code: .failed, message: "Choose a folder outside the app's data folder."))
         let app = AppModel(bridge: fake)
         let alert = await app.exportErrorLog(path: "/data/x.log")
-        #expect(alert == AlertState(title: "Error", message: "Choose a folder outside the app's data folder."))
+        #expect(alert == AlertState(title: "Unable to Export Error Log", message: "Choose a folder outside the app's data folder."))
     }
 
     // MARK: Quit
@@ -511,13 +602,15 @@ struct AppModelTests {
         #expect(answers.isEmpty)
     }
 
-    @Test("quit confirmation copy matches the Fyne app")
+    @Test("quit confirmation copy")
     func quitCopy() {
         #expect(
             AppModel.quitConfirmation
                 == Confirmation(
-                    title: "Unsubmitted Changes", message: "The registry has unsubmitted changes. Exit anyway?",
-                    confirmTitle: "Exit", cancelTitle: "Cancel", isDestructive: true))
+                    title: "Unsubmitted Changes",
+                    message:
+                        "The registry has changes that haven't been submitted for review. If you quit, they'll be lost.",
+                    confirmTitle: "Discard and Quit", cancelTitle: "Cancel", isDestructive: true))
     }
 
     @Test("dirty edits: the default confirmDiscard discards")

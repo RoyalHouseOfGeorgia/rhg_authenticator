@@ -25,7 +25,7 @@ struct BulkModelTests {
         return nil
     }
 
-    @Test("UI copy matches the Fyne app")
+    @Test("UI copy")
     func copy() {
         #expect(Array(BulkModel.bulkSignTitle.utf8) == Array("Bulk Sign from File".utf8) + [0xE2, 0x80, 0xA6])
         #expect([BulkModel.title, BulkModel.signTitle, BulkModel.cancelTitle] == ["Bulk Sign", "Sign", "Cancel"])
@@ -37,7 +37,7 @@ struct BulkModelTests {
         #expect(Array(BulkModel.exportTitle.utf8) == Array("Export Results CSV".utf8) + [0xE2, 0x80, 0xA6])
         #expect(BulkModel.regenerateNote == "Re-open the same file to regenerate results later.")
         #expect(BulkModel.closeTitle == "Close")
-        #expect(BulkModel.connectingLabel == "Connecting to YubiKey...")
+        #expect(BulkModel.connectingLabel == "Connecting to YubiKey\u{2026}")
         #expect(Array(BulkModel.stoppingLabel.utf8) == Array("Stopping after current row".utf8) + [0xE2, 0x80, 0xA6])
     }
 
@@ -64,7 +64,7 @@ struct BulkModelTests {
         #expect(await settle { fake.count(.bulkRun) == 1 })
         #expect(run(model) == BulkModel.Run())
         #expect(model.isShowingSheet)  // from confirm on, so the PIN prompt stacks on it
-        #expect(run(model)?.label == "Connecting to YubiKey...")
+        #expect(run(model)?.label == BulkModel.connectingLabel)
         #expect(run(model)?.fraction == 0)
         #expect(run(model)?.isCancelEnabled == true)
 
@@ -121,7 +121,7 @@ struct BulkModelTests {
         await model.fileChosen(path: "/in/done.csv")
         #expect(model.phase == .idle)
         #expect(model.isShowingTabAlert && !model.isShowingSheetAlert)
-        #expect(model.alert == AlertState(title: "Error", message: "Another operation is in progress."))
+        #expect(model.alert == AlertState(title: "Bulk Signing Stopped", message: "Another operation is in progress."))
     }
 
     @Test("a load error shows the core's message and ends the flow")
@@ -132,7 +132,7 @@ struct BulkModelTests {
         model.begin()
         await model.fileChosen(path: "/in/x.csv")
         #expect(model.phase == .idle && !model.isActive)
-        #expect(model.alert == AlertState(title: "Error", message: "Could not open the CSV file."))
+        #expect(model.alert == AlertState(title: "Unable to Open File", message: "Could not open the CSV file."))
         #expect(model.isShowingTabAlert && !model.isShowingSheetAlert)
         #expect(fake.count(.bulkRun) == 0)
         model.dismissAlert()
@@ -154,7 +154,7 @@ struct BulkModelTests {
         // alert presents; no report is offered.
         #expect(run(model) == BulkModel.Run())
         #expect(model.isShowingSheetAlert && !model.isShowingTabAlert)
-        #expect(model.alert == AlertState(title: "Error", message: "Registry unavailable — cannot sign offline."))
+        #expect(model.alert == AlertState(title: "Bulk Signing Stopped", message: "Registry unavailable — cannot sign offline."))
         await model.cancelRun()  // the run is over: nothing to cancel
         #expect(fake.count(.bulkCancel) == 0)
         model.dismissAlert()
@@ -307,7 +307,7 @@ struct BulkModelTests {
         model.begin()
         await model.fileChosen(path: "/in/done.csv")
         await model.exportResults(path: "/out/results.csv")
-        #expect(model.alert == AlertState(title: "Error", message: "Another YubiKey operation is running."))
+        #expect(model.alert == AlertState(title: "Unable to Export Results", message: "Another YubiKey operation is running."))
         #expect(model.isShowingSheetAlert && !model.isShowingTabAlert)
         model.dismissAlert()
         #expect(model.alert == nil && model.phase == .results(plan: plan, outcome: bulkOutcome()))

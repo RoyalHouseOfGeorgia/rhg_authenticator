@@ -17,15 +17,16 @@ struct RegistryView: View {
                 Button {
                     Task { [registry] in await registry.fetchTapped() }
                 } label: {
-                    Label(RegistryModel.fetchTitle, systemImage: "arrow.down.circle")
+                    Label(RegistryModel.fetchTitle, systemImage: "arrow.down")
                 }
-                .keyboardShortcut("r")
+                .disabled(!registry.canFetch)
                 .help(RegistryModel.fetchTooltip)
                 Button {
                     registry.addEntryTapped()
                 } label: {
                     Label(RegistryModel.addEntryTitle, systemImage: "plus")
                 }
+                .disabled(!registry.canAddEntry)
                 Button {
                     registry.editEntryTapped()
                 } label: {
@@ -39,15 +40,23 @@ struct RegistryView: View {
                     Label(RegistryModel.submitTitle, systemImage: "paperplane")
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(registry.isBusy)
                 Spacer(minLength: 0)
                 LoginButton(login: login)
             }
-            // A selected cell's full text lands here: one line, truncated
-            // when it is longer than the window is wide.
-            Text(registry.status)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .help(registry.status)
+            // The fetch and submit status: one line, truncated when it is
+            // longer than the window is wide, after a spinner while either
+            // runs.
+            HStack(spacing: 6) {
+                if registry.isBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(registry.status)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(registry.status)
+            }
             RegistryTable(registry: registry)
         }
         .padding(16)
@@ -63,77 +72,89 @@ struct RegistryView: View {
     }
 }
 
-/// The registry's table: a bold header row that stays put while the rows
-/// scroll under it, then one row per entry, in fixed-width columns, so a long
-/// cell truncates rather than reflowing the table. Clicking a cell selects it
-/// (its text goes to the status line); double-clicking an entry's cell edits
-/// the entry; hovering shows its full text.
+/// The registry's table, one row per entry, in resizable columns, so a long
+/// cell truncates rather than reflowing the table; hovering shows its full
+/// text. Double-click or Return edits the selected entry, and ⌘C or the
+/// context menu's Copy copies a row as tab-separated cells.
 @MainActor
 struct RegistryTable: View {
     let registry: RegistryModel
 
-    /// The columns' widths, in `registry.columns` order.
-    private static let columnWidths: [CGFloat] = [40, 200, 100, 100, 150, 200, 450]
-    /// The width of any column past those.
-    private static let defaultColumnWidth: CGFloat = 150
+    /// The columns' minimum and ideal widths, in `registry.columns` order,
+    /// one per column (`RegistryModel.columnCount`).
+    private static let widths: [(min: CGFloat, ideal: CGFloat)] = [
+        (40, 40), (100, 200), (80, 100), (80, 100), (80, 150), (100, 200), (150, 450),
+    ]
 
     var body: some View {
-        let columns = registry.columns
-        let rows = registry.snapshot.rows
-        ScrollView([.horizontal, .vertical]) {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                Section {
-                    ForEach(rows.indices, id: \.self) { row in
-                        rowView(row, cells: rows[row], columnCount: columns.count)
-                    }
-                } header: {
-                    HStack(spacing: 0) {
-                        ForEach(columns.indices, id: \.self) { column in
-                            cell(columns[column], column: column).bold()
-                        }
-                    }
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .overlay(alignment: .bottom) { Divider() }
+        let rows = registry.snapshot.rows.indices.map(RegistryRow.init)
+        Table(rows, selection: Binding(get: { registry.selection }, set: { registry.select(row: $0) })) {
+            // One column(n) per column: TableColumnForEach needs macOS 14.4.
+            column(0)
+            column(1)
+            column(2)
+            column(3)
+            column(4)
+            column(5)
+            column(6)
+        }
+        .alternatingRowBackgrounds()
+        .contextMenu(forSelectionType: Int.self) { ids in
+            Button(RegistryModel.editEntryTitle) {
+                if let row = ids.first {
+                    registry.editEntry(row: row)
                 }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
-        .border(Color(nsColor: .separatorColor))
-    }
-
-    /// One entry's row, padded with empty cells to the header's columns.
-    private func rowView(_ row: Int, cells: [String], columnCount: Int) -> some View {
-        let selection = registry.selection
-        return HStack(spacing: 0) {
-            ForEach(0..<columnCount, id: \.self) { column in
-                let text = cells.indices.contains(column) ? cells[column] : ""
-                let isSelected = selection == RegistryModel.Cell(row: row, column: column)
-                cell(text, column: column)
-                    .background(isSelected ? Color.accentColor.opacity(0.3) : Color.clear)
-                    .contentShape(Rectangle())
-                    .gesture(
-                        TapGesture(count: 2).onEnded {
-                            registry.editEntryTapped()
-                        }
-                    )
-                    // Alongside the double-click, so it is not delayed while
-                    // that waits for a second click.
-                    .simultaneousGesture(TapGesture().onEnded { registry.select(row: row, column: column) })
-                    .help(text)
+            .disabled(!canEditEntry(ids.first))
+            Button("Copy") {
+                if let row = ids.first {
+                    Pasteboard.copy(registry.copyText(row: row))
+                }
+            }
+            .disabled(ids.isEmpty)
+        } primaryAction: { ids in
+            if let row = ids.first {
+                registry.editEntry(row: row)
             }
         }
-        .background(selection?.row == row ? Color.accentColor.opacity(0.15) : Color.clear)
+        .onCopyCommand {
+            guard let row = registry.selection else { return [] }
+            return [NSItemProvider(object: registry.copyText(row: row) as NSString)]
+        }
     }
 
-    private func cell(_ text: String, column: Int) -> some View {
-        let widths = Self.columnWidths
-        let width = widths.indices.contains(column) ? widths[column] : Self.defaultColumnWidth
-        return Text(text)
+    /// The `index`th column (of `RegistryModel.columnCount`): its header is
+    /// "" until the registry has loaded.
+    private func column(_ index: Int) -> TableColumn<RegistryRow, Never, RegistryCell, Text> {
+        assert(Self.widths.count == RegistryModel.columnCount)
+        let columns = registry.columns
+        let title = columns.indices.contains(index) ? columns[index] : ""
+        return TableColumn(title) { row in
+            RegistryCell(text: registry.cell(row: row.id, column: index))
+        }
+        .width(min: Self.widths[index].min, ideal: Self.widths[index].ideal)
+    }
+
+    private func canEditEntry(_ row: Int?) -> Bool {
+        guard let row else { return false }
+        return registry.canEditEntry(row: row)
+    }
+}
+
+/// A registry table row: the index of a row in the registry's snapshot.
+struct RegistryRow: Identifiable {
+    let id: Int
+}
+
+/// A registry table cell: one line, truncated, with its full text on hover.
+@MainActor
+struct RegistryCell: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
             .lineLimit(1)
             .truncationMode(.tail)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 3)
-            .frame(width: width, alignment: .leading)
+            .help(text)
     }
 }

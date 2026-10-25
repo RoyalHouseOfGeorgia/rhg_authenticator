@@ -9,16 +9,19 @@ import RHGBridge
 @Observable
 public final class AuditModel {
     nonisolated public static let refreshTitle = "Refresh"
-    nonisolated public static let refreshTooltip = refreshTitle + " (\u{2318}R)"
+    nonisolated public static let refreshTooltip = "Reload the latest commits (\u{2318}R)"
     nonisolated public static let openTitle = "Open on GitHub"
     nonisolated public static let openTooltip = "Select a commit to open it."
-    nonisolated public static let fetchingStatus = "Fetching..."
+    nonisolated public static let fetchingStatus = "Fetching commits\u{2026}"
 
     public private(set) var rows: [AuditRow] = []
     /// The status line.
     public private(set) var status = ""
     /// A fetch is running; Refresh is disabled.
     public private(set) var isRefreshing = false
+    /// Refresh is enabled (its button and View → Refresh): no refresh
+    /// running.
+    public var canRefresh: Bool { !isRefreshing }
     /// The selected row's index in `rows`; cleared when the rows are replaced.
     public private(set) var selection: Int?
 

@@ -40,10 +40,15 @@ struct LoginModelTests {
         return (held, task)
     }
 
-    @Test("UI copy matches the Fyne app")
+    @Test("UI copy")
     func copy() {
         #expect(Array(LoginModel.reconnectTitle.utf8) == Array("Offline ".utf8) + [0xE2, 0x80, 0x94] + Array(" Reconnect".utf8))
-        #expect(LoginModel.loginTitle == "Login to GitHub")
+        #expect(LoginModel.loginTitle == "Log In to GitHub\u{2026}")
+        #expect(LoginModel.logOutTitle == "Log Out\u{2026}")
+        #expect(LoginModel.reconnectingStatus == "Reconnecting to GitHub\u{2026}")
+        #expect(LoginModel.requestingCodeStatus == "Requesting device code\u{2026}")
+        #expect(LoginModel.waitingStatus == "Waiting for GitHub authorization\u{2026}")
+        #expect(LoginModel.logoutConfirmation.confirmTitle == "Log Out")
         #expect(LoginModel.deviceCodeTitle == "GitHub Login")
         #expect(LoginModel.deviceCodePrompt == "Enter this code at GitHub:")
         #expect(
@@ -60,13 +65,13 @@ struct LoginModelTests {
         let fake = FakeBridge()
         let (login, _) = await model(fake)
         #expect(login.authState == AuthState(loggedIn: false, offline: false, user: "", statusText: ""))
-        #expect(login.buttonTitle == "Login to GitHub")
+        #expect(login.buttonTitle == LoginModel.loginTitle)
         await setAuth(login, loggedInOffline, fake)
         #expect(login.buttonTitle == "Offline \u{2014} Reconnect")
         await setAuth(login, loggedIn, fake)
-        #expect(Array(login.buttonTitle.utf8) == Array("@octocat ".utf8) + [0xE2, 0x96, 0xBE])
+        #expect(login.buttonTitle == "@octocat")
         await setAuth(login, loggedOut, fake)
-        #expect(login.buttonTitle == "Login to GitHub")
+        #expect(login.buttonTitle == LoginModel.loginTitle)
     }
 
     @Test("auth.changed is a signal: the latest auth.state read wins, whatever the payload or the order")
@@ -133,12 +138,12 @@ struct LoginModelTests {
         let (login, status) = await model(fake, state: loggedOut)
         let (held, task) = await startHeld(fake, login)
         #expect(login.isLoggingIn)
-        #expect(status.texts == ["Requesting device code..."])
+        #expect(status.texts == [LoginModel.requestingCodeStatus])
         held.release(loggedIn)
         await task.value
         #expect(!login.isLoggingIn)
         #expect(login.authState == loggedIn)
-        #expect(status.texts == ["Requesting device code...", "Logged in as @octocat"])
+        #expect(status.texts == [LoginModel.requestingCodeStatus, "Logged in as @octocat"])
         #expect(login.alert == nil)
         #expect(fake.params(.authLogin) == ["{}"])
         #expect(fake.count(.authCancelLogin) == 0)
@@ -161,7 +166,7 @@ struct LoginModelTests {
         fake.respond(.authLogin, loggedIn)
         let (login, status) = await model(fake, state: loggedInOffline)
         await login.buttonTapped()
-        #expect(status.texts == ["Reconnecting to GitHub...", "Logged in as @octocat"])
+        #expect(status.texts == [LoginModel.reconnectingStatus, "Logged in as @octocat"])
         #expect(login.authState == loggedIn)
     }
 
@@ -201,7 +206,7 @@ struct LoginModelTests {
         fake.fail(.authLogin, error)
         let (login, status) = await model(fake)
         await login.start()
-        #expect(login.alert == AlertState(title: "Error", message: error.message))
+        #expect(login.alert == AlertState(title: "Unable to Log In", message: error.message))
         login.alertDismissed()
         #expect(login.alert == nil)
         #expect(status.last == "")
@@ -244,7 +249,7 @@ struct LoginModelTests {
         let (login, status) = await model(fake)
         let (held, task) = await startHeld(fake, login)
         login.showDeviceCode(code)
-        #expect(status.last == "Waiting for GitHub authorization...")
+        #expect(status.last == LoginModel.waitingStatus)
         let prompt = try #require(login.deviceCode)
         #expect(prompt.userCode == "ABCD-1234")
         #expect(prompt.verificationURL == URL(string: "https://github.com/login/device"))
@@ -334,6 +339,21 @@ struct LoginModelTests {
         #expect(login.authState == loggedIn)
     }
 
+    @Test("the menu's Log Out… asks to log out, offline too (never a reconnect); logged out, nothing")
+    func logOutTapped() async {
+        for state in [loggedIn, loggedInOffline] {
+            let fake = FakeBridge()
+            let (login, _) = await model(fake, state: state)
+            login.logOutTapped()
+            #expect(login.pendingConfirmation == LoginModel.logoutConfirmation)
+            #expect(fake.count(.authLogin) == 0)
+        }
+        let fake = FakeBridge()
+        let (login, _) = await model(fake, state: loggedOut)
+        login.logOutTapped()
+        #expect(login.pendingConfirmation == nil)
+    }
+
     @Test("declining Log Out does nothing; confirming with nothing asked does nothing")
     func logoutDeclined() async {
         let fake = FakeBridge()
@@ -353,7 +373,7 @@ struct LoginModelTests {
         let (login, status) = await model(fake, state: loggedIn)
         await login.buttonTapped()
         await login.confirmLogout()
-        #expect(login.alert == AlertState(title: "Error", message: "An internal error occurred — please restart"))
+        #expect(login.alert == AlertState(title: "Unable to Log Out", message: "An internal error occurred — please restart"))
         #expect(status.texts.isEmpty)
     }
 
@@ -368,13 +388,13 @@ struct LoginModelTests {
         let held = fake.hold(.authLogin)
         let running = Task { await login.start() }
         #expect(await settle { fake.count(.authLogin) == 1 })
-        #expect(registry.status == "Requesting device code...")
-        #expect(history.status == "Requesting device code...")
+        #expect(registry.status == LoginModel.requestingCodeStatus)
+        #expect(history.status == LoginModel.requestingCodeStatus)
         held.release(loggedIn)
         await running.value
         #expect(registry.status == "Logged in as @octocat")
         #expect(history.status == "Logged in as @octocat")
-        #expect(status.texts == ["Requesting device code...", "Logged in as @octocat"])
+        #expect(status.texts == [LoginModel.requestingCodeStatus, "Logged in as @octocat"])
     }
 
     // Handlers are never removed: the released model's still runs, and does

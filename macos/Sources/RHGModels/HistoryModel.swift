@@ -10,16 +10,17 @@ import RHGBridge
 @MainActor
 @Observable
 public final class HistoryModel {
-    nonisolated public static let searchPlaceholder = "Search by recipient..."
-    nonisolated public static let searchTooltip = "Search (\u{2318}F)"
+    nonisolated public static let searchPlaceholder = "Search by recipient"
+    nonisolated public static let searchTooltip = "Filter the list by recipient (\u{2318}F)"
     nonisolated public static let refreshTitle = "Refresh"
-    nonisolated public static let refreshTooltip = refreshTitle + " (\u{2318}R)"
+    nonisolated public static let refreshTooltip = "Reread the issuance log and revocations (\u{2318}R)"
     nonisolated public static let revokeTitle = "Revoke"
     nonisolated public static let exportTitle = "Export Issuance Log\u{2026}"
     nonisolated public static let removeDuplicatesTitle = "Remove Duplicates\u{2026}"
     nonisolated public static let deleteTitle = "Delete Entry\u{2026}"
-    nonisolated public static let deleteTooltip =
-        "Select a record to delete it. In the list, Delete deletes the selected record."
+    /// Delete Entry…'s tooltip (`deleteTooltip`), disabled and enabled.
+    nonisolated public static let deleteDisabledTooltip = "Select a record to delete it."
+    nonisolated public static let deleteEnabledTooltip = "Remove the selected record from the issuance log (\u{232B})"
     /// The detail pane with no record selected.
     nonisolated public static let emptyDetailText = "Select a record to see its details."
     /// Starts the detail pane's text when the core could not word the record.
@@ -32,6 +33,8 @@ public final class HistoryModel {
     nonisolated public static let deleteNotFoundTitle = "Record Not Found"
     nonisolated public static let deleteFailedTitle = "Delete Failed"
     nonisolated public static let revocationUnavailableStatus = "Revocation unavailable"
+    /// The status line after Remove Duplicates… found none to remove.
+    nonisolated public static let noDuplicatesStatus = "The issuance log has no duplicate entries."
 
     /// The log as last read, filtered by the search.
     public private(set) var snapshot = HistoryListResult(
@@ -130,6 +133,10 @@ public final class HistoryModel {
         guard !isRevoking, !isDeleting, let selection else { return false }
         return snapshot.rows.indices.contains(selection)
     }
+
+    /// Delete Entry…'s tooltip: what it does while enabled, else how to
+    /// enable it.
+    public var deleteTooltip: String { canDelete ? Self.deleteEnabledTooltip : Self.deleteDisabledTooltip }
 
     /// "Revocation unavailable" when the revocation list could not be fetched.
     public var revocationStatus: String {
@@ -231,7 +238,7 @@ public final class HistoryModel {
         if reportLoadFailure, alert == nil {
             reportLoadFailure = false
             if latest.loadFailed {
-                show(AlertState(title: "Error", message: "unable to load history"))
+                show(AlertState(title: "Unable to Load History", message: "The issuance log couldn't be read."))
             }
         }
         if let detailRow {
@@ -316,7 +323,7 @@ public final class HistoryModel {
         do {
             try await bridge.refreshHistory()
         } catch {
-            show(.error(error))
+            show(.error(error, title: "Unable to Refresh History"))
         }
     }
 
@@ -350,7 +357,7 @@ public final class HistoryModel {
             do throws(RPCError) {
                 text = try await bridge.recordText(record)
             } catch {
-                show(.error(error))
+                show(.error(error, title: "Unable to Revoke Record"))
                 return
             }
             let question = Confirmation(
@@ -407,7 +414,7 @@ public final class HistoryModel {
             do throws(RPCError) {
                 text = try await bridge.recordText(record)
             } catch {
-                show(.error(error))
+                show(.error(error, title: "Unable to Delete Record"))
                 return
             }
             let question = Confirmation(
@@ -477,7 +484,7 @@ public final class HistoryModel {
             if error.code == .nothingToExport {
                 show(AlertState(title: "Nothing to Export", message: error.message))
             } else {
-                show(.error(error))
+                show(.error(error, title: "Unable to Export Issuance Log"))
             }
             return
         }
@@ -506,8 +513,8 @@ public final class HistoryModel {
         }
     }
 
-    /// Removes the duplicates (history.removeDuplicates) and shows the core's
-    /// report; the list reloads on history.changed.
+    /// Removes the duplicates (history.removeDuplicates) and puts the core's
+    /// report on the status line; the list reloads on history.changed.
     private func removeDuplicates() async {
         let result: RemoveDuplicatesResult
         do {
@@ -521,15 +528,18 @@ public final class HistoryModel {
             showNoDuplicates()
             return
         }
-        show(AlertState(title: "Duplicates Removed", message: result.message))
+        status = result.message
     }
 
     private func showDedupeFailure(_ error: RPCError) {
         show(AlertState(title: "Remove Duplicates Failed", message: error.message, offersErrorLogExport: true))
     }
 
+    /// Remove Duplicates… found nothing to remove. Outcomes go to the status
+    /// line, not an alert (Windows shows one; a modal for a non-problem is
+    /// not the Mac idiom); its failures stay alerts.
     private func showNoDuplicates() {
-        show(AlertState(title: "No Duplicates", message: "The issuance log has no duplicate entries."))
+        status = Self.noDuplicatesStatus
     }
 
     /// Asks `question`: `action` runs on confirm, `alternate` (if any) on its

@@ -42,12 +42,13 @@ struct UpdateBannerView: View {
                         }
                         Spacer()
                         // The usual quit (unsubmitted-edits confirm included),
-                        // relaunching once the update installs.
+                        // relaunching once the update installs. Bordered, so
+                        // the tab's own action stays the one prominent button.
                         Button(UpdateBanner.restartNowTitle) {
                             model.requestRestart()
                             NSApp.terminate(nil)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.bordered)
                     }
                 case .manualOnly(let text, let releaseURL, let hint):
                     VStack(alignment: .leading, spacing: 4) {

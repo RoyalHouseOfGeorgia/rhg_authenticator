@@ -14,8 +14,8 @@ struct SignView: View {
     let bulk: BulkModel
     /// A signing or a bulk flow is under way (`AppModel.isSigningBusy`).
     let isSigningBusy: Bool
-    /// The date button's graphical picker is open.
-    @State private var isPickingDate = false
+    /// Save SVG / Save PNG are enabled (`AppModel.canSaveQR`).
+    let canSaveQR: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -30,7 +30,7 @@ struct SignView: View {
                 Button {
                     BulkPanels.chooseFile(for: bulk)
                 } label: {
-                    Label(BulkModel.bulkSignTitle, systemImage: "doc.on.doc")
+                    Label(BulkModel.bulkSignTitle, systemImage: "doc.text")
                 }
                 .disabled(isSigningBusy)
                 Spacer(minLength: 0)
@@ -46,14 +46,21 @@ struct SignView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// The form, then the status line and Report Issue under it.
+    /// The form, then the status line (a spinner before it while signing)
+    /// and Report Issue under it.
     private var inputPane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 form
-                Text(sign.status)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .top, spacing: 6) {
+                    if sign.isBusy {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(sign.status)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let reportTitle = sign.report.buttonTitle {
                     Button {
                         Task { [sign] in await sign.reportIssue() }
@@ -90,42 +97,26 @@ struct SignView: View {
             .textFieldStyle(.roundedBorder)
             .lineLimit(3...6)
 
-            // The date shows once, as YYYY-Mon-DD; the button opens the
-            // picker. The signed date is the UTC calendar date
-            // (SignModel.dateString), so the picker shows and edits dates in
-            // UTC too.
+            // The signed date is the UTC calendar date (SignModel.dateString).
             LabeledContent(SignModel.dateLabel) {
-                Button(sign.displayDate) {
-                    isPickingDate = true
-                }
-                .monospacedDigit()
-                .popover(isPresented: $isPickingDate) {
-                    DatePicker(SignModel.dateLabel, selection: $sign.date, displayedComponents: .date)
-                        .datePickerStyle(.graphical)
-                        .labelsHidden()
-                        .utcCalendar()
-                        .padding(12)
-                }
+                DatePopoverField(title: SignModel.dateLabel, date: $sign.date, text: sign.displayDate)
             }
         }
         .formStyle(.columns)
     }
 
-    /// The signed credential, or the muted empty state until there is one.
+    /// The signed credential, or the empty state until there is one.
     @ViewBuilder
     private var resultPane: some View {
         if let result = sign.result {
             ScrollView {
-                ResultView(sign: sign, result: result)
+                ResultView(sign: sign, result: result, canSaveQR: canSaveQR)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 16)
                     .frame(maxWidth: .infinity)
             }
         } else {
-            Text(SignModel.noResultText)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(16)
+            ContentUnavailableView(SignModel.noResultText, systemImage: "checkmark.seal")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -133,11 +124,13 @@ struct SignView: View {
 
 /// The signed credential: the fields as signed (not the form, which may have
 /// changed meanwhile), its QR code, the print advisory and the save and copy
-/// buttons.
+/// buttons. The save buttons are enabled as File's Save QR Code items are
+/// (`AppModel.canSaveQR`).
 @MainActor
 struct ResultView: View {
     let sign: SignModel
     let result: SignResult
+    let canSaveQR: Bool
 
     var body: some View {
         VStack(spacing: 12) {
@@ -161,17 +154,17 @@ struct ResultView: View {
                 } label: {
                     Label(SignModel.saveSVGTitle, systemImage: "square.and.arrow.down")
                 }
+                .disabled(!canSaveQR)
                 Button {
                     QRSavePanel.present(for: sign, format: .png)
                 } label: {
                     Label(SignModel.savePNGTitle, systemImage: "square.and.arrow.down")
                 }
+                .disabled(!canSaveQR)
                 Button {
-                    let pasteboard = NSPasteboard.general
-                    _ = pasteboard.clearContents()
-                    _ = pasteboard.setString(result.url, forType: .string)
+                    Pasteboard.copy(result.url)
                 } label: {
-                    Label(SignModel.copyURLTitle, systemImage: "doc.on.clipboard")
+                    Label(SignModel.copyURLTitle, systemImage: "doc.on.doc")
                 }
             }
         }
@@ -188,8 +181,8 @@ struct ResultView: View {
     }
 }
 
-/// Save SVG / Save PNG: asks where to save, then writes the file through
-/// the core.
+/// Save SVG / Save PNG and File's Save QR Code items: asks where to save,
+/// then writes the file through the core.
 @MainActor
 enum QRSavePanel {
     static func present(for sign: SignModel, format: QRFormat) {

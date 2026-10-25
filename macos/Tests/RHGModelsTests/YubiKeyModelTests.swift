@@ -7,9 +7,10 @@ import Testing
 @Suite("YubiKeyModel")
 @MainActor
 struct YubiKeyModelTests {
-    @Test("UI copy matches the Fyne app")
+    @Test("UI copy")
     func copy() {
         #expect(YubiKeyModel.checkTitle == "Check YubiKey")
+        #expect(YubiKeyModel.checkingStatus == "Checking YubiKey\u{2026}")
     }
 
     @Test(
@@ -45,7 +46,7 @@ struct YubiKeyModelTests {
         #expect(!model.isChecking)
     }
 
-    @Test("while checking: Checking..., details cleared, a second check ignored")
+    @Test("while checking: checking, details cleared, a second check ignored")
     func checking() async {
         let fake = FakeBridge()
         fake.respond(.yubikeyCheck, KeyCheck(outcome: .notFound, status: "Key NOT found in registry", details: ["F"]))
@@ -55,7 +56,7 @@ struct YubiKeyModelTests {
         let checking = Task { await model.check() }
         #expect(await settle { fake.count(.yubikeyCheck) == 2 })
         #expect(model.isChecking)
-        #expect(model.status == "Checking...")
+        #expect(model.status == YubiKeyModel.checkingStatus)
         #expect(model.details.isEmpty)
         await model.check()
         #expect(fake.count(.yubikeyCheck) == 2)

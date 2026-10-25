@@ -10,13 +10,20 @@ import RHGBridge
 @MainActor
 @Observable
 public final class LoginModel {
-    nonisolated public static let loginTitle = "Login to GitHub"
+    /// Opens the device-code sheet, hence the ellipsis.
+    nonisolated public static let loginTitle = "Log In to GitHub\u{2026}"
     nonisolated public static let reconnectTitle = "Offline \u{2014} Reconnect"
     nonisolated public static let deviceCodeTitle = "GitHub Login"
     nonisolated public static let deviceCodePrompt = "Enter this code at GitHub:"
     nonisolated public static let copyCodeTitle = "Copy Code"
     nonisolated public static let openGitHubTitle = "Open GitHub"
     nonisolated public static let cancelTitle = "Cancel"
+    /// The logged-in button's Log Out item, which asks first.
+    nonisolated public static let logOutTitle = "Log Out\u{2026}"
+    /// The status texts of a login under way.
+    nonisolated public static let reconnectingStatus = "Reconnecting to GitHub\u{2026}"
+    nonisolated public static let requestingCodeStatus = "Requesting device code\u{2026}"
+    nonisolated public static let waitingStatus = "Waiting for GitHub authorization\u{2026}"
 
     /// The Log Out question.
     nonisolated public static let logoutConfirmation = Confirmation(
@@ -80,8 +87,8 @@ public final class LoginModel {
     /// auth.login is running.
     public var isLoggingIn: Bool { loginCalls > 0 }
 
-    /// The login button's title: "Login to GitHub", "Offline — Reconnect" or
-    /// "@user ▾".
+    /// The login button's title: `loginTitle`, `reconnectTitle` or, logged in
+    /// and online, "@user".
     public var buttonTitle: String {
         if !authState.loggedIn {
             return Self.loginTitle
@@ -89,7 +96,7 @@ public final class LoginModel {
         if authState.offline {
             return Self.reconnectTitle
         }
-        return "@" + authState.user + " \u{25BE}"
+        return "@" + authState.user
     }
 
     /// Reads the login state (auth.state).
@@ -110,6 +117,14 @@ public final class LoginModel {
         }
     }
 
+    /// The login menu's Log Out…: asks to log out, whatever the session
+    /// became while the menu was open (a reconnect is never started from
+    /// it); nothing when logged out.
+    public func logOutTapped() {
+        guard authState.loggedIn else { return }
+        pendingConfirmation = Self.logoutConfirmation
+    }
+
     /// Log Out confirmed: logs out (auth.logout); auth.changed updates the
     /// button.
     public func confirmLogout() async {
@@ -118,7 +133,7 @@ public final class LoginModel {
         do {
             try await bridge.logout()
         } catch {
-            alert = .error(error)
+            alert = .error(error, title: "Unable to Log Out")
             return
         }
         publishStatus("Logged out")
@@ -133,7 +148,7 @@ public final class LoginModel {
     /// device flow (auth.login, which emits auth.deviceCode), and shows the
     /// outcome. The single entry point of every "log in" button.
     public func start() async {
-        publishStatus(authState.loggedIn && authState.offline ? "Reconnecting to GitHub..." : "Requesting device code...")
+        publishStatus(authState.loggedIn && authState.offline ? Self.reconnectingStatus : Self.requestingCodeStatus)
         loginCalls += 1
         let state: AuthState
         do {
@@ -147,7 +162,7 @@ public final class LoginModel {
             }
             finished()
             if error.code != .cancelled {
-                alert = .error(error)
+                alert = .error(error, title: "Unable to Log In")
             }
             publishStatus("")
             return
@@ -185,7 +200,7 @@ public final class LoginModel {
     /// auth.deviceCode: shows the code. Ignored when no login is running.
     func showDeviceCode(_ code: DeviceCode) {
         guard isLoggingIn else { return }
-        publishStatus("Waiting for GitHub authorization...")
+        publishStatus(Self.waitingStatus)
         let url = code.verificationUri.isEmpty ? nil : URL(string: code.verificationUri)
         deviceCode = DeviceCodePrompt(userCode: code.userCode, verificationURL: url)
     }

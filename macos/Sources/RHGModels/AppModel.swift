@@ -2,6 +2,26 @@ import Foundation
 import Observation
 import RHGBridge
 
+/// The window's tabs, in the tab picker's order.
+public enum AppTab: CaseIterable, Hashable, Sendable {
+    case sign
+    case history
+    case registry
+    case audit
+    case yubiKey
+
+    /// The tab picker's segment title.
+    public var title: String {
+        switch self {
+        case .sign: AppModel.signTabTitle
+        case .history: AppModel.historyTabTitle
+        case .registry: AppModel.registryTabTitle
+        case .audit: AppModel.auditTabTitle
+        case .yubiKey: AppModel.yubiKeyTabTitle
+        }
+    }
+}
+
 /// The app: startup, the status bar, core events and the quit sequence. It
 /// owns the tab and prompt models and routes the core's events to them.
 @MainActor
@@ -15,7 +35,7 @@ public final class AppModel {
         case fatal(message: String)
     }
 
-    /// The Help menu's one item.
+    /// Help → Export Error Log…, also offered by some alerts.
     nonisolated public static let exportErrorLogTitle = "Export Error Log\u{2026}"
     /// The tab picker's titles, in the tabs' order.
     nonisolated public static let signTabTitle = "Sign"
@@ -26,8 +46,19 @@ public final class AppModel {
 
     /// The quit confirmation with unsubmitted registry edits (`confirmDiscard`).
     nonisolated public static let quitConfirmation = Confirmation(
-        title: "Unsubmitted Changes", message: "The registry has unsubmitted changes. Exit anyway?",
-        confirmTitle: "Exit", isDestructive: true)
+        title: "Unsubmitted Changes",
+        message: "The registry has changes that haven't been submitted for review. If you quit, they'll be lost.",
+        confirmTitle: "Discard and Quit", isDestructive: true)
+
+    /// The title of the alert a startup failure shows before quitting.
+    nonisolated public static let fatalErrorTitle = "RHG Authenticator Can't Start"
+    /// The title of the alert app.internalError shows (`internalErrorMessage`).
+    nonisolated public static let internalErrorTitle = "Something Went Wrong"
+
+    /// View → Refresh's title on a tab without a refresh.
+    nonisolated public static let refreshMenuTitle = "Refresh"
+    /// The documentation Help → RHG Authenticator Help opens.
+    nonisolated public static let helpURL = URL(string: "https://github.com/RoyalHouseOfGeorgia/rhg_authenticator#readme")!
 
     /// Appended to a startup failure's message.
     nonisolated public static let reportSuffix =
@@ -42,6 +73,11 @@ public final class AppModel {
     public private(set) var updateStatus: UpdateStatus?
     /// The latest update.updated event.
     public private(set) var updatedNotice: UpdatedNotice?
+    /// The tab the window shows.
+    public var selectedTab: AppTab = .sign
+    /// Bumped by `requestFind()`; the History tab focuses its search field
+    /// when it changes.
+    public private(set) var findRequests = 0
 
     public let sign: SignModel
     public let bulk: BulkModel
@@ -87,6 +123,45 @@ public final class AppModel {
     /// are both disabled. The core's busy flag is the real guard.
     public var isSigningBusy: Bool { sign.isBusy || bulk.isActive }
 
+    /// Save SVG / Save PNG, the result's buttons and File's Save QR Code
+    /// items alike: a signed result, and no signing under way.
+    public var canSaveQR: Bool { sign.result != nil && !isSigningBusy }
+
+    /// View → Refresh's title: the visible tab's refresh button title, or
+    /// plain "Refresh" (disabled) on a tab without one (Sign, YubiKey).
+    public var refreshTitle: String {
+        switch selectedTab {
+        case .history: HistoryModel.refreshTitle
+        case .registry: RegistryModel.fetchTitle
+        case .audit: AuditModel.refreshTitle
+        case .sign, .yubiKey: Self.refreshMenuTitle
+        }
+    }
+
+    /// Whether the visible tab's refresh can run, as its button: History's
+    /// Refresh always, Fetch from Server unless a fetch or a submit is under
+    /// way, Audit's Refresh unless one is; never on Sign or YubiKey.
+    public var canRefresh: Bool {
+        switch selectedTab {
+        case .history: true
+        case .registry: registry.canFetch
+        case .audit: audit.canRefresh
+        case .sign, .yubiKey: false
+        }
+    }
+
+    /// View → Refresh (⌘R): what the visible tab's refresh button does
+    /// (Fetch from Server asks first when there are unsubmitted edits).
+    public func refresh() async {
+        guard canRefresh else { return }
+        switch selectedTab {
+        case .history: await history.refreshTapped()
+        case .registry: await registry.fetchTapped()
+        case .audit: await audit.refresh()
+        case .sign, .yubiKey: break
+        }
+    }
+
     /// The error log's suggested file name, rhg-error-log-YYYY-MM-DD.log, by
     /// today's date in the machine's time zone.
     public var suggestedErrorLogFilename: String {
@@ -102,7 +177,7 @@ public final class AppModel {
             let result = try await bridge.exportErrorLog(path: path)
             return AlertState(title: result.title, message: result.message)
         } catch {
-            return .error(error)
+            return .error(error, title: "Unable to Export Error Log")
         }
     }
 
@@ -121,6 +196,13 @@ public final class AppModel {
     /// Closes the "Updated to" notice.
     public func dismissUpdatedNotice() {
         updatedNotice = nil
+    }
+
+    /// Find…: shows the History tab, from any tab, and asks it to focus its
+    /// search field.
+    public func requestFind() {
+        selectedTab = .history
+        findRequests += 1
     }
 
     /// Restart now: the next quit relaunches the app after the update

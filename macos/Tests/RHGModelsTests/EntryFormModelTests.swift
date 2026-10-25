@@ -14,7 +14,7 @@ struct EntryFormModelTests {
         EntryFormModel(bridge: fake, clock: { lateNewYearsDay })
     }
 
-    @Test("UI copy matches the Fyne app")
+    @Test("UI copy")
     func copy() {
         #expect([EntryFormModel.addTitle, EntryFormModel.editTitle] == ["Add Entry", "Edit Entry"])
         #expect([EntryFormModel.addConfirmTitle, EntryFormModel.editConfirmTitle, EntryFormModel.cancelTitle] == ["Add", "Save", "Cancel"])
@@ -22,11 +22,11 @@ struct EntryFormModelTests {
             [
                 EntryFormModel.authorityLabel, EntryFormModel.fromLabel, EntryFormModel.toLabel, EntryFormModel.noExpiryLabel,
                 EntryFormModel.publicKeyLabel, EntryFormModel.noteLabel,
-            ] == ["Authority", "From date", "To date", "No expiry", "Public Key", "Note"])
+            ] == ["Authority", "From Date", "To Date", "No expiry", "Public Key", "Note"])
         #expect([EntryFormModel.authorityPlaceholder, EntryFormModel.notePlaceholder] == ["Authority name", "Optional note"])
         #expect(
             [EntryFormModel.importCertificateTitle, EntryFormModel.importFromYubiKeyTitle]
-                == ["Import Certificate", "Import from YubiKey"])
+                == ["Import Certificate\u{2026}", "Import from YubiKey"])
         #expect(EntryFormModel.noKeyText == "No key imported")
         #expect(EntryFormModel.yubiKeyBusyText == "The YubiKey is busy with another operation. Try again when it finishes.")
         #expect(EntryFormModel.certificateExtensions == ["crt", "pem"])

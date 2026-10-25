@@ -9,7 +9,8 @@ public struct Confirmation: Sendable, Equatable {
     public var cancelTitle: String
     /// A third button's title (nil: none), answered with the model's `alternate()`.
     public var alternateTitle: String?
-    /// The confirm button discards something (give it the destructive role).
+    /// The confirm button discards something: give it the destructive role,
+    /// and Return to no button.
     public var isDestructive: Bool
 
     public init(
@@ -24,14 +25,37 @@ public struct Confirmation: Sendable, Equatable {
         self.isDestructive = isDestructive
     }
 
-    /// The question's buttons in the order they are added to the dialog
-    /// (NSAlert shows the first rightmost and gives it Return). A question
-    /// that is not destructive has confirm first, then the alternate, if
-    /// any, then Cancel. A destructive one has Cancel first, so Return never
-    /// destroys anything, then confirm and the alternate.
+    /// The question's buttons in the order they are added to the dialog:
+    /// confirm, Cancel, then the alternate, if any, in every question.
+    /// NSAlert shows the first rightmost and each later one to its left, so
+    /// the window sheet reads, left to right, [alternate] [Cancel] [confirm]
+    /// (Delete Entry…: [Revoke Instead] [Cancel] [Delete]), the Mac layout
+    /// of [Don't Save] [Cancel] [Save]. `isDestructive` changes only the key
+    /// equivalents: in a destructive question no button has Return, and
+    /// Cancel has Escape.
     public var buttonRoles: [ConfirmChoice] {
         let alternate: [ConfirmChoice] = alternateTitle == nil ? [] : [.alternate]
-        return isDestructive ? [.cancel, .confirm] + alternate : [.confirm] + alternate + [.cancel]
+        return [.confirm, .cancel] + alternate
+    }
+
+    /// The key equivalent to give the button with `role`, or nil to keep
+    /// NSAlert's own (Return on the first button added, confirm). Cancel
+    /// always has Escape (NSAlert gives it only to a button titled
+    /// "Cancel"); in a destructive question no other button has a key, so
+    /// Return destroys nothing. Return does nothing there rather than
+    /// cancel (as Enter does on Windows): a button has one key, and Cancel
+    /// keeps Escape.
+    public func keyEquivalent(for role: ConfirmChoice) -> String? {
+        if role == .cancel {
+            return "\u{1b}"
+        }
+        return isDestructive ? "" : nil
+    }
+
+    /// Whether the button with `role` is marked destructive: confirm, in a
+    /// destructive question.
+    public func hasDestructiveAction(for role: ConfirmChoice) -> Bool {
+        isDestructive && role == .confirm
     }
 
     /// The answer of the button at `index` in `buttonRoles`; any other index

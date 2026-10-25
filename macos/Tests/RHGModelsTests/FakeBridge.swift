@@ -245,7 +245,7 @@ func setAuth(_ login: LoginModel, _ state: AuthState, _ fake: FakeBridge) async 
 let startupAudit = AuditResult(rows: [], status: "Loaded 0 commits")
 
 /// An AppModel whose startup succeeded, so its events are being drained, and
-/// whose Audit tab's first fetch has been sent.
+/// whose Audit tab's first fetch has finished.
 @MainActor
 func startedApp(
     _ fake: FakeBridge, clock: @escaping () -> Date = Date.init, openURL: @escaping @MainActor (URL) -> Void = { _ in }
@@ -256,7 +256,7 @@ func startedApp(
     fake.respond(.auditCommits, startupAudit)
     let app = AppModel(bridge: fake, clock: clock, openURL: openURL)
     await app.start()
-    #expect(await settle { fake.count(.auditCommits) == 1 })
+    #expect(await settle { fake.count(.auditCommits) == 1 && !app.audit.isRefreshing })
     // app.start loads the history, ending in history.changed.
     fake.emit(.historyChanged)
     #expect(await settle { fake.count(.historyList) == 1 && app.history.snapshot == historyList(count: 2) })
