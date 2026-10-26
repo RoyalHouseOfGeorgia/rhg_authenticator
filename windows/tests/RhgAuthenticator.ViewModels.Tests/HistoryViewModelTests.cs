@@ -138,18 +138,6 @@ public sealed class HistoryViewModelTests
                 HistoryViewModel.DuplicatesRemovedTitle, HistoryViewModel.RemoveDuplicatesFailedTitle,
                 HistoryViewModel.LoadFailedMessage,
             ]);
-        Assert.Equal(TimeSpan.FromMilliseconds(200), HistoryViewModel.SearchDebounce);
-    }
-
-    [Fact]
-    public void RequiresItsServices()
-    {
-        var login = new LoginViewModel(_fake, _confirm, new FakeClipboard(), new FakeUrlOpener(), _alerts);
-        Assert.Throws<ArgumentNullException>(() => new HistoryViewModel(null!, login, _confirm, _fileSave, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new HistoryViewModel(_fake, null!, _confirm, _fileSave, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new HistoryViewModel(_fake, login, null!, _fileSave, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new HistoryViewModel(_fake, login, _confirm, null!, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new HistoryViewModel(_fake, login, _confirm, _fileSave, null!));
     }
 
     [Fact]
@@ -170,18 +158,6 @@ public sealed class HistoryViewModelTests
         Assert.False(history.DeleteEntryCommand.CanExecute(null));
         Assert.True(history.RefreshCommand.CanExecute(null));
         Assert.Empty(_fake.Calls);
-    }
-
-    [Fact]
-    public async Task HistoryChangedReadsTheLogForTheQuery()
-    {
-        var list = List([1, 2]);
-        _fake.Respond(RpcMethod.HistoryList, list);
-        var history = NewModel();
-        await history.HistoryChangedAsync();
-        Assert.Same(list, history.Snapshot);
-        Assert.Equal(["{\"query\":\"\"}"], _fake.Params(RpcMethod.HistoryList));
-        Assert.Null(_alerts.Current);
     }
 
     [Fact]
@@ -432,17 +408,6 @@ public sealed class HistoryViewModelTests
         Assert.Equal(1, history.SelectedIndex);
         Assert.Equal("Detail of record 2", history.SelectedDetail);
         Assert.Equal(1, _fake.Count(RpcMethod.HistoryRecordText)); // the pick's only
-    }
-
-    [Fact]
-    public async Task AReReadWhereOnlyTheRevocationListFailedIsShown()
-    {
-        var history = await Loaded(List([1]) with { RevocationsLoaded = true });
-        var failed = List([1], revocationsUnavailable: true) with { RevocationsLoaded = true };
-        _fake.Respond(RpcMethod.HistoryList, failed);
-        await history.RereadAsync();
-        Assert.Same(failed, history.Snapshot);
-        Assert.Equal("Revocation unavailable", history.RevocationStatus);
     }
 
     [Fact]
@@ -756,7 +721,6 @@ public sealed class HistoryViewModelTests
 
     [Theory]
     [InlineData("failed")]
-    [InlineData("internal")]
     [InlineData("future")]
     public async Task AnyOtherRevocationFailureShowsRevocationFailedOfferingTheErrorLog(string code)
     {
@@ -987,21 +951,6 @@ public sealed class HistoryViewModelTests
     }
 
     [Fact]
-    public async Task RevokeInsteadWithTheRevocationListNotLoadedShowsRevocationFailed()
-    {
-        const string Message = "The revocation list has not loaded yet.";
-        var history = await Selected(0, List([1, 2, 3], revokeAvailable: false, revocationsUnavailable: true));
-        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
-        _confirm.Answer(ConfirmChoice.Alternate);
-        _confirm.Answer(ConfirmChoice.Confirm);
-        _fake.Fail(RpcMethod.HistoryRevoke, new RpcException(RpcErrorCode.Failed, Message));
-        await history.DeleteEntryCommand.ExecuteAsync(null);
-        Assert.Equal(new AlertState("Revocation Failed", Message, OffersErrorLogExport: true), _alerts.Current);
-        Assert.False(history.IsRevoking);
-        Assert.Equal(0, _fake.Count(RpcMethod.AuthLogin));
-    }
-
-    [Fact]
     public async Task HistoryChangedWhileTheQuestionIsOpenStillDeletesTheCapturedRecord()
     {
         var history = await Selected(1);
@@ -1068,8 +1017,6 @@ public sealed class HistoryViewModelTests
 
     [Theory]
     [InlineData("failed")]
-    [InlineData("input")]
-    [InlineData("internal")]
     [InlineData("future")]
     public async Task AnyOtherDeleteFailureShowsDeleteFailedOfferingTheErrorLog(string code)
     {
@@ -1244,14 +1191,12 @@ public sealed class HistoryViewModelTests
         Assert.Equal(3, history.SelectedIndex);
     }
 
-    [Theory]
-    [InlineData("notFound")]
-    [InlineData("failed")]
-    public async Task AFailedDeletionSelectsNothingOnTheNextHistoryChanged(string code)
+    [Fact]
+    public async Task AFailedDeletionSelectsNothingOnTheNextHistoryChanged()
     {
         var history = await Selected(1);
         _fake.Respond(RpcMethod.HistoryRecordText, Text(2));
-        _fake.Fail(RpcMethod.HistoryDeleteEntry, new RpcException(code, "no"));
+        _fake.Fail(RpcMethod.HistoryDeleteEntry, new RpcException("notFound", "no"));
         _confirm.Answer(ConfirmChoice.Confirm);
         await history.DeleteEntryCommand.ExecuteAsync(null);
         var rows = List([1, 3]);

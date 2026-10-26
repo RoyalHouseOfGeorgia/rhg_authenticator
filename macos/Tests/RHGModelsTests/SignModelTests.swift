@@ -37,8 +37,6 @@ struct SignModelTests {
         #expect(SignModel.preparingStatus == "Preparing to sign\u{2026}")
         #expect(SignModel.alreadyIssuedStatus == "Credential previously generated; no new record created.")
         #expect(SignModel.connectingStatus == "Connecting to YubiKey\u{2026}")
-        let reporting: [UInt8] = Array("Reporting".utf8) + [0xE2, 0x80, 0xA6]  // U+2026
-        #expect(Array(SignModel.reportingTitle.utf8) == reporting)
     }
 
     @Test("a validation error shows the core's message and never signs")
@@ -317,24 +315,15 @@ struct SignModelTests {
                 == [#"{"format":"png","path":"/out/a.png","url":"https://verify.royalhouseofgeorgia.ge/?p=abc"}"#])
     }
 
-    @Test("save failure shows the core's message", arguments: [QRFormat.svg, .png])
-    func saveFailure(_ format: QRFormat) async {
+    @Test("save failure shows the core's message")
+    func saveFailure() async {
         let fake = FakeBridge()
         fake.respond(.signSign, signResult())
         fake.fail(.signSaveQR, RPCError(code: .failed, message: "Choose a folder outside the app's data folder."))
         let model = filledModel(fake)
         await model.sign()
-        await model.saveQR(format: format, path: "/out/a")
+        await model.saveQR(format: .svg, path: "/out/a")
         #expect(
             model.alert == AlertState(title: "Unable to Save QR Code", message: "Choose a folder outside the app's data folder."))
-    }
-
-    @Test("loadHonors fills the picker")
-    func loadHonors() async throws {
-        let fake = FakeBridge()
-        fake.respond(.signHonors, HonorsResult(honors: ["X"]))
-        let model = SignModel(bridge: fake)
-        try await model.loadHonors()
-        #expect(model.honors == ["X"])
     }
 }

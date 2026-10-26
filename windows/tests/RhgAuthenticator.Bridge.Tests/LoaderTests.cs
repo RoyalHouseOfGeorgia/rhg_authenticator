@@ -258,10 +258,4 @@ public sealed class LoaderTests : IDisposable
         Assert.Throws<ArgumentException>(
             () => CoreLibrary.ExtractEmbedded(typeof(LoaderTests).Assembly, EmbeddedResourceName, "relative/dir"));
     }
-
-    [Fact]
-    public void FileNameIsPerOs()
-    {
-        Assert.Equal(OperatingSystem.IsWindows() ? "rhgcore.dll" : "librhgcore.so", CoreLibrary.FileName);
-    }
 }

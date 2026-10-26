@@ -18,38 +18,6 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
-// --- SafeRedirect tests ---
-
-func TestSafeRedirect_AllowsHTTPS(t *testing.T) {
-	target, _ := url.Parse("https://cdn.example.com/path")
-	req := &http.Request{URL: target}
-	via := []*http.Request{{}}
-	if err := SafeRedirect(req, via); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestSafeRedirect_RejectsHTTP(t *testing.T) {
-	target, _ := url.Parse("http://evil.com/path")
-	req := &http.Request{URL: target}
-	via := []*http.Request{{}}
-	if err := SafeRedirect(req, via); err == nil {
-		t.Fatal("expected error for HTTP redirect")
-	}
-}
-
-func TestSafeRedirect_RejectsExcessiveRedirects(t *testing.T) {
-	target, _ := url.Parse("https://example.com/path")
-	req := &http.Request{URL: target}
-	via := make([]*http.Request, 10)
-	for i := range via {
-		via[i] = &http.Request{}
-	}
-	if err := SafeRedirect(req, via); err == nil {
-		t.Fatal("expected error after 10 redirects")
-	}
-}
-
 // --- NewClient ---
 
 func TestNewClient(t *testing.T) {
@@ -75,21 +43,6 @@ func TestNewClient(t *testing.T) {
 
 func TestClient_baseURL_Default(t *testing.T) {
 	c := NewClient("tok")
-	if got := c.baseURL(); got != defaultAPIBaseURL {
-		t.Errorf("baseURL() = %q, want %q", got, defaultAPIBaseURL)
-	}
-}
-
-func TestClient_baseURL_Override(t *testing.T) {
-	c := NewClient("tok")
-	c.BaseURL = "http://localhost:9999"
-	if got := c.baseURL(); got != "http://localhost:9999" {
-		t.Errorf("baseURL() = %q, want %q", got, "http://localhost:9999")
-	}
-}
-
-func TestClient_baseURL_EmptyStringUsesDefault(t *testing.T) {
-	c := &Client{BaseURL: ""}
 	if got := c.baseURL(); got != defaultAPIBaseURL {
 		t.Errorf("baseURL() = %q, want %q", got, defaultAPIBaseURL)
 	}
@@ -183,88 +136,6 @@ func TestDoJSON_429(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "rate limit exceeded") {
 		t.Errorf("error = %q, want to contain 'rate limit exceeded'", err.Error())
-	}
-}
-
-// --- getRef ---
-
-func TestGetRef_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %s, want GET", r.Method)
-		}
-		if !strings.HasSuffix(r.URL.Path, "/git/refs/heads/main") {
-			t.Errorf("path = %s, want suffix /git/refs/heads/main", r.URL.Path)
-		}
-		w.WriteHeader(200)
-		w.Write([]byte(`{"ref": "refs/heads/main", "object": {"sha": "abc123def456"}}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	sha, err := c.getRef(context.Background(), "heads/main")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if sha != "abc123def456" {
-		t.Errorf("SHA = %q, want %q", sha, "abc123def456")
-	}
-}
-
-func TestGetRef_NotFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(404)
-		w.Write([]byte(`{"message": "Not Found"}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	_, err := c.getRef(context.Background(), "heads/nonexistent")
-	if err == nil {
-		t.Fatal("expected error for 404")
-	}
-	var ae *APIError
-	if !isAPIError(err, 404, &ae) {
-		t.Errorf("expected APIError 404, got %v", err)
-	}
-}
-
-// --- updateContents ---
-
-func TestUpdateContents_Base64Encoding(t *testing.T) {
-	rawContent := []byte(`{"keys": [{"test": true}]}`)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %s, want PUT", r.Method)
-		}
-		body, _ := io.ReadAll(r.Body)
-		var req map[string]string
-		if err := json.Unmarshal(body, &req); err != nil {
-			t.Fatalf("unmarshal request body: %v", err)
-		}
-		decoded, err := base64.StdEncoding.DecodeString(req["content"])
-		if err != nil {
-			t.Fatalf("base64 decode: %v", err)
-		}
-		if string(decoded) != string(rawContent) {
-			t.Errorf("decoded content = %q, want %q", decoded, rawContent)
-		}
-		if req["branch"] != "test-branch" {
-			t.Errorf("branch = %q, want %q", req["branch"], "test-branch")
-		}
-		if req["sha"] != "file-sha-123" {
-			t.Errorf("sha = %q, want %q", req["sha"], "file-sha-123")
-		}
-		w.WriteHeader(200)
-		w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	err := c.updateContents(context.Background(), "path/to/file.json", "test-branch", rawContent, "file-sha-123", "update msg")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -588,20 +459,6 @@ func TestCreateRevocationPR_OpenPRCheck(t *testing.T) {
 	}
 }
 
-func TestCreateRevocationPR_NoWriteAccess(t *testing.T) {
-	srv, f := newRevocationFakeServer(t, []byte(`{"revocations": []}`))
-	f.repoBody = `{"permissions": {"push": false}}`
-
-	c := newTestClient(srv, "tok")
-	_, err := c.CreateRevocationPR(context.Background(), testRevHashB, "2026-10-01")
-	if !errors.Is(err, ErrNoWriteAccess) {
-		t.Fatalf("error = %v, want ErrNoWriteAccess", err)
-	}
-	if slices.Contains(f.calls, "createRef") || slices.Contains(f.calls, "createPR") {
-		t.Errorf("calls = %v, want no branch or PR work", f.calls)
-	}
-}
-
 func TestCreateRevocationPR_InvalidHash(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("API should not be called for invalid hash: %s %s", r.Method, r.URL.Path)
@@ -788,16 +645,6 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	req.URL.Scheme = "http"
 	req.URL.Host = strings.TrimPrefix(t.targetURL, "http://")
 	return t.base.RoundTrip(req)
-}
-
-// isAPIError checks if err (possibly wrapped) contains an *APIError with the given status.
-func isAPIError(err error, status int, target **APIError) bool {
-	var ae *APIError
-	if errors.As(err, &ae) {
-		*target = ae
-		return ae.StatusCode == status
-	}
-	return false
 }
 
 // unwrapAll returns the innermost error in a chain.

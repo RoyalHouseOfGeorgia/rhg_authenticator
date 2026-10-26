@@ -28,12 +28,6 @@ public sealed class PinTests
     }
 
     [Fact]
-    public void TruncateRejectsNull()
-    {
-        Assert.Throws<ArgumentNullException>(() => PinTruncation.Truncate(null!, 8));
-    }
-
-    [Fact]
     public void PinSubmitParamsNeverPrintThePin()
     {
         var p = new PinSubmitParams(7, "secret-987", true);

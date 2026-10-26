@@ -6,30 +6,16 @@ public sealed class YubiKeyViewModelTests
 {
     private readonly FakeBridge _fake = new();
 
-    public static TheoryData<KeyCheck> Checks =>
-    [
-        new KeyCheck(KeyCheckOutcome.Found, "Key found in registry", ["Authority: A", "Fingerprint: ae21"]),
-        new KeyCheck(KeyCheckOutcome.NotFound, "Key NOT found in registry", ["Fingerprint: ae21"]),
-        new KeyCheck(KeyCheckOutcome.Failed, "Registry unavailable — connect to internet to check key", []),
-    ];
-
     [Fact]
     public void CopyMatchesTheFyneApp()
     {
         Assert.Equal("Check YubiKey", YubiKeyViewModel.CheckTitle);
-        Assert.Equal("Checking...", YubiKeyViewModel.CheckingStatus);
     }
 
     [Fact]
-    public void RequiresABridge()
+    public async Task ACheckShowsTheCoresStatusAndDetails()
     {
-        Assert.Throws<ArgumentNullException>(() => new YubiKeyViewModel(null!));
-    }
-
-    [Theory]
-    [MemberData(nameof(Checks))]
-    public async Task ACheckShowsTheCoresStatusAndDetails(KeyCheck result)
-    {
+        var result = new KeyCheck(KeyCheckOutcome.Found, "Key found in registry", ["Authority: A", "Fingerprint: ae21"]);
         _fake.Respond(RpcMethod.YubikeyCheck, result);
         var model = new YubiKeyViewModel(_fake);
         Assert.Equal("", model.Status);

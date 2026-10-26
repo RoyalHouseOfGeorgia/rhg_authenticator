@@ -255,14 +255,6 @@ func TestIsRevoked_CaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestIsRevoked_EmptyList(t *testing.T) {
-	list := &RevocationList{Revocations: []RevocationEntry{}}
-	set := BuildRevocationSet(list)
-	if IsRevoked(strings.Repeat("a", 64), set) {
-		t.Error("expected IsRevoked to return false for empty list")
-	}
-}
-
 func TestIsRevoked_NilList(t *testing.T) {
 	if IsRevoked(strings.Repeat("a", 64), nil) {
 		t.Error("expected IsRevoked to return false for nil list")
@@ -384,36 +376,5 @@ func TestAppendRevocationEntry_HashLowercased(t *testing.T) {
 	want := strings.ToLower(hashUpper)
 	if result.Revocations[0].Hash != want {
 		t.Errorf("hash = %q, want lowercased %q", result.Revocations[0].Hash, want)
-	}
-}
-
-func TestAppendRevocationEntry_RevokedOnPassedThrough(t *testing.T) {
-	existing := &RevocationList{Revocations: []RevocationEntry{}}
-	revokedOn := "2099-12-31"
-	result := AppendRevocationEntry(existing, strings.Repeat("a", 64), revokedOn)
-	if result.Revocations[0].RevokedOn != revokedOn {
-		t.Errorf("revoked_on = %q, want %q", result.Revocations[0].RevokedOn, revokedOn)
-	}
-}
-
-func TestIsRevoked_ViaSet(t *testing.T) {
-	hashLower := strings.Repeat("c", 64)
-	list := &RevocationList{
-		Revocations: []RevocationEntry{
-			{Hash: hashLower, RevokedOn: "2025-03-01"},
-		},
-	}
-	set := BuildRevocationSet(list)
-
-	// Mixed-case lookup should match.
-	mixedCase := strings.Repeat("C", 32) + strings.Repeat("c", 32)
-	if !IsRevoked(mixedCase, set) {
-		t.Error("expected IsRevoked to find mixed-case hash in set")
-	}
-
-	// Non-existent hash should not match.
-	absent := strings.Repeat("d", 64)
-	if IsRevoked(absent, set) {
-		t.Error("expected IsRevoked to return false for absent hash")
 	}
 }

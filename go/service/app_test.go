@@ -704,21 +704,6 @@ func TestReportSignError_OnlyLatestFailure(t *testing.T) {
 	}
 }
 
-func TestReportSignError_BrowserFormCanRepeat(t *testing.T) {
-	h := newAppHarness(t, ghapi.NewFakeKeyring())
-	titles := stubReportIssue(h, "https://github.com/o/r/issues/new?title=x", false)
-	h.openErr = errors.New("boom")
-	id := signError(t, h, validFields("Alice")).ReportID
-	for range 2 {
-		if res, err := h.app.ReportSignError(context.Background(), id); err != nil || res.Filed {
-			t.Fatalf("ReportSignError = %+v, %v", res, err)
-		}
-	}
-	if len(*titles) != 2 {
-		t.Errorf("tries = %d, want 2", len(*titles))
-	}
-}
-
 func TestReportSignError_Busy(t *testing.T) {
 	h := newAppHarness(t, ghapi.NewFakeKeyring())
 	titles := stubReportIssue(h, "https://github.com/o/r/issues/7", true)

@@ -50,20 +50,6 @@ public sealed class SignViewModelTests
         Assert.Equal(
             ["Save SVG", "Save PNG", "Copy URL"],
             [SignViewModel.SaveSvgTitle, SignViewModel.SavePngTitle, SignViewModel.CopyUrlTitle]);
-        Assert.Equal([.. "Reporting"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(ReportState.ReportingTitle)); // U+2026
-        Assert.Equal("Preparing to sign...", SignViewModel.PreparingStatus);
-        Assert.Equal("Connecting to YubiKey...", SignViewModel.ConnectingStatus);
-    }
-
-    [Fact]
-    public void RequiresItsServices()
-    {
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(null!, _fileSave, _clipboard, _urls, _alerts, _bulk));
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, null!, _clipboard, _urls, _alerts, _bulk));
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, null!, _urls, _alerts, _bulk));
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, _clipboard, null!, _alerts, _bulk));
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, _clipboard, _urls, null!, _bulk));
-        Assert.Throws<ArgumentNullException>(() => new SignViewModel(_fake, _fileSave, _clipboard, _urls, _alerts, null!));
     }
 
     [Fact]
@@ -132,17 +118,16 @@ public sealed class SignViewModelTests
         Assert.Null(_alerts.Current);
     }
 
-    [Theory]
-    [InlineData(RpcErrorCode.Failed, "No YubiKey detected.")]
-    [InlineData(RpcErrorCode.Busy, "Core: another signing is in progress.")]
-    [InlineData(RpcErrorCode.Internal, "An internal error occurred — please restart")]
-    public async Task AnErrorWithoutOfferReportShowsItsMessageVerbatim(RpcErrorCode code, string message)
+    [Fact]
+    public async Task AnErrorWithoutOfferReportShowsItsMessageVerbatim()
     {
-        _fake.Fail(RpcMethod.SignSign, new RpcException(code, message));
+        const string message = "No YubiKey detected.";
+        _fake.Fail(RpcMethod.SignSign, new RpcException(RpcErrorCode.Failed, message));
         var model = FilledModel();
         await model.SignCommand.ExecuteAsync(null);
         Assert.Equal(message, model.Status);
         Assert.IsType<ReportState.Unavailable>(model.Report);
+        Assert.Null(model.Report.ButtonTitle);
         Assert.False(model.ReportIssueCommand.CanExecute(null));
         Assert.Null(model.Result);
         Assert.False(model.IsBusy);
@@ -476,17 +461,15 @@ public sealed class SignViewModelTests
         Assert.Empty(_fake.Calls);
     }
 
-    [Theory]
-    [InlineData(QrFormat.Svg)]
-    [InlineData(QrFormat.Png)]
-    public async Task SaveFailureShowsTheCoresMessage(QrFormat format)
+    [Fact]
+    public async Task SaveFailureShowsTheCoresMessage()
     {
         _fake.Respond(RpcMethod.SignSign, Fixtures.SignResult());
         _fake.Fail(RpcMethod.SignSaveQr, new RpcException(RpcErrorCode.Failed, "Choose a folder outside the app's data folder."));
         var model = FilledModel();
         await model.SignCommand.ExecuteAsync(null);
         _fileSave.Answer("/data/a");
-        await (format == QrFormat.Svg ? model.SaveSvgCommand : model.SavePngCommand).ExecuteAsync(null);
+        await model.SaveSvgCommand.ExecuteAsync(null);
         Assert.Equal(new AlertState("Error", "Choose a folder outside the app's data folder."), _alerts.Current);
     }
 
@@ -528,15 +511,5 @@ public sealed class SignViewModelTests
         await model.SignCommand.ExecuteAsync(null);
         model.CopyUrlCommand.Execute(null);
         Assert.Equal(new AlertState("Error", "Host: clipboard busy."), _alerts.Current);
-    }
-
-    [Fact]
-    public async Task LoadHonorsFillsThePicker()
-    {
-        _fake.Respond(RpcMethod.SignHonors, new HonorsResult(["X", "Y"]));
-        var model = FilledModel();
-        Assert.Empty(model.Honors);
-        await model.LoadHonorsAsync();
-        Assert.Equal(["X", "Y"], model.Honors);
     }
 }

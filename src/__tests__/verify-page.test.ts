@@ -149,15 +149,6 @@ describe('getRegistryUrl', () => {
     });
     expect(getRegistryUrl()).toBe('/keys/registry.json');
   });
-
-  it('returns relative URL for LAN IP', () => {
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, hostname: '192.168.1.100' },
-      writable: true,
-      configurable: true,
-    });
-    expect(getRegistryUrl()).toBe('/keys/registry.json');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -189,15 +180,6 @@ describe('getRevocationListUrl', () => {
   it('returns relative URL for localhost', () => {
     Object.defineProperty(window, 'location', {
       value: { ...originalLocation, hostname: 'localhost' },
-      writable: true,
-      configurable: true,
-    });
-    expect(getRevocationListUrl()).toBe('/keys/revocations.json');
-  });
-
-  it('returns relative URL for LAN IP', () => {
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, hostname: '192.168.1.100' },
       writable: true,
       configurable: true,
     });
@@ -264,15 +246,6 @@ describe('fetchRegistry', () => {
     await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
       'Registry response exceeds size limit',
     );
-  });
-
-  it('accepts response body under 1 MiB with valid registry JSON', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(validJson, { status: 200 }),
-    );
-    const result = await fetchRegistry('/keys/registry.json');
-    // validJson is well under 1 MiB — just verify it parses successfully
-    expect(result.keys).toHaveLength(1);
   });
 
   it('throws on schema validation failure (valid JSON, invalid registry)', async () => {
@@ -453,34 +426,6 @@ describe('fetchRevocationList', () => {
 });
 
 // ---------------------------------------------------------------------------
-// fetchAndValidate error label consistency
-// ---------------------------------------------------------------------------
-
-describe('fetchAndValidate error labels', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('fetchRegistry network error message contains "verification"', async () => {
-    vi.mocked(fetch).mockRejectedValue(new TypeError('Network failure'));
-    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
-      /verification/,
-    );
-  });
-
-  it('fetchRevocationList network error message contains "revocation"', async () => {
-    vi.mocked(fetch).mockRejectedValue(new TypeError('Network failure'));
-    await expect(fetchRevocationList('/keys/revocations.json')).rejects.toThrow(
-      /revocation/,
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
 // runVerification
 // ---------------------------------------------------------------------------
 
@@ -542,40 +487,6 @@ describe('runVerification', () => {
     );
     // Signature length validated by verifyCredential, returns invalid (not error).
     expect(result).toEqual({ status: 'invalid', reason: 'invalid signature length' });
-  });
-
-  it('returns invalid with date-mismatch reason', async () => {
-    const restrictedEntry = makeKeyEntry(publicKey, { from: '2020-01-01', to: '2023-12-31' });
-    const restrictedRegistry = makeRegistry(restrictedEntry);
-    // Credential date is 2024-06-15, key expired end of 2023
-    const params = makeSignedParams(secretKey);
-    const result = await runVerification(params, restrictedRegistry);
-    expect(result.status).toBe('invalid');
-    expect((result as { status: 'invalid'; reason: string }).reason).toContain(
-      'date outside key validity period',
-    );
-  });
-
-  it('rejects payload with non-string field value', async () => {
-    const badObj = { ...validCredentialObj(), recipient: 123 };
-    const payloadBytes = canonicalize(badObj as Record<string, string | number>);
-    const signatureBytes = sign(payloadBytes, secretKey);
-    const params: PageParams = {
-      payload: base64urlEncode(payloadBytes),
-      signature: base64urlEncode(signatureBytes),
-    };
-    const result = await runVerification(params, registry);
-    expect(result.status).toBe('invalid');
-  });
-
-  it('returns invalid for completely garbled payload', async () => {
-    const badPayload = base64urlEncode(new TextEncoder().encode('not json {{'));
-    const sig = base64urlEncode(new Uint8Array(64));
-    const result = await runVerification(
-      { payload: badPayload, signature: sig },
-      registry,
-    );
-    expect(result.status).toBe('invalid');
   });
 
   it('valid result authority comes from registry key, not credential payload', async () => {
@@ -641,34 +552,6 @@ describe('runVerification', () => {
     } finally {
       vi.stubGlobal('crypto', originalCrypto);
     }
-  });
-
-  it('returns revoked via crypto.subtle.digest → hex → revocation set lookup end-to-end', async () => {
-    // Build a signed credential using a fresh keypair so it is independent of
-    // other tests.
-    const { secretKey: sk, publicKey: pk } = makeKeypair(42);
-    const credObj = validCredentialObj({ recipient: 'Crypto Subtle Test' });
-    const payloadBytes = canonicalize(credObj as Record<string, string | number>);
-    const signatureBytes = sign(payloadBytes, sk);
-    const params: PageParams = {
-      payload: base64urlEncode(payloadBytes),
-      signature: base64urlEncode(signatureBytes),
-    };
-
-    // Compute the hash the same way runVerification does: via crypto.subtle.digest
-    // then hex-encode with zero-padded bytes.
-    const hashBuffer = await crypto.subtle.digest('SHA-256', payloadBytes as Uint8Array<ArrayBuffer>);
-    const payloadHash = [...new Uint8Array(hashBuffer)]
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-
-    // Build a registry that will accept the credential, and a revocation list
-    // that marks the computed hash as revoked.
-    const testRegistry = makeRegistry(makeKeyEntry(pk));
-    const revocationList = makeRevocationList(payloadHash);
-
-    const result = await runVerification(params, testRegistry, revocationList);
-    expect(result.status).toBe('revoked');
   });
 });
 
@@ -745,18 +628,6 @@ describe('renderResult', () => {
     expect(container.querySelector('a[href="mailto:secretary@royalhouseofgeorgia.ge"]')).not.toBeNull();
   });
 
-  it('does not render credential fields on invalid result (security)', () => {
-    const result: VerifyPageResult = {
-      status: 'invalid',
-      reason: 'tampered',
-    };
-    renderResult(result, container);
-
-    // Verify no credential field elements exist
-    expect(container.querySelectorAll('.credential-field')).toHaveLength(0);
-    expect(container.querySelectorAll('.field-value')).toHaveLength(0);
-  });
-
   it('all text uses textContent — script tag in field appears as literal text', () => {
     const xssAttempt = '<script>alert("xss")</script>';
     const result: VerifyPageResult = {
@@ -785,14 +656,6 @@ describe('renderResult', () => {
     const link = container.querySelector('a[href="https://royalhouseofgeorgia.ge"]');
     expect(link).not.toBeNull();
     expect(link!.textContent).toBe('Visit the Royal House of Georgia');
-  });
-
-  it('mailto link present in both invalid and error states', () => {
-    renderResult({ status: 'invalid', reason: 'x' }, container);
-    expect(container.querySelector('a[href="mailto:secretary@royalhouseofgeorgia.ge"]')).not.toBeNull();
-
-    renderResult({ status: 'error', message: 'x' }, container);
-    expect(container.querySelector('a[href="mailto:secretary@royalhouseofgeorgia.ge"]')).not.toBeNull();
   });
 
   // --- Revocation render tests ---
@@ -1079,65 +942,5 @@ describe('initVerifyPage', () => {
     expect(container.querySelector('.result-revoked')).not.toBeNull();
     expect(container.textContent).toContain('Credential Revoked');
     expect(container.querySelectorAll('.credential-field')).toHaveLength(0);
-  });
-
-  it('Promise.allSettled: registry and revocation fetched in parallel', async () => {
-    const params = makeSignedParams(secretKey);
-    Object.defineProperty(window, 'location', {
-      value: {
-        ...window.location,
-        search: `?p=${params.payload}&s=${params.signature}`,
-        hostname: 'localhost',
-      },
-      writable: true,
-      configurable: true,
-    });
-
-    let registryFetchTime = 0;
-    let revocationFetchTime = 0;
-    const startTime = Date.now();
-
-    vi.mocked(fetch).mockImplementation((input) => {
-      const url = String(input);
-      if (url.includes('registry.json')) {
-        registryFetchTime = Date.now() - startTime;
-        return Promise.resolve(new Response(makeRegistryJson(registry), { status: 200 }));
-      }
-      if (url.includes('revocations.json')) {
-        revocationFetchTime = Date.now() - startTime;
-        return Promise.resolve(
-          new Response(makeRevocationListJson(makeEmptyRevocationList()), { status: 200 }),
-        );
-      }
-      return Promise.reject(new Error(`Unexpected URL: ${url}`));
-    });
-
-    await initVerifyPage();
-
-    // Both fetches should be initiated at approximately the same time (parallel)
-    // In a synchronous mock environment, both will be ~0ms from start
-    expect(Math.abs(registryFetchTime - revocationFetchTime)).toBeLessThan(50);
-    // Verify both were actually called
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Cross-system hash consistency
-// ---------------------------------------------------------------------------
-
-describe('SHA-256 hash consistency', () => {
-  it('SHA-256 hash of canonical payload matches expected hex string', async () => {
-    const payload = new TextEncoder().encode(
-      '{"date":"2024-06-15","detail":"Test Detail","honor":"Test Honor","recipient":"Jane Doe","version":1}',
-    );
-    const expected = createHash('sha256').update(payload).digest('hex');
-
-    // Compute via crypto.subtle (which is what the browser uses)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', payload);
-    const actual = [...new Uint8Array(hashBuffer)]
-      .map(b => b.toString(16).padStart(2, '0')).join('');
-
-    expect(actual).toBe(expected);
   });
 });

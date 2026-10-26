@@ -5,10 +5,6 @@ import (
 	"errors"
 )
 
-// maxStdBase64Input is the maximum allowed length for standard Base64 input
-// to DecodeStandard. Matches the TypeScript MAX_B64_INPUT = 256.
-const maxStdBase64Input = 256
-
 // Encode encodes data to an unpadded Base64URL string.
 func Encode(data []byte) string {
 	return base64.RawURLEncoding.EncodeToString(data)
@@ -29,13 +25,4 @@ func Decode(s string) ([]byte, error) {
 	}
 
 	return base64.RawURLEncoding.DecodeString(clean)
-}
-
-// DecodeStandard decodes a standard padded Base64 string to bytes.
-// It enforces a maximum input length of 256 characters.
-func DecodeStandard(s string) ([]byte, error) {
-	if len(s) > maxStdBase64Input {
-		return nil, errors.New("base64: input exceeds maximum length")
-	}
-	return base64.StdEncoding.DecodeString(s)
 }

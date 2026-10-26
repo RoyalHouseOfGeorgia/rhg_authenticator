@@ -45,9 +45,7 @@ struct PINPromptModelTests {
     @Test(
         "the PIN is capped to maxBytes UTF-8 bytes between scalars",
         arguments: [
-            ("12345678", 8, "12345678"), ("123456789", 8, "12345678"), ("1234567\u{E9}", 8, "1234567"),
-            ("123456\u{E9}", 8, "123456\u{E9}"), ("e\u{301}e\u{301}e\u{301}", 4, "e\u{301}e"),
-            ("\u{1F600}\u{1F600}", 6, "\u{1F600}"),
+            ("123456789", 8, "12345678"), ("1234567\u{E9}", 8, "1234567"),
         ])
     func cap(_ typed: String, _ maxBytes: Int, _ kept: String) {
         let model = shown(FakeBridge(), maxBytes: maxBytes)

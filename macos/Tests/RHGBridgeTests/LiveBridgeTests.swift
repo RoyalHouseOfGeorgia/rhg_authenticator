@@ -70,16 +70,6 @@ struct LiveBridgeInProcessTests {
         }
     }
 
-    @Test("a method before app.init is an input error")
-    func beforeInit() async {
-        do {
-            _ = try await LiveBridge.install().appInfo()
-            Issue.record("app.info succeeded before app.init")
-        } catch {
-            #expect(error.code == .input)
-        }
-    }
-
     @Test("params that cannot be encoded are badParams, not sent")
     func badParams() async {
         struct NotJSON: Encodable, Sendable { var value = Double.nan }

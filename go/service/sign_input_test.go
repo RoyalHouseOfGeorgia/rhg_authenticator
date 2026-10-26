@@ -131,32 +131,6 @@ func TestSignFlowErrorMessage_InvalidCredentialSanitized(t *testing.T) {
 	}
 }
 
-func TestCapitalize(t *testing.T) {
-	for in, want := range map[string]string{"": "", "abc": "Abc", "Abc": "Abc", "ábc": "Ábc", "1a": "1a"} {
-		if got := capitalize(in); got != want {
-			t.Errorf("capitalize(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestIsOperatorInputError(t *testing.T) {
-	cases := map[string]struct {
-		err  error
-		want bool
-	}{
-		"too long":        {&core.TooLongForQRError{OverBytes: 1}, true},
-		"invalid":         {&core.InvalidCredentialError{Reason: errors.New("x")}, true},
-		"wrapped invalid": {&signFlowError{Phase: phaseSign, Err: &core.InvalidCredentialError{Reason: errors.New("x")}}, true},
-		"cancelled":       {errSigningCancelled, false},
-		"generic":         {errors.New("boom"), false},
-	}
-	for name, tc := range cases {
-		if got := isOperatorInputError(tc.err); got != tc.want {
-			t.Errorf("%s: got %v, want %v", name, got, tc.want)
-		}
-	}
-}
-
 func TestSignIssueBody_OmitsRawError(t *testing.T) {
 	err := &signFlowError{Phase: phaseQR, Err: errors.New("open /home/alice/secret/issuance.log: denied")}
 	msg := "QR generation failed. Export the error log for details."

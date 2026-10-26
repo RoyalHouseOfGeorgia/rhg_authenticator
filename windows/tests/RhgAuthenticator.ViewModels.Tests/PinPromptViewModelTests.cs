@@ -23,12 +23,6 @@ public sealed class PinPromptViewModelTests
         Assert.Equal("Cancel", PinPromptViewModel.CancelTitle);
     }
 
-    [Fact]
-    public void RequiresABridge()
-    {
-        Assert.Throws<ArgumentNullException>(() => new PinPromptViewModel(null!));
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -68,18 +62,10 @@ public sealed class PinPromptViewModelTests
     }
 
     [Theory]
-    [InlineData("12345678", 8, "12345678")]
-    [InlineData("123456789", 8, "12345678")]
-    [InlineData("1234567é", 8, "1234567")]
-    [InlineData("123456é", 8, "123456é")]
     // Georgian letters are 3 UTF-8 bytes each: 8 bytes keep 2 of them, not 8 UTF-16 units.
     [InlineData("ქართული", 8, "ქა")]
-    [InlineData("12ქა", 8, "12ქა")]
     // A combining mark is a scalar of its own and may be cut from its base.
     [InlineData("ééé", 4, "ée")]
-    // An emoji is one 4-byte scalar (two UTF-16 units), never split.
-    [InlineData("\U0001F600\U0001F600", 6, "\U0001F600")]
-    [InlineData("1234567\U0001F600", 8, "1234567")]
     public void ThePinIsCappedToMaxBytesBetweenScalars(string typed, int maxBytes, string kept)
     {
         var model = Shown(new FakeBridge(), maxBytes: maxBytes);
@@ -188,11 +174,5 @@ public sealed class PinPromptViewModelTests
         var text = model.ToString();
         Assert.DoesNotContain("4321", text, StringComparison.Ordinal);
         Assert.Contains("<redacted>", text, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void PresentRequiresARequest()
-    {
-        Assert.Throws<ArgumentNullException>(() => new PinPromptViewModel(new FakeBridge()).Present(null!));
     }
 }

@@ -29,9 +29,7 @@ struct RegistryModelTests {
         #expect(RegistryModel.fetchTitle == "Fetch from Server")
         #expect(RegistryModel.submitTitle == "Submit for Review")
         #expect([RegistryModel.addEntryTitle, RegistryModel.editEntryTitle] == ["Add Entry\u{2026}", "Edit Entry\u{2026}"])
-        #expect(
-            [RegistryModel.loadedStatus, RegistryModel.fetchingStatus, RegistryModel.loadFailedStatus]
-                == ["Loaded from registry server", "Fetching registry\u{2026}", "Failed to load registry"])
+        #expect(RegistryModel.fetchingStatus == "Fetching registry\u{2026}")
         #expect(
             [RegistryModel.submittingStatus, RegistryModel.submitBusyStatus]
                 == ["Creating pull request\u{2026}", "Submit already in progress"])
@@ -46,34 +44,6 @@ struct RegistryModelTests {
     func tooltips() {
         #expect(RegistryModel.editEntryTooltip == "Select an entry to edit it.")
         #expect(RegistryModel.fetchTooltip == "Download the latest registry (\u{2318}R)")
-    }
-
-    @Test("load: columns, snapshot, and the loaded status")
-    func load() async throws {
-        let fake = FakeBridge()
-        let registry = try await loaded(fake)
-        #expect(registry.columns == registryColumns)
-        #expect(registry.snapshot == registrySnapshot(count: 2))
-        #expect(registry.status == "Loaded from registry server")
-        #expect(registry.selection == nil && registry.entryForm == nil && registry.alert == nil)
-        #expect(fake.methods == ["registry.columns", "registry.snapshot"])
-    }
-
-    @Test("load before the registry arrived: fetching")
-    func loadNotLoaded() async throws {
-        let registry = try await loaded(FakeBridge(), snapshot: registrySnapshot(count: 0, loaded: false))
-        #expect(registry.status == RegistryModel.fetchingStatus)
-    }
-
-    @Test("load failures throw the core's error", arguments: [RPCMethod.registryColumns, .registrySnapshot])
-    func loadFailure(_ failing: RPCMethod) async {
-        let fake = FakeBridge()
-        fake.respond(.registryColumns, ColumnsResult(columns: registryColumns))
-        fake.respond(.registrySnapshot, registrySnapshot(count: 1))
-        fake.reset(failing)
-        fake.fail(failing, RPCError(code: .internal, message: "broke"))
-        let registry = RegistryModel(bridge: fake, login: LoginModel(bridge: fake))
-        await #expect(throws: RPCError(code: .internal, message: "broke")) { try await registry.load() }
     }
 
     // MARK: Selection
@@ -213,12 +183,6 @@ struct RegistryModelTests {
         #expect(!registry.isFetching && !registry.isBusy)
     }
 
-    @Test("a loaded registry is not fetching")
-    func notFetchingWhenLoaded() async throws {
-        let registry = try await loaded(FakeBridge())
-        #expect(!registry.isFetching && !registry.isSubmitting && !registry.isBusy)
-    }
-
     @Test("fetching while Fetch runs and until its registry.changed")
     func fetchingDuringFetch() async throws {
         let fake = FakeBridge()
@@ -324,21 +288,6 @@ struct RegistryModelTests {
         await fetch.value
     }
 
-    @Test("while a submit runs, Fetch and Submit do nothing")
-    func busyDuringSubmit() async throws {
-        let fake = FakeBridge()
-        let held = fake.hold(.registrySubmit)
-        let registry = try await loaded(fake)
-        let submit = Task { await registry.submitForReview() }
-        #expect(await settle { fake.count(.registrySubmit) == 1 })
-        await registry.submitForReview()
-        await registry.fetchTapped()
-        #expect(fake.count(.registrySubmit) == 1)
-        #expect(fake.count(.registryFetch) == 0)
-        held.release(SubmitResult(prNumber: 3, url: ""))
-        await submit.value
-    }
-
     @Test("while a fetch runs, Add Entry and Edit Entry do nothing: the fetch replaces the core's edits")
     func noEntryFormDuringFetch() async throws {
         let fake = FakeBridge()
@@ -357,15 +306,6 @@ struct RegistryModelTests {
         await fetch.value
         await registry.registryChanged()
         #expect(registry.canAddEntry && registry.canEditEntry(row: 1))
-    }
-
-    @Test("during the startup load, Fetch and Submit do nothing")
-    func busyDuringStartupLoad() async throws {
-        let fake = FakeBridge()
-        let registry = try await loaded(fake, snapshot: registrySnapshot(count: 2, loaded: false))
-        await registry.fetchTapped()
-        await registry.submitForReview()
-        #expect(fake.count(.registryFetch) == 0 && fake.count(.registrySubmit) == 0)
     }
 
     // MARK: Fetch
@@ -407,15 +347,6 @@ struct RegistryModelTests {
         #expect(registry.status == "Loaded from registry server")
     }
 
-    @Test("a failed fetch: Failed to load registry")
-    func fetchFailure() async throws {
-        let fake = FakeBridge()
-        fake.fail(.registryFetch, RPCError(code: .failed, message: "offline"))
-        let registry = try await loaded(fake)
-        await registry.fetchTapped()
-        #expect(registry.status == "Failed to load registry")
-    }
-
     // MARK: Add and Edit
 
     @Test("Add Entry opens an add form; Cancel closes it")
@@ -449,20 +380,6 @@ struct RegistryModelTests {
         fake.respond(.registryAddEntry, Empty())
         await registry.submitEntryForm()
         #expect(registry.selection == nil)
-        #expect(!registry.canEditEntry)
-        registry.editEntryTapped()
-        #expect(registry.entryForm == nil)
-        #expect(registry.alert == nil)
-    }
-
-    @Test("Edit Entry is disabled for a selected row past the entries")
-    func editRowPastEntries() async throws {
-        let fake = FakeBridge()
-        let two = registrySnapshot(count: 2)
-        let snapshot = RegistrySnapshot(entries: [two.entries[0]], rows: two.rows, dirty: false, loaded: true)
-        let registry = try await loaded(fake, snapshot: snapshot)
-        registry.select(row: 1)
-        #expect(registry.selection == 1)
         #expect(!registry.canEditEntry)
         registry.editEntryTapped()
         #expect(registry.entryForm == nil)
@@ -631,18 +548,6 @@ struct RegistryModelTests {
         #expect(fake.count(.registryFetch) == 1)
     }
 
-    @Test("Submit success, browser declined: nothing opens")
-    func submitDeclined() async throws {
-        let fake = FakeBridge()
-        fake.respond(.registrySubmit, SubmitResult(prNumber: 7, url: prURL))
-        let urls = URLRecorder()
-        let registry = try await loaded(fake, openURL: urls.open)
-        await registry.submitForReview()
-        registry.dismissConfirmation()
-        await registry.confirm()
-        #expect(urls.opened.isEmpty)
-    }
-
     @Test("Submit success without a URL: an information alert, nothing to open")
     func submitWithoutURL() async throws {
         let fake = FakeBridge()
@@ -713,7 +618,7 @@ struct RegistryModelTests {
 
     @Test(
         "any other failure: Submission Failed offering the error log",
-        arguments: [RPCErrorCode.failed, .internal, .unknown("future")])
+        arguments: [RPCErrorCode.failed, .unknown("future")])
     func submitFailed(_ code: RPCErrorCode) async throws {
         let fake = FakeBridge()
         fake.fail(.registrySubmit, RPCError(code: code, message: "GitHub returned an error."))

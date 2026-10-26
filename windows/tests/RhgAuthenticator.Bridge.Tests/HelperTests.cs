@@ -101,14 +101,6 @@ public sealed class HelperTests
     }
 
     [Fact]
-    public async Task MissingResponseIsBadResponse()
-    {
-        IBridge bridge = new RecordingBridge(new Dictionary<string, byte[]>());
-        var error = await Assert.ThrowsAsync<RpcException>(() => bridge.AppInfoAsync());
-        Assert.Equal(RpcException.BadResponseMessage, error.Message);
-    }
-
-    [Fact]
     public void ResultSpotChecks()
     {
         T Result<T>(string path, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> info)

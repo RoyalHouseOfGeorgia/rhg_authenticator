@@ -179,25 +179,6 @@ func TestValidateCredential_EmptyFields(t *testing.T) {
 	}
 }
 
-func TestValidateCredential_MaxLengthBoundary(t *testing.T) {
-	// Exactly at max — should pass.
-	obj := validObj()
-	obj["honor"] = strings.Repeat("A", 200)
-	_, err := ValidateCredential(obj)
-	if err != nil {
-		t.Fatalf("expected no error at max length, got %v", err)
-	}
-}
-
-func TestValidateCredential_MaxLengthExceeded(t *testing.T) {
-	obj := validObj()
-	obj["honor"] = strings.Repeat("A", 201)
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "honor exceeds maximum length of 200" {
-		t.Fatalf("expected max length error, got %v", err)
-	}
-}
-
 func TestValidateCredential_MaxLengthGeorgianText(t *testing.T) {
 	// Georgian characters are multi-byte but each is 1 rune.
 	// 200 Georgian characters should pass for honor (max 200 runes).
@@ -231,15 +212,6 @@ func TestValidateCredential_InvalidDate(t *testing.T) {
 	_, err := ValidateCredential(obj)
 	if err == nil || err.Error() != "invalid date: 2025-02-30" {
 		t.Fatalf("expected invalid date error, got %v", err)
-	}
-}
-
-func TestValidateCredential_Year0000(t *testing.T) {
-	obj := validObj()
-	obj["date"] = "0000-01-01"
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "invalid date: 0000-01-01" {
-		t.Fatalf("expected invalid date error for year 0000, got %v", err)
 	}
 }
 

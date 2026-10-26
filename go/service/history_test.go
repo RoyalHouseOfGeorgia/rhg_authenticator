@@ -25,24 +25,6 @@ import (
 
 // --- formatRecordSummary tests ---
 
-func TestFormatRecordSummary(t *testing.T) {
-	rec := issuancelog.IssuanceRecord{
-		Date:      "2026-03-14",
-		Recipient: "John Doe",
-		Honor:     "Order of the Crown of Georgia",
-	}
-	got := formatRecordSummary(rec)
-	if !strings.Contains(got, "2026-Mar-14") {
-		t.Error("summary should contain formatted date")
-	}
-	if !strings.Contains(got, "John Doe") {
-		t.Error("summary should contain recipient")
-	}
-	if !strings.Contains(got, "Order of the Crown") {
-		t.Error("summary should contain honor")
-	}
-}
-
 func TestFormatRecordSummary_LongHonor(t *testing.T) {
 	rec := issuancelog.IssuanceRecord{
 		Date:      "2026-03-14",
@@ -112,22 +94,6 @@ func TestDuplicatesRemovedText(t *testing.T) {
 	}
 	if got, want := DuplicatesRemovedText(1, "/b"), "Removed 1 entry. Backup saved to /b."; got != want {
 		t.Errorf("DuplicatesRemovedText(1) = %q, want %q", got, want)
-	}
-}
-
-func TestHasRecords(t *testing.T) {
-	tests := map[string]bool{
-		"":                       false,
-		" \n\t":                  false,
-		"[]":                     false,
-		"[\n  {},\n  {}\n]":      true,
-		"not json":               true, // exported anyway for inspection
-		`{"recipient":"object"}`: true,
-	}
-	for in, want := range tests {
-		if got := hasRecords([]byte(in)); got != want {
-			t.Errorf("hasRecords(%q) = %v, want %v", in, got, want)
-		}
 	}
 }
 

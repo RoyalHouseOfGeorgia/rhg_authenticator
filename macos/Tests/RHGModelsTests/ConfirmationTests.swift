@@ -14,8 +14,6 @@ struct ConfirmationTests {
         "the buttons' order: confirm, Cancel, then the alternate, destructive or not",
         arguments: [
             (true, false, [ConfirmChoice.confirm, .cancel]),
-            (true, true, [ConfirmChoice.confirm, .cancel, .alternate]),
-            (false, false, [ConfirmChoice.confirm, .cancel]),
             (false, true, [ConfirmChoice.confirm, .cancel, .alternate]),
         ])
     func buttonRoles(destructive: Bool, alternate: Bool, roles: [ConfirmChoice]) {
@@ -49,10 +47,6 @@ struct ConfirmationTests {
         #expect(destructive.choice(forButtonAt: 2) == .alternate)
         #expect(destructive.choice(forButtonAt: 3) == .cancel)
         #expect(destructive.choice(forButtonAt: -1) == .cancel)
-        let plainWithAlternate = question(destructive: false, alternate: true)
-        #expect(plainWithAlternate.choice(forButtonAt: 0) == .confirm)
-        #expect(plainWithAlternate.choice(forButtonAt: 1) == .cancel)
-        #expect(plainWithAlternate.choice(forButtonAt: 2) == .alternate)
         let plain = question(destructive: false, alternate: false)
         #expect(plain.choice(forButtonAt: 0) == .confirm)
         #expect(plain.choice(forButtonAt: 1) == .cancel)

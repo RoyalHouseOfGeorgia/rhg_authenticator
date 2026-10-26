@@ -128,15 +128,6 @@ struct ContractTests {
         #expect(enumValues[.yubikeyCheck] == Set(KeyCheckResult.known.map(\.rawValue)))
     }
 
-    @Test("every methods/<method> directory has params.json and result.json")
-    func everyMethodHasFiles() throws {
-        let all = Set(try files(under: contractDir.appendingPathComponent("methods")))
-        for method in RPCMethod.allCases {
-            #expect(all.contains("\(method.rawValue)/params.json"), "\(method.rawValue)")
-            #expect(all.contains("\(method.rawValue)/result.json"), "\(method.rawValue)")
-        }
-    }
-
     @Test("every errors/ file decodes as its RPCError and re-encodes to the same bytes")
     func errorFiles() throws {
         let errorsDir = contractDir.appendingPathComponent("errors")

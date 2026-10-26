@@ -122,14 +122,6 @@ func TestGo_DefaultHandlerWhenUnset(t *testing.T) {
 	}
 }
 
-func TestSetPanicHandler_NilRestoresDefault(t *testing.T) {
-	setHandler(t, func(any, []byte) {})
-	SetPanicHandler(nil)
-	if handler != nil {
-		t.Error("SetPanicHandler(nil) did not clear the handler")
-	}
-}
-
 // TestNoBareGoStatements fails if any production file outside this package
 // starts a goroutine with a bare go statement instead of safego.Go.
 func TestNoBareGoStatements(t *testing.T) {

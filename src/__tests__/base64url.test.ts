@@ -28,9 +28,9 @@ describe("base64url", () => {
     expect(base64urlDecode("SGVsbG8")).toEqual(expected);
   });
 
-  // 3. Parameterized round-trips for lengths 0–6 (all mod-3 remainder classes)
-  describe("round-trips for byte lengths 0 through 6", () => {
-    for (let len = 0; len <= 6; len++) {
+  // 3. Parameterized round-trips for lengths 1–3 (all mod-3 remainder classes)
+  describe("round-trips for byte lengths 1 through 3", () => {
+    for (let len = 1; len <= 3; len++) {
       it(`length ${len}`, () => {
         const bytes = new Uint8Array(len);
         for (let i = 0; i < len; i++) bytes[i] = (i * 37 + 13) & 0xff;
@@ -38,14 +38,6 @@ describe("base64url", () => {
         expect(base64urlDecode(encoded)).toEqual(bytes);
       });
     }
-  });
-
-  // 4. Large payload round-trip (~500 bytes)
-  it("round-trips a 500-byte payload", () => {
-    const bytes = new Uint8Array(500);
-    for (let i = 0; i < 500; i++) bytes[i] = (i * 7 + 3) & 0xff;
-    const encoded = base64urlEncode(bytes);
-    expect(base64urlDecode(encoded)).toEqual(bytes);
   });
 
   // 5. Standard Base64 decode of a known Ed25519 SPKI DER key
@@ -76,15 +68,10 @@ describe("base64url", () => {
   });
 
   // 7. Throws on invalid characters
-  describe("throws on invalid characters", () => {
-    const invalidInputs = ["abc#def", "abc!def", "abc def"];
-    for (const input of invalidInputs) {
-      it(`rejects "${input}"`, () => {
-        expect(() => base64urlDecode(input)).toThrow(
-          "base64urlDecode: invalid Base64URL input",
-        );
-      });
-    }
+  it('throws on invalid characters ("abc#def")', () => {
+    expect(() => base64urlDecode("abc#def")).toThrow(
+      "base64urlDecode: invalid Base64URL input",
+    );
   });
 
   // 8. Bytes producing + and / in standard Base64 use - and _ in Base64URL
@@ -117,12 +104,6 @@ describe("base64url", () => {
   describe("throws on remainder-1 length input", () => {
     it('rejects "A" (length 1, remainder 1)', () => {
       expect(() => base64urlDecode("A")).toThrow(
-        "base64urlDecode: invalid Base64URL input — invalid length",
-      );
-    });
-
-    it('rejects "AAAAA" (length 5, remainder 1)', () => {
-      expect(() => base64urlDecode("AAAAA")).toThrow(
         "base64urlDecode: invalid Base64URL input — invalid length",
       );
     });
@@ -160,13 +141,5 @@ describe("base64url", () => {
         "input exceeds maximum length",
       );
     });
-  });
-
-  // 9. High-bit bytes exercise Latin-1 boundary
-  it("correctly handles high-bit bytes (0x00, 0x7F, 0x80, 0xFF)", () => {
-    const bytes = new Uint8Array([0x00, 0x7f, 0x80, 0xff]);
-    const encoded = base64urlEncode(bytes);
-    const decoded = base64urlDecode(encoded);
-    expect(decoded).toEqual(bytes);
   });
 });

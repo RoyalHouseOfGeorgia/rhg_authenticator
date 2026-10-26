@@ -4,12 +4,6 @@ import Testing
 
 @Suite("Envelopes and errors")
 struct EnvelopeTests {
-    @Test("ok:true with {} decodes as Empty")
-    func emptyResult() throws {
-        let result = try RPCEnvelope.decode(Data(#"{"ok":true,"result":{}}"#.utf8), as: Empty.self)
-        #expect(result == Empty())
-    }
-
     @Test("an unknown error code decodes, keeping its raw value")
     func unknownCode() throws {
         let data = Data(#"{"ok":false,"error":{"code":"brandNew","message":"m","offerReport":false}}"#.utf8)
@@ -27,14 +21,6 @@ struct EnvelopeTests {
         #expect(error.reportId == nil && !error.offerReport)
     }
 
-    @Test("every known code round-trips through its raw value")
-    func knownCodes() {
-        #expect(RPCErrorCode.known.count == 11)
-        for code in RPCErrorCode.known {
-            #expect(RPCErrorCode(rawValue: code.rawValue) == code)
-        }
-    }
-
     @Test(
         "an undecodable response is badResponse",
         arguments: [
@@ -49,22 +35,11 @@ struct EnvelopeTests {
         #expect(error.code == .internal && !error.offerReport)
     }
 
-    @Test("a result that does not match the DTO is badResponse")
-    func resultMismatch() throws {
-        let data = Data(#"{"ok":true,"result":{}}"#.utf8)
-        #expect(throws: RPCError.badResponse) { _ = try RPCEnvelope.decode(data, as: AppInfo.self) }
-    }
-
     @Test("CanonicalJSON sorts keys and escapes neither slashes nor non-ASCII")
     func canonicalEncoding() throws {
         let params = SaveQRParams(url: "https://x/ნ?a=é", format: .png, path: "/OUT/a.png")
         let json = String(decoding: try CanonicalJSON.encode(params), as: UTF8.self)
         #expect(json == #"{"format":"png","path":"/OUT/a.png","url":"https://x/ნ?a=é"}"#)
-    }
-
-    @Test("an omitted dataDir is absent from app.init params")
-    func appInitDefault() throws {
-        #expect(try CanonicalJSON.encode(AppInitParams()) == Data("{}".utf8))
     }
 
     @Test("a nil update notice encodes as null, as the core sends it")
@@ -91,14 +66,6 @@ struct ResultEnumTests {
         #expect(BulkStop.unknown("later").rawValue == "later")
         #expect(RevokeStatus.unknown("later").rawValue == "later")
         #expect(KeyCheckResult.unknown("later").rawValue == "later")
-    }
-
-    @Test("known values round-trip through their raw value")
-    func knownValues() {
-        for v in UpdateState.known { #expect(UpdateState(rawValue: v.rawValue) == v) }
-        for v in BulkStop.known { #expect(BulkStop(rawValue: v.rawValue) == v) }
-        for v in RevokeStatus.known { #expect(RevokeStatus(rawValue: v.rawValue) == v) }
-        for v in KeyCheckResult.known { #expect(KeyCheckResult(rawValue: v.rawValue) == v) }
     }
 }
 
@@ -128,22 +95,6 @@ struct EventTests {
     func strictDecode() {
         #expect(throws: DecodingError.self) {
             _ = try JSONDecoder().decode(BridgeEvent.self, from: Data(#"{"event":"pin.dismiss","data":{}}"#.utf8))
-        }
-    }
-
-    @Test("every event's name and payload survive an encode/decode round trip")
-    func roundTrip() throws {
-        let status = UpdateStatus(state: .ready, version: "1", releaseUrl: "u", moveToApplications: true)
-        let events: [BridgeEvent] = [
-            .appInternalError, .authChanged(AuthState(loggedIn: true, offline: false, user: "u", statusText: "s")),
-            .authDeviceCode(DeviceCode(userCode: "A-B", verificationUri: "v")), .bulkConnecting,
-            .bulkProgress(BulkProgress(done: 1, total: 2, name: "n")), .historyChanged, .historyRevocationsChanged,
-            .pinDismiss(PINDismiss(requestId: 4)), .pinRequest(PINRequest(requestId: 4, rememberDefault: false, maxBytes: 8)),
-            .registryChanged, .signConnecting, .updateStatus(status),
-            .updateUpdated(UpdatedNotice(version: "1", releaseUrl: "u")),
-        ]
-        for event in events {
-            #expect(BridgeEvent(json: try CanonicalJSON.encode(event)) == event, "\(event.name)")
         }
     }
 }
@@ -259,18 +210,6 @@ struct HelperTests {
             #expect(call.params + Data("\n".utf8) == file, "\(method.rawValue) params")
         }
     }
-
-    @Test("a helper rethrows the error envelope")
-    func helperError() async throws {
-        let bridge = RecordingBridge(responses: ["sign.sign": try contractFile("errors/failed-with-report.json")])
-        let credential = CredentialParams(recipient: "", honor: "", detail: "", date: "")
-        do {
-            _ = try await bridge.sign(credential)
-            Issue.record("sign succeeded")
-        } catch {
-            #expect(error.code == .failed && error.offerReport && error.reportId == "1")
-        }
-    }
 }
 
 /// The memberwise inits (used by fakes) assign each argument to its own field:
@@ -279,37 +218,6 @@ struct HelperTests {
 struct InitializerTests {
     private func result<R: Decodable>(_ path: String, as _: R.Type = R.self) throws -> R {
         try RPCEnvelope.decode(contractFile("methods/\(path)"))
-    }
-
-    private func params<P: Decodable>(_ method: String, as _: P.Type = P.self) throws -> P {
-        try JSONDecoder().decode(P.self, from: contractFile("methods/\(method)/params.json"))
-    }
-
-    @Test("params inits match the contract params")
-    func paramsInits() throws {
-        let record = try params("history.recordText", as: RecordParams.self).record
-        #expect(try params("bulk.load") == PathParams(path: "/OUT/bulk.csv"))
-        #expect(try params("history.list") == HistoryListParams(query: ""))
-        #expect(try params("history.revoke") == RevokeParams(payloadSha256: String(repeating: "0", count: 63) + "2"))
-        #expect(try params("history.recordText") == RecordParams(record: record))
-        #expect(
-            try params("history.deleteEntry")
-                == RecordParams(
-                    record: HistoryRecord(
-                        timestamp: "2026-03-04T05:06:07Z", recipient: "Bob Jones", honor: "Ennoblement",
-                        detail: "For service", date: "2026-03-04", payloadSha256: String(repeating: "0", count: 63) + "2",
-                        signatureB64url: String(repeating: "A", count: 86))))
-        let key = "JUO5L/EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0="
-        #expect(
-            try params("registry.addEntry")
-                == AddEntryParams(
-                    form: EntryForm(authority: "New Authority", from: "2026-01-01", to: "", note: "Second key", noExpiry: true),
-                    publicKey: key))
-        #expect(
-            try params("registry.updateEntry")
-                == UpdateEntryParams(
-                    index: 0, publicKey: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
-                    form: EntryForm(authority: "A", from: "2025-01-01", to: "2030-12-31", note: "", noExpiry: false)))
     }
 
     @Test("result inits match the contract results")

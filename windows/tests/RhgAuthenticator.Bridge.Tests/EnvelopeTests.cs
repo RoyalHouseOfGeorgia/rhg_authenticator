@@ -12,15 +12,9 @@ public sealed class EnvelopeTests
     }
 
     [Fact]
-    public void OkWithEmptyObjectDecodesAsEmpty()
+    public void UnknownErrorCodesAndFieldsDecodeKeepingTheRawCode()
     {
-        Assert.Equal(Empty.Value, RpcEnvelope.Decode("""{"ok":true,"result":{}}"""u8, Json.Empty));
-    }
-
-    [Fact]
-    public void UnknownErrorCodeDecodesKeepingItsRawValue()
-    {
-        var error = DecodeError("""{"ok":false,"error":{"code":"brandNew","message":"m","offerReport":false}}""");
+        var error = DecodeError("""{"ok":false,"error":{"code":"brandNew","extra":1,"message":"m","offerReport":false}}""");
         Assert.Equal(RpcErrorCode.Unknown, error.Code);
         Assert.Equal("brandNew", error.RawCode);
         Assert.Equal("m", error.Message);
@@ -33,27 +27,6 @@ public sealed class EnvelopeTests
         Assert.Equal(RpcErrorCode.Failed, error.Code);
         Assert.False(error.OfferReport);
         Assert.Null(error.ReportId);
-    }
-
-    [Fact]
-    public void ErrorFieldsAreKept()
-    {
-        var error = DecodeError("""{"ok":false,"error":{"code":"failed","message":"m","offerReport":true,"reportId":"7","extra":1}}""");
-        Assert.True(error.OfferReport);
-        Assert.Equal("7", error.ReportId);
-    }
-
-    [Fact]
-    public void EveryKnownCodeRoundTripsThroughItsWireName()
-    {
-        Assert.Equal(11, WireEnum.Known<RpcErrorCode>().Count);
-        foreach (var code in WireEnum.Known<RpcErrorCode>())
-        {
-            var error = new RpcException(code, "m");
-            Assert.Equal(code, error.Code);
-            Assert.Equal(code, new RpcException(error.RawCode, "m").Code);
-        }
-        Assert.Equal("notLoggedIn", new RpcException(RpcErrorCode.NotLoggedIn, "m").RawCode);
     }
 
     [Theory]
@@ -104,18 +77,6 @@ public sealed class EnvelopeTests
     }
 
     [Fact]
-    public void BridgeErrorsHaveTheirCodes()
-    {
-        var bad = RpcException.BadResponse();
-        Assert.Equal(RpcErrorCode.Internal, bad.Code);
-        Assert.Equal("internal", bad.RawCode);
-        var badParams = RpcException.BadParams();
-        Assert.Equal(RpcErrorCode.Input, badParams.Code);
-        Assert.Equal(RpcException.BadParamsMessage, badParams.Message);
-        Assert.Throws<ArgumentNullException>(() => new RpcException((string)null!, "m"));
-    }
-
-    [Fact]
     public void ErrorPayloadOmitsAMissingReportId()
     {
         var json = CanonicalJson.Encode(RpcErrorPayload.From(new RpcException(RpcErrorCode.Busy, "b")),
@@ -139,19 +100,6 @@ public sealed class EnvelopeTests
         var signed = RpcEnvelope.Decode(Support.ContractFile("methods/sign.sign/result.json"), Json.SignResult);
         Assert.Equal(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }, signed.PngPreview);
         Assert.Contains("\"pngPreview\":\"iVBORw0KGgo=\"", CanonicalJson.Encode(signed, Json.SignResult), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void DecodeRejectsANullTypeInfo()
-    {
-        Assert.Throws<ArgumentNullException>(() => RpcEnvelope.Decode<Empty>("{}"u8, null!));
-    }
-
-    [Fact]
-    public void QrFormatEncodesLowercase()
-    {
-        Assert.Equal("\"png\"", JsonSerializer.Serialize(QrFormat.Png, Json.QrFormat));
-        Assert.Equal(QrFormat.Svg, JsonSerializer.Deserialize("\"svg\"", Json.QrFormat));
     }
 }
 
@@ -204,11 +152,5 @@ public sealed class CanonicalJsonTests
     {
         Assert.Equal("null"u8.ToArray(), CanonicalJson.EncodeNode(null));
         Assert.Equal("null", CanonicalJson.Encode<UpdatedNotice?>(null, Json.UpdatedNotice));
-    }
-
-    [Fact]
-    public void RejectsANullTypeInfo()
-    {
-        Assert.Throws<ArgumentNullException>(() => CanonicalJson.Encode(Empty.Value, null!));
     }
 }

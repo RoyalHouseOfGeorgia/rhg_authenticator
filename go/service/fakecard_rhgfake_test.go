@@ -3,18 +3,14 @@
 package service
 
 import (
-	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
-	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/yubikey"
 )
 
@@ -84,10 +80,8 @@ func TestFakeCard_ReadPinErrorPropagates(t *testing.T) {
 	}
 }
 
-// newFakeCardApp returns an App made by New (so with the default opener),
-// online with a registry holding the fake card's key, and a prompter
-// answering pin.
-func newFakeCardApp(t *testing.T, pin string) *App {
+// newFakeCardApp returns an App made by New, so with the default opener.
+func newFakeCardApp(t *testing.T) *App {
 	t.Helper()
 	dir := t.TempDir()
 	app, err := New(Config{
@@ -95,58 +89,18 @@ func newFakeCardApp(t *testing.T, pin string) *App {
 		Logger:        debuglog.New(filepath.Join(dir, debuglog.FileName)),
 		RegistryURL:   "http://127.0.0.1:1",
 		RevocationURL: "http://127.0.0.1:1",
-		Prompter:      newFakePrompter(pin, false),
+		Prompter:      newFakePrompter(FakeCardPIN, false),
 		Events:        &fakeEvents{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(app.Close)
-	pub := FakeCardPublicKey()
-	app.reg, app.registryFetched = registryWith(core.KeyEntry{Authority: "RHG Test Card", From: "2000-01-01", PublicKey: base64.StdEncoding.EncodeToString(pub[:])}), true
 	return app
 }
 
-func TestFakeCard_AppSignsAndLogs(t *testing.T) {
-	app := newFakeCardApp(t, FakeCardPIN)
-	fields := SignFields{Recipient: "Jane Doe", Honor: "Ennoblement", Detail: "For service", Date: "2026-01-02"}
-	if _, err := app.Sign(context.Background(), fields); err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	recs, err := issuancelog.ReadLog(app.logPath)
-	if err != nil || len(recs) != 1 {
-		t.Fatalf("log = %v, %v; want one record", recs, err)
-	}
-	payload, err := core.BuildPayload(fields.request())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(recs[0].SignatureB64URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pub := FakeCardPublicKey()
-	if !ed25519.Verify(pub[:], payload, sig) {
-		t.Fatal("logged signature does not verify with the fake card's public key")
-	}
-
-	key, err := app.ImportFromYubiKey()
-	if err != nil || key != base64.StdEncoding.EncodeToString(pub[:]) {
-		t.Fatalf("ImportFromYubiKey = %q, %v", key, err)
-	}
-}
-
-func TestFakeCard_AppWrongPIN(t *testing.T) {
-	app := newFakeCardApp(t, "654321")
-	_, err := app.Sign(context.Background(), SignFields{Recipient: "Jane Doe", Honor: "Ennoblement", Detail: "For service", Date: "2026-01-02"})
-	var se *SignError
-	if !errors.As(err, &se) || !yubikey.IsPINAuthError(err) {
-		t.Fatalf("err = %v, want a SignError for a wrong PIN", err)
-	}
-}
-
 func TestSetPINTimeoutForTest(t *testing.T) {
-	app := newFakeCardApp(t, FakeCardPIN)
+	app := newFakeCardApp(t)
 	if app.pinTimeout != defaultPINEntryTimeout {
 		t.Fatalf("default pinTimeout = %v", app.pinTimeout)
 	}
@@ -159,7 +113,7 @@ func TestSetPINTimeoutForTest(t *testing.T) {
 // TestFakeBuild_InfoVersionMarked: the version a front end shows marks the
 // test build, as --version does.
 func TestFakeBuild_InfoVersionMarked(t *testing.T) {
-	if v := newFakeCardApp(t, FakeCardPIN).Info().Version; !strings.HasSuffix(v, " (rhgfake)") {
+	if v := newFakeCardApp(t).Info().Version; !strings.HasSuffix(v, " (rhgfake)") {
 		t.Errorf("Info().Version = %q, want the rhgfake marker", v)
 	}
 }

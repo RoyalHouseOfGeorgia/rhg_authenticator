@@ -30,13 +30,6 @@ func TestBuildEntry_Basic(t *testing.T) {
 	}
 }
 
-func TestBuildEntry_NoExpiry(t *testing.T) {
-	entry := buildEntry("Auth", "2026-01-01", nil, "key123", "")
-	if entry.To != nil {
-		t.Errorf("To should be nil for no-expiry, got %v", entry.To)
-	}
-}
-
 func TestBuildEntry_WithExpiry(t *testing.T) {
 	to := "2027-12-31"
 	entry := buildEntry("Auth", "2026-01-01", &to, "key123", "")
@@ -45,52 +38,6 @@ func TestBuildEntry_WithExpiry(t *testing.T) {
 	}
 	if *entry.To != "2027-12-31" {
 		t.Errorf("To = %q, want %q", *entry.To, "2027-12-31")
-	}
-}
-
-func TestBuildEntry_PreservesKey(t *testing.T) {
-	originalKey := "MCowBQYDK2VwAyEAoriginalkey="
-	entry := buildEntry("Auth", "2026-01-01", nil, originalKey, "")
-	if entry.PublicKey != originalKey {
-		t.Errorf("PublicKey = %q, want %q", entry.PublicKey, originalKey)
-	}
-}
-
-func TestBuildEntry_NormalizesAuthority(t *testing.T) {
-	// U+00E9 (e-acute precomposed = NFC) vs U+0065 U+0301 (e + combining acute = NFD).
-	nfd := "caf\u0065\u0301" // NFD form
-	nfc := "caf\u00e9"       // NFC form
-
-	// Verify our input is actually NFD (different from NFC form).
-	if nfd == nfc {
-		t.Skip("test input is already NFC, cannot test normalization")
-	}
-
-	entry := buildEntry(nfd, "2026-01-01", nil, "key", "")
-	if entry.Authority != nfc {
-		t.Errorf("Authority = %q, want NFC-normalized %q", entry.Authority, nfc)
-	}
-}
-
-func TestBuildEntry_TrimsAuthority(t *testing.T) {
-	entry := buildEntry("  Spaced Authority  ", "2026-01-01", nil, "key", "")
-	if entry.Authority != "Spaced Authority" {
-		t.Errorf("Authority = %q, want trimmed %q", entry.Authority, "Spaced Authority")
-	}
-}
-
-func TestBuildEntry_AlgorithmAlwaysEd25519(t *testing.T) {
-	// buildEntry should always set Algorithm to "Ed25519" regardless of input.
-	entry := buildEntry("Auth", "2026-01-01", nil, "key", "note")
-	if entry.Algorithm != "Ed25519" {
-		t.Errorf("Algorithm = %q, want %q", entry.Algorithm, "Ed25519")
-	}
-}
-
-func TestBuildEntry_EmptyNote(t *testing.T) {
-	entry := buildEntry("Auth", "2026-01-01", nil, "key", "")
-	if entry.Note != "" {
-		t.Errorf("Note = %q, want empty string", entry.Note)
 	}
 }
 
@@ -110,13 +57,6 @@ func TestBuildEntry_PreservesNote(t *testing.T) {
 	entry := buildEntry("Auth", "2026-01-01", nil, "key", note)
 	if entry.Note != note {
 		t.Errorf("Note = %q, want %q", entry.Note, note)
-	}
-}
-
-func TestBuildEntry_PreservesFromDate(t *testing.T) {
-	entry := buildEntry("Auth", "2099-12-31", nil, "key", "")
-	if entry.From != "2099-12-31" {
-		t.Errorf("From = %q, want %q", entry.From, "2099-12-31")
 	}
 }
 
@@ -162,13 +102,6 @@ func TestValidateEntryForm_InvalidToDate(t *testing.T) {
 	}
 }
 
-func TestValidateEntryForm_ValidToDate(t *testing.T) {
-	err := validateEntryForm("Auth", "2026-01-01", "key", false, "2027-12-31")
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateEntryForm_NoExpirySkipsToValidation(t *testing.T) {
 	// When noExpiry is true, to date is ignored.
 	err := validateEntryForm("Auth", "2026-01-01", "key", true, "garbage")
@@ -199,13 +132,6 @@ func TestValidateEntryForm_ToEqualsFrom(t *testing.T) {
 	err := validateEntryForm("Auth", "2026-01-01", "key", false, "2026-01-01")
 	if err != nil {
 		t.Errorf("unexpected error when to == from: %v", err)
-	}
-}
-
-func TestValidateEntryForm_NoExpiryBypassesToCheck(t *testing.T) {
-	err := validateEntryForm("Auth", "2026-01-01", "key", true, "")
-	if err != nil {
-		t.Errorf("unexpected error when noExpiry=true and to is empty: %v", err)
 	}
 }
 

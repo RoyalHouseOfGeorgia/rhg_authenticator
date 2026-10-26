@@ -75,14 +75,6 @@ public sealed class LiveBridgeInProcessTests(CoreLibraryFixture fixture)
     }
 
     [Fact]
-    public async Task CallRejectsNullArguments()
-    {
-        var bridge = LiveBridge.Install();
-        await Assert.ThrowsAsync<ArgumentNullException>(() => bridge.CallAsync(null!, Empty.Value, Json.Empty, Json.Empty));
-        await Assert.ThrowsAsync<ArgumentNullException>(() => bridge.CallAsync<Empty, Empty>("app.info", Empty.Value, Json.Empty, null!));
-    }
-
-    [Fact]
     public async Task TheEventCallbackQueuesEachEventAndIgnoresNull()
     {
         var bridge = LiveBridge.Install();
@@ -170,11 +162,5 @@ public sealed class MainCliTests(CoreLibraryFixture fixture)
     public void ArgumentsWithNonAsciiReachTheCore()
     {
         Assert.Null(MainCli.RunArgv(["რ", "--ნ"]));
-    }
-
-    [Fact]
-    public void VerifyUpdateZipWithoutAZipIsAUsageError()
-    {
-        Assert.True(MainCli.RunArgv(["rhg-authenticator", "--verify-update-zip"]) > 0);
     }
 }

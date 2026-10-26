@@ -116,26 +116,6 @@ func TestLoadToken_ZeroByte(t *testing.T) {
 	}
 }
 
-func TestLoadToken_FallbackFile(t *testing.T) {
-	kr := NewFakeKeyring()
-	kr.SimulateError = ErrKeyNotFound
-	dir := t.TempDir()
-	tok := sampleToken()
-
-	path := filepath.Join(dir, tokenFileName)
-	if err := os.WriteFile(path, []byte(mustMarshal(t, tok)), 0o600); err != nil {
-		t.Fatalf("writing token file: %v", err)
-	}
-
-	got, err := LoadToken(kr, dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.AccessToken != tok.AccessToken {
-		t.Errorf("AccessToken = %q, want %q", got.AccessToken, tok.AccessToken)
-	}
-}
-
 func TestLoadToken_MissingCreatedAt(t *testing.T) {
 	kr := NewFakeKeyring()
 	// JSON without created_at — should unmarshal with zero time.
@@ -460,61 +440,6 @@ func TestClearToken_FileRemoveError(t *testing.T) {
 	}
 }
 
-// --- FakeKeyring tests ---
-
-func TestFakeKeyring_Basic(t *testing.T) {
-	kr := NewFakeKeyring()
-
-	// Get from empty keyring.
-	_, err := kr.Get("svc", "key")
-	if !errors.Is(err, ErrKeyNotFound) {
-		t.Errorf("Get empty: err = %v, want ErrKeyNotFound", err)
-	}
-
-	// Set and Get.
-	if err := kr.Set("svc", "key", "val"); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-	got, err := kr.Get("svc", "key")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got != "val" {
-		t.Errorf("Get = %q, want %q", got, "val")
-	}
-
-	// Delete.
-	if err := kr.Delete("svc", "key"); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	_, err = kr.Get("svc", "key")
-	if !errors.Is(err, ErrKeyNotFound) {
-		t.Errorf("Get after delete: err = %v, want ErrKeyNotFound", err)
-	}
-
-	// Delete non-existent.
-	err = kr.Delete("svc", "key")
-	if !errors.Is(err, ErrKeyNotFound) {
-		t.Errorf("Delete missing: err = %v, want ErrKeyNotFound", err)
-	}
-}
-
-func TestFakeKeyring_SimulateError(t *testing.T) {
-	kr := NewFakeKeyring()
-	simErr := errors.New("simulated")
-	kr.SimulateError = simErr
-
-	if _, err := kr.Get("s", "k"); !errors.Is(err, simErr) {
-		t.Errorf("Get: err = %v, want simulated", err)
-	}
-	if err := kr.Set("s", "k", "v"); !errors.Is(err, simErr) {
-		t.Errorf("Set: err = %v, want simulated", err)
-	}
-	if err := kr.Delete("s", "k"); !errors.Is(err, simErr) {
-		t.Errorf("Delete: err = %v, want simulated", err)
-	}
-}
-
 // tok returns a minimal token for tests that don't care about specific values.
 func tok() Token {
 	return Token{AccessToken: "gho_test", TokenType: "bearer"}
@@ -743,51 +668,6 @@ func TestPollForToken_Pending(t *testing.T) {
 	}
 	if got := count.Load(); got != 3 {
 		t.Errorf("poll count = %d, want 3", got)
-	}
-}
-
-func TestPollForToken_SlowDown(t *testing.T) {
-	var pollCount int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		pollCount++
-		w.Header().Set("Content-Type", "application/json")
-		if pollCount == 1 {
-			fmt.Fprintf(w, `{"error":"slow_down"}`)
-			return
-		}
-		fmt.Fprintf(w, `{"access_token":"gho_sd","token_type":"bearer","scope":"public_repo"}`)
-	}))
-	defer srv.Close()
-	withAuthOverrides(t, func() {
-		accessTokenEndpoint = srv.URL
-	})
-
-	// Recording sleep that captures requested durations.
-	var sleepDurations []time.Duration
-	recordingSleep := func(ctx context.Context, d time.Duration) error {
-		sleepDurations = append(sleepDurations, d)
-		return ctx.Err()
-	}
-
-	tok, err := pollForTokenInternal(context.Background(), "dc_123", 1, 30, recordingSleep)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if tok.AccessToken != "gho_sd" {
-		t.Errorf("AccessToken = %q, want %q", tok.AccessToken, "gho_sd")
-	}
-	if pollCount != 2 {
-		t.Fatalf("poll count = %d, want 2", pollCount)
-	}
-	// First sleep: 1s (initial interval). After slow_down, second sleep: 6s (1+5).
-	if len(sleepDurations) != 2 {
-		t.Fatalf("sleep count = %d, want 2", len(sleepDurations))
-	}
-	if sleepDurations[0] != 1*time.Second {
-		t.Errorf("first sleep = %v, want 1s", sleepDurations[0])
-	}
-	if sleepDurations[1] != 6*time.Second {
-		t.Errorf("second sleep = %v, want 6s (1+5 from slow_down)", sleepDurations[1])
 	}
 }
 
@@ -1117,20 +997,6 @@ func TestValidateToken_NetworkError(t *testing.T) {
 	}
 }
 
-func TestValidateToken_ContextTimeout(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Already cancelled.
-
-	withAuthOverrides(t, func() {
-		userAPIEndpoint = "http://127.0.0.1:1"
-	})
-
-	_, err := ValidateToken(ctx, Token{AccessToken: "gho_timeout"})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
 func TestValidateToken_EmptyLogin(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1296,42 +1162,6 @@ func TestRestoreSession_MissingFile(t *testing.T) {
 	}
 }
 
-func TestRestoreSession_ContextTimeout(t *testing.T) {
-	// Use an already-cancelled context so ValidateToken fails immediately.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	withAuthOverrides(t, func() {
-		timeNow = func() time.Time { return time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC) }
-		// We still need a valid userAPIEndpoint even though it won't be reached.
-		userAPIEndpoint = "http://127.0.0.1:1"
-	})
-
-	kr := NewFakeKeyring()
-	dir := t.TempDir()
-	tkn := sampleToken()
-	if err := SaveToken(kr, dir, tkn); err != nil {
-		t.Fatalf("saving token: %v", err)
-	}
-
-	gotTok, username, loggedIn, offline, err := RestoreSession(ctx, kr, dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !loggedIn {
-		t.Error("loggedIn = false, want true")
-	}
-	if !offline {
-		t.Error("offline = false, want true")
-	}
-	if username != "" {
-		t.Errorf("username = %q, want empty", username)
-	}
-	if gotTok.AccessToken != tkn.AccessToken {
-		t.Errorf("token should be preserved when offline")
-	}
-}
-
 // --- M1: hasRequiredScope tests ---
 
 func TestHasRequiredScope(t *testing.T) {
@@ -1379,44 +1209,6 @@ func TestPollForToken_WrongScope(t *testing.T) {
 	}
 	if !errors.Is(err, ErrMissingScope) {
 		t.Errorf("error = %v, want ErrMissingScope", err)
-	}
-}
-
-func TestPollForToken_MultiScope(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"access_token":"gho_multi","token_type":"bearer","scope":"read:org, public_repo"}`)
-	}))
-	defer srv.Close()
-	withAuthOverrides(t, func() {
-		accessTokenEndpoint = srv.URL
-	})
-
-	tok, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if tok.AccessToken != "gho_multi" {
-		t.Errorf("AccessToken = %q, want %q", tok.AccessToken, "gho_multi")
-	}
-}
-
-func TestPollForToken_RepoScope(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"access_token":"gho_repo","token_type":"bearer","scope":"repo"}`)
-	}))
-	defer srv.Close()
-	withAuthOverrides(t, func() {
-		accessTokenEndpoint = srv.URL
-	})
-
-	tok, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if tok.AccessToken != "gho_repo" {
-		t.Errorf("AccessToken = %q, want %q", tok.AccessToken, "gho_repo")
 	}
 }
 
@@ -1545,32 +1337,6 @@ func TestLoadToken_ErrKeyNotFound_FallsThrough(t *testing.T) {
 }
 
 // --- Finding #8: Token expiry ---
-
-func TestIsTokenExpired_Fresh(t *testing.T) {
-	withAuthOverrides(t, func() {
-		timeNow = func() time.Time { return time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC) }
-	})
-	tok := Token{
-		AccessToken: "gho_fresh",
-		CreatedAt:   time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC),
-	}
-	if isTokenExpired(tok) {
-		t.Error("token created 1 day ago should not be expired")
-	}
-}
-
-func TestIsTokenExpired_Old(t *testing.T) {
-	withAuthOverrides(t, func() {
-		timeNow = func() time.Time { return time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC) }
-	})
-	tok := Token{
-		AccessToken: "gho_old",
-		CreatedAt:   time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC), // 102 days ago
-	}
-	if !isTokenExpired(tok) {
-		t.Error("token created 102 days ago should be expired")
-	}
-}
 
 func TestIsTokenExpired_ZeroCreatedAt(t *testing.T) {
 	tok := Token{

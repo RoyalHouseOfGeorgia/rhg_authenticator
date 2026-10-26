@@ -254,12 +254,16 @@ func validateEntry(data json.RawMessage, index int) (KeyEntry, error) {
 	}, nil
 }
 
+// maxPublicKeyB64 caps a key entry's base64 public_key, as MAX_B64_INPUT
+// does in the TypeScript verifier (src/base64url.ts).
+const maxPublicKeyB64 = 256
+
 // DecodePublicKey decodes a key entry's public_key field to raw 32-byte Ed25519 key material.
 // Accepts 44-byte SPKI DER (strips 12-byte prefix) or 32-byte raw.
 func DecodePublicKey(entry KeyEntry) ([32]byte, error) {
 	var result [32]byte
 
-	if len(entry.PublicKey) > 256 {
+	if len(entry.PublicKey) > maxPublicKeyB64 {
 		return result, fmt.Errorf("decodePublicKey: public_key exceeds maximum length")
 	}
 
@@ -293,20 +297,6 @@ func KeyFingerprint(entry KeyEntry) (string, error) {
 	}
 	hash := sha256.Sum256(raw[:])
 	return hex.EncodeToString(hash[:]), nil
-}
-
-// FindKeysByAuthority returns all key entries matching the given authority.
-// Both query and entry authority are NFC-normalized. Comparison is case-sensitive.
-func FindKeysByAuthority(reg Registry, authority string) []KeyEntry {
-	normalizedQuery := norm.NFC.String(authority)
-	var result []KeyEntry
-	for _, entry := range reg.Keys {
-		// entry.Authority is already NFC-normalized during validation.
-		if entry.Authority == normalizedQuery {
-			result = append(result, entry)
-		}
-	}
-	return result
 }
 
 // IsDateInRange checks if a credential date falls within a key's validity range.

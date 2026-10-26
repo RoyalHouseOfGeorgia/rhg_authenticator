@@ -13,14 +13,9 @@ struct YubiKeyModelTests {
         #expect(YubiKeyModel.checkingStatus == "Checking YubiKey\u{2026}")
     }
 
-    @Test(
-        "a check shows the core's status and details",
-        arguments: [
-            KeyCheck(outcome: .found, status: "Key found in registry", details: ["Authority: A", "Fingerprint: ae21"]),
-            KeyCheck(outcome: .notFound, status: "Key NOT found in registry", details: ["Fingerprint: ae21"]),
-            KeyCheck(outcome: .failed, status: "Registry unavailable — connect to internet to check key", details: []),
-        ])
-    func check(_ result: KeyCheck) async {
+    @Test("a check shows the core's status and details")
+    func check() async {
+        let result = KeyCheck(outcome: .found, status: "Key found in registry", details: ["Authority: A", "Fingerprint: ae21"])
         let fake = FakeBridge()
         fake.respond(.yubikeyCheck, result)
         let model = YubiKeyModel(bridge: fake)

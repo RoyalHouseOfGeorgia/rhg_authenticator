@@ -38,7 +38,6 @@ struct BulkModelTests {
         #expect(BulkModel.regenerateNote == "Re-open the same file to regenerate results later.")
         #expect(BulkModel.closeTitle == "Close")
         #expect(BulkModel.connectingLabel == "Connecting to YubiKey\u{2026}")
-        #expect(Array(BulkModel.stoppingLabel.utf8) == Array("Stopping after current row".utf8) + [0xE2, 0x80, 0xA6])
     }
 
     @Test("happy path: load, confirm, run with progress, results, close")

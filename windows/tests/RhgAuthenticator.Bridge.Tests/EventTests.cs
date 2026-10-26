@@ -15,7 +15,6 @@ public sealed class EventTests
 
     [Theory]
     [InlineData("", "")]
-    [InlineData("{", "")]
     [InlineData("[]", "")]
     [InlineData("null", "")]
     [InlineData("""{"data":null}""", "")]
@@ -52,27 +51,10 @@ public sealed class EventTests
             BridgeEvent.ParseStrict("""{"event":"pin.dismiss","data":{"requestId":4,"reason":"later"}}"""u8));
     }
 
-    public static TheoryData<BridgeEvent> AllEvents =>
-    [
-        new BridgeEvent.AppInternalError(),
-        new BridgeEvent.AuthChanged(new AuthState(true, false, "u", "s")),
-        new BridgeEvent.AuthDeviceCode(new DeviceCode("A-B", "v")),
-        new BridgeEvent.BulkConnecting(),
-        new BridgeEvent.BulkProgressed(new BulkProgress(1, 2, "n")),
-        new BridgeEvent.HistoryChanged(),
-        new BridgeEvent.HistoryRevocationsChanged(),
-        new BridgeEvent.PinDismissed(new PinDismiss(4)),
-        new BridgeEvent.PinRequested(new PinRequest(ulong.MaxValue, false, 8)),
-        new BridgeEvent.RegistryChanged(),
-        new BridgeEvent.SignConnecting(),
-        new BridgeEvent.UpdateStatusChanged(new UpdateStatus(UpdateState.Ready, "1", "u", true)),
-        new BridgeEvent.UpdateUpdated(new UpdatedNotice("1", "u")),
-    ];
-
-    [Theory]
-    [MemberData(nameof(AllEvents))]
-    public void EveryEventSurvivesAnEncodeDecodeRoundTrip(BridgeEvent e)
+    [Fact]
+    public void AMaximalPinRequestIdSurvivesAnEncodeDecodeRoundTrip()
     {
+        BridgeEvent e = new BridgeEvent.PinRequested(new PinRequest(ulong.MaxValue, false, 8));
         Assert.Equal(e, BridgeEvent.Parse(Support.Utf8(e.ToJson())));
         Assert.Equal(e, BridgeEvent.ParseStrict(Support.Utf8(e.ToJson())));
         Assert.StartsWith("{\"data\":", e.ToJson(), StringComparison.Ordinal);

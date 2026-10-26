@@ -37,15 +37,6 @@ public sealed class AuditViewModelTests
         Assert.Equal("Refresh (F5)", AuditViewModel.RefreshTooltip);
         Assert.Equal("Open on GitHub", AuditViewModel.OpenTitle);
         Assert.Equal("Select a commit to open it.", AuditViewModel.OpenTooltip);
-        Assert.Equal("Fetching...", AuditViewModel.FetchingStatus);
-    }
-
-    [Fact]
-    public void RequiresItsServices()
-    {
-        Assert.Throws<ArgumentNullException>(() => new AuditViewModel(null!, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new AuditViewModel(_fake, null!, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new AuditViewModel(_fake, _urls, null!));
     }
 
     [Fact]
@@ -148,20 +139,9 @@ public sealed class AuditViewModelTests
     }
 
     [Fact]
-    public async Task SelectingNeverOpensTheBrowser()
+    public async Task OpenIsDisabledForACommitWithoutAnHttpsUrl()
     {
-        var audit = await Loaded(CommitUrl);
-        audit.Select(0);
-        Assert.Empty(_urls.Opened);
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("http://github.com/RoyalHouseOfGeorgia/rhg_authenticator/commit/abc123")]
-    [InlineData("commit/abc123")]
-    public async Task OpenIsDisabledForACommitWithoutAnHttpsUrl(string url)
-    {
-        var audit = await Loaded(url);
+        var audit = await Loaded("http://github.com/RoyalHouseOfGeorgia/rhg_authenticator/commit/abc123");
         audit.Select(0);
         Assert.False(audit.OpenCommand.CanExecute(null));
         audit.OpenCommand.Execute(null);

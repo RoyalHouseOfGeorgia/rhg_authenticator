@@ -126,14 +126,10 @@ type PRResult struct {
 	HTMLURL string `json:"html_url"`
 }
 
-// SafeRedirect is an alias for core.SafeRedirect, kept for in-package callers.
-// For unauthenticated HTTP clients only.
-var SafeRedirect = core.SafeRedirect
-
 // safeCheckRedirect strips the Authorization header when a redirect targets
 // a host outside *.github.com. For authenticated API clients only.
 //
-// Unauthenticated clients should use SafeRedirect instead, which rejects
+// Unauthenticated clients should use core.SafeRedirect instead, which rejects
 // non-HTTPS redirects entirely.
 func safeCheckRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) == 0 {

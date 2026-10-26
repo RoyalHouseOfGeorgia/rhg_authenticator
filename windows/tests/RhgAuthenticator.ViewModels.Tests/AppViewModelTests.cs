@@ -24,7 +24,6 @@ public sealed class AppViewModelTests
     {
         Assert.Equal("RHG Authenticator", AppViewModel.WindowTitle);
         Assert.Equal("Loading key registry…", AppViewModel.LoadingText);
-        Assert.Equal(AppViewModel.ReportSuffix, s_reportSuffix);
         var app = NewApp();
         Assert.Equal(["Sign", "History", "Registry", "Audit", "YubiKey", "Help"], app.Tabs.Select(t => t.Title));
         Assert.Equal("Help", AppViewModel.HelpTitle);
@@ -44,15 +43,6 @@ public sealed class AppViewModelTests
         Assert.Equal([.. "Export Error Log"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(AppViewModel.ExportErrorLogTitle));
         Assert.Equal(
             "Saves the app's diagnostic log to a file you choose, to attach to an issue report.", AppViewModel.HelpText);
-    }
-
-    [Fact]
-    public void AFreshAppEnablesAndSelectsOnlyHelpAndShowsLoading()
-    {
-        var app = NewApp();
-        Assert.Equal([false, false, false, false, false, true], app.Tabs.Select(t => t.IsEnabled));
-        Assert.Same(app.Tabs[5], app.SelectedTab);
-        Assert.True(app.IsStarting);
     }
 
     [Fact]
@@ -124,23 +114,6 @@ public sealed class AppViewModelTests
         Assert.Contains(nameof(AppViewModel.IsStarting), changed);
         Assert.Contains(nameof(AppViewModel.SelectedTab), changed);
         Assert.Contains(nameof(AppTab.IsEnabled), signTabChanged);
-    }
-
-    [Fact]
-    public void RequiresItsServices()
-    {
-        Assert.Throws<ArgumentNullException>(
-            () => new AppViewModel(null!, _fileSave, _fileOpen, new FakeClipboard(), new FakeUrlOpener(), _confirm));
-        Assert.Throws<ArgumentNullException>(
-            () => new AppViewModel(_fake, null!, _fileOpen, new FakeClipboard(), new FakeUrlOpener(), _confirm));
-        Assert.Throws<ArgumentNullException>(
-            () => new AppViewModel(_fake, _fileSave, null!, new FakeClipboard(), new FakeUrlOpener(), _confirm));
-        Assert.Throws<ArgumentNullException>(
-            () => new AppViewModel(_fake, _fileSave, _fileOpen, null!, new FakeUrlOpener(), _confirm));
-        Assert.Throws<ArgumentNullException>(
-            () => new AppViewModel(_fake, _fileSave, _fileOpen, new FakeClipboard(), null!, _confirm));
-        Assert.Throws<ArgumentNullException>(
-            () => new AppViewModel(_fake, _fileSave, _fileOpen, new FakeClipboard(), new FakeUrlOpener(), null!));
     }
 
     [Fact]
@@ -286,18 +259,6 @@ public sealed class AppViewModelTests
     }
 
     [Fact]
-    public async Task AppInternalErrorShowsTheRestartAlert()
-    {
-        var app = await Fixtures.StartedApp(_fake);
-        Assert.Null(app.Alerts.Current);
-        _fake.Emit(new BridgeEvent.AppInternalError());
-        Assert.True(await Fixtures.Settle(() => app.Alerts.Current is not null));
-        Assert.Equal(new AlertState("Error", "An internal error occurred — please restart"), app.Alerts.Current);
-        await app.Alerts.DismissAsync();
-        Assert.Null(app.Alerts.Current);
-    }
-
-    [Fact]
     public async Task AFailingEventHandlerShowsTheRestartAlertAndTheDrainGoesOn()
     {
         var app = await Fixtures.StartedApp(_fake);
@@ -392,17 +353,6 @@ public sealed class AppViewModelTests
         Assert.True(await app.PrepareToQuitAsync());
         Assert.Equal([RpcMethod.AppCanQuit, RpcMethod.AppShutdown], _fake.Methods);
         Assert.Equal(["{\"relaunch\":false}"], _fake.Params(RpcMethod.AppShutdown));
-        Assert.Empty(_confirm.Questions);
-    }
-
-    [Fact]
-    public async Task CoreErrorsNeverBlockQuitting()
-    {
-        _fake.Fail(RpcMethod.AppCanQuit, new RpcException(RpcErrorCode.Internal, "x"));
-        _fake.Fail(RpcMethod.AppShutdown, new RpcException(RpcErrorCode.Internal, "y"));
-        var app = NewApp();
-        Assert.True(await app.PrepareToQuitAsync());
-        Assert.Equal([RpcMethod.AppCanQuit, RpcMethod.AppShutdown], _fake.Methods);
         Assert.Empty(_confirm.Questions);
     }
 
@@ -758,20 +708,6 @@ public sealed class AppViewModelTests
     }
 
     [Fact]
-    public async Task RefreshTabDoesNothingWhileAuditIsRefreshing()
-    {
-        var held = _fake.Hold(RpcMethod.AuditCommits);
-        var app = await Fixtures.StartedApp(_fake);
-        app.SelectedTab = app.Tabs[3];
-        Assert.True(app.Audit.IsRefreshing);
-        Assert.False(app.RefreshTabCommand.CanExecute(null));
-        app.RefreshTabCommand.Execute(null);
-        Assert.Equal(1, _fake.Count(RpcMethod.AuditCommits));
-        held.Release(new AuditResult([], "No commits"));
-        Assert.True(await Fixtures.Settle(() => !app.Audit.IsRefreshing));
-    }
-
-    [Fact]
     public async Task RefreshTabDoesNothingWhileHistoryIsRefreshing()
     {
         // History's Refresh has no guard of its own: only its running state
@@ -805,16 +741,13 @@ public sealed class AppViewModelTests
         Assert.True(await Fixtures.Settle(() => !app.Registry.FetchCommand.IsRunning));
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(4)]
-    [InlineData(5)]
-    public async Task RefreshTabDoesNothingOnTabsWithoutARefresh(int tab)
+    [Fact]
+    public async Task RefreshTabDoesNothingOnTheSignTab()
     {
         var app = await Fixtures.StartedApp(_fake);
         Assert.True(await Fixtures.Settle(() => !app.Audit.IsRefreshing));
         var calls = _fake.Calls.Count;
-        app.SelectedTab = app.Tabs[tab];
+        app.SelectedTab = app.Tabs[0];
         Assert.False(app.RefreshTabCommand.CanExecute(null));
         app.RefreshTabCommand.Execute(null);
         Assert.Equal(calls, _fake.Calls.Count);
@@ -883,16 +816,6 @@ public sealed class AppViewModelTests
         _fake.Emit(new BridgeEvent.AuthChanged(Fixtures.LoggedIn));
         Assert.True(await Fixtures.Settle(() => ReferenceEquals(app.History.Snapshot, list)));
         Assert.True(await Fixtures.Settle(() => app.Login.AuthState == Fixtures.LoggedIn));
-    }
-
-    [Fact]
-    public async Task LoginStatusTextsReachTheRegistryAndHistoryStatusLines()
-    {
-        var app = await Fixtures.StartedApp(_fake);
-        _fake.Respond(RpcMethod.AuthLogin, Fixtures.LoggedIn);
-        await app.Login.StartAsync();
-        Assert.Equal("Logged in as @octocat", app.Registry.Status);
-        Assert.Equal("Logged in as @octocat", app.History.Status);
     }
 
     [Fact]

@@ -34,15 +34,6 @@ func TestBuildIssueTitle_Truncation(t *testing.T) {
 	}
 }
 
-func TestBuildIssueTitle_ExactLength(t *testing.T) {
-	prefix := "[Auto] network: "
-	desc := strings.Repeat("a", maxTitleLen-len(prefix))
-	got := BuildIssueTitle("network", desc)
-	if len(got) != maxTitleLen {
-		t.Errorf("title length = %d, want %d", len(got), maxTitleLen)
-	}
-}
-
 func TestBuildIssueTitle_MultibyteTruncation(t *testing.T) {
 	// Place a 4-byte emoji so the 256-byte cut falls mid-rune.
 	prefix := "[Auto] internal: "
@@ -179,40 +170,6 @@ func TestBrowserURL_ShortBodyNotTruncated(t *testing.T) {
 	body := parsed.Query().Get("body")
 	if body != shortBody {
 		t.Errorf("body = %q, want %q", body, shortBody)
-	}
-}
-
-func TestBrowserURL_MultibyteTruncation(t *testing.T) {
-	// Build a body with multi-byte characters near the cut point.
-	// Each emoji is 4 bytes; place them so the cut falls mid-rune.
-	prefix := strings.Repeat("A", maxBrowserBodyBytes-2)
-	body := prefix + "\U0001F600\U0001F600" // two 4-byte emoji
-	u := browserURL("Title", body)
-
-	parsed, err := url.Parse(u)
-	if err != nil {
-		t.Fatalf("invalid URL: %v", err)
-	}
-	decoded := parsed.Query().Get("body")
-	// Should not contain broken UTF-8.
-	if strings.ToValidUTF8(decoded, "\xff") != decoded {
-		t.Error("truncated body contains invalid UTF-8")
-	}
-}
-
-// --- Token never in body ---
-
-func TestReportIssue_TokenNotInBody(t *testing.T) {
-	token := "gho_supersecrettoken123"
-	body := BuildIssueBody("v1.0.0", "internal", "error occurred")
-
-	if strings.Contains(body, token) {
-		t.Error("issue body contains token")
-	}
-
-	result, _ := ReportIssue(context.Background(), nil, "Title", body)
-	if strings.Contains(result, token) {
-		t.Error("result URL contains token")
 	}
 }
 

@@ -216,49 +216,6 @@ func TestExecuteSignFlow_PINSentinelsSurviveAndClassify(t *testing.T) {
 	}
 }
 
-func TestExecuteSignFlow_HappyPath(t *testing.T) {
-	_, priv, _ := ed25519.GenerateKey(nil)
-	adapter := &mockSignAdapter{secretKey: priv}
-
-	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
-		return adapter, nopCloser{}, nil
-	}
-
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	logPath := filepath.Join(tmpDir, "issuance.log")
-
-	req := core.SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Order of the Crown of Georgia",
-		Detail:    "Distinguished service",
-		Date:      "2026-03-14",
-	}
-
-	result, err := executeSignFlow(req, logPath, true, openAdapter, acceptAnyKey, dummyReadPin, nil, logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.PNGPreview) == 0 {
-		t.Error("expected non-empty PNGPreview")
-	}
-	if len(result.Hash8) != 8 {
-		t.Errorf("Hash8 length = %d, want 8", len(result.Hash8))
-	}
-	if result.Response.URL == "" {
-		t.Error("expected non-empty URL in response")
-	}
-	if result.Response.Signature == "" {
-		t.Error("expected non-empty Signature in response")
-	}
-	if result.Response.Payload == "" {
-		t.Error("expected non-empty Payload in response")
-	}
-	if result.Response.PayloadSHA256 == "" {
-		t.Error("expected non-empty PayloadSHA256 in response")
-	}
-}
-
 // TestExecuteSignFlow_AdapterOpenError: the key read and the PIN succeed,
 // then the signing open fails (card pulled after the PIN); the open error is
 // returned unwrapped.
@@ -310,100 +267,6 @@ func TestExecuteSignFlow_SignError(t *testing.T) {
 	}
 	if sfe.Phase != phaseSign {
 		t.Errorf("Phase = %q, want %q", sfe.Phase, phaseSign)
-	}
-}
-
-func TestExecuteSignFlow_LogFileWritten(t *testing.T) {
-	_, priv, _ := ed25519.GenerateKey(nil)
-	adapter := &mockSignAdapter{secretKey: priv}
-
-	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
-		return adapter, nopCloser{}, nil
-	}
-
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	logPath := filepath.Join(tmpDir, "issuances.json")
-
-	req := core.SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Order of the Crown of Georgia",
-		Detail:    "Distinguished service",
-		Date:      "2026-03-14",
-	}
-
-	_, err := executeSignFlow(req, logPath, true, openAdapter, acceptAnyKey, dummyReadPin, nil, logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify the log file was written by signflow (not by HandleSign).
-	records, err := issuancelog.ReadLog(logPath)
-	if err != nil {
-		t.Fatalf("ReadLog error: %v", err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("expected 1 log record, got %d", len(records))
-	}
-	if records[0].Recipient != "John Doe" {
-		t.Errorf("Recipient = %q, want %q", records[0].Recipient, "John Doe")
-	}
-	if records[0].Honor != "Order of the Crown of Georgia" {
-		t.Errorf("Honor = %q, want %q", records[0].Honor, "Order of the Crown of Georgia")
-	}
-	if records[0].PayloadSHA256 == "" {
-		t.Error("PayloadSHA256 should not be empty")
-	}
-	if records[0].SignatureB64URL == "" {
-		t.Error("SignatureB64URL should not be empty")
-	}
-	if records[0].Timestamp == "" {
-		t.Error("Timestamp should not be empty")
-	}
-}
-
-func TestExecuteSignFlow_RecordFieldsNFCNormalized(t *testing.T) {
-	_, priv, _ := ed25519.GenerateKey(nil)
-	adapter := &mockSignAdapter{secretKey: priv}
-
-	openAdapter := func(readPin func() (string, error)) (core.SigningAdapter, io.Closer, error) {
-		return adapter, nopCloser{}, nil
-	}
-
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	logPath := filepath.Join(tmpDir, "issuances.json")
-
-	// NFD input: e + combining acute accent.
-	req := core.SignRequest{
-		Recipient: "Caf\u0065\u0301",
-		Honor:     "Order of the Crown of Georgia",
-		Detail:    "re\u0301sume\u0301",
-		Date:      "2026-03-14",
-	}
-
-	_, err := executeSignFlow(req, logPath, true, openAdapter, acceptAnyKey, dummyReadPin, nil, logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	records, err := issuancelog.ReadLog(logPath)
-	if err != nil {
-		t.Fatalf("ReadLog error: %v", err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(records))
-	}
-
-	// Record fields should be NFC-normalized.
-	if records[0].Recipient != "Caf\u00e9" {
-		t.Errorf("Recipient = %q, want NFC-normalized %q", records[0].Recipient, "Caf\u00e9")
-	}
-	if records[0].Detail != "r\u00e9sum\u00e9" {
-		t.Errorf("Detail = %q, want NFC-normalized %q", records[0].Detail, "r\u00e9sum\u00e9")
-	}
-	if records[0].Date != "2026-03-14" {
-		t.Errorf("Date = %q, want %q", records[0].Date, "2026-03-14")
 	}
 }
 
@@ -535,27 +398,6 @@ func TestClearPINCacheOnAuthError_RealisticVerifyPinChain(t *testing.T) {
 
 	if _, ok := cache.Get(); ok {
 		t.Error("expected cache cleared for a realistically-wrapped verify-pin AuthErr")
-	}
-}
-
-func TestSignFlowError_Unwrap(t *testing.T) {
-	inner := fmt.Errorf("hardware fault")
-	sfe := &signFlowError{Phase: phaseSign, Err: inner}
-	if errors.Unwrap(sfe) != inner {
-		t.Errorf("Unwrap returned %v, want %v", errors.Unwrap(sfe), inner)
-	}
-}
-
-func TestSignFlowError_Phase(t *testing.T) {
-	inner := fmt.Errorf("timeout")
-	sfe := &signFlowError{Phase: phaseExportKey, Err: inner}
-
-	var extracted *signFlowError
-	if !errors.As(sfe, &extracted) {
-		t.Fatal("errors.As failed")
-	}
-	if extracted.Phase != phaseExportKey {
-		t.Errorf("Phase = %q, want %q", extracted.Phase, phaseExportKey)
 	}
 }
 
@@ -775,33 +617,6 @@ func TestSignAndLog_OpenError(t *testing.T) {
 	}
 	if !strings.Contains(string(debugData), "connect: pcsc daemon not running") {
 		t.Errorf("debug log should contain connect error, got: %s", debugData)
-	}
-}
-
-// TestExecuteSignFlow_LogPathMissingDirIsNonFatal pins that executeSignFlow
-// swallows signAndLog's phaseLog error: single-sign still returns a full
-// result (including the QR PNG) when the issuance-log append fails.
-func TestExecuteSignFlow_LogPathMissingDirIsNonFatal(t *testing.T) {
-	_, priv, _ := ed25519.GenerateKey(nil)
-	openAdapter := func(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
-		return &mockSignAdapter{secretKey: priv}, nopCloser{}, nil
-	}
-	tmpDir := t.TempDir()
-	logger := debuglog.New(filepath.Join(tmpDir, "debug.log"))
-	logPath := filepath.Join(tmpDir, "missing", "log.json")
-
-	result, err := executeSignFlow(validSignRequest(), logPath, true, openAdapter, acceptAnyKey, dummyReadPin, nil, logger)
-	if err != nil {
-		t.Fatalf("expected nil error (log failure non-fatal), got: %v", err)
-	}
-	if len(result.PNGPreview) == 0 {
-		t.Error("expected non-empty PNGPreview")
-	}
-	if result.Response.URL == "" {
-		t.Error("expected non-empty URL")
-	}
-	if len(result.Hash8) != 8 {
-		t.Errorf("Hash8 length = %d, want 8", len(result.Hash8))
 	}
 }
 

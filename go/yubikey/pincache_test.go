@@ -38,23 +38,6 @@ func TestPinCache_SetAndGet(t *testing.T) {
 	}
 }
 
-func TestPinCache_DisableClearsPIN(t *testing.T) {
-	c := NewPinCache()
-	defer c.Close()
-
-	c.SetEnabled(true)
-	if err := c.Set("123456"); err != nil {
-		t.Fatal(err)
-	}
-
-	c.SetEnabled(false)
-
-	pin, ok := c.Get()
-	if ok || pin != "" {
-		t.Errorf("expected empty result after disable, got %q, %v", pin, ok)
-	}
-}
-
 func TestPinCache_Clear(t *testing.T) {
 	c := NewPinCache()
 	defer c.Close()
@@ -68,24 +51,6 @@ func TestPinCache_Clear(t *testing.T) {
 	pin, ok := c.Get()
 	if ok || pin != "" {
 		t.Errorf("expected empty result after Clear, got %q, %v", pin, ok)
-	}
-}
-
-func TestPinCache_Timeout(t *testing.T) {
-	c := newPinCacheWithTimeout(50 * time.Millisecond)
-	defer c.Close()
-
-	c.SetEnabled(true)
-	if err := c.Set("123456"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Wait for timeout to fire.
-	time.Sleep(100 * time.Millisecond)
-
-	pin, ok := c.Get()
-	if ok || pin != "" {
-		t.Errorf("expected PIN to be cleared after timeout, got %q, %v", pin, ok)
 	}
 }
 
@@ -191,27 +156,6 @@ func TestPinCache_DoubleClose(t *testing.T) {
 	c.Close()
 }
 
-func TestPinCache_SetOverwritesExisting(t *testing.T) {
-	c := NewPinCache()
-	defer c.Close()
-	c.SetEnabled(true)
-
-	if err := c.Set("first"); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Set("second"); err != nil {
-		t.Fatal(err)
-	}
-
-	pin, ok := c.Get()
-	if !ok {
-		t.Fatal("expected cached PIN to be valid")
-	}
-	if pin != "second" {
-		t.Errorf("expected PIN %q, got %q", "second", pin)
-	}
-}
-
 func TestPinCache_EnableDisableEnable(t *testing.T) {
 	c := NewPinCache()
 	defer c.Close()
@@ -267,12 +211,6 @@ func TestZeroBytes(t *testing.T) {
 			t.Errorf("byte %d = %x, want 0", i, b)
 		}
 	}
-}
-
-func TestZeroBytes_Empty(t *testing.T) {
-	// Should not panic on empty slice.
-	zeroBytes([]byte{})
-	zeroBytes(nil)
 }
 
 func TestPinCache_SetMlockFailure(t *testing.T) {

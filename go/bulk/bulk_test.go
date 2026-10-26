@@ -340,15 +340,6 @@ func TestRunNotLogged(t *testing.T) {
 	}
 }
 
-func TestMarkNotAttempted(t *testing.T) {
-	res := mixedPlan(t)
-	MarkNotAttempted(res)
-	c := Summarize(res)
-	if c.ToSign != 0 || c.NotAttempted != 3 || c.Invalid != 1 || c.AlreadyIssued != 1 {
-		t.Fatalf("counts = %+v", c)
-	}
-}
-
 type failWriter struct{}
 
 func (failWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }

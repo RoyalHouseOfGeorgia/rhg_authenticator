@@ -127,23 +127,6 @@ func TestFetchRegistryCommits_RateLimit(t *testing.T) {
 	}
 }
 
-func TestFetchRegistryCommits_UnexpectedContentType(t *testing.T) {
-	ts := testCommitServer(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("<html>oops</html>"))
-	})
-	defer ts.Close()
-
-	_, _, err := FetchRegistryCommits(ts.URL, 10, "")
-	if err == nil {
-		t.Fatal("expected error for unexpected Content-Type")
-	}
-	if !strings.Contains(err.Error(), "unexpected Content-Type") {
-		t.Errorf("error = %q, want it to contain 'unexpected Content-Type'", err.Error())
-	}
-}
-
 func TestFetchRegistryCommits_ContentTypeParsing(t *testing.T) {
 	tests := []struct {
 		ct     string

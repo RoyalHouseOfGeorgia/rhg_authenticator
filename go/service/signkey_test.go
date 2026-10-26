@@ -474,38 +474,25 @@ func TestBulk_OfflineLoadWorksRunRefused(t *testing.T) {
 	}
 }
 
-func TestSign_KeyRejectedBeforePIN(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		entry  func(priv ed25519.PrivateKey) core.KeyEntry
-		reason error
-		msg    string
-	}{
-		{"not registered", func(ed25519.PrivateKey) core.KeyEntry {
-			_, other, _ := ed25519.GenerateKey(nil)
-			return keyEntry(other, "", "")
-		}, ErrKeyNotRegistered, ErrKeyNotRegistered.Error()},
-		{"expired for the date", func(p ed25519.PrivateKey) core.KeyEntry { return keyEntry(p, "2026-03-13", "") }, ErrKeyExpired, msgExpiredBefore},
-		{"honor not allowed", func(p ed25519.PrivateKey) core.KeyEntry { return keyEntry(p, "", `["Appointment"]`) }, ErrHonorNotAllowed, msgOtherOnlyAppt},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newAppHarness(t, nil)
-			h.app.reg = registryWith(tc.entry(h.priv))
-			_, err := h.app.Sign(context.Background(), validFields("Alice"))
-			var se *SignError
-			if !errors.As(err, &se) || !errors.Is(err, tc.reason) {
-				t.Fatalf("err = %#v, want a SignError matching %v", err, tc.reason)
-			}
-			if se.Message != tc.msg || se.OfferReport || se.ReportID != "" {
-				t.Errorf("SignError = %+v, want message %q and no report", se, tc.msg)
-			}
-			if h.prompter.callCount() != 0 || h.opens != 1 {
-				t.Errorf("prompts=%d opens=%d; want no PIN, only the key read", h.prompter.callCount(), h.opens)
-			}
-			if _, statErr := os.Stat(h.app.logPath); !errors.Is(statErr, os.ErrNotExist) {
-				t.Errorf("issuance log written: %v", statErr)
-			}
-		})
+// TestSign_UnregisteredKeyRejectedBeforePIN drives the checkSigningKey gate
+// through App.Sign; its other reasons are covered by TestCheckSigningKey.
+func TestSign_UnregisteredKeyRejectedBeforePIN(t *testing.T) {
+	h := newAppHarness(t, nil)
+	_, other, _ := ed25519.GenerateKey(nil)
+	h.app.reg = registryWith(keyEntry(other, "", ""))
+	_, err := h.app.Sign(context.Background(), validFields("Alice"))
+	var se *SignError
+	if !errors.As(err, &se) || !errors.Is(err, ErrKeyNotRegistered) {
+		t.Fatalf("err = %#v, want a SignError matching %v", err, ErrKeyNotRegistered)
+	}
+	if se.Message != ErrKeyNotRegistered.Error() || se.OfferReport || se.ReportID != "" {
+		t.Errorf("SignError = %+v, want message %q and no report", se, ErrKeyNotRegistered.Error())
+	}
+	if h.prompter.callCount() != 0 || h.opens != 1 {
+		t.Errorf("prompts=%d opens=%d; want no PIN, only the key read", h.prompter.callCount(), h.opens)
+	}
+	if _, statErr := os.Stat(h.app.logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("issuance log written: %v", statErr)
 	}
 }
 

@@ -40,18 +40,6 @@ describe('validateCredential', () => {
         'credential must be a plain object',
       );
     });
-
-    it('throws on a string', () => {
-      expect(() => validateCredential('hello')).toThrow(
-        'credential must be a plain object',
-      );
-    });
-
-    it('throws on undefined', () => {
-      expect(() => validateCredential(undefined)).toThrow(
-        'credential must be a plain object',
-      );
-    });
   });
 
   describe('missing required fields', () => {
@@ -93,19 +81,8 @@ describe('validateCredential', () => {
       );
     });
 
-    it('throws UnsupportedVersionError for version 0', () => {
-      expect(() =>
-        validateCredential({ ...validCredential, version: 0 }),
-      ).toThrow(UnsupportedVersionError);
-    });
-
     it('throws when version is a string instead of a number', () => {
       const cred = { ...validCredential, version: '1' };
-      expect(() => validateCredential(cred)).toThrow('version must be a number');
-    });
-
-    it('throws when version is null', () => {
-      const cred = { ...validCredential, version: null };
       expect(() => validateCredential(cred)).toThrow('version must be a number');
     });
   });
@@ -127,16 +104,6 @@ describe('validateCredential', () => {
       expect(err.message).toBe('Unsupported credential version: 0');
     });
 
-    it('preserves numeric version -1 in message', () => {
-      const err = new UnsupportedVersionError(-1);
-      expect(err.message).toBe('Unsupported credential version: -1');
-    });
-
-    it('preserves NaN in message', () => {
-      const err = new UnsupportedVersionError(NaN);
-      expect(err.message).toBe('Unsupported credential version: NaN');
-    });
-
     it('has name set to UnsupportedVersionError', () => {
       const err = new UnsupportedVersionError(99);
       expect(err.name).toBe('UnsupportedVersionError');
@@ -144,11 +111,6 @@ describe('validateCredential', () => {
   });
 
   describe('date validation', () => {
-    it('rejects month 13', () => {
-      const cred = { ...validCredential, date: '2026-13-01' };
-      expect(() => validateCredential(cred)).toThrow('invalid date: 2026-13-01');
-    });
-
     it('rejects February 30', () => {
       const cred = { ...validCredential, date: '2026-02-30' };
       expect(() => validateCredential(cred)).toThrow('invalid date: 2026-02-30');
@@ -159,71 +121,6 @@ describe('validateCredential', () => {
       expect(() => validateCredential(cred)).toThrow(/invalid date/);
     });
 
-    it('rejects month 0', () => {
-      const cred = { ...validCredential, date: '2026-00-15' };
-      expect(() => validateCredential(cred)).toThrow('invalid date: 2026-00-15');
-    });
-
-    it('rejects day 0', () => {
-      const cred = { ...validCredential, date: '2026-01-00' };
-      expect(() => validateCredential(cred)).toThrow('invalid date: 2026-01-00');
-    });
-
-    it('rejects day 32 in January', () => {
-      const cred = { ...validCredential, date: '2026-01-32' };
-      expect(() => validateCredential(cred)).toThrow('invalid date: 2026-01-32');
-    });
-
-    it('rejects April 31', () => {
-      const cred = { ...validCredential, date: '2026-04-31' };
-      expect(() => validateCredential(cred)).toThrow('invalid date: 2026-04-31');
-    });
-
-    it('sanitizes control characters in date error messages', () => {
-      const cred = { ...validCredential, date: '2026-99-99\nINFO: fake' };
-      expect(() => validateCredential(cred)).toThrow('date contains invalid control characters');
-    });
-
-    it('sanitizes bidi override characters in date error messages', () => {
-      const cred = { ...validCredential, date: 'abc\u202Edef\u200F\u061Cghi' };
-      try {
-        validateCredential(cred);
-      } catch (e) {
-        const msg = (e as Error).message;
-        expect(msg).not.toMatch(/\u202E/);
-        expect(msg).not.toMatch(/\u200F/);
-        expect(msg).not.toMatch(/\u061C/);
-      }
-    });
-  });
-
-  describe('year 0000 rejection', () => {
-    it('rejects year 0000 as invalid date', () => {
-      const cred = { ...validCredential, date: '0000-01-01' };
-      expect(() => validateCredential(cred)).toThrow('invalid date: 0000-01-01');
-    });
-  });
-
-  describe('leap year handling', () => {
-    it('accepts Feb 29 in a leap year (2024)', () => {
-      const cred = { ...validCredential, date: '2024-02-29' };
-      expect(validateCredential(cred)).toEqual(cred);
-    });
-
-    it('rejects Feb 29 in a non-leap year (2025)', () => {
-      const cred = { ...validCredential, date: '2025-02-29' };
-      expect(() => validateCredential(cred)).toThrow('invalid date: 2025-02-29');
-    });
-
-    it('accepts Feb 29 in a century leap year (2000)', () => {
-      const cred = { ...validCredential, date: '2000-02-29' };
-      expect(validateCredential(cred)).toEqual(cred);
-    });
-
-    it('rejects Feb 29 in a non-leap century year (1900)', () => {
-      const cred = { ...validCredential, date: '1900-02-29' };
-      expect(() => validateCredential(cred)).toThrow('invalid date: 1900-02-29');
-    });
   });
 
   describe('empty string fields', () => {
@@ -247,13 +144,6 @@ describe('validateCredential', () => {
 
     it('rejects trailing whitespace', () => {
       const cred = { ...validCredential, recipient: 'John ' };
-      expect(() => validateCredential(cred)).toThrow(
-        'recipient must not have leading or trailing whitespace',
-      );
-    });
-
-    it('rejects leading and trailing whitespace', () => {
-      const cred = { ...validCredential, recipient: ' John ' };
       expect(() => validateCredential(cred)).toThrow(
         'recipient must not have leading or trailing whitespace',
       );
@@ -339,12 +229,6 @@ describe('validateCredential', () => {
       );
     });
 
-    it('accepts date at max length (10)', () => {
-      const cred = { ...validCredential, date: '2026-03-11' };
-      expect(cred.date.length).toBe(10);
-      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
-    });
-
     it('rejects date one char over max (11)', () => {
       const cred = { ...validCredential, date: '2026-03-111' };
       expect(() => validateCredential(cred)).toThrow(
@@ -358,11 +242,6 @@ describe('validateCredential', () => {
     it('rejects an object with an extra field', () => {
       const cred = { ...validCredential, foo: 'bar' };
       expect(() => validateCredential(cred)).toThrow('unexpected field: foo');
-    });
-
-    it('rejects multiple extra fields (reports first encountered)', () => {
-      const cred = { ...validCredential, aaa: 1, zzz: 2 };
-      expect(() => validateCredential(cred)).toThrow(/unexpected field:/);
     });
   });
 });

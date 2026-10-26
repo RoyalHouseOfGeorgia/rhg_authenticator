@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -71,13 +72,19 @@ func TestCheck_Server404(t *testing.T) {
 }
 
 func TestCheck_ServerTimeout(t *testing.T) {
+	// Serves a real update after 1 s, so the test fails unless the 50 ms
+	// client timeout fires first.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(10 * time.Second)
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(time.Second):
+		}
+		json.NewEncoder(w).Encode(botRelease("v2.0.0", "https://example.com"))
 	}))
 	defer server.Close()
 
-	// Use a very short timeout to test timeout behavior
-	result := checkInternal(server.URL, "v1.0.0", 100*time.Millisecond)
+	result := checkInternal(server.URL, "v1.0.0", 50*time.Millisecond)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on timeout")
 	}
@@ -92,18 +99,6 @@ func TestCheck_InvalidJSON(t *testing.T) {
 	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on invalid JSON")
-	}
-}
-
-func TestCheck_EmptyTagName(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(botRelease("", "https://example.com"))
-	}))
-	defer server.Close()
-
-	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
-	if result.UpdateAvailable {
-		t.Fatal("expected no update on empty tag")
 	}
 }
 
@@ -243,13 +238,21 @@ func TestParseSemver(t *testing.T) {
 }
 
 func TestCheck_RejectsHTTPRedirect(t *testing.T) {
-	// Server redirects to an HTTP URL — should be rejected by SafeRedirect.
+	var hits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		json.NewEncoder(w).Encode(botRelease("v2.0.0", "https://example.com"))
+	}))
+	defer target.Close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://evil.com/malicious", http.StatusFound)
+		http.Redirect(w, r, target.URL, http.StatusFound)
 	}))
 	defer server.Close()
 
 	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
+	if n := hits.Load(); n != 0 {
+		t.Errorf("http redirect target fetched %d times, want 0", n)
+	}
 	if result.UpdateAvailable {
 		t.Fatal("expected no update when redirect to HTTP is rejected")
 	}

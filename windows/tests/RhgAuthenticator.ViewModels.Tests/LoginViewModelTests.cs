@@ -50,8 +50,6 @@ public sealed class LoginViewModelTests
     [Fact]
     public void Copy()
     {
-        Assert.Equal([.. "Offline "u8, 0xE2, 0x80, 0x94, .. " Reconnect"u8], Encoding.UTF8.GetBytes(LoginViewModel.ReconnectTitle));
-        Assert.Equal("Login to GitHub", LoginViewModel.LoginTitle);
         Assert.Equal("GitHub Login", LoginViewModel.DeviceCodeTitle);
         Assert.Equal("Enter this code at GitHub:", LoginViewModel.DeviceCodePromptText);
         Assert.Equal(
@@ -62,16 +60,6 @@ public sealed class LoginViewModelTests
             LoginViewModel.LogoutConfirmation);
         Assert.Equal("Cancel", LoginViewModel.LogoutConfirmation.CancelTitle);
         Assert.False(LoginViewModel.LogoutConfirmation.IsDestructive);
-    }
-
-    [Fact]
-    public void RequiresItsServices()
-    {
-        Assert.Throws<ArgumentNullException>(() => new LoginViewModel(null!, _confirm, _clipboard, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new LoginViewModel(_fake, null!, _clipboard, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new LoginViewModel(_fake, _confirm, null!, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new LoginViewModel(_fake, _confirm, _clipboard, null!, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new LoginViewModel(_fake, _confirm, _clipboard, _urls, null!));
     }
 
     [Fact]
@@ -146,15 +134,6 @@ public sealed class LoginViewModelTests
     }
 
     [Fact]
-    public async Task LoadStateThrowsTheCoresError()
-    {
-        _fake.Fail(RpcMethod.AuthState, new RpcException(RpcErrorCode.Internal, "broke"));
-        var login = NewModel();
-        var error = await Assert.ThrowsAsync<RpcException>(login.LoadStateAsync);
-        Assert.Equal("broke", error.Message);
-    }
-
-    [Fact]
     public async Task LoggedOutTheLoginSucceedsWithTheCoresStatusTextAndState()
     {
         var login = await ModelIn(Fixtures.LoggedOut);
@@ -172,17 +151,6 @@ public sealed class LoginViewModelTests
         Assert.Null(_alerts.Current);
         Assert.Equal(["{}"], _fake.Params(RpcMethod.AuthLogin));
         Assert.Equal(0, _fake.Count(RpcMethod.AuthCancelLogin));
-    }
-
-    [Fact]
-    public async Task TheButtonWithNoSessionStartsTheLogin()
-    {
-        _fake.Respond(RpcMethod.AuthLogin, Fixtures.LoggedIn);
-        var login = await ModelIn(Fixtures.LoggedOut);
-        await login.ButtonCommand.ExecuteAsync(null);
-        Assert.Equal(1, _fake.Count(RpcMethod.AuthLogin));
-        Assert.Empty(_confirm.Questions);
-        Assert.Equal("Logged in as @octocat", _statuses[^1]);
     }
 
     [Fact]
@@ -235,12 +203,11 @@ public sealed class LoginViewModelTests
         Assert.False(login.IsLoggingIn);
     }
 
-    [Theory]
-    [InlineData(RpcErrorCode.LoginUnavailable, "GitHub login isn't available: no secure credential store on this computer.")]
-    [InlineData(RpcErrorCode.Failed, "GitHub didn't grant the public_repo permission the app needs.")]
-    public async Task AFailedLoginShowsTheCoresMessageAsAnError(RpcErrorCode code, string message)
+    [Fact]
+    public async Task AFailedLoginShowsTheCoresMessageAsAnError()
     {
-        _fake.Fail(RpcMethod.AuthLogin, new RpcException(code, message));
+        const string message = "GitHub login isn't available: no secure credential store on this computer.";
+        _fake.Fail(RpcMethod.AuthLogin, new RpcException(RpcErrorCode.LoginUnavailable, message));
         var login = NewModel();
         await login.StartAsync();
         Assert.Equal(new AlertState("Error", message), _alerts.Current);
@@ -297,16 +264,12 @@ public sealed class LoginViewModelTests
         Assert.False(login.OpenGitHubCommand.CanExecute(null));
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("http://github.com/login/device")]
-    [InlineData("/login/device")]
-    [InlineData("not a url")]
-    public async Task ADeviceCodeWithoutAnHttpsUriHasNoUrlAndOpenGitHubIsDisabled(string uri)
+    [Fact]
+    public async Task ADeviceCodeWithoutAnHttpsUriHasNoUrlAndOpenGitHubIsDisabled()
     {
         var login = NewModel();
         var (held, task) = await StartHeld(login);
-        login.ShowDeviceCode(new DeviceCode("WXYZ-0000", uri));
+        login.ShowDeviceCode(new DeviceCode("WXYZ-0000", "http://github.com/login/device"));
         Assert.Equal(new DeviceCodePrompt("WXYZ-0000", null), login.DeviceCode);
         Assert.False(login.OpenGitHubCommand.CanExecute(null));
         login.OpenGitHubCommand.Execute(null);

@@ -357,18 +357,6 @@ func TestExportErrorLogFunc_UnreadableLog(t *testing.T) {
 	}
 }
 
-func TestExportErrorLogFunc_SaveFailure(t *testing.T) {
-	dir, logger := newErrorLog(t, "diagnostics")
-	target := filepath.Join(t.TempDir(), "absent", "errors.log")
-	err := ExportErrorLog(dir, logger, target)
-	if err == nil || err.Error() != msgSaveNoFolder || !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("err = %v, want %q wrapping fs.ErrNotExist", err, msgSaveNoFolder)
-	}
-	if !strings.Contains(readFile(t, logger.Path()), "save failed: ") {
-		t.Error("save failure not logged")
-	}
-}
-
 func TestErrorLogExported(t *testing.T) {
 	got := ErrorLogExported(`C:\Users\op\rhg error log.txt`)
 	want := ExportResult{

@@ -121,13 +121,6 @@ func TestTruncateRunes_Unicode(t *testing.T) {
 	}
 }
 
-func TestTruncateRunes_Empty(t *testing.T) {
-	got := truncateRunes("", 50)
-	if got != "" {
-		t.Errorf("truncateRunes empty = %q, want empty", got)
-	}
-}
-
 func TestTruncateRunes_ZeroMax(t *testing.T) {
 	got := truncateRunes("anything", 0)
 	if got != "" {

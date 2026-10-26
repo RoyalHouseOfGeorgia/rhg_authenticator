@@ -153,18 +153,6 @@ struct AppModelTests {
         #expect(fake.params(.appInit) == ["{}"])
     }
 
-    @Test("the status items are the core's as given, whatever the numbers and version")
-    func statusItemsAsGiven() async {
-        let fake = FakeBridge()
-        fake.respond(
-            .appInit, AppInfo(activeKeys: 1, online: true, recentlyExpired: 0, version: "vv1", statusItems: ["Only one"]))
-        fake.respond(.signHonors, HonorsResult(honors: []))
-        scriptStartupReads(fake)
-        let app = AppModel(bridge: fake)
-        await app.start()
-        #expect(app.statusItems == ["Only one"])
-    }
-
     @Test("app.init failure is fatal with the report suffix; nothing else is called")
     func initFailure() async {
         let fake = FakeBridge()

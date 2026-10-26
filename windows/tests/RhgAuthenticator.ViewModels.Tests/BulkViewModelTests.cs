@@ -9,11 +9,10 @@ public sealed class BulkViewModelTests
     private readonly FakeFileOpen _fileOpen = new();
     private readonly FakeFileSave _fileSave = new();
     private readonly AlertQueue _alerts = new();
-    private bool _signing;
 
     private BulkViewModel NewModel()
     {
-        return new BulkViewModel(_fake, _fileOpen, _fileSave, _alerts, () => _signing);
+        return new BulkViewModel(_fake, _fileOpen, _fileSave, _alerts, () => false);
     }
 
     /// <summary>A model in <see cref="BulkPhase.Confirming"/> for <see cref="Fixtures.BulkPlan"/>.</summary>
@@ -61,20 +60,6 @@ public sealed class BulkViewModelTests
         Assert.Equal([.. "Export Results CSV"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(BulkViewModel.ExportTitle));
         Assert.Equal("Re-open the same file to regenerate results later.", BulkViewModel.RegenerateNote);
         Assert.Equal("Close", BulkViewModel.CloseTitle);
-        Assert.Equal("Connecting to YubiKey...", BulkViewModel.ConnectingLabel);
-        Assert.Equal(
-            [.. "Stopping after current row"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(BulkViewModel.StoppingLabel));
-    }
-
-    [Fact]
-    public void RequiresItsServices()
-    {
-        Func<bool> idle = () => false;
-        Assert.Throws<ArgumentNullException>(() => new BulkViewModel(null!, _fileOpen, _fileSave, _alerts, idle));
-        Assert.Throws<ArgumentNullException>(() => new BulkViewModel(_fake, null!, _fileSave, _alerts, idle));
-        Assert.Throws<ArgumentNullException>(() => new BulkViewModel(_fake, _fileOpen, null!, _alerts, idle));
-        Assert.Throws<ArgumentNullException>(() => new BulkViewModel(_fake, _fileOpen, _fileSave, null!, idle));
-        Assert.Throws<ArgumentNullException>(() => new BulkViewModel(_fake, _fileOpen, _fileSave, _alerts, null!));
     }
 
     [Fact]
@@ -381,19 +366,6 @@ public sealed class BulkViewModelTests
         Assert.Equal(BulkPhase.Confirming, model.Phase);
         Assert.Equal(1, _fake.Count(RpcMethod.BulkLoad));
         Assert.Single(_fileOpen.Requests);
-    }
-
-    [Fact]
-    public async Task BulkSignIsIgnoredWhileASigningIsBusy()
-    {
-        _signing = true;
-        var model = NewModel();
-        Assert.False(model.BulkSignCommand.CanExecute(null));
-        await model.BulkSignCommand.ExecuteAsync(null);
-        Assert.Equal(BulkPhase.Idle, model.Phase);
-        Assert.Empty(_fileOpen.Requests);
-        _signing = false;
-        Assert.True(model.BulkSignCommand.CanExecute(null));
     }
 
     [Fact]

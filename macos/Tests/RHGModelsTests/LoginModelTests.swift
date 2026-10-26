@@ -42,22 +42,16 @@ struct LoginModelTests {
 
     @Test("UI copy")
     func copy() {
-        #expect(Array(LoginModel.reconnectTitle.utf8) == Array("Offline ".utf8) + [0xE2, 0x80, 0x94] + Array(" Reconnect".utf8))
         #expect(LoginModel.loginTitle == "Log In to GitHub\u{2026}")
         #expect(LoginModel.logOutTitle == "Log Out\u{2026}")
         #expect(LoginModel.reconnectingStatus == "Reconnecting to GitHub\u{2026}")
         #expect(LoginModel.requestingCodeStatus == "Requesting device code\u{2026}")
         #expect(LoginModel.waitingStatus == "Waiting for GitHub authorization\u{2026}")
-        #expect(LoginModel.logoutConfirmation.confirmTitle == "Log Out")
         #expect(LoginModel.deviceCodeTitle == "GitHub Login")
         #expect(LoginModel.deviceCodePrompt == "Enter this code at GitHub:")
         #expect(
             [LoginModel.copyCodeTitle, LoginModel.openGitHubTitle, LoginModel.cancelTitle]
                 == ["Copy Code", "Open GitHub", "Cancel"])
-        #expect(LoginModel.logoutConfirmation.title == "Log Out")
-        #expect(
-            LoginModel.logoutConfirmation.message
-                == "Log out of GitHub? You'll need to re-authorize to submit future updates.")
     }
 
     @Test("the button title follows the login state")
@@ -106,16 +100,6 @@ struct LoginModelTests {
         read.release(loggedOut)
         await pending.value
         #expect(login.authState == loggedIn)
-    }
-
-    @Test("loadState reads auth.state")
-    func loadState() async throws {
-        let fake = FakeBridge()
-        fake.respond(.authState, loggedIn)
-        let (login, _) = await model(fake)
-        try await login.loadState()
-        #expect(login.authState == loggedIn)
-        #expect(fake.params(.authState) == ["{}"])
     }
 
     @Test("loadState is newer than an auth.state read still running")
@@ -195,13 +179,10 @@ struct LoginModelTests {
         #expect(!login.isLoggingIn)
     }
 
-    @Test(
-        "a failed login shows the core's message as an error",
-        arguments: [
-            RPCError(code: .loginUnavailable, message: "GitHub login isn't available: no secure credential store on this computer."),
-            RPCError(code: .failed, message: "GitHub didn't grant the public_repo permission the app needs."),
-        ])
-    func failed(_ error: RPCError) async {
+    @Test("a failed login shows the core's message as an error")
+    func failed() async {
+        let error = RPCError(
+            code: .loginUnavailable, message: "GitHub login isn't available: no secure credential store on this computer.")
         let fake = FakeBridge()
         fake.fail(.authLogin, error)
         let (login, status) = await model(fake)

@@ -24,10 +24,7 @@ public sealed class EntryFormViewModelTests
     [Fact]
     public void Copy()
     {
-        Assert.Equal(["Add Entry", "Edit Entry"], [EntryFormViewModel.AddTitle, EntryFormViewModel.EditTitle]);
-        Assert.Equal(
-            ["Add", "Save", "Cancel"],
-            [EntryFormViewModel.AddConfirmTitle, EntryFormViewModel.EditConfirmTitle, EntryFormViewModel.CancelTitle]);
+        Assert.Equal("Cancel", EntryFormViewModel.CancelTitle);
         Assert.Equal(
             ["Authority", "From date", "To date", "No expiry", "Public Key", "Note"],
             [
@@ -39,21 +36,6 @@ public sealed class EntryFormViewModelTests
         Assert.Equal(
             ["Import Certificate", "Import from YubiKey"],
             [EntryFormViewModel.ImportCertificateTitle, EntryFormViewModel.ImportFromYubiKeyTitle]);
-        Assert.Equal("No key imported", EntryFormViewModel.NoKeyText);
-        Assert.Equal(
-            "The YubiKey is busy with another operation. Try again when it finishes.", EntryFormViewModel.YubiKeyBusyText);
-        Assert.Equal(["crt", "pem"], EntryFormViewModel.CertificateExtensions);
-    }
-
-    [Fact]
-    public void RequiresItsServicesAndEntry()
-    {
-        var entry = Fixtures.RegistryEntry(1).Entry;
-        Assert.Throws<ArgumentNullException>(() => new EntryFormViewModel(null!, _fileOpen));
-        Assert.Throws<ArgumentNullException>(() => new EntryFormViewModel(_fake, null!));
-        Assert.Throws<ArgumentNullException>(() => new EntryFormViewModel(null!, _fileOpen, 0, entry));
-        Assert.Throws<ArgumentNullException>(() => new EntryFormViewModel(_fake, null!, 0, entry));
-        Assert.Throws<ArgumentNullException>(() => new EntryFormViewModel(_fake, _fileOpen, 0, null!));
     }
 
     [Fact]

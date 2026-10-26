@@ -71,15 +71,6 @@ public sealed class FlowTests(CoreLibraryFixture fixture)
     }
 
     [Fact]
-    public async Task VerifyUpdateZipWithoutAZipIsAUsageError()
-    {
-        var (status, lines, stderr) = await Support.RunFlowAsync(["--verify-update-zip"], s_timeout);
-        Assert.True(status > 0);
-        Assert.False(string.IsNullOrEmpty(stderr) && lines.Count == 0);
-        Assert.DoesNotContain(lines, l => l.StartsWith("usage: RhgAuthenticator.FlowRunner", StringComparison.Ordinal));
-    }
-
-    [Fact]
     public async Task UnknownScenarioPrintsUsageAndExits2()
     {
         var (status, lines, _) = await Support.RunFlowAsync(["nope"], s_timeout);

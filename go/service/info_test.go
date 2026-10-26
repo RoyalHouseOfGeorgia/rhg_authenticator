@@ -9,69 +9,6 @@ import (
 
 func ptrStr(s string) *string { return &s }
 
-func TestComputeRegistryStats_ActiveKeys(t *testing.T) {
-	reg := core.Registry{
-		Keys: []core.KeyEntry{
-			{Authority: "A", From: "2025-01-01", To: nil},
-			{Authority: "B", From: "2025-06-01", To: ptrStr("2026-12-31")},
-		},
-	}
-	stats := computeRegistryStats(reg, "2026-03-15")
-	if stats.ActiveKeys != 2 {
-		t.Errorf("ActiveKeys = %d, want 2", stats.ActiveKeys)
-	}
-}
-
-func TestComputeRegistryStats_ExpiredKey(t *testing.T) {
-	reg := core.Registry{
-		Keys: []core.KeyEntry{
-			{Authority: "A", From: "2025-01-01", To: ptrStr("2026-03-01")},
-		},
-	}
-	stats := computeRegistryStats(reg, "2026-03-15")
-	if stats.ActiveKeys != 0 {
-		t.Errorf("ActiveKeys = %d, want 0", stats.ActiveKeys)
-	}
-	if stats.RecentlyExpired != 1 {
-		t.Errorf("RecentlyExpired = %d, want 1", stats.RecentlyExpired)
-	}
-}
-
-func TestComputeRegistryStats_ExpiredOlderThan30Days(t *testing.T) {
-	reg := core.Registry{
-		Keys: []core.KeyEntry{
-			{Authority: "A", From: "2025-01-01", To: ptrStr("2025-12-31")},
-		},
-	}
-	stats := computeRegistryStats(reg, "2026-03-15")
-	if stats.RecentlyExpired != 0 {
-		t.Errorf("RecentlyExpired = %d, want 0 (expired >30 days ago)", stats.RecentlyExpired)
-	}
-}
-
-func TestComputeRegistryStats_EmptyRegistry(t *testing.T) {
-	reg := core.Registry{Keys: []core.KeyEntry{}}
-	stats := computeRegistryStats(reg, "2026-03-15")
-	if stats.ActiveKeys != 0 {
-		t.Errorf("ActiveKeys = %d, want 0", stats.ActiveKeys)
-	}
-	if stats.RecentlyExpired != 0 {
-		t.Errorf("RecentlyExpired = %d, want 0", stats.RecentlyExpired)
-	}
-}
-
-func TestComputeRegistryStats_FutureFromIsActive(t *testing.T) {
-	reg := core.Registry{
-		Keys: []core.KeyEntry{
-			{Authority: "A", From: "2027-01-01", To: nil},
-		},
-	}
-	stats := computeRegistryStats(reg, "2026-03-15")
-	if stats.ActiveKeys != 1 {
-		t.Errorf("ActiveKeys = %d, want 1 (from is informational)", stats.ActiveKeys)
-	}
-}
-
 func TestComputeRegistryStats_ToEqualsTodayIsActive(t *testing.T) {
 	reg := core.Registry{
 		Keys: []core.KeyEntry{
@@ -148,13 +85,5 @@ func TestStatusItems(t *testing.T) {
 		if got := statusItems(tc.version, tc.online, stats); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: statusItems = %q, want %q", tc.name, got, tc.want)
 		}
-	}
-}
-
-func TestStatusItems_NoKeys(t *testing.T) {
-	got := statusItems("v1.0.0", true, registryStats{})
-	want := []string{"Active keys: 0", "Expired (30d): 0", "Version 1.0.0"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("statusItems = %q, want %q", got, want)
 	}
 }

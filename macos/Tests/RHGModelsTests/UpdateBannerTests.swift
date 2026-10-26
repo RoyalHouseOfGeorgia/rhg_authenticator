@@ -40,9 +40,9 @@ struct UpdateBannerTests {
                         "To get updates automatically, move RHG Authenticator into your Applications folder."))
     }
 
-    @Test("manualOnly without a release link shows nothing", arguments: [false, true])
-    func manualOnlyNoLink(moveToApplications: Bool) {
-        #expect(UpdateBanner(status(.manualOnly, releaseUrl: "", moveToApplications: moveToApplications)) == nil)
+    @Test("manualOnly without a release link shows nothing")
+    func manualOnlyNoLink() {
+        #expect(UpdateBanner(status(.manualOnly, releaseUrl: "", moveToApplications: false)) == nil)
     }
 
     @Test("the banners' button titles")

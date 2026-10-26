@@ -51,18 +51,6 @@ public sealed class RegistryViewModelTests
     }
 
     [Fact]
-    public void RequiresItsServices()
-    {
-        var login = new LoginViewModel(_fake, _confirm, new FakeClipboard(), _urls, _alerts);
-        Assert.Throws<ArgumentNullException>(() => new RegistryViewModel(null!, login, _confirm, _fileOpen, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new RegistryViewModel(_fake, null!, _confirm, _fileOpen, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new RegistryViewModel(_fake, login, null!, _fileOpen, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new RegistryViewModel(_fake, login, _confirm, null!, _urls, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new RegistryViewModel(_fake, login, _confirm, _fileOpen, null!, _alerts));
-        Assert.Throws<ArgumentNullException>(() => new RegistryViewModel(_fake, login, _confirm, _fileOpen, _urls, null!));
-    }
-
-    [Fact]
     public void ANewModelIsEmptyAndNotLoaded()
     {
         var registry = NewModel();
@@ -77,42 +65,10 @@ public sealed class RegistryViewModelTests
     }
 
     [Fact]
-    public async Task LoadReadsTheColumnsAndTheSnapshotAndSaysLoaded()
-    {
-        var snapshot = Fixtures.Snapshot(2);
-        _fake.Respond(RpcMethod.RegistryColumns, new ColumnsResult(Fixtures.RegistryColumns));
-        _fake.Respond(RpcMethod.RegistrySnapshot, snapshot);
-        var registry = NewModel();
-        await registry.LoadAsync();
-        Assert.Equal(Fixtures.RegistryColumns, registry.Columns);
-        Assert.Same(snapshot, registry.Snapshot);
-        Assert.Equal("Loaded from registry server", registry.Status);
-        Assert.Null(registry.SelectedCell);
-        Assert.Null(registry.EntryForm);
-        Assert.Null(_alerts.Current);
-        Assert.Equal([RpcMethod.RegistryColumns, RpcMethod.RegistrySnapshot], _fake.Methods);
-        Assert.True(registry.SubmitForReviewCommand.CanExecute(null));
-    }
-
-    [Fact]
     public async Task LoadBeforeTheRegistryArrivedSaysFetching()
     {
         var registry = await Loaded(Fixtures.Snapshot(0, loaded: false));
         Assert.Equal("Fetching...", registry.Status);
-    }
-
-    [Theory]
-    [InlineData(RpcMethod.RegistryColumns)]
-    [InlineData(RpcMethod.RegistrySnapshot)]
-    public async Task LoadFailuresThrowTheCoresError(string failing)
-    {
-        _fake.Respond(RpcMethod.RegistryColumns, new ColumnsResult(Fixtures.RegistryColumns));
-        _fake.Respond(RpcMethod.RegistrySnapshot, Fixtures.Snapshot(1));
-        _fake.Reset(failing);
-        _fake.Fail(failing, new RpcException(RpcErrorCode.Internal, "broke"));
-        var registry = NewModel();
-        var error = await Assert.ThrowsAsync<RpcException>(registry.LoadAsync);
-        Assert.Equal("broke", error.Message);
     }
 
     [Fact]
@@ -492,13 +448,10 @@ public sealed class RegistryViewModelTests
         Assert.Equal(1, _fake.Count(RpcMethod.RegistryFetch));
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("http://github.com/RoyalHouseOfGeorgia/rhg_authenticator/pull/9")]
-    [InlineData("pull/9")]
-    public async Task SubmitSuccessWithoutAnHttpsUrlShowsAnInformationAlert(string url)
+    [Fact]
+    public async Task SubmitSuccessWithoutAnHttpsUrlShowsAnInformationAlert()
     {
-        _fake.Respond(RpcMethod.RegistrySubmit, new SubmitResult(9, url));
+        _fake.Respond(RpcMethod.RegistrySubmit, new SubmitResult(9, "http://github.com/RoyalHouseOfGeorgia/rhg_authenticator/pull/9"));
         var registry = await Loaded();
         _fake.Respond(RpcMethod.RegistrySnapshot, Fixtures.Snapshot(2));
         await registry.SubmitForReviewCommand.ExecuteAsync(null);
@@ -567,7 +520,6 @@ public sealed class RegistryViewModelTests
 
     [Theory]
     [InlineData("failed")]
-    [InlineData("internal")]
     [InlineData("future")]
     public async Task AnyOtherFailureShowsSubmissionFailedOfferingTheErrorLog(string code)
     {

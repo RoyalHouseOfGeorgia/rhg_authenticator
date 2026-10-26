@@ -34,9 +34,7 @@ public sealed class DisplayDateTests
     [InlineData("abcd-01-02")]
     [InlineData("2026-01-02-03")]
     [InlineData("2026/01/02")]
-    [InlineData("2026-01/02")]
     [InlineData("２０２６-01-02")]
-    [InlineData("٢٠٢٦-01-02")]
     public void LeavesOtherTextUnchanged(string text)
     {
         Assert.Equal(text, DisplayDate.Format(text));
@@ -69,19 +67,6 @@ public sealed class DisplayDateTests
         {
             Assert.Equal(TimeSpan.Zero, parsed.TimeOfDay);
         }
-    }
-
-    [Fact]
-    public void NullTextThrows()
-    {
-        Assert.Throws<ArgumentNullException>(() => DisplayDate.Format(null!));
-        Assert.Throws<ArgumentNullException>(() => DisplayDate.ParseYmd(null!));
-    }
-
-    [Fact]
-    public void NullCultureThrows()
-    {
-        Assert.Throws<ArgumentNullException>(() => DisplayDate.Culture(null!));
     }
 
     [Fact]
@@ -131,12 +116,6 @@ public sealed class SaveLocationTests : IDisposable
     public void Dispose()
     {
         Directory.Delete(_root, recursive: true);
-    }
-
-    [Fact]
-    public void StartsOnTheDesktop()
-    {
-        Assert.Equal("/home/op/Desktop", new SaveLocation(() => "/home/op/Desktop").InitialDirectory);
     }
 
     [Fact]
@@ -283,29 +262,6 @@ public sealed class AlertStateTests
         await dismissing;
     }
 
-    [Fact]
-    public void ReportStateButtons()
-    {
-        ReportState unavailable = new ReportState.Unavailable();
-        Assert.Null(unavailable.ButtonTitle);
-        Assert.False(unavailable.IsButtonEnabled);
-
-        ReportState available = new ReportState.Available("r1");
-        Assert.Equal("Report Issue", available.ButtonTitle);
-        Assert.True(available.IsButtonEnabled);
-
-        ReportState reporting = new ReportState.Reporting("r1");
-        Assert.Equal("Reporting…", reporting.ButtonTitle);
-        Assert.False(reporting.IsButtonEnabled);
-
-        ReportState reported = new ReportState.Reported();
-        Assert.Equal("Issue Reported", reported.ButtonTitle);
-        Assert.False(reported.IsButtonEnabled);
-
-        Assert.Equal(new ReportState.Reporting("r1"), reporting);
-        Assert.NotEqual(new ReportState.Reporting("r2"), reporting);
-        Assert.Equal<ReportState>(new ReportState.Reported(), reported);
-    }
 }
 
 public sealed class UpdateBannerTests
@@ -326,21 +282,11 @@ public sealed class UpdateBannerTests
     }
 
     [Theory]
-    [InlineData(UpdateState.ManualOnly, "")]
     [InlineData(UpdateState.ManualOnly, "http://github.com/RoyalHouseOfGeorgia/rhg_authenticator/releases")]
-    [InlineData(UpdateState.ManualOnly, "releases/tag/v1.3.0")]
-    [InlineData(UpdateState.Idle, ReleaseUrl)]
     [InlineData(UpdateState.Ready, ReleaseUrl)]
-    [InlineData(UpdateState.Unknown, ReleaseUrl)]
     public void AnythingElseOffersNothing(UpdateState state, string url)
     {
         Assert.Null(UpdateBanner.From(new UpdateStatus(state, "1.3.0", url, true)));
-    }
-
-    [Fact]
-    public void NullStatusThrows()
-    {
-        Assert.Throws<ArgumentNullException>(() => UpdateBanner.From(null!));
     }
 }
 

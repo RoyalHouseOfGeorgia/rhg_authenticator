@@ -2,7 +2,6 @@ package service
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/pem"
 	"os"
 	"testing"
@@ -102,25 +101,5 @@ func TestExtractEd25519Key_ValidDER(t *testing.T) {
 	keyFromPEM, _ := extractEd25519Key(certPEM)
 	if key != keyFromPEM {
 		t.Errorf("DER and PEM paths returned different keys: %s vs %s", key, keyFromPEM)
-	}
-}
-
-func TestExtractEd25519Key_RawKeyLength(t *testing.T) {
-	certData, err := os.ReadFile("../testdata/test-ed25519.crt")
-	if err != nil {
-		t.Fatalf("failed to read test fixture: %v", err)
-	}
-
-	key, err := extractEd25519Key(certData)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	raw, err := base64.StdEncoding.DecodeString(key)
-	if err != nil {
-		t.Fatalf("base64 decode failed: %v", err)
-	}
-	if len(raw) != 32 {
-		t.Errorf("expected 32-byte raw key, got %d bytes", len(raw))
 	}
 }

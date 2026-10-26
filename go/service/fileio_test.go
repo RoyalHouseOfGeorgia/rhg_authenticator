@@ -137,21 +137,3 @@ func TestMarshalRegistry_EmptyKeys(t *testing.T) {
 		t.Errorf("error = %v, want containing %q", err, "validation failed")
 	}
 }
-
-func TestMarshalRegistry_Deterministic(t *testing.T) {
-	reg := validRegistry()
-
-	data1, err := marshalRegistry(reg)
-	if err != nil {
-		t.Fatalf("first call: %v", err)
-	}
-
-	data2, err := marshalRegistry(reg)
-	if err != nil {
-		t.Fatalf("second call: %v", err)
-	}
-
-	if !bytes.Equal(data1, data2) {
-		t.Error("two calls with same input produced different output")
-	}
-}

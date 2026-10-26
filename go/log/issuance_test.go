@@ -31,30 +31,6 @@ func sampleRecord() IssuanceRecord {
 	}
 }
 
-func TestAppendRecord_NewFile(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "issuance.json")
-
-	rec := sampleRecord()
-	if err := AppendRecord(logPath, rec); err != nil {
-		t.Fatalf("AppendRecord failed: %v", err)
-	}
-
-	records, err := ReadLog(logPath)
-	if err != nil {
-		t.Fatalf("ReadLog failed: %v", err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(records))
-	}
-	if records[0].Recipient != "John Doe" {
-		t.Errorf("recipient = %q, want %q", records[0].Recipient, "John Doe")
-	}
-	if records[0].Honor != "Order of the Golden Fleece" {
-		t.Errorf("honor = %q, want %q", records[0].Honor, "Order of the Golden Fleece")
-	}
-}
-
 func TestAppendRecord_TwoRecords(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "issuance.json")
@@ -255,36 +231,6 @@ func TestIssuanceRecord_JSONKeys(t *testing.T) {
 	}
 	if len(m) != len(expectedKeys) {
 		t.Errorf("expected %d keys, got %d", len(expectedKeys), len(m))
-	}
-}
-
-func TestAppendRecord_TimestampRFC3339(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "issuance.json")
-
-	ts := "2026-03-13T10:30:00Z"
-	rec := sampleRecord()
-	rec.Timestamp = ts
-
-	if err := AppendRecord(logPath, rec); err != nil {
-		t.Fatalf("AppendRecord failed: %v", err)
-	}
-
-	records, err := ReadLog(logPath)
-	if err != nil {
-		t.Fatalf("ReadLog failed: %v", err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(records))
-	}
-
-	// Verify the timestamp is valid RFC 3339.
-	parsed, err := time.Parse(time.RFC3339, records[0].Timestamp)
-	if err != nil {
-		t.Fatalf("timestamp %q is not valid RFC 3339: %v", records[0].Timestamp, err)
-	}
-	if parsed.Year() != 2026 || parsed.Month() != 3 || parsed.Day() != 13 {
-		t.Errorf("parsed timestamp date mismatch: %v", parsed)
 	}
 }
 
@@ -644,19 +590,6 @@ func TestRemoveDuplicates_MissingFile(t *testing.T) {
 	}
 	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
 		t.Errorf("log file should not be created, stat err = %v", err)
-	}
-}
-
-func TestRemoveDuplicates_InvalidJSON(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "issuance.json")
-	if err := os.WriteFile(logPath, []byte("{not json"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	if _, _, err := RemoveDuplicates(logPath); err == nil {
-		t.Fatal("expected parse error")
-	}
-	if baks := backupFiles(t, logPath); len(baks) != 0 {
-		t.Errorf("unexpected backup files: %v", baks)
 	}
 }
 

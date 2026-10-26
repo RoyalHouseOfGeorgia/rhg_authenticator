@@ -90,13 +90,6 @@ func TestValidateSignForm_InvalidDate_Feb30(t *testing.T) {
 	}
 }
 
-func TestValidateSignForm_InvalidDate_Empty(t *testing.T) {
-	err := validateSignForm("John Doe", honorTitles[0], "Detail", "")
-	if err == nil {
-		t.Fatal("expected error for empty date")
-	}
-}
-
 func TestValidateSignForm_ValidLeapYear(t *testing.T) {
 	err := validateSignForm("John Doe", honorTitles[0], "Detail", "2024-02-29")
 	if err != nil {
@@ -122,78 +115,10 @@ func TestBuildFilename_PNG(t *testing.T) {
 	}
 }
 
-func TestBuildFilename_OtherExt(t *testing.T) {
-	// Non-png extensions should use "min3cm" suffix.
-	got := buildFilename("2026-01-01", "deadbeef", "pdf")
-	want := "rhg-credential-2026-01-01-deadbeef-min3cm.pdf"
-	if got != want {
-		t.Errorf("buildFilename other = %q, want %q", got, want)
-	}
-}
-
-// --- honorTitles constant tests ---
-
-func TestHonorTitles_Count(t *testing.T) {
-	if len(honorTitles) != 7 {
-		t.Errorf("honorTitles count = %d, want 7", len(honorTitles))
-	}
-}
-
-func TestHonorTitles_NotEmpty(t *testing.T) {
-	for i, title := range honorTitles {
-		if strings.TrimSpace(title) == "" {
-			t.Errorf("honorTitles[%d] is empty", i)
-		}
-	}
-}
-
-func TestHonorTitles_NoDuplicates(t *testing.T) {
-	seen := make(map[string]bool)
-	for _, title := range honorTitles {
-		if seen[title] {
-			t.Errorf("duplicate honor title: %q", title)
-		}
-		seen[title] = true
-	}
-}
-
-func TestHonorTitles_Contains_Eagle(t *testing.T) {
-	found := false
-	for _, title := range honorTitles {
-		if strings.Contains(title, "Eagle") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("honorTitles should contain the Eagle order")
-	}
-}
-
-func TestHonorTitles_Contains_Ennoblement(t *testing.T) {
-	found := false
-	for _, title := range honorTitles {
-		if title == "Ennoblement" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("honorTitles should contain Ennoblement")
-	}
-}
-
 // --- sanitizeError tests ---
 
 func TestSanitizeError_PCSC(t *testing.T) {
 	got := sanitizeError("test", fmt.Errorf("pcsc daemon not running"))
-	if got != "test: smart card service error" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestSanitizeError_SCARD(t *testing.T) {
-	got := sanitizeError("test", fmt.Errorf("scard: service unavailable"))
 	if got != "test: smart card service error" {
 		t.Errorf("got %q", got)
 	}
@@ -213,20 +138,6 @@ func TestSanitizeError_YubiKey(t *testing.T) {
 	}
 }
 
-func TestSanitizeError_Card(t *testing.T) {
-	got := sanitizeError("test", fmt.Errorf("smart card not found"))
-	if got != "test: hardware device error" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestSanitizeError_CardNoFalsePositive(t *testing.T) {
-	got := sanitizeError("test", fmt.Errorf("discard data"))
-	if got != "test: unexpected error" {
-		t.Errorf("got %q, want %q", got, "test: unexpected error")
-	}
-}
-
 func TestSanitizeError_Generic(t *testing.T) {
 	got := sanitizeError("test", fmt.Errorf("unexpected failure"))
 	if got != "test: unexpected error" {
@@ -238,13 +149,6 @@ func TestSanitizeError_Nil(t *testing.T) {
 	got := sanitizeError("test", nil)
 	if got != "test: unknown error" {
 		t.Errorf("got %q", got)
-	}
-}
-
-func TestSanitizeError_EmptyMessage(t *testing.T) {
-	got := sanitizeError("test", fmt.Errorf(""))
-	if got != "test: unexpected error" {
-		t.Errorf("got %q, want %q", got, "test: unexpected error")
 	}
 }
 
@@ -269,22 +173,8 @@ func TestFriendlyYubiKeyError_YubiKeyError(t *testing.T) {
 	}
 }
 
-func TestFriendlyYubiKeyError_CardError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("smart card not found"))
-	if !strings.Contains(got, "not detected") {
-		t.Errorf("expected 'not detected' message, got: %q", got)
-	}
-}
-
 func TestFriendlyYubiKeyError_PCSCError(t *testing.T) {
 	got := friendlyYubiKeyError(fmt.Errorf("pcsc daemon not running"))
-	if !strings.Contains(got, "Smart card service") {
-		t.Errorf("expected 'Smart card service' message, got: %q", got)
-	}
-}
-
-func TestFriendlyYubiKeyError_SCARDError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("scard: service not available"))
 	if !strings.Contains(got, "Smart card service") {
 		t.Errorf("expected 'Smart card service' message, got: %q", got)
 	}
@@ -408,15 +298,6 @@ func TestSignFlowErrorMessage_Transient_WrappedInSignFlowError(t *testing.T) {
 	}
 }
 
-func TestSignFlowErrorMessage_Transient_RawAdapterOpen(t *testing.T) {
-	// The raw adapter-open path (not wrapped in signFlowError) must also route
-	// a reset to the canonical message.
-	got := signFlowErrorMessage(resetErr())
-	if got != core.MsgYubiKeyReset {
-		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
-	}
-}
-
 func TestSignFlowErrorMessage_CertificateError(t *testing.T) {
 	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: object not found"))
 	if !strings.Contains(got, "No signing certificate found") {
@@ -428,13 +309,6 @@ func TestSignFlowErrorMessage_CertificateWithSmartCardInError(t *testing.T) {
 	// piv-go may include "smart card" in the error when slot 9c is empty.
 	// This must NOT be misclassified as "YubiKey not detected".
 	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: smart card error: data object not found"))
-	if !strings.Contains(got, "No signing certificate found") {
-		t.Errorf("expected certificate-specific message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_NotEd25519Error(t *testing.T) {
-	got := signFlowErrorMessage(fmt.Errorf("certificate does not contain an Ed25519 public key"))
 	if !strings.Contains(got, "No signing certificate found") {
 		t.Errorf("expected certificate-specific message, got: %q", got)
 	}

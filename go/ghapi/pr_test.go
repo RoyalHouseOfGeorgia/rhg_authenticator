@@ -280,15 +280,6 @@ func TestCreateRepoFilePR_PermissionsAbsent_Proceeds(t *testing.T) {
 	assertSteps(t, f, "repoAccess", "getRef", "createRef", "getContents", "updateContents", "createPR")
 }
 
-func TestCreateRepoFilePR_PermissionsNull_Proceeds(t *testing.T) {
-	f := &prFake{repoBody: `{"permissions": null}`}
-	c := newPRFake(t, f)
-
-	if _, err := runRepoFilePR(c); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestCreateRepoFilePR_RepoCheckFails(t *testing.T) {
 	f := &prFake{repoStatus: 500, repoBody: `{"message": "boom"}`}
 	c := newPRFake(t, f)
@@ -578,20 +569,6 @@ func TestCreateRegistryPR_UsesRegistryPathAndPrefix(t *testing.T) {
 	if len(got.Keys) != 1 || got.Keys[0].Authority != "Test Authority" {
 		t.Errorf("round-tripped keys = %+v", got.Keys)
 	}
-}
-
-func TestCreateRegistryPR_NoWriteAccess(t *testing.T) {
-	f := &prFake{repoBody: `{"permissions": {"push": false}}`}
-	c := newPRFake(t, f)
-
-	_, err := c.CreateRegistryPR(context.Background(), []byte("content"), "title")
-	if !errors.Is(err, ErrNoWriteAccess) {
-		t.Fatalf("error = %v, want ErrNoWriteAccess", err)
-	}
-	if got := UserMessage(err); !strings.Contains(got, "collaborator") {
-		t.Errorf("UserMessage = %q, want collaborator guidance", got)
-	}
-	assertSteps(t, f, "repoAccess")
 }
 
 // --- Low-level helpers target c.Owner/c.Repo ---

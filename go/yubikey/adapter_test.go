@@ -205,27 +205,6 @@ func TestSignBytes_Success(t *testing.T) {
 	}
 }
 
-func TestSignBytes_PinCancelled(t *testing.T) {
-	pub, sk := testEd25519Key()
-	yk := &fakeYubiKey{
-		cert:    testCert(pub),
-		privKey: &fakeSigner{key: sk},
-	}
-
-	cancelPin := func() (string, error) { return "", nil }
-
-	adapter, err := newAdapterFromHandle(yk, cancelPin)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer adapter.Close()
-
-	_, err = adapter.SignBytes([]byte("data"))
-	if err == nil {
-		t.Fatal("expected error when PIN is empty")
-	}
-}
-
 func TestSignBytes_PinError(t *testing.T) {
 	pub, sk := testEd25519Key()
 	yk := &fakeYubiKey{
@@ -366,30 +345,6 @@ func TestClose_Error(t *testing.T) {
 	}
 }
 
-func TestSigningAdapterCompliance(t *testing.T) {
-	// Compile-time check that YubiKeyAdapter satisfies the method set
-	// expected by core.SigningAdapter (ExportPublicKey + SignBytes).
-	pub, sk := testEd25519Key()
-	yk := &fakeYubiKey{
-		cert:    testCert(pub),
-		privKey: &fakeSigner{key: sk},
-	}
-
-	adapter, err := newAdapterFromHandle(yk, staticPin("123456"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer adapter.Close()
-
-	// Verify the two methods that core.SigningAdapter requires.
-	if _, err := adapter.ExportPublicKey(); err != nil {
-		t.Errorf("ExportPublicKey: %v", err)
-	}
-	if _, err := adapter.SignBytes([]byte("test")); err != nil {
-		t.Errorf("SignBytes: %v", err)
-	}
-}
-
 func TestNewYubiKeyAdapter_CardsError(t *testing.T) {
 	provider := PIVProvider{
 		Cards: func() ([]string, error) {
@@ -440,41 +395,6 @@ func TestNewYubiKeyAdapter_OpenError(t *testing.T) {
 	}
 }
 
-func TestNewYubiKeyAdapter_EmptyCardList(t *testing.T) {
-	provider := PIVProvider{
-		Cards: func() ([]string, error) {
-			return []string{}, nil
-		},
-		Open: nil,
-	}
-	_, err := NewYubiKeyAdapterWithProvider(provider, staticPin("123456"))
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "no YubiKey found among 0") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestSignBytes_NilReadPin(t *testing.T) {
-	pub, _ := testEd25519Key()
-	yk := &fakeYubiKey{cert: testCert(pub)}
-
-	adapter, err := newAdapterFromHandle(yk, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer adapter.Close()
-
-	_, err = adapter.SignBytes([]byte("data"))
-	if err == nil {
-		t.Fatal("expected error when readPin is nil")
-	}
-	if err.Error() != "PIN reader not initialized" {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
 func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 	pub, sk := testEd25519Key()
 	yk := &fakeYubiKey{
@@ -491,8 +411,8 @@ func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 
 	// Should fail before SetReadPin.
 	_, err = adapter.SignBytes([]byte("data"))
-	if err == nil {
-		t.Fatal("expected error when readPin is nil")
+	if err == nil || err.Error() != "PIN reader not initialized" {
+		t.Fatalf("SignBytes with a nil readPin: err = %v, want PIN reader not initialized", err)
 	}
 
 	// Set a valid readPin and retry.

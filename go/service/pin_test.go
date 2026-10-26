@@ -38,19 +38,6 @@ func TestTruncatePINToBytes(t *testing.T) {
 	}
 }
 
-// TestTruncatePINToBytes_Idempotent verifies that re-truncating an
-// already-truncated PIN is a no-op (the property applyPINByteCap relies on to
-// avoid an OnChanged loop).
-func TestTruncatePINToBytes_Idempotent(t *testing.T) {
-	for _, s := range []string{"123456789", "café1234", "1234567é"} {
-		once := TruncatePINToBytes(s, PIVMaxPINBytes)
-		twice := TruncatePINToBytes(once, PIVMaxPINBytes)
-		if twice != once {
-			t.Errorf("TruncatePINToBytes not idempotent for %q: once=%q twice=%q", s, once, twice)
-		}
-	}
-}
-
 // TestProcessPINResult verifies the cap/cache semantics of the pure helper
 // used by App.readPIN after the prompt returns.
 func TestProcessPINResult(t *testing.T) {

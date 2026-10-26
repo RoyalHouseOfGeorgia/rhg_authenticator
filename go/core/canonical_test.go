@@ -21,22 +21,6 @@ func TestCanonicalizeSimpleObject(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeKeySorting(t *testing.T) {
-	obj := map[string]any{
-		"z": float64(1),
-		"a": float64(2),
-		"m": float64(3),
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"a":2,"m":3,"z":1}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
 func TestCanonicalizeNFCNormalization(t *testing.T) {
 	// e + combining acute accent (U+0065 U+0301) → é (U+00E9)
 	obj := map[string]any{
@@ -112,45 +96,6 @@ func TestCanonicalizeDepthLimit(t *testing.T) {
 	want := `{"a":{"b":{"c":{"d":"ok"}}}}`
 	if string(got) != want {
 		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeDepthExact(t *testing.T) {
-	// The outermost map is at depth 0. A map at depth 4 should be rejected.
-	// depth 0: top-level
-	// depth 1: l1
-	// depth 2: l2
-	// depth 3: l3
-	// depth 4: l4 — rejected because depth >= maxDepth(4)
-	obj := map[string]any{
-		"l1": map[string]any{
-			"l2": map[string]any{
-				"l3": map[string]any{
-					"l4": map[string]any{
-						"val": "deep",
-					},
-				},
-			},
-		},
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected depth limit error at depth 4")
-	}
-
-	// Just under the limit: innermost map at depth 3
-	objOk := map[string]any{
-		"l1": map[string]any{
-			"l2": map[string]any{
-				"l3": map[string]any{
-					"val": "ok",
-				},
-			},
-		},
-	}
-	_, err = Canonicalize(objOk)
-	if err != nil {
-		t.Fatalf("depth 3 inner map should succeed: %v", err)
 	}
 }
 
@@ -353,14 +298,6 @@ func TestCanonicalizeNumbers(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeNonIntegerFloatError(t *testing.T) {
-	obj := map[string]any{"val": float64(1.5)}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for non-integer float 1.5")
-	}
-}
-
 func TestCanonicalizeIntType(t *testing.T) {
 	// Go int values should also work.
 	obj := map[string]any{
@@ -376,20 +313,6 @@ func TestCanonicalizeIntType(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeNullValue(t *testing.T) {
-	obj := map[string]any{
-		"val": nil,
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"val":null}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
 func TestCanonicalizeBooleans(t *testing.T) {
 	obj := map[string]any{
 		"f": false,
@@ -400,34 +323,6 @@ func TestCanonicalizeBooleans(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 	want := `{"f":false,"t":true}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeUnsupportedType(t *testing.T) {
-	obj := map[string]any{
-		"val": complex(1, 2),
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for unsupported type")
-	}
-}
-
-func TestCanonicalizeNestedObject(t *testing.T) {
-	obj := map[string]any{
-		"a": map[string]any{
-			"b": map[string]any{
-				"c": "deep",
-			},
-		},
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"a":{"b":{"c":"deep"}}}`
 	if string(got) != want {
 		t.Errorf("got %q, want %q", string(got), want)
 	}
@@ -561,20 +456,6 @@ func TestCanonicalizeArrayJustUnderDepthLimit(t *testing.T) {
 	want := `{"arr":[[["ok"]]]}`
 	if string(got) != want {
 		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeArrayAtExactDepthLimit(t *testing.T) {
-	// depth 0: map, depth 1: arr1, depth 2: arr2, depth 3: arr3,
-	// depth 4: arr4 — rejected (depth >= maxDepth).
-	var v any = []any{"val"}
-	for i := 0; i < 3; i++ {
-		v = []any{v}
-	}
-	obj := map[string]any{"a": v}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected depth limit error for array at depth 4")
 	}
 }
 

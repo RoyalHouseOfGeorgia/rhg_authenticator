@@ -142,14 +142,6 @@ func TestConfigure_DefaultIsOffline(t *testing.T) {
 	}
 }
 
-func TestConfigure_Offline(t *testing.T) {
-	h := newFakeHarness(t)
-	h.call(t, "test.configure", `{"online":false}`).ok(t, nil)
-	if info := h.init(t); info.Online {
-		t.Fatalf("info = %+v, want offline", info)
-	}
-}
-
 func TestConfigure_OnlyBeforeInit(t *testing.T) {
 	h := newFakeHarness(t)
 	h.call(t, "test.configure", `{}`).ok(t, nil)

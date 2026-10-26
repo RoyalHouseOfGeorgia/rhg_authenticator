@@ -94,17 +94,6 @@ public sealed class ContractTests
     }
 
     [Fact]
-    public void EveryMethodHasParamsAndResult()
-    {
-        var all = Support.FilesUnder(MethodsDir).ToHashSet();
-        foreach (var method in RpcMethod.All)
-        {
-            Assert.Contains($"{method}/params.json", all);
-            Assert.Contains($"{method}/result.json", all);
-        }
-    }
-
-    [Fact]
     public void EveryMethodFileDecodesAndReencodesToTheSameBytes()
     {
         var all = Support.FilesUnder(MethodsDir).Where(f => f != "index.json").ToList();

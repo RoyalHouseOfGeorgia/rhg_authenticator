@@ -740,21 +740,6 @@ func TestHistory(t *testing.T) {
 	h.call(t, "history.removeDuplicates", ``).fails(t, CodeFailed, "")
 }
 
-func TestAppExportErrorLog(t *testing.T) {
-	h := newHarness(t, nil)
-	out := filepath.Join(h.out, "debug.txt")
-	var notice service.ExportResult
-	h.call(t, "app.exportErrorLog", `{"path":`+jsonString(out)+`}`).ok(t, &notice)
-	if _, err := os.Stat(out); err != nil {
-		t.Errorf("error log not exported: %v", err)
-	}
-	if notice != service.ErrorLogExported(out) {
-		t.Errorf("export notice = %+v", notice)
-	}
-	h.call(t, "app.exportErrorLog", `{"path":`+jsonString(filepath.Join(h.dir, "x.txt"))+`}`).
-		fails(t, CodeFailed, service.ErrProtectedPath.Error())
-}
-
 func TestAuditCommits_Offline(t *testing.T) {
 	h := newHarness(t, nil)
 	h.call(t, "audit.commits", ``).fails(t, CodeFailed, "Failed to fetch registry history.")
@@ -886,10 +871,4 @@ func TestHistoryRecordParams_Input(t *testing.T) {
 	// An all-empty record is structurally valid: not input.
 	h.call(t, "history.deleteEntry", `{"record":{}}`).fails(t, CodeNotFound, "This record is no longer in the issuance log.")
 	h.call(t, "history.recordText", `{"record":{}}`).ok(t, nil)
-}
-
-func TestHistoryDeleteEntry_Unreadable(t *testing.T) {
-	h := newHarness(t, nil)
-	writeFile(t, filepath.Join(h.dir, "issuances.json"), "not json")
-	h.call(t, "history.deleteEntry", `{"record":{"recipient":"x"}}`).fails(t, CodeFailed, "Could not read the issuance log.")
 }
