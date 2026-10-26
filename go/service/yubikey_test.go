@@ -80,47 +80,37 @@ func TestKeyCheck_NotFound(t *testing.T) {
 	}
 }
 
-func TestKeyCheck_Error_PCSC(t *testing.T) {
-	kc := keyReadFailure(fmt.Errorf("yubikey: pcsc daemon not running"))
-	outcome, status, details := kc.Outcome, kc.Status, kc.Details
-	if outcome != KeyCheckFailed {
-		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFailed)
+func TestKeyCheck_Error(t *testing.T) {
+	cases := []struct {
+		name         string
+		err          error
+		wantStatus   string // exact status, when set
+		wantContains string
+	}{
+		{name: "PCSC", err: fmt.Errorf("yubikey: pcsc daemon not running"), wantContains: "Smart card service"},
+		{name: "no YubiKey", err: fmt.Errorf("yubikey: no YubiKey detected"), wantContains: "plug in"},
+		{
+			name:       "card reset is transient despite verify pin in the chain",
+			err:        errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid"),
+			wantStatus: core.MsgYubiKeyReset,
+		},
 	}
-	if !strings.Contains(status, "Smart card service") {
-		t.Errorf("status should mention smart card service, got: %q", status)
-	}
-	if details != nil {
-		t.Errorf("details should be nil on error, got: %v", details)
-	}
-}
-
-func TestKeyCheck_Error_NoYubiKey(t *testing.T) {
-	kc := keyReadFailure(fmt.Errorf("yubikey: no YubiKey detected"))
-	outcome, status, details := kc.Outcome, kc.Status, kc.Details
-	if outcome != KeyCheckFailed {
-		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFailed)
-	}
-	if !strings.Contains(status, "plug in") {
-		t.Errorf("status should mention 'plug in', got: %q", status)
-	}
-	if details != nil {
-		t.Errorf("details should be nil on error, got: %v", details)
-	}
-}
-
-func TestKeyCheck_Error_Transient(t *testing.T) {
-	// A card reset must surface the canonical reset message, even though
-	// "verify pin" appears in the wrapped error chain.
-	kc := keyReadFailure(errors.New("sign: signing failed: verify pin: transmitting request: the smart card has been reset, so any shared state information is invalid"))
-	outcome, status, details := kc.Outcome, kc.Status, kc.Details
-	if outcome != KeyCheckFailed {
-		t.Errorf("outcome = %q, want %q", outcome, KeyCheckFailed)
-	}
-	if status != core.MsgYubiKeyReset {
-		t.Errorf("status = %q, want %q", status, core.MsgYubiKeyReset)
-	}
-	if details != nil {
-		t.Errorf("details should be nil on error, got: %v", details)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kc := keyReadFailure(tc.err)
+			if kc.Outcome != KeyCheckFailed {
+				t.Errorf("outcome = %q, want %q", kc.Outcome, KeyCheckFailed)
+			}
+			if tc.wantStatus != "" && kc.Status != tc.wantStatus {
+				t.Errorf("status = %q, want %q", kc.Status, tc.wantStatus)
+			}
+			if !strings.Contains(kc.Status, tc.wantContains) {
+				t.Errorf("status = %q, want containing %q", kc.Status, tc.wantContains)
+			}
+			if kc.Details != nil {
+				t.Errorf("details should be nil on error, got: %v", kc.Details)
+			}
+		})
 	}
 }
 
@@ -150,43 +140,36 @@ func TestKeyCheck_NoExpiry(t *testing.T) {
 	}
 }
 
-func TestKeyCheck_WithNote(t *testing.T) {
-	to := "2027-12-31"
-	entry := &core.KeyEntry{
-		Authority: "Test Authority",
-		From:      "2026-01-01",
-		To:        &to,
-		Note:      "Backup key for ceremonies",
+func TestKeyCheck_Note(t *testing.T) {
+	cases := []struct {
+		name     string
+		note     string
+		fp       string
+		wantNote string // "" means no note line
+	}{
+		{"with note", "Backup key for ceremonies", strings.Repeat("bb", 32), "Backup key for ceremonies"},
+		{"whitespace-only note is omitted", "   ", strings.Repeat("cc", 32), ""},
 	}
-	kc := keyCheck(entry, strings.Repeat("bb", 32))
-	details := kc.Details
-	foundNote := false
-	for _, d := range details {
-		if strings.HasPrefix(d, "Note: ") {
-			foundNote = true
-			if !strings.Contains(d, "Backup key for ceremonies") {
-				t.Errorf("note detail should contain note text, got: %q", d)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			to := "2027-12-31"
+			entry := &core.KeyEntry{Authority: "Test Authority", From: "2026-01-01", To: &to, Note: tc.note}
+			details := keyCheck(entry, tc.fp).Details
+			foundNote := false
+			for _, d := range details {
+				if !strings.HasPrefix(d, "Note: ") {
+					continue
+				}
+				foundNote = true
+				if tc.wantNote == "" {
+					t.Errorf("note should be omitted, but found: %q", d)
+				} else if !strings.Contains(d, tc.wantNote) {
+					t.Errorf("note detail should contain %q, got: %q", tc.wantNote, d)
+				}
 			}
-		}
-	}
-	if !foundNote {
-		t.Errorf("expected note line in details, got: %v", details)
-	}
-}
-
-func TestKeyCheck_EmptyNote(t *testing.T) {
-	to := "2027-12-31"
-	entry := &core.KeyEntry{
-		Authority: "Test Authority",
-		From:      "2026-01-01",
-		To:        &to,
-		Note:      "   ",
-	}
-	kc := keyCheck(entry, strings.Repeat("cc", 32))
-	details := kc.Details
-	for _, d := range details {
-		if strings.HasPrefix(d, "Note: ") {
-			t.Errorf("whitespace-only note should be omitted, but found: %q", d)
-		}
+			if tc.wantNote != "" && !foundNote {
+				t.Errorf("expected note line in details, got: %v", details)
+			}
+		})
 	}
 }

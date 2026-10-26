@@ -389,61 +389,34 @@ func TestKeyFingerprint_InvalidKey(t *testing.T) {
 
 // --- IsDateInRange tests ---
 
-func TestIsDateInRange_InRange(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01"}
-	key.To = strPtr("2025-12-31")
-	if !IsDateInRange("2025-06-15", key) {
-		t.Error("expected true for date in range")
-	}
-}
-
-func TestIsDateInRange_AtFromBoundary(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01"}
-	key.To = strPtr("2025-12-31")
-	if !IsDateInRange("2025-01-01", key) {
-		t.Error("expected true for date at from boundary (inclusive)")
-	}
-}
-
-func TestIsDateInRange_BeforeFrom(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01"}
-	key.To = strPtr("2025-12-31")
-	if !IsDateInRange("2024-12-31", key) {
-		t.Error("expected true for date before from (from is informational)")
-	}
-}
-
-func TestIsDateInRange_FromAfterTo(t *testing.T) {
+func TestIsDateInRange(t *testing.T) {
+	year2025 := KeyEntry{From: "2025-01-01", To: strPtr("2025-12-31")}
 	// A key registered with a future from and then revoked (to set earlier)
 	// is bounded by to alone.
-	key := KeyEntry{From: "2026-12-01", To: strPtr("2026-10-02")}
-	cases := []struct {
+	fromAfterTo := KeyEntry{From: "2026-12-01", To: strPtr("2026-10-02")}
+	openEnded := KeyEntry{From: "2025-01-01", To: nil}
+	tests := []struct {
+		name string
+		key  KeyEntry
 		date string
 		want bool
 	}{
-		{"2026-01-15", true},  // before to (and before from)
-		{"2026-10-02", true},  // on to (inclusive)
-		{"2026-10-03", false}, // after to, before from
-		{"2026-12-15", false}, // after to and after from
+		{"InRange", year2025, "2025-06-15", true},
+		{"AtFromBoundary inclusive", year2025, "2025-01-01", true},
+		{"BeforeFrom from is informational", year2025, "2024-12-31", true},
+		{"FromAfterTo before to and before from", fromAfterTo, "2026-01-15", true},
+		{"FromAfterTo on to inclusive", fromAfterTo, "2026-10-02", true},
+		{"FromAfterTo after to before from", fromAfterTo, "2026-10-03", false},
+		{"FromAfterTo after to and after from", fromAfterTo, "2026-12-15", false},
+		{"NilTo no upper bound", openEnded, "2099-12-31", true},
+		{"InvalidDateFormat", openEnded, "not-a-date", false},
 	}
-	for _, c := range cases {
-		if got := IsDateInRange(c.date, key); got != c.want {
-			t.Errorf("IsDateInRange(%q) = %v, want %v", c.date, got, c.want)
-		}
-	}
-}
-
-func TestIsDateInRange_NilTo(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01", To: nil}
-	if !IsDateInRange("2099-12-31", key) {
-		t.Error("expected true for nil to (no upper bound)")
-	}
-}
-
-func TestIsDateInRange_InvalidDateFormat(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01", To: nil}
-	if IsDateInRange("not-a-date", key) {
-		t.Error("expected false for invalid date format")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsDateInRange(tt.date, tt.key); got != tt.want {
+				t.Errorf("IsDateInRange(%q) = %v, want %v", tt.date, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -22,78 +22,43 @@ func resetErr() error {
 
 // --- validateSignForm tests ---
 
-func TestValidateSignForm_AllValid(t *testing.T) {
-	err := validateSignForm("John Doe", honorTitles[0], "For service", "2026-03-14")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestValidateSignForm(t *testing.T) {
+	cases := []struct {
+		name                           string
+		recipient, honor, detail, date string
+		wantErr                        bool
+		wantMsg                        string // exact error text, when set
+		wantContains                   string
+	}{
+		{name: "all valid", recipient: "John Doe", honor: honorTitles[0], detail: "For service", date: "2026-03-14"},
+		{name: "empty recipient", recipient: "", honor: honorTitles[0], detail: "Detail", date: "2026-03-14", wantErr: true, wantMsg: "Recipient is required."},
+		{name: "whitespace-only recipient", recipient: "   ", honor: honorTitles[0], detail: "Detail", date: "2026-03-14", wantErr: true},
+		{name: "no honor selected", recipient: "John Doe", honor: "", detail: "Detail", date: "2026-03-14", wantErr: true, wantMsg: "Honor title must be selected."},
+		{name: "empty detail", recipient: "John Doe", honor: honorTitles[0], detail: "", date: "2026-03-14", wantErr: true, wantMsg: "Detail is required."},
+		{name: "whitespace-only detail", recipient: "John Doe", honor: honorTitles[0], detail: "  \t ", date: "2026-03-14", wantErr: true},
+		{name: "invalid date bad format", recipient: "John Doe", honor: honorTitles[0], detail: "Detail", date: "not-a-date", wantErr: true, wantContains: "date"},
+		{name: "invalid date Feb 30", recipient: "John Doe", honor: honorTitles[0], detail: "Detail", date: "2026-02-30", wantErr: true},
+		{name: "valid leap year", recipient: "John Doe", honor: honorTitles[0], detail: "Detail", date: "2024-02-29"},
 	}
-}
-
-func TestValidateSignForm_EmptyRecipient(t *testing.T) {
-	err := validateSignForm("", honorTitles[0], "Detail", "2026-03-14")
-	if err == nil {
-		t.Fatal("expected error for empty recipient")
-	}
-	if err.Error() != "Recipient is required." {
-		t.Errorf("error should mention recipient, got: %v", err)
-	}
-}
-
-func TestValidateSignForm_WhitespaceOnlyRecipient(t *testing.T) {
-	err := validateSignForm("   ", honorTitles[0], "Detail", "2026-03-14")
-	if err == nil {
-		t.Fatal("expected error for whitespace-only recipient")
-	}
-}
-
-func TestValidateSignForm_NoHonorSelected(t *testing.T) {
-	err := validateSignForm("John Doe", "", "Detail", "2026-03-14")
-	if err == nil {
-		t.Fatal("expected error for empty honor")
-	}
-	if err.Error() != "Honor title must be selected." {
-		t.Errorf("error should mention honor, got: %v", err)
-	}
-}
-
-func TestValidateSignForm_EmptyDetail(t *testing.T) {
-	err := validateSignForm("John Doe", honorTitles[0], "", "2026-03-14")
-	if err == nil {
-		t.Fatal("expected error for empty detail")
-	}
-	if err.Error() != "Detail is required." {
-		t.Errorf("error should mention detail, got: %v", err)
-	}
-}
-
-func TestValidateSignForm_WhitespaceOnlyDetail(t *testing.T) {
-	err := validateSignForm("John Doe", honorTitles[0], "  \t ", "2026-03-14")
-	if err == nil {
-		t.Fatal("expected error for whitespace-only detail")
-	}
-}
-
-func TestValidateSignForm_InvalidDate_BadFormat(t *testing.T) {
-	err := validateSignForm("John Doe", honorTitles[0], "Detail", "not-a-date")
-	if err == nil {
-		t.Fatal("expected error for invalid date")
-	}
-	if !strings.Contains(err.Error(), "date") {
-		t.Errorf("error should mention date, got: %v", err)
-	}
-}
-
-func TestValidateSignForm_InvalidDate_Feb30(t *testing.T) {
-	err := validateSignForm("John Doe", honorTitles[0], "Detail", "2026-02-30")
-	if err == nil {
-		t.Fatal("expected error for Feb 30")
-	}
-}
-
-func TestValidateSignForm_ValidLeapYear(t *testing.T) {
-	err := validateSignForm("John Doe", honorTitles[0], "Detail", "2024-02-29")
-	if err != nil {
-		t.Fatalf("unexpected error for valid leap year date: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSignForm(tc.recipient, tc.honor, tc.detail, tc.date)
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if tc.wantMsg != "" && err.Error() != tc.wantMsg {
+				t.Errorf("error = %q, want %q", err, tc.wantMsg)
+			}
+			if tc.wantContains != "" && !strings.Contains(err.Error(), tc.wantContains) {
+				t.Errorf("error = %q, want containing %q", err, tc.wantContains)
+			}
+		})
 	}
 }
 
@@ -117,211 +82,163 @@ func TestBuildFilename_PNG(t *testing.T) {
 
 // --- sanitizeError tests ---
 
-func TestSanitizeError_PCSC(t *testing.T) {
-	got := sanitizeError("test", fmt.Errorf("pcsc daemon not running"))
-	if got != "test: smart card service error" {
-		t.Errorf("got %q", got)
+func TestSanitizeError(t *testing.T) {
+	cases := []struct {
+		name   string
+		prefix string
+		err    error
+		want   string
+	}{
+		{"PCSC", "test", fmt.Errorf("pcsc daemon not running"), "test: smart card service error"},
+		{"PIN", "test", fmt.Errorf("wrong PIN entered"), "test: PIN error"},
+		{"YubiKey", "test", fmt.Errorf("no YubiKey detected"), "test: hardware device error"},
+		{"generic", "test", fmt.Errorf("unexpected failure"), "test: unexpected error"},
+		{"nil", "test", nil, "test: unknown error"},
+		{"card reset is transient, not a PIN error, despite verify pin in the chain", "HandleSign", resetErr(), "HandleSign: card reset"},
 	}
-}
-
-func TestSanitizeError_PIN(t *testing.T) {
-	got := sanitizeError("test", fmt.Errorf("wrong PIN entered"))
-	if got != "test: PIN error" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestSanitizeError_YubiKey(t *testing.T) {
-	got := sanitizeError("test", fmt.Errorf("no YubiKey detected"))
-	if got != "test: hardware device error" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestSanitizeError_Generic(t *testing.T) {
-	got := sanitizeError("test", fmt.Errorf("unexpected failure"))
-	if got != "test: unexpected error" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestSanitizeError_Nil(t *testing.T) {
-	got := sanitizeError("test", nil)
-	if got != "test: unknown error" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestSanitizeError_Transient(t *testing.T) {
-	// A card reset must classify as transient ("card reset"), NOT "PIN error",
-	// even though "verify pin" appears in the wrapped chain.
-	got := sanitizeError("HandleSign", resetErr())
-	if !strings.HasSuffix(got, ": card reset") {
-		t.Errorf("got %q, want suffix %q", got, ": card reset")
-	}
-	if strings.HasSuffix(got, ": PIN error") {
-		t.Errorf("transient error misclassified as PIN error: %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeError(tc.prefix, tc.err); got != tc.want {
+				t.Errorf("sanitizeError = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
 // --- friendlyYubiKeyError tests ---
 
-func TestFriendlyYubiKeyError_YubiKeyError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("no YubiKey detected"))
-	if !strings.Contains(got, "not detected") {
-		t.Errorf("expected 'not detected' message, got: %q", got)
+func TestFriendlyYubiKeyError(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantPart   string
+		wantSuffix string
+	}{
+		{name: "YubiKey error", err: fmt.Errorf("no YubiKey detected"), wantPart: "not detected"},
+		{name: "PCSC error", err: fmt.Errorf("pcsc daemon not running"), wantPart: "Smart card service"},
+		{name: "generic error", err: fmt.Errorf("unexpected failure"), wantPart: "Failed to connect", wantSuffix: "Export the error log for details."},
 	}
-}
-
-func TestFriendlyYubiKeyError_PCSCError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("pcsc daemon not running"))
-	if !strings.Contains(got, "Smart card service") {
-		t.Errorf("expected 'Smart card service' message, got: %q", got)
-	}
-}
-
-func TestFriendlyYubiKeyError_GenericError(t *testing.T) {
-	got := friendlyYubiKeyError(fmt.Errorf("unexpected failure"))
-	if !strings.Contains(got, "Failed to connect") {
-		t.Errorf("expected 'Failed to connect' message, got: %q", got)
-	}
-	if !strings.HasSuffix(got, "Export the error log for details.") {
-		t.Errorf("expected error log export reference in message, got: %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := friendlyYubiKeyError(tc.err)
+			if !strings.Contains(got, tc.wantPart) {
+				t.Errorf("got %q, want containing %q", got, tc.wantPart)
+			}
+			if !strings.HasSuffix(got, tc.wantSuffix) {
+				t.Errorf("got %q, want suffix %q", got, tc.wantSuffix)
+			}
+		})
 	}
 }
 
 // --- signFlowErrorMessage tests ---
 
-func TestSignFlowErrorMessage_ExportPublicKey(t *testing.T) {
-	err := &signFlowError{Phase: phaseExportKey, Err: fmt.Errorf("hardware failure")}
-	got := signFlowErrorMessage(err)
-	if !strings.Contains(got, "Failed to read YubiKey") {
-		t.Errorf("expected YubiKey read failure message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_QRGeneration(t *testing.T) {
-	err := &signFlowError{Phase: phaseQR, Err: fmt.Errorf("encode failed")}
-	got := signFlowErrorMessage(err)
-	if !strings.Contains(got, "QR generation failed") {
-		t.Errorf("expected QR failure message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_YubiKeyAdapter(t *testing.T) {
-	got := signFlowErrorMessage(fmt.Errorf("pcsc daemon not running"))
-	if !strings.Contains(got, "Smart card service") {
-		t.Errorf("expected smart card service message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_SignError(t *testing.T) {
-	sfe := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("hardware fault")}
-	got := signFlowErrorMessage(sfe)
-	if !strings.Contains(got, "Signing failed") {
-		t.Errorf("expected 'Signing failed' message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_Timeout(t *testing.T) {
-	// The timeout sentinel must yield a timeout message, NOT a hardware message
-	// (the literal "PIN entry timed out" matches the \bpin\b classifier).
-	// The text names no control: a bulk run (no Sign button) shows it too.
-	got := signFlowErrorMessage(errPINEntryTimedOut)
-	if got != "PIN entry timed out. Try again." {
-		t.Errorf("expected timeout message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_MlockFailure(t *testing.T) {
-	// The %w-wrapped mlock sentinel must yield the restart message, not a
-	// misclassified hardware PIN error.
-	err := fmt.Errorf("%w: mlock failed", errPINCacheUnavailable)
-	got := signFlowErrorMessage(err)
-	if !strings.Contains(got, "secure the PIN") {
-		t.Errorf("expected mlock/restart message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_IssuanceLogUnreadable(t *testing.T) {
-	// The wrapped parse error must not be classified as a hardware fault.
-	err := fmt.Errorf("%w: %w", errIssuanceLogUnreadable, fmt.Errorf("parsing log file: unexpected end of JSON input"))
-	got := signFlowErrorMessage(err)
-	want := "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable."
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestSignFlowErrorMessage_WrongPINWithRetries(t *testing.T) {
-	err := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2})}
-	got := signFlowErrorMessage(err)
-	if !strings.Contains(got, "2 attempt") {
-		t.Errorf("expected remaining-attempts count in message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_WrongPINBlocked(t *testing.T) {
-	// Retries == 0 must NOT claim "blocked" outright — it means blocked OR count
-	// unavailable.
-	err := &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 0})}
-	got := signFlowErrorMessage(err)
-	if !strings.Contains(got, "locked") || strings.Contains(got, "attempt(s) left") {
-		t.Errorf("expected ambiguous locked message without a positive count, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_TransientWinsOverPINRetries(t *testing.T) {
-	// A transient reset never carries piv.AuthErr, so PINRetries can't fire; the
-	// reset must map to MsgYubiKeyReset even though resetErr()'s text contains
-	// "verify pin".
-	got := signFlowErrorMessage(resetErr())
-	if got != core.MsgYubiKeyReset {
-		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
-	}
-}
-
-func TestSignFlowErrorMessage_GenericError(t *testing.T) {
-	got := signFlowErrorMessage(fmt.Errorf("something unexpected"))
-	if !strings.Contains(got, "Signing failed") {
-		t.Errorf("expected signing failed message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_Transient_WrappedInSignFlowError(t *testing.T) {
-	// A reset during the sign phase must yield the canonical reset message,
-	// not the generic "Signing failed" message.
-	sfe := &signFlowError{Phase: phaseSign, Err: resetErr()}
-	got := signFlowErrorMessage(sfe)
-	if got != core.MsgYubiKeyReset {
-		t.Errorf("got %q, want %q", got, core.MsgYubiKeyReset)
-	}
-}
-
-func TestSignFlowErrorMessage_CertificateError(t *testing.T) {
-	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: object not found"))
-	if !strings.Contains(got, "No signing certificate found") {
-		t.Errorf("expected certificate-specific message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_CertificateWithSmartCardInError(t *testing.T) {
-	// piv-go may include "smart card" in the error when slot 9c is empty.
-	// This must NOT be misclassified as "YubiKey not detected".
-	got := signFlowErrorMessage(fmt.Errorf("failed to read certificate from slot 9c: smart card error: data object not found"))
-	if !strings.Contains(got, "No signing certificate found") {
-		t.Errorf("expected certificate-specific message, got: %q", got)
-	}
-}
-
-func TestSignFlowErrorMessage_NotLogged(t *testing.T) {
+func TestSignFlowErrorMessage(t *testing.T) {
 	pathErr := &os.PathError{Op: "open", Path: "/nonexistent/dir/log.json.tmp", Err: errors.New("no such file or directory")}
-	err := &signFlowError{Phase: phaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, pathErr)}
 
-	got := signFlowErrorMessage(err)
-	want := "Credential signed but NOT recorded in the issuance log — check disk space/permissions."
-	if got != want {
-		t.Errorf("signFlowErrorMessage = %q, want %q", got, want)
+	cases := []struct {
+		name        string
+		err         error
+		want        string // exact message, when set
+		contains    []string
+		notContains []string
+	}{
+		{
+			name:     "export public key",
+			err:      &signFlowError{Phase: phaseExportKey, Err: fmt.Errorf("hardware failure")},
+			contains: []string{"Failed to read YubiKey"},
+		},
+		{
+			name:     "QR generation",
+			err:      &signFlowError{Phase: phaseQR, Err: fmt.Errorf("encode failed")},
+			contains: []string{"QR generation failed"},
+		},
+		{
+			name:     "YubiKey adapter",
+			err:      fmt.Errorf("pcsc daemon not running"),
+			contains: []string{"Smart card service"},
+		},
+		{
+			name:     "sign error",
+			err:      &signFlowError{Phase: phaseSign, Err: fmt.Errorf("hardware fault")},
+			contains: []string{"Signing failed"},
+		},
+		{
+			// The literal "PIN entry timed out" matches the \bpin\b classifier.
+			// The text names no control: a bulk run (no Sign button) shows it too.
+			name: "timeout sentinel yields a timeout message, not a hardware PIN message",
+			err:  errPINEntryTimedOut,
+			want: "PIN entry timed out. Try again.",
+		},
+		{
+			name:     "wrapped mlock sentinel yields the restart message, not a hardware PIN error",
+			err:      fmt.Errorf("%w: mlock failed", errPINCacheUnavailable),
+			contains: []string{"secure the PIN"},
+		},
+		{
+			name: "wrapped issuance log parse error is not a hardware fault",
+			err:  fmt.Errorf("%w: %w", errIssuanceLogUnreadable, fmt.Errorf("parsing log file: unexpected end of JSON input")),
+			want: "Could not read the issuance log, so duplicates can't be checked. Signing is blocked until it is readable.",
+		},
+		{
+			name:     "wrong PIN with retries",
+			err:      &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2})},
+			contains: []string{"2 attempt"},
+		},
+		{
+			name:        "wrong PIN with zero retries means blocked or count unavailable, never a positive count",
+			err:         &signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 0})},
+			contains:    []string{"locked"},
+			notContains: []string{"attempt(s) left"},
+		},
+		{
+			name: "transient reset wins over PIN retries despite verify pin in the text",
+			err:  resetErr(),
+			want: core.MsgYubiKeyReset,
+		},
+		{
+			name:     "generic error",
+			err:      fmt.Errorf("something unexpected"),
+			contains: []string{"Signing failed"},
+		},
+		{
+			name: "transient reset in the sign phase yields the reset message, not Signing failed",
+			err:  &signFlowError{Phase: phaseSign, Err: resetErr()},
+			want: core.MsgYubiKeyReset,
+		},
+		{
+			name:     "certificate error",
+			err:      fmt.Errorf("failed to read certificate from slot 9c: object not found"),
+			contains: []string{"No signing certificate found"},
+		},
+		{
+			name:     "certificate error mentioning smart card is not YubiKey not detected",
+			err:      fmt.Errorf("failed to read certificate from slot 9c: smart card error: data object not found"),
+			contains: []string{"No signing certificate found"},
+		},
+		{
+			name: "not logged",
+			err:  &signFlowError{Phase: phaseLog, Err: fmt.Errorf("%w: %w", core.ErrNotLogged, pathErr)},
+			want: "Credential signed but NOT recorded in the issuance log — check disk space/permissions.",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := signFlowErrorMessage(tc.err)
+			if tc.want != "" && got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			for _, s := range tc.contains {
+				if !strings.Contains(got, s) {
+					t.Errorf("got %q, want containing %q", got, s)
+				}
+			}
+			for _, s := range tc.notContains {
+				if strings.Contains(got, s) {
+					t.Errorf("got %q, want not containing %q", got, s)
+				}
+			}
+		})
 	}
 }
 

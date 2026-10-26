@@ -137,65 +137,62 @@ func TestAppendRecord_FilePermissions(t *testing.T) {
 	}
 }
 
-func TestCleanStaleTmpFiles_RemovesMatchingFiles(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "issuance.json")
+func TestCleanStaleTmpFiles(t *testing.T) {
+	tests := []struct {
+		name        string
+		logSubdir   string   // log directory under the temp dir; never created
+		files       []string // files created before cleaning
+		dirs        []string // directories created before cleaning
+		wantRemoved []string
+		wantKept    []string
+	}{
+		{
+			name:        "RemovesMatchingFiles",
+			files:       []string{"issuance.json.tmp.abc12345", "issuance.json.tmp.def67890"},
+			wantRemoved: []string{"issuance.json.tmp.abc12345", "issuance.json.tmp.def67890"},
+		},
+		{
+			name:     "PreservesUnrelatedFiles",
+			files:    []string{"other_file.txt", "other.json.tmp.abc12345"},
+			wantKept: []string{"other_file.txt", "other.json.tmp.abc12345"},
+		},
+		{name: "NonexistentDirectory", logSubdir: "nonexistent_subdir"},
+		{
+			// A subdirectory matching the prefix pattern is skipped.
+			name:     "DirectoryWithSubdirs",
+			dirs:     []string{"issuance.json.tmp.subdir"},
+			wantKept: []string{"issuance.json.tmp.subdir"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, f), []byte("stale"), 0o600); err != nil {
+					t.Fatalf("write %s failed: %v", f, err)
+				}
+			}
+			for _, d := range tt.dirs {
+				if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+					t.Fatalf("mkdir failed: %v", err)
+				}
+			}
 
-	// Create stale tmp files.
-	tmp1 := filepath.Join(dir, "issuance.json.tmp.abc12345")
-	tmp2 := filepath.Join(dir, "issuance.json.tmp.def67890")
-	if err := os.WriteFile(tmp1, []byte("stale"), 0o600); err != nil {
-		t.Fatalf("write tmp1 failed: %v", err)
-	}
-	if err := os.WriteFile(tmp2, []byte("stale"), 0o600); err != nil {
-		t.Fatalf("write tmp2 failed: %v", err)
-	}
+			if err := CleanStaleTmpFiles(filepath.Join(dir, tt.logSubdir, "issuance.json")); err != nil {
+				t.Fatalf("CleanStaleTmpFiles failed: %v", err)
+			}
 
-	if err := CleanStaleTmpFiles(logPath); err != nil {
-		t.Fatalf("CleanStaleTmpFiles failed: %v", err)
-	}
-
-	// Verify tmp files are gone.
-	if _, err := os.Stat(tmp1); !os.IsNotExist(err) {
-		t.Errorf("tmp1 should have been removed")
-	}
-	if _, err := os.Stat(tmp2); !os.IsNotExist(err) {
-		t.Errorf("tmp2 should have been removed")
-	}
-}
-
-func TestCleanStaleTmpFiles_PreservesUnrelatedFiles(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "issuance.json")
-
-	// Create an unrelated file and a file for a different log name.
-	unrelated := filepath.Join(dir, "other_file.txt")
-	differentLog := filepath.Join(dir, "other.json.tmp.abc12345")
-	if err := os.WriteFile(unrelated, []byte("keep"), 0o600); err != nil {
-		t.Fatalf("write unrelated failed: %v", err)
-	}
-	if err := os.WriteFile(differentLog, []byte("keep"), 0o600); err != nil {
-		t.Fatalf("write differentLog failed: %v", err)
-	}
-
-	if err := CleanStaleTmpFiles(logPath); err != nil {
-		t.Fatalf("CleanStaleTmpFiles failed: %v", err)
-	}
-
-	if _, err := os.Stat(unrelated); err != nil {
-		t.Errorf("unrelated file should still exist: %v", err)
-	}
-	if _, err := os.Stat(differentLog); err != nil {
-		t.Errorf("different log tmp file should still exist: %v", err)
-	}
-}
-
-func TestCleanStaleTmpFiles_NonexistentDirectory(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "nonexistent_subdir", "issuance.json")
-
-	err := CleanStaleTmpFiles(logPath)
-	if err != nil {
-		t.Fatalf("expected no error for nonexistent directory, got %v", err)
+			for _, f := range tt.wantRemoved {
+				if _, err := os.Stat(filepath.Join(dir, f)); !os.IsNotExist(err) {
+					t.Errorf("%s should have been removed", f)
+				}
+			}
+			for _, f := range tt.wantKept {
+				if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+					t.Errorf("%s should still exist: %v", f, err)
+				}
+			}
+		})
 	}
 }
 
@@ -349,30 +346,11 @@ func TestAppendRecord_WriteError(t *testing.T) {
 	}
 }
 
-func TestCleanStaleTmpFiles_DirectoryWithSubdirs(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "issuance.json")
-
-	// Create a subdirectory that matches the prefix pattern — should be skipped.
-	subdir := filepath.Join(dir, "issuance.json.tmp.subdir")
-	if err := os.MkdirAll(subdir, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-
-	if err := CleanStaleTmpFiles(logPath); err != nil {
-		t.Fatalf("CleanStaleTmpFiles failed: %v", err)
-	}
-
-	// The subdirectory should still exist (dirs are skipped).
-	if _, err := os.Stat(subdir); err != nil {
-		t.Errorf("subdirectory should still exist: %v", err)
-	}
-}
-
 // recWithHash returns a sample record for hash with a well-formed (64-byte)
 // signature, so Dedupe treats it as an issued credential.
 func recWithHash(hash, recipient string) IssuanceRecord {
 	rec := sampleRecord()
+	rec.Timestamp = "2026-03-14T00:00:00Z" // fixed, so separately built records compare equal
 	rec.PayloadSHA256 = hash
 	rec.Recipient = recipient
 	rec.SignatureB64URL = sigOf(1)
@@ -405,88 +383,68 @@ func TestIssuedKey(t *testing.T) {
 	}
 }
 
-func TestDedupe_None(t *testing.T) {
-	records := []IssuanceRecord{recWithHash("aa", "A"), recWithHash("bb", "B")}
-	kept, removed := Dedupe(records)
-	if removed != 0 {
-		t.Errorf("removed = %d, want 0", removed)
-	}
-	if !reflect.DeepEqual(kept, records) {
-		t.Errorf("kept = %+v, want %+v", kept, records)
-	}
-}
-
-func TestDedupe_PairKeepsFirst(t *testing.T) {
-	records := []IssuanceRecord{recWithHash("aa", "first"), recWithHash("bb", "B"), recWithHash("aa", "second")}
-	kept, removed := Dedupe(records)
-	if removed != 1 {
-		t.Errorf("removed = %d, want 1", removed)
-	}
-	want := records[:2]
-	if !reflect.DeepEqual(kept, want) {
-		t.Errorf("kept = %+v, want %+v", kept, want)
-	}
-}
-
-func TestDedupe_ThreeCopies(t *testing.T) {
-	records := []IssuanceRecord{recWithHash("aa", "1"), recWithHash("aa", "2"), recWithHash("aa", "3")}
-	kept, removed := Dedupe(records)
-	if removed != 2 {
-		t.Errorf("removed = %d, want 2", removed)
-	}
-	if len(kept) != 1 || kept[0].Recipient != "1" {
-		t.Errorf("kept = %+v, want only the first record", kept)
-	}
-}
-
-func TestDedupe_CaseInsensitiveHash(t *testing.T) {
-	records := []IssuanceRecord{recWithHash("ABCDEF", "upper"), recWithHash("abcdef", "lower")}
-	kept, removed := Dedupe(records)
-	if removed != 1 {
-		t.Errorf("removed = %d, want 1", removed)
-	}
-	if len(kept) != 1 || kept[0].Recipient != "upper" {
-		t.Errorf("kept = %+v, want only the uppercase (first) record", kept)
-	}
-}
-
-func TestDedupe_DifferentSignaturesKeepsFirst(t *testing.T) {
-	first := recWithHash("aa", "A")
-	first.SignatureB64URL = sigOf(1)
-	second := recWithHash("aa", "A")
-	second.SignatureB64URL = sigOf(2)
-	kept, removed := Dedupe([]IssuanceRecord{first, second})
-	if removed != 1 {
-		t.Errorf("removed = %d, want 1", removed)
-	}
-	if len(kept) != 1 || kept[0].SignatureB64URL != sigOf(1) {
-		t.Errorf("kept = %+v, want only the first signature", kept)
-	}
-}
-
-func TestDedupe_MalformedFirstKeepsLaterValid(t *testing.T) {
+func TestDedupe(t *testing.T) {
+	sig2 := recWithHash("aa", "A")
+	sig2.SignatureB64URL = sigOf(2)
 	malformed := recWithHash("aa", "bad")
 	malformed.SignatureB64URL = "c2ln" // decodes, but not 64 bytes
-	valid := recWithHash("aa", "good")
-	later := recWithHash("aa", "copy")
-	kept, removed := Dedupe([]IssuanceRecord{malformed, valid, later})
-	if removed != 1 {
-		t.Errorf("removed = %d, want 1", removed)
+	tests := []struct {
+		name        string
+		records     []IssuanceRecord
+		wantKept    []IssuanceRecord
+		wantRemoved int
+	}{
+		{
+			name:     "None",
+			records:  []IssuanceRecord{recWithHash("aa", "A"), recWithHash("bb", "B")},
+			wantKept: []IssuanceRecord{recWithHash("aa", "A"), recWithHash("bb", "B")},
+		},
+		{
+			name:        "PairKeepsFirst",
+			records:     []IssuanceRecord{recWithHash("aa", "first"), recWithHash("bb", "B"), recWithHash("aa", "second")},
+			wantKept:    []IssuanceRecord{recWithHash("aa", "first"), recWithHash("bb", "B")},
+			wantRemoved: 1,
+		},
+		{
+			name:        "ThreeCopies",
+			records:     []IssuanceRecord{recWithHash("aa", "1"), recWithHash("aa", "2"), recWithHash("aa", "3")},
+			wantKept:    []IssuanceRecord{recWithHash("aa", "1")},
+			wantRemoved: 2,
+		},
+		{
+			name:        "CaseInsensitiveHash",
+			records:     []IssuanceRecord{recWithHash("ABCDEF", "upper"), recWithHash("abcdef", "lower")},
+			wantKept:    []IssuanceRecord{recWithHash("ABCDEF", "upper")},
+			wantRemoved: 1,
+		},
+		{
+			name:        "DifferentSignaturesKeepsFirst",
+			records:     []IssuanceRecord{recWithHash("aa", "A"), sig2},
+			wantKept:    []IssuanceRecord{recWithHash("aa", "A")},
+			wantRemoved: 1,
+		},
+		{
+			name:        "MalformedFirstKeepsLaterValid",
+			records:     []IssuanceRecord{malformed, recWithHash("aa", "good"), recWithHash("aa", "copy")},
+			wantKept:    []IssuanceRecord{malformed, recWithHash("aa", "good")},
+			wantRemoved: 1,
+		},
+		{
+			name:     "EmptyHashAlwaysKept",
+			records:  []IssuanceRecord{recWithHash("", "A"), recWithHash("", "B")},
+			wantKept: []IssuanceRecord{recWithHash("", "A"), recWithHash("", "B")},
+		},
 	}
-	want := []IssuanceRecord{malformed, valid}
-	if !reflect.DeepEqual(kept, want) {
-		t.Errorf("kept = %+v, want malformed + first valid", kept)
-	}
-}
-
-func TestDedupe_EmptyHashAlwaysKept(t *testing.T) {
-	records := []IssuanceRecord{recWithHash("", "A"), recWithHash("", "B")}
-	kept, removed := Dedupe(records)
-	if removed != 0 {
-		t.Errorf("removed = %d, want 0", removed)
-	}
-	if !reflect.DeepEqual(kept, records) {
-		t.Errorf("kept = %+v, want %+v", kept, records)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kept, removed := Dedupe(tt.records)
+			if removed != tt.wantRemoved {
+				t.Errorf("removed = %d, want %d", removed, tt.wantRemoved)
+			}
+			if !reflect.DeepEqual(kept, tt.wantKept) {
+				t.Errorf("kept = %+v, want %+v", kept, tt.wantKept)
+			}
+		})
 	}
 }
 

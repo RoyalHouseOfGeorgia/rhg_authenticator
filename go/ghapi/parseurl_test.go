@@ -2,52 +2,33 @@ package ghapi
 
 import "testing"
 
+// Each row also checks ParseGitHubURL directly, so its rejections stay
+// covered if GitHubURLOrEmpty stops delegating to it.
 func TestGitHubURLOrEmpty(t *testing.T) {
-	for raw, want := range map[string]string{
-		"https://github.com/o/r/pull/1": "https://github.com/o/r/pull/1",
-		"http://github.com/o/r":         "",
-		"https://evil.example/o/r":      "",
-		"https://u@github.com/o/r":      "",
-		"":                              "",
-	} {
-		if got := GitHubURLOrEmpty(raw); got != want {
-			t.Errorf("GitHubURLOrEmpty(%q) = %q, want %q", raw, got, want)
-		}
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"https pull", "https://github.com/o/r/pull/1", "https://github.com/o/r/pull/1"},
+		{"http", "http://github.com/o/r", ""},
+		{"other host", "https://evil.example/o/r", ""},
+		{"user info", "https://u@github.com/o/r", ""},
+		{"ParseGitHubURL_Valid", "https://github.com/owner/repo/commit/abc123", "https://github.com/owner/repo/commit/abc123"},
+		{"ParseGitHubURL_HTTP", "http://github.com/owner/repo/commit/abc123", ""},
+		{"ParseGitHubURL_NonGitHub", "https://gitlab.com/owner/repo/commit/abc123", ""},
+		{"ParseGitHubURL_Malformed", "://not-a-url", ""},
+		{"ParseGitHubURL_EmptyString", "", ""},
+		{"ParseGitHubURL_WithCredentials", "https://user:pass@github.com/owner/repo", ""},
 	}
-}
-
-func TestParseGitHubURL_Valid(t *testing.T) {
-	if ParseGitHubURL("https://github.com/owner/repo/commit/abc123") == nil {
-		t.Error("expected non-nil for valid GitHub URL")
-	}
-}
-
-func TestParseGitHubURL_HTTP(t *testing.T) {
-	if ParseGitHubURL("http://github.com/owner/repo/commit/abc123") != nil {
-		t.Error("expected nil for HTTP scheme")
-	}
-}
-
-func TestParseGitHubURL_NonGitHub(t *testing.T) {
-	if ParseGitHubURL("https://gitlab.com/owner/repo/commit/abc123") != nil {
-		t.Error("expected nil for non-GitHub host")
-	}
-}
-
-func TestParseGitHubURL_Malformed(t *testing.T) {
-	if ParseGitHubURL("://not-a-url") != nil {
-		t.Error("expected nil for malformed URL")
-	}
-}
-
-func TestParseGitHubURL_EmptyString(t *testing.T) {
-	if ParseGitHubURL("") != nil {
-		t.Error("expected nil for empty string")
-	}
-}
-
-func TestParseGitHubURL_WithCredentials(t *testing.T) {
-	if ParseGitHubURL("https://user:pass@github.com/owner/repo") != nil {
-		t.Error("expected nil for URL with embedded credentials")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := GitHubURLOrEmpty(tt.raw); got != tt.want {
+				t.Errorf("GitHubURLOrEmpty(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+			if accepted := ParseGitHubURL(tt.raw) != nil; accepted != (tt.want != "") {
+				t.Errorf("ParseGitHubURL(%q) accepted = %v, want %v", tt.raw, accepted, tt.want != "")
+			}
+		})
 	}
 }

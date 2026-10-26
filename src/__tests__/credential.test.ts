@@ -23,20 +23,12 @@ describe('validateCredential', () => {
   });
 
   describe('rejects non-object inputs', () => {
-    it('throws on null', () => {
-      expect(() => validateCredential(null)).toThrow(
-        'credential must be a plain object',
-      );
-    });
-
-    it('throws on an array', () => {
-      expect(() => validateCredential([1, 2, 3])).toThrow(
-        'credential must be a plain object',
-      );
-    });
-
-    it('throws on a number', () => {
-      expect(() => validateCredential(42)).toThrow(
+    it.each([
+      ['null', null],
+      ['an array', [1, 2, 3]],
+      ['a number', 42],
+    ])('throws on %s', (_label, input) => {
+      expect(() => validateCredential(input)).toThrow(
         'credential must be a plain object',
       );
     });
@@ -73,17 +65,24 @@ describe('validateCredential', () => {
   });
 
   describe('version validation', () => {
-    it('throws UnsupportedVersionError for version 2', () => {
-      const cred = { ...validCredential, version: 2 };
-      expect(() => validateCredential(cred)).toThrow(UnsupportedVersionError);
-      expect(() => validateCredential(cred)).toThrow(
-        'Unsupported credential version: 2',
-      );
-    });
-
-    it('throws when version is a string instead of a number', () => {
-      const cred = { ...validCredential, version: '1' };
-      expect(() => validateCredential(cred)).toThrow('version must be a number');
+    it.each<{ name: string; version: unknown; message: string; errorClass?: typeof UnsupportedVersionError }>([
+      {
+        name: 'throws UnsupportedVersionError for version 2',
+        version: 2,
+        message: 'Unsupported credential version: 2',
+        errorClass: UnsupportedVersionError,
+      },
+      {
+        name: 'throws when version is a string instead of a number',
+        version: '1',
+        message: 'version must be a number',
+      },
+    ])('$name', ({ version, message, errorClass }) => {
+      const cred = { ...validCredential, version };
+      if (errorClass !== undefined) {
+        expect(() => validateCredential(cred)).toThrow(errorClass);
+      }
+      expect(() => validateCredential(cred)).toThrow(message);
     });
   });
 
@@ -193,49 +192,42 @@ describe('validateCredential', () => {
   });
 
   describe('field max length limits', () => {
-    it('accepts recipient at max length (500)', () => {
-      const cred = { ...validCredential, recipient: 'R'.repeat(500) };
-      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
+    it.each<{ name: string; field: string; value: string; rejects?: string }>([
+      { name: 'accepts recipient at max length (500)', field: 'recipient', value: 'R'.repeat(500) },
+      {
+        name: 'rejects recipient one char over max (501)',
+        field: 'recipient',
+        value: 'R'.repeat(501),
+        rejects: 'recipient exceeds maximum length of 500',
+      },
+      { name: 'accepts honor at max length (200)', field: 'honor', value: 'H'.repeat(200) },
+      {
+        name: 'rejects honor one char over max (201)',
+        field: 'honor',
+        value: 'H'.repeat(201),
+        rejects: 'honor exceeds maximum length of 200',
+      },
+      { name: 'accepts detail at max length (2000)', field: 'detail', value: 'D'.repeat(2000) },
+      {
+        name: 'rejects detail one char over max (2001)',
+        field: 'detail',
+        value: 'D'.repeat(2001),
+        rejects: 'detail exceeds maximum length of 2000',
+      },
+      {
+        name: 'rejects date one char over max (11)',
+        field: 'date',
+        value: '2026-03-111',
+        rejects: 'date exceeds maximum length of 10',
+      },
+    ])('$name', ({ field, value, rejects }) => {
+      const cred = { ...validCredential, [field]: value };
+      if (rejects === undefined) {
+        expect(() => validateCredential(cred)).not.toThrow();
+      } else {
+        expect(() => validateCredential(cred)).toThrow(rejects);
+      }
     });
-
-    it('rejects recipient one char over max (501)', () => {
-      const cred = { ...validCredential, recipient: 'R'.repeat(501) };
-      expect(() => validateCredential(cred)).toThrow(
-        'recipient exceeds maximum length of 500',
-      );
-    });
-
-    it('accepts honor at max length (200)', () => {
-      const cred = { ...validCredential, honor: 'H'.repeat(200) };
-      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
-    });
-
-    it('rejects honor one char over max (201)', () => {
-      const cred = { ...validCredential, honor: 'H'.repeat(201) };
-      expect(() => validateCredential(cred)).toThrow(
-        'honor exceeds maximum length of 200',
-      );
-    });
-
-    it('accepts detail at max length (2000)', () => {
-      const cred = { ...validCredential, detail: 'D'.repeat(2000) };
-      expect(() => validateCredential(cred)).not.toThrow('exceeds maximum length');
-    });
-
-    it('rejects detail one char over max (2001)', () => {
-      const cred = { ...validCredential, detail: 'D'.repeat(2001) };
-      expect(() => validateCredential(cred)).toThrow(
-        'detail exceeds maximum length of 2000',
-      );
-    });
-
-    it('rejects date one char over max (11)', () => {
-      const cred = { ...validCredential, date: '2026-03-111' };
-      expect(() => validateCredential(cred)).toThrow(
-        'date exceeds maximum length of 10',
-      );
-    });
-
   });
 
   describe('extra fields', () => {

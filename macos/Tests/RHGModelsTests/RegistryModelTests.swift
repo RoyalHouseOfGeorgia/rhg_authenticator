@@ -38,10 +38,6 @@ struct RegistryModelTests {
             RegistryModel.discardConfirmation.message
                 == "This will re-fetch the live registry from the server, discarding your local edits. Continue?")
         #expect(RegistryModel.discardConfirmation.isDestructive)
-    }
-
-    @Test("tooltips")
-    func tooltips() {
         #expect(RegistryModel.editEntryTooltip == "Select an entry to edit it.")
         #expect(RegistryModel.fetchTooltip == "Download the latest registry (\u{2318}R)")
     }
@@ -417,18 +413,6 @@ struct RegistryModelTests {
         #expect(registry.entryForm == nil)
     }
 
-    @Test("a successful submit's re-read keeps the selection")
-    func submitKeepsSelection() async throws {
-        let fake = FakeBridge()
-        fake.respond(.registrySubmit, SubmitResult(prNumber: 5, url: ""))
-        let registry = try await loaded(fake, snapshot: registrySnapshot(count: 2, dirty: true))
-        registry.select(row: 1)
-        fake.respond(.registrySnapshot, registrySnapshot(count: 2))
-        await registry.submitForReview()
-        #expect(registry.snapshot == registrySnapshot(count: 2))
-        #expect(registry.selection == 1)
-    }
-
     @Test("an accepted add closes the sheet and re-reads the registry, keeping the selection")
     func addAccepted() async throws {
         let fake = FakeBridge()
@@ -534,14 +518,16 @@ struct RegistryModelTests {
         #expect(registry.pendingConfirmation == nil)
     }
 
-    @Test("a successful submit re-reads the registry, so a later Fetch does not ask")
-    func submitCleansDirty() async throws {
+    @Test("a successful submit re-reads the registry, keeping the selection, so a later Fetch does not ask")
+    func submitRereads() async throws {
         let fake = FakeBridge()
         fake.respond(.registrySubmit, SubmitResult(prNumber: 5, url: ""))
         let registry = try await loaded(fake, snapshot: registrySnapshot(count: 2, dirty: true))
+        registry.select(row: 1)
         fake.respond(.registrySnapshot, registrySnapshot(count: 2))
         await registry.submitForReview()
         #expect(registry.snapshot == registrySnapshot(count: 2))
+        #expect(registry.selection == 1)
         await registry.alertDismissed()
         await registry.fetchTapped()
         #expect(registry.pendingConfirmation == nil)

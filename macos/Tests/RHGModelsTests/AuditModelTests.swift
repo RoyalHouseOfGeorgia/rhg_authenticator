@@ -14,10 +14,6 @@ struct AuditModelTests {
         #expect(AuditModel.refreshTitle == "Refresh")
         #expect(AuditModel.fetchingStatus == "Fetching commits\u{2026}")
         #expect(AuditModel.openTitle == "Open on GitHub")
-    }
-
-    @Test("tooltips")
-    func tooltips() {
         #expect(AuditModel.openTooltip == "Select a commit to open it.")
         #expect(AuditModel.refreshTooltip == "Reload the latest commits (\u{2318}R)")
     }

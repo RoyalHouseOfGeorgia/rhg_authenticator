@@ -311,69 +311,46 @@ func TestSaveToken_NonLinuxNoFallback(t *testing.T) {
 
 // --- ClearToken tests ---
 
-func TestClearToken(t *testing.T) {
-	kr := NewFakeKeyring()
-	tok := sampleToken()
-	dir := t.TempDir()
-
-	// Set up token in both locations.
-	if err := kr.Set(serviceName, serviceKey, mustMarshal(t, tok)); err != nil {
-		t.Fatalf("setting keyring: %v", err)
-	}
-	path := filepath.Join(dir, tokenFileName)
-	if err := os.WriteFile(path, []byte(mustMarshal(t, tok)), 0o600); err != nil {
-		t.Fatalf("writing file: %v", err)
-	}
-
-	if err := ClearToken(kr, dir); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Keyring should be empty.
-	if _, err := kr.Get(serviceName, serviceKey); !errors.Is(err, ErrKeyNotFound) {
-		t.Errorf("keyring Get after clear: err = %v, want ErrKeyNotFound", err)
-	}
-	// File should be gone.
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Error("file should not exist after clear")
-	}
-}
-
 func TestClearToken_ClearsBoth(t *testing.T) {
-	t.Run("only_keyring", func(t *testing.T) {
-		kr := NewFakeKeyring()
-		if err := kr.Set(serviceName, serviceKey, "data"); err != nil {
-			t.Fatalf("setting keyring: %v", err)
-		}
-		if err := ClearToken(kr, t.TempDir()); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if _, err := kr.Get(serviceName, serviceKey); !errors.Is(err, ErrKeyNotFound) {
-			t.Errorf("keyring should be empty after clear")
-		}
-	})
+	stored := mustMarshal(t, sampleToken())
+	tests := []struct {
+		name    string
+		keyring string // keyring contents before clearing; "" means unset
+		file    string // token file contents before clearing; "" means absent
+	}{
+		{name: "both_exist", keyring: stored, file: stored},
+		{name: "only_keyring", keyring: "data"},
+		{name: "only_file", file: "data"},
+		{name: "neither_exists"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kr := NewFakeKeyring()
+			dir := t.TempDir()
+			path := filepath.Join(dir, tokenFileName)
+			if tt.keyring != "" {
+				if err := kr.Set(serviceName, serviceKey, tt.keyring); err != nil {
+					t.Fatalf("setting keyring: %v", err)
+				}
+			}
+			if tt.file != "" {
+				if err := os.WriteFile(path, []byte(tt.file), 0o600); err != nil {
+					t.Fatalf("writing file: %v", err)
+				}
+			}
 
-	t.Run("only_file", func(t *testing.T) {
-		kr := NewFakeKeyring()
-		dir := t.TempDir()
-		path := filepath.Join(dir, tokenFileName)
-		if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
-			t.Fatalf("writing file: %v", err)
-		}
-		if err := ClearToken(kr, dir); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-			t.Error("file should be removed")
-		}
-	})
+			if err := ClearToken(kr, dir); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-	t.Run("neither_exists", func(t *testing.T) {
-		kr := NewFakeKeyring()
-		if err := ClearToken(kr, t.TempDir()); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
+			if _, err := kr.Get(serviceName, serviceKey); !errors.Is(err, ErrKeyNotFound) {
+				t.Errorf("keyring Get after clear: err = %v, want ErrKeyNotFound", err)
+			}
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Error("file should not exist after clear")
+			}
+		})
+	}
 }
 
 func TestClearToken_KeyringError(t *testing.T) {
@@ -757,41 +734,34 @@ func TestPollForToken_MultipleSlowDown(t *testing.T) {
 	}
 }
 
-func TestPollForToken_Expired(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"error":"expired_token"}`)
-	}))
-	defer srv.Close()
-	withAuthOverrides(t, func() {
-		accessTokenEndpoint = srv.URL
-	})
-
-	_, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
-	if err == nil {
-		t.Fatal("expected error, got nil")
+func TestPollForToken_TerminalErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr error
+	}{
+		{"Expired", `{"error":"expired_token"}`, ErrDeviceCodeExpired},
+		{"Denied", `{"error":"access_denied"}`, ErrAccessDenied},
 	}
-	if !errors.Is(err, ErrDeviceCodeExpired) {
-		t.Errorf("error = %v, want ErrDeviceCodeExpired", err)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, tt.body)
+			}))
+			defer srv.Close()
+			withAuthOverrides(t, func() {
+				accessTokenEndpoint = srv.URL
+			})
 
-func TestPollForToken_Denied(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"error":"access_denied"}`)
-	}))
-	defer srv.Close()
-	withAuthOverrides(t, func() {
-		accessTokenEndpoint = srv.URL
-	})
-
-	_, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrAccessDenied) {
-		t.Errorf("error = %v, want ErrAccessDenied", err)
+			_, err := pollForTokenInternal(context.Background(), "dc_123", 1, 10, instantSleep)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("error = %v, want %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -1214,39 +1184,32 @@ func TestPollForToken_WrongScope(t *testing.T) {
 
 // --- M6: Token redaction tests ---
 
-func TestToken_StringRedaction(t *testing.T) {
+func TestToken_Redaction(t *testing.T) {
 	tok := Token{
 		AccessToken: "gho_secret123",
 		TokenType:   "bearer",
 		Scope:       "public_repo",
 	}
-	s := fmt.Sprintf("%v", tok)
-	if strings.Contains(s, "gho_secret123") {
-		t.Errorf("String() exposes access token: %s", s)
+	tests := []struct {
+		name         string
+		format       string
+		wantContains []string
+	}{
+		{"StringRedaction", "%v", []string{"[REDACTED]", "bearer", "public_repo"}},
+		{"GoStringRedaction", "%#v", []string{"[REDACTED]"}},
 	}
-	if !strings.Contains(s, "[REDACTED]") {
-		t.Errorf("String() missing [REDACTED]: %s", s)
-	}
-	if !strings.Contains(s, "bearer") {
-		t.Errorf("String() missing TokenType: %s", s)
-	}
-	if !strings.Contains(s, "public_repo") {
-		t.Errorf("String() missing Scope: %s", s)
-	}
-}
-
-func TestToken_GoStringRedaction(t *testing.T) {
-	tok := Token{
-		AccessToken: "gho_secret123",
-		TokenType:   "bearer",
-		Scope:       "public_repo",
-	}
-	s := fmt.Sprintf("%#v", tok)
-	if strings.Contains(s, "gho_secret123") {
-		t.Errorf("GoString() exposes access token: %s", s)
-	}
-	if !strings.Contains(s, "[REDACTED]") {
-		t.Errorf("GoString() missing [REDACTED]: %s", s)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := fmt.Sprintf(tt.format, tok)
+			if strings.Contains(s, "gho_secret123") {
+				t.Errorf("%s exposes access token: %s", tt.format, s)
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(s, want) {
+					t.Errorf("%s missing %q: %s", tt.format, want, s)
+				}
+			}
+		})
 	}
 }
 

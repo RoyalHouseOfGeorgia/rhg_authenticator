@@ -9,63 +9,54 @@ import (
 
 func ptrStr(s string) *string { return &s }
 
-func TestComputeRegistryStats_ToEqualsTodayIsActive(t *testing.T) {
-	reg := core.Registry{
-		Keys: []core.KeyEntry{
-			{Authority: "A", From: "2025-01-01", To: ptrStr("2026-03-15")},
+func TestComputeRegistryStats(t *testing.T) {
+	cases := []struct {
+		name       string
+		keys       []core.KeyEntry
+		today      string
+		wantActive int
+		wantRecent int
+	}{
+		{
+			name:       "to equals today is active (to is inclusive)",
+			keys:       []core.KeyEntry{{Authority: "A", From: "2025-01-01", To: ptrStr("2026-03-15")}},
+			today:      "2026-03-15",
+			wantActive: 1,
+		},
+		{
+			name:       "expired exactly 30 days ago is recent (boundary is inclusive)",
+			keys:       []core.KeyEntry{{Authority: "A", From: "2025-01-01", To: ptrStr("2026-02-13")}},
+			today:      "2026-03-15",
+			wantRecent: 1,
+		},
+		{
+			name:  "invalid today date counts nothing",
+			keys:  []core.KeyEntry{{Authority: "A", From: "2025-01-01", To: nil}},
+			today: "not-a-date",
+		},
+		{
+			name: "mixed keys (future from counts as active)",
+			keys: []core.KeyEntry{
+				{Authority: "Active", From: "2025-01-01", To: nil},
+				{Authority: "RecentExpired", From: "2025-01-01", To: ptrStr("2026-03-10")},
+				{Authority: "OldExpired", From: "2024-01-01", To: ptrStr("2024-12-31")},
+				{Authority: "FutureFrom", From: "2027-01-01", To: nil},
+			},
+			today:      "2026-03-15",
+			wantActive: 2,
+			wantRecent: 1,
 		},
 	}
-	stats := computeRegistryStats(reg, "2026-03-15")
-	if stats.ActiveKeys != 1 {
-		t.Errorf("ActiveKeys = %d, want 1 (to is inclusive)", stats.ActiveKeys)
-	}
-	if stats.RecentlyExpired != 0 {
-		t.Errorf("RecentlyExpired = %d, want 0", stats.RecentlyExpired)
-	}
-}
-
-func TestComputeRegistryStats_ExpiredExactly30DaysAgo(t *testing.T) {
-	reg := core.Registry{
-		Keys: []core.KeyEntry{
-			{Authority: "A", From: "2025-01-01", To: ptrStr("2026-02-13")},
-		},
-	}
-	stats := computeRegistryStats(reg, "2026-03-15")
-	if stats.ActiveKeys != 0 {
-		t.Errorf("ActiveKeys = %d, want 0", stats.ActiveKeys)
-	}
-	if stats.RecentlyExpired != 1 {
-		t.Errorf("RecentlyExpired = %d, want 1 (30-day boundary is inclusive)", stats.RecentlyExpired)
-	}
-}
-
-func TestComputeRegistryStats_InvalidDate(t *testing.T) {
-	reg := core.Registry{
-		Keys: []core.KeyEntry{
-			{Authority: "A", From: "2025-01-01", To: nil},
-		},
-	}
-	stats := computeRegistryStats(reg, "not-a-date")
-	if stats.ActiveKeys != 0 {
-		t.Errorf("ActiveKeys = %d, want 0 (invalid today date)", stats.ActiveKeys)
-	}
-}
-
-func TestComputeRegistryStats_MixedKeys(t *testing.T) {
-	reg := core.Registry{
-		Keys: []core.KeyEntry{
-			{Authority: "Active", From: "2025-01-01", To: nil},
-			{Authority: "RecentExpired", From: "2025-01-01", To: ptrStr("2026-03-10")},
-			{Authority: "OldExpired", From: "2024-01-01", To: ptrStr("2024-12-31")},
-			{Authority: "FutureFrom", From: "2027-01-01", To: nil},
-		},
-	}
-	stats := computeRegistryStats(reg, "2026-03-15")
-	if stats.ActiveKeys != 2 {
-		t.Errorf("ActiveKeys = %d, want 2 (future from counts as active)", stats.ActiveKeys)
-	}
-	if stats.RecentlyExpired != 1 {
-		t.Errorf("RecentlyExpired = %d, want 1", stats.RecentlyExpired)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := computeRegistryStats(core.Registry{Keys: tc.keys}, tc.today)
+			if stats.ActiveKeys != tc.wantActive {
+				t.Errorf("ActiveKeys = %d, want %d", stats.ActiveKeys, tc.wantActive)
+			}
+			if stats.RecentlyExpired != tc.wantRecent {
+				t.Errorf("RecentlyExpired = %d, want %d", stats.RecentlyExpired, tc.wantRecent)
+			}
+		})
 	}
 }
 

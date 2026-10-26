@@ -8,6 +8,12 @@ public sealed class AppViewModelTests
     private static readonly string s_reportSuffix =
         "\n\nPlease report this error at https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/issues";
 
+    private static readonly string[] s_startupOrder =
+    [
+        RpcMethod.AppInit, RpcMethod.SignHonors, RpcMethod.AuthState, RpcMethod.RegistryColumns,
+        RpcMethod.RegistrySnapshot, RpcMethod.AppStart,
+    ];
+
     private readonly FakeBridge _fake = new();
 
     private readonly FakeFileSave _fileSave = new();
@@ -139,12 +145,7 @@ public sealed class AppViewModelTests
         Assert.Equal(Fixtures.RegistryColumns, app.Registry.Columns);
         Assert.Same(snapshot, app.Registry.Snapshot);
         Assert.Equal(RegistryViewModel.LoadedStatus, app.Registry.Status);
-        Assert.Equal(
-            [
-                RpcMethod.AppInit, RpcMethod.SignHonors, RpcMethod.AuthState, RpcMethod.RegistryColumns,
-                RpcMethod.RegistrySnapshot, RpcMethod.AppStart, RpcMethod.AuditCommits,
-            ],
-            _fake.Methods);
+        Assert.Equal([.. s_startupOrder, RpcMethod.AuditCommits], _fake.Methods);
         Assert.Equal(["{\"dataDir\":\"/data\"}"], _fake.Params(RpcMethod.AppInit));
     }
 
@@ -178,52 +179,29 @@ public sealed class AppViewModelTests
         Assert.Equal(new AlertState(AlertState.ErrorTitle, app.FatalMessage!, OffersErrorLogExport: true), app.Alerts.Current);
     }
 
-    [Fact]
-    public async Task HonorsFailureIsFatalAndAppStartIsNotCalled()
-    {
-        _fake.Respond(RpcMethod.AppInit, Fixtures.OnlineInfo);
-        _fake.Fail(RpcMethod.SignHonors, new RpcException(RpcErrorCode.Internal, "honors broke"));
-        var app = NewApp();
-        await app.StartAsync();
-        Assert.Equal(AppPhase.Fatal, app.Phase);
-        Assert.Equal("honors broke" + s_reportSuffix, app.FatalMessage);
-        Assert.Equal(new AlertState(AlertState.ErrorTitle, app.FatalMessage!, OffersErrorLogExport: true), app.Alerts.Current);
-        Assert.Equal([RpcMethod.AppInit, RpcMethod.SignHonors], _fake.Methods);
-    }
-
+    // Each row is one startup call failing: the app goes fatal, nothing after
+    // the failing call runs (so app.start is not called unless it is the one
+    // that failed), and the audit refresh never starts.
     [Theory]
-    [InlineData(RpcMethod.AuthState)]
-    [InlineData(RpcMethod.RegistryColumns)]
-    [InlineData(RpcMethod.RegistrySnapshot)]
-    public async Task AStartupReadFailureIsFatalAndAppStartIsNotCalled(string failing)
+    [InlineData(RpcMethod.SignHonors, RpcErrorCode.Internal, "honors broke")]
+    [InlineData(RpcMethod.AuthState, RpcErrorCode.Internal, "read broke")]
+    [InlineData(RpcMethod.RegistryColumns, RpcErrorCode.Internal, "read broke")]
+    [InlineData(RpcMethod.RegistrySnapshot, RpcErrorCode.Internal, "read broke")]
+    [InlineData(RpcMethod.AppStart, RpcErrorCode.Input, "not initialized")]
+    public async Task AStartupFailureIsFatalAndNothingAfterItIsCalled(string failing, RpcErrorCode code, string message)
     {
         _fake.Respond(RpcMethod.AppInit, Fixtures.OnlineInfo);
         _fake.Respond(RpcMethod.SignHonors, new HonorsResult(["Order of Queen Tamar"]));
         Fixtures.ScriptStartupReads(_fake);
         _fake.Reset(failing);
-        _fake.Fail(failing, new RpcException(RpcErrorCode.Internal, "read broke"));
+        _fake.Fail(failing, new RpcException(code, message));
         var app = NewApp();
         await app.StartAsync();
         Assert.Equal(AppPhase.Fatal, app.Phase);
-        Assert.Equal("read broke" + s_reportSuffix, app.FatalMessage);
+        Assert.Equal(message + s_reportSuffix, app.FatalMessage);
         Assert.Equal(new AlertState(AlertState.ErrorTitle, app.FatalMessage!, OffersErrorLogExport: true), app.Alerts.Current);
-        Assert.Equal(failing, _fake.Methods[^1]);
-        Assert.Equal(0, _fake.Count(RpcMethod.AppStart));
-        Assert.Equal(0, _fake.Count(RpcMethod.AuditCommits));
-    }
-
-    [Fact]
-    public async Task AppStartFailureIsFatal()
-    {
-        _fake.Respond(RpcMethod.AppInit, Fixtures.OnlineInfo);
-        _fake.Respond(RpcMethod.SignHonors, new HonorsResult([]));
-        Fixtures.ScriptStartupReads(_fake);
-        _fake.Fail(RpcMethod.AppStart, new RpcException(RpcErrorCode.Input, "not initialized"));
-        var app = NewApp();
-        await app.StartAsync();
-        Assert.Equal(AppPhase.Fatal, app.Phase);
-        Assert.Equal("not initialized" + s_reportSuffix, app.FatalMessage);
-        Assert.Equal(new AlertState(AlertState.ErrorTitle, app.FatalMessage!, OffersErrorLogExport: true), app.Alerts.Current);
+        Assert.Contains(failing, s_startupOrder);
+        Assert.Equal(s_startupOrder[..(Array.IndexOf(s_startupOrder, failing) + 1)], _fake.Methods);
         Assert.Equal(0, _fake.Count(RpcMethod.AuditCommits));
     }
 

@@ -21,23 +21,18 @@ struct UpdateBannerTests {
         #expect(UpdateBanner(status(.ready, releaseUrl: "", moveToApplications: true)) == expected)
     }
 
-    @Test("manualOnly: the text and the Download link; no hint unless moveToApplications")
-    func manualOnly() throws {
+    @Test(
+        "manualOnly: the text and the Download link; the Applications folder hint only with moveToApplications",
+        arguments: [
+            (false, nil),
+            (true, "To get updates automatically, move RHG Authenticator into your Applications folder."),
+        ] as [(Bool, String?)])
+    func manualOnly(moveToApplications: Bool, hint: String?) throws {
         #expect(
-            UpdateBanner(status(.manualOnly))
+            UpdateBanner(status(.manualOnly, moveToApplications: moveToApplications))
                 == .manualOnly(
                     text: "Version 1.3.0 is available —", releaseURL: try #require(URL(string: release)),
-                    moveToApplicationsHint: nil))
-    }
-
-    @Test("manualOnly with moveToApplications: the Applications folder hint")
-    func manualOnlyMoveHint() throws {
-        #expect(
-            UpdateBanner(status(.manualOnly, moveToApplications: true))
-                == .manualOnly(
-                    text: "Version 1.3.0 is available —", releaseURL: try #require(URL(string: release)),
-                    moveToApplicationsHint:
-                        "To get updates automatically, move RHG Authenticator into your Applications folder."))
+                    moveToApplicationsHint: hint))
     }
 
     @Test("manualOnly without a release link shows nothing")
@@ -58,18 +53,13 @@ struct UpdateBannerTests {
         #expect(UpdateBanner(status(state, moveToApplications: true)) == nil)
     }
 
-    @Test("updated: the text and the What's new link")
-    func updated() throws {
-        let url = try #require(URL(string: release))
+    @Test(
+        "updated: the text, and the What's new link only with a release link",
+        arguments: [(release, release), ("", nil)] as [(String, String?)])
+    func updated(releaseUrl: String, whatsNew: String?) throws {
+        let url = try whatsNew.map { try #require(URL(string: $0)) }
         #expect(
-            UpdatedBanner(UpdatedNotice(version: "1.2.3", releaseUrl: release))
+            UpdatedBanner(UpdatedNotice(version: "1.2.3", releaseUrl: releaseUrl))
                 == UpdatedBanner(text: "Updated to version 1.2.3.", whatsNewURL: url))
-    }
-
-    @Test("updated without a release link: no What's new")
-    func updatedNoLink() {
-        #expect(
-            UpdatedBanner(UpdatedNotice(version: "1.2.3", releaseUrl: ""))
-                == UpdatedBanner(text: "Updated to version 1.2.3.", whatsNewURL: nil))
     }
 }

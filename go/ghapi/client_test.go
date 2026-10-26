@@ -94,48 +94,36 @@ func TestDoJSON_ResponseSizeLimit(t *testing.T) {
 	}
 }
 
-func TestDoJSON_401(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(401)
-		w.Write([]byte(`{"message": "Bad credentials"}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	err := c.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
-	if !IsUnauthorized(err) {
-		t.Errorf("IsUnauthorized = false, want true; err = %v", err)
+func TestDoJSON_ErrorStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   int
+		body     string
+		is       func(error) bool
+		isName   string
+		contains string // optional substring of the error
+	}{
+		{name: "401", status: 401, body: `{"message": "Bad credentials"}`, is: IsUnauthorized, isName: "IsUnauthorized"},
+		{name: "403", status: 403, body: `{"message": "Forbidden"}`, is: IsForbidden, isName: "IsForbidden"},
+		{name: "429", status: 429, body: `{}`, is: IsRateLimited, isName: "IsRateLimited", contains: "rate limit exceeded"},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
 
-func TestDoJSON_403(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(403)
-		w.Write([]byte(`{"message": "Forbidden"}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	err := c.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
-	if !IsForbidden(err) {
-		t.Errorf("IsForbidden = false, want true; err = %v", err)
-	}
-}
-
-func TestDoJSON_429(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(429)
-		w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	err := c.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
-	if !IsRateLimited(err) {
-		t.Errorf("IsRateLimited = false, want true; err = %v", err)
-	}
-	if !strings.Contains(err.Error(), "rate limit exceeded") {
-		t.Errorf("error = %q, want to contain 'rate limit exceeded'", err.Error())
+			c := newTestClient(srv, "tok")
+			err := c.doJSON(context.Background(), http.MethodGet, "/test", nil, nil)
+			if !tt.is(err) {
+				t.Fatalf("%s = false, want true; err = %v", tt.isName, err)
+			}
+			if tt.contains != "" && !strings.Contains(err.Error(), tt.contains) {
+				t.Errorf("error = %q, want to contain %q", err.Error(), tt.contains)
+			}
+		})
 	}
 }
 
@@ -568,50 +556,49 @@ func TestFetchUpstreamFile_DecodesWrappedBase64(t *testing.T) {
 	}
 }
 
-func TestFetchUpstreamFile_NonBase64Encoding(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"content": "", "encoding": "none", "sha": "abc"})
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	_, err := c.FetchUpstreamFile(context.Background(), revocationPath)
-	if err == nil {
-		t.Fatal("expected error for encoding \"none\"")
+func TestFetchUpstreamFile_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		wantErr    string // substring of the error, when set
+		wantStatus int    // APIError status, when set
+	}{
+		{
+			name:    "NonBase64Encoding",
+			status:  200,
+			body:    `{"content":"","encoding":"none","sha":"abc"}`,
+			wantErr: "unsupported content encoding",
+		},
+		{
+			name:    "InvalidBase64",
+			status:  200,
+			body:    `{"content":"!!!not-base64!!!","encoding":"base64"}`,
+			wantErr: "decoding",
+		},
+		{name: "NotFound", status: 404, body: `{"message":"Not Found"}`, wantStatus: 404},
 	}
-	if !strings.Contains(err.Error(), "unsupported content encoding") {
-		t.Errorf("error = %q, want 'unsupported content encoding'", err.Error())
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
 
-func TestFetchUpstreamFile_InvalidBase64(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"content": "!!!not-base64!!!", "encoding": "base64"})
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	_, err := c.FetchUpstreamFile(context.Background(), revocationPath)
-	if err == nil {
-		t.Fatal("expected error for invalid base64")
-	}
-	if !strings.Contains(err.Error(), "decoding") {
-		t.Errorf("error = %q, want decoding context", err.Error())
-	}
-}
-
-func TestFetchUpstreamFile_NotFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(404)
-		w.Write([]byte(`{"message":"Not Found"}`))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(srv, "tok")
-	_, err := c.FetchUpstreamFile(context.Background(), revocationPath)
-	var ae *APIError
-	if !errors.As(err, &ae) || ae.StatusCode != 404 {
-		t.Errorf("error = %v, want 404 APIError", err)
+			c := newTestClient(srv, "tok")
+			_, err := c.FetchUpstreamFile(context.Background(), revocationPath)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want %q", err.Error(), tt.wantErr)
+			}
+			var ae *APIError
+			if tt.wantStatus != 0 && (!errors.As(err, &ae) || ae.StatusCode != tt.wantStatus) {
+				t.Errorf("error = %v, want %d APIError", err, tt.wantStatus)
+			}
+		})
 	}
 }
 

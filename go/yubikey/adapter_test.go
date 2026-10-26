@@ -426,6 +426,8 @@ func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 	}
 }
 
+// TestPINRetries_Cases checks PINRetries and IsPINAuthError on the same error;
+// wantOK is also the expected IsPINAuthError result.
 func TestPINRetries_Cases(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -436,9 +438,33 @@ func TestPINRetries_Cases(t *testing.T) {
 		{name: "bare AuthErr Retries 2", err: piv.AuthErr{Retries: 2}, wantRetries: 2, wantOK: true},
 		{name: "bare AuthErr Retries 0 (blocked or unavailable)", err: piv.AuthErr{}, wantRetries: 0, wantOK: true},
 		{
+			name:        "single-wrapped AuthErr",
+			err:         fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 2}),
+			wantRetries: 2,
+			wantOK:      true,
+		},
+		{
+			name: "double-wrapped AuthErr",
+			err: fmt.Errorf("signing failed: %w",
+				fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 1})),
+			wantRetries: 1,
+			wantOK:      true,
+		},
+		{
 			name:        "realistic wrapped chain",
 			err:         fmt.Errorf("signing failed: %w", fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 1})),
 			wantRetries: 1,
+			wantOK:      true,
+		},
+		{
+			// Pins the exact shape piv-go produces on a wrong-PIN VERIFY
+			// ("verify pin: %w"), re-wrapped by adapter/HandleSign. If a future
+			// piv-go bump changes this to %v, errors.As breaks and this fails —
+			// before a wrong PIN can be silently replayed into the retry counter.
+			name: "realistic verify-pin wrapped chain",
+			err: fmt.Errorf("signing failed: %w",
+				fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})),
+			wantRetries: 2,
 			wantOK:      true,
 		},
 		{name: "non-auth error", err: errors.New("pcsc daemon not running"), wantRetries: 0, wantOK: false},
@@ -453,58 +479,8 @@ func TestPINRetries_Cases(t *testing.T) {
 			if gotRetries != tt.wantRetries {
 				t.Errorf("PINRetries retries = %d, want %d", gotRetries, tt.wantRetries)
 			}
-		})
-	}
-}
-
-func TestIsPINAuthError_Cases(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "bare AuthErr",
-			err:  piv.AuthErr{},
-			want: true,
-		},
-		{
-			name: "single-wrapped AuthErr",
-			err:  fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 2}),
-			want: true,
-		},
-		{
-			name: "double-wrapped AuthErr",
-			err: fmt.Errorf("signing failed: %w",
-				fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 1})),
-			want: true,
-		},
-		{
-			// Pins the exact shape piv-go produces on a wrong-PIN VERIFY
-			// ("verify pin: %w"), re-wrapped by adapter/HandleSign. If a future
-			// piv-go bump changes this to %v, errors.As breaks and this fails —
-			// before a wrong PIN can be silently replayed into the retry counter.
-			name: "realistic verify-pin wrapped chain",
-			err: fmt.Errorf("signing failed: %w",
-				fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})),
-			want: true,
-		},
-		{
-			name: "non-auth error",
-			err:  errors.New("pcsc daemon not running"),
-			want: false,
-		},
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsPINAuthError(tt.err); got != tt.want {
-				t.Errorf("IsPINAuthError(%v) = %v, want %v", tt.err, got, tt.want)
+			if got := IsPINAuthError(tt.err); got != tt.wantOK {
+				t.Errorf("IsPINAuthError(%v) = %v, want %v", tt.err, got, tt.wantOK)
 			}
 		})
 	}

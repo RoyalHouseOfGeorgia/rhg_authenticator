@@ -224,27 +224,27 @@ struct LoginModelTests {
         #expect(!login.isLoggingIn)
     }
 
-    @Test("device code with a URI: Waiting status, code and URL")
-    func deviceCodeWithURI() async throws {
+    @Test(
+        "a device code: Waiting status and the code; its URL only with a URI (otherwise Open GitHub is disabled)",
+        arguments: [
+            (
+                DeviceCode(userCode: "ABCD-1234", verificationUri: "https://github.com/login/device"),
+                LoginModel.DeviceCodePrompt(
+                    userCode: "ABCD-1234", verificationURL: URL(string: "https://github.com/login/device"))
+            ),
+            (
+                DeviceCode(userCode: "WXYZ-0000", verificationUri: ""),
+                LoginModel.DeviceCodePrompt(userCode: "WXYZ-0000", verificationURL: nil)
+            ),
+        ])
+    func deviceCode(_ sent: DeviceCode, expected: LoginModel.DeviceCodePrompt) async throws {
         let fake = FakeBridge()
         let (login, status) = await model(fake)
         let (held, task) = await startHeld(fake, login)
-        login.showDeviceCode(code)
+        login.showDeviceCode(sent)
         #expect(status.last == LoginModel.waitingStatus)
         let prompt = try #require(login.deviceCode)
-        #expect(prompt.userCode == "ABCD-1234")
-        #expect(prompt.verificationURL == URL(string: "https://github.com/login/device"))
-        held.release(loggedIn)
-        await task.value
-    }
-
-    @Test("device code without a URI: no URL (Open GitHub disabled)")
-    func deviceCodeWithoutURI() async {
-        let fake = FakeBridge()
-        let (login, _) = await model(fake)
-        let (held, task) = await startHeld(fake, login)
-        login.showDeviceCode(DeviceCode(userCode: "WXYZ-0000", verificationUri: ""))
-        #expect(login.deviceCode == LoginModel.DeviceCodePrompt(userCode: "WXYZ-0000", verificationURL: nil))
+        #expect(prompt == expected)
         held.release(loggedIn)
         await task.value
     }

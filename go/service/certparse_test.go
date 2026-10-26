@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -37,43 +38,34 @@ func TestExtractEd25519Key_RSACert(t *testing.T) {
 	}
 }
 
-func TestExtractEd25519Key_RandomBytes(t *testing.T) {
+func TestExtractEd25519Key_InvalidInput(t *testing.T) {
 	garbage := make([]byte, 256)
 	if _, err := rand.Read(garbage); err != nil {
 		t.Fatalf("failed to generate random bytes: %v", err)
 	}
-
-	_, err := extractEd25519Key(garbage)
-	if err == nil {
-		t.Fatal("expected error for random bytes, got nil")
-	}
-	if got := err.Error(); len(got) < 25 || got[:25] != "not a valid certificate: " {
-		t.Errorf("expected error starting with 'not a valid certificate: ', got: %s", got)
-	}
-}
-
-func TestExtractEd25519Key_CorruptedPEM(t *testing.T) {
 	corrupted := pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: []byte("this is not a valid DER certificate"),
 	})
 
-	_, err := extractEd25519Key(corrupted)
-	if err == nil {
-		t.Fatal("expected error for corrupted PEM, got nil")
+	cases := []struct {
+		name  string
+		input []byte
+	}{
+		{"random bytes", garbage},
+		{"corrupted PEM", corrupted},
+		{"empty input", []byte{}},
 	}
-	if got := err.Error(); len(got) < 25 || got[:25] != "not a valid certificate: " {
-		t.Errorf("expected error starting with 'not a valid certificate: ', got: %s", got)
-	}
-}
-
-func TestExtractEd25519Key_EmptyInput(t *testing.T) {
-	_, err := extractEd25519Key([]byte{})
-	if err == nil {
-		t.Fatal("expected error for empty input, got nil")
-	}
-	if got := err.Error(); len(got) < 25 || got[:25] != "not a valid certificate: " {
-		t.Errorf("expected error starting with 'not a valid certificate: ', got: %s", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := extractEd25519Key(tc.input)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if got := err.Error(); !strings.HasPrefix(got, "not a valid certificate: ") {
+				t.Errorf("expected error starting with 'not a valid certificate: ', got: %s", got)
+			}
+		})
 	}
 }
 

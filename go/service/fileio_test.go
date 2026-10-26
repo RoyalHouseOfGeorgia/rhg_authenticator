@@ -24,36 +24,18 @@ func validRegistry() core.Registry {
 
 // --- marshalRegistry tests ---
 
-func TestMarshalRegistry_ValidOutput(t *testing.T) {
-	reg := validRegistry()
-
-	data, err := marshalRegistry(reg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Must end with a newline.
-	if !bytes.HasSuffix(data, []byte("\n")) {
-		t.Error("output does not end with trailing newline")
-	}
-
-	// Must contain 2-space indentation (json.MarshalIndent with "  ").
-	if !bytes.Contains(data, []byte("  ")) {
-		t.Error("output does not contain 2-space indent")
-	}
-
-	// Must be valid JSON that can round-trip through ValidateRegistry.
-	if _, err := core.ValidateRegistry(data); err != nil {
-		t.Errorf("output is not valid registry JSON: %v", err)
-	}
-}
-
 func TestMarshalRegistry_RoundTrip(t *testing.T) {
 	reg := validRegistry()
 
 	data, err := marshalRegistry(reg)
 	if err != nil {
 		t.Fatalf("marshalRegistry: %v", err)
+	}
+	if !bytes.HasSuffix(data, []byte("\n")) {
+		t.Error("output does not end with trailing newline")
+	}
+	if !bytes.Contains(data, []byte("  ")) {
+		t.Error("output does not contain 2-space indent")
 	}
 
 	got, err := core.ValidateRegistry(data)

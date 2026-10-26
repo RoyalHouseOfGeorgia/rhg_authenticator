@@ -14,15 +14,19 @@ import (
 
 const testURL = "https://example.com/verify?id=abc123"
 
-func TestGenerateSVGValidXML(t *testing.T) {
+func TestGenerateSVGStructure(t *testing.T) {
 	svg, err := GenerateSVG(testURL)
 	if err != nil {
 		t.Fatalf("GenerateSVG error: %v", err)
 	}
-
-	// Verify well-formed XML.
 	if err := xml.Unmarshal(svg, new(any)); err != nil {
-		t.Fatalf("SVG is not valid XML: %v", err)
+		t.Errorf("SVG is not valid XML: %v", err)
+	}
+	if !bytes.HasPrefix(svg, []byte(`<?xml version="1.0" encoding="UTF-8"?>`)) {
+		t.Error("SVG should start with XML declaration")
+	}
+	if !bytes.Contains(svg, []byte(`xmlns="http://www.w3.org/2000/svg"`)) {
+		t.Error("SVG should contain SVG namespace declaration")
 	}
 }
 
@@ -140,28 +144,6 @@ func TestNewQROverLimit(t *testing.T) {
 	expected := fmt.Sprintf("URL exceeds maximum length (%d > %d)", core.MaxVerifyURLLength+1, core.MaxVerifyURLLength)
 	if err.Error() != expected {
 		t.Errorf("error = %q, want %q", err.Error(), expected)
-	}
-}
-
-func TestGenerateSVGXMLDeclaration(t *testing.T) {
-	svg, err := GenerateSVG(testURL)
-	if err != nil {
-		t.Fatalf("GenerateSVG error: %v", err)
-	}
-
-	if !bytes.HasPrefix(svg, []byte(`<?xml version="1.0" encoding="UTF-8"?>`)) {
-		t.Error("SVG should start with XML declaration")
-	}
-}
-
-func TestGenerateSVGSVGNamespace(t *testing.T) {
-	svg, err := GenerateSVG(testURL)
-	if err != nil {
-		t.Fatalf("GenerateSVG error: %v", err)
-	}
-
-	if !bytes.Contains(svg, []byte(`xmlns="http://www.w3.org/2000/svg"`)) {
-		t.Error("SVG should contain SVG namespace declaration")
 	}
 }
 

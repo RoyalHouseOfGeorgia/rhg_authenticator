@@ -17,114 +17,52 @@ import (
 // --- formatCommitSummary tests ---
 
 func TestFormatCommitSummary(t *testing.T) {
-	c := ghapi.RegistryCommit{SHA: "abc123"}
-	c.Commit.Message = "Fix registry"
-	c.Commit.Author.Name = "Kimon"
-	c.Commit.Author.Date = "2026-03-15T10:00:00Z"
-
-	got := formatCommitSummary(c)
-	want := "2026-Mar-15  Kimon — Fix registry"
-	if got != want {
-		t.Errorf("formatCommitSummary = %q, want %q", got, want)
+	cases := []struct {
+		name                  string
+		sha                   string
+		message, author, date string
+		want                  string
+	}{
+		{"basic", "abc123", "Fix registry", "Kimon", "2026-03-15T10:00:00Z", "2026-Mar-15  Kimon — Fix registry"},
+		{"long message truncated to 80 runes plus ellipsis", "", strings.Repeat("a", 100), "Author", "2026-03-15T10:00:00Z", "2026-Mar-15  Author — " + strings.Repeat("a", 80) + "..."},
+		{"multiline message shows only the first line", "", "line1\nline2\nline3", "Author", "2026-03-15T10:00:00Z", "2026-Mar-15  Author — line1"},
+		{"empty fields fall back and a bad date is shown raw", "", "", "", "not-a-date", "not-a-date  Unknown — (no message)"},
 	}
-}
-
-func TestFormatCommitSummary_LongMessage(t *testing.T) {
-	c := ghapi.RegistryCommit{}
-	c.Commit.Message = strings.Repeat("a", 100)
-	c.Commit.Author.Name = "Author"
-	c.Commit.Author.Date = "2026-03-15T10:00:00Z"
-
-	got := formatCommitSummary(c)
-	if !strings.HasSuffix(got, "...") {
-		t.Error("long message should be truncated with '...'")
-	}
-	// The message portion should be 80 runes + "..."
-	// Extract the part after " — "
-	parts := strings.SplitN(got, " — ", 2)
-	if len(parts) != 2 {
-		t.Fatalf("unexpected format: %q", got)
-	}
-	msgRunes := []rune(parts[1])
-	// 80 runes + 3 for "..."
-	if len(msgRunes) != 83 {
-		t.Errorf("truncated message rune count = %d, want 83", len(msgRunes))
-	}
-}
-
-func TestFormatCommitSummary_MultilineMessage(t *testing.T) {
-	c := ghapi.RegistryCommit{}
-	c.Commit.Message = "line1\nline2\nline3"
-	c.Commit.Author.Name = "Author"
-	c.Commit.Author.Date = "2026-03-15T10:00:00Z"
-
-	got := formatCommitSummary(c)
-	if strings.Contains(got, "line2") {
-		t.Error("multiline message should only show first line")
-	}
-	if !strings.Contains(got, "line1") {
-		t.Error("should contain first line")
-	}
-}
-
-func TestFormatCommitSummary_EmptyFields(t *testing.T) {
-	c := ghapi.RegistryCommit{}
-	c.Commit.Message = ""
-	c.Commit.Author.Name = ""
-	c.Commit.Author.Date = "not-a-date"
-
-	got := formatCommitSummary(c)
-	if !strings.Contains(got, "Unknown") {
-		t.Errorf("empty author should show 'Unknown', got: %q", got)
-	}
-	if !strings.Contains(got, "(no message)") {
-		t.Errorf("empty message should show '(no message)', got: %q", got)
-	}
-	if !strings.Contains(got, "not-a-date") {
-		t.Errorf("bad date should use raw string, got: %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := ghapi.RegistryCommit{SHA: tc.sha}
+			c.Commit.Message = tc.message
+			c.Commit.Author.Name = tc.author
+			c.Commit.Author.Date = tc.date
+			if got := formatCommitSummary(c); got != tc.want {
+				t.Errorf("formatCommitSummary = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
 // --- truncateRunes tests ---
 
-func TestTruncateRunes_Short(t *testing.T) {
-	got := truncateRunes("Short", 50)
-	if got != "Short" {
-		t.Errorf("truncateRunes = %q, want %q", got, "Short")
+func TestTruncateRunes(t *testing.T) {
+	cases := []struct {
+		name   string
+		s      string
+		maxLen int
+		want   string
+	}{
+		{"short", "Short", 50, "Short"},
+		{"exact length", strings.Repeat("a", 50), 50, strings.Repeat("a", 50)},
+		{"long", strings.Repeat("a", 60), 50, strings.Repeat("a", 50) + "..."},
+		// Georgian characters are multi-byte but each is one rune.
+		{"unicode", strings.Repeat("\u10D0", 55), 50, strings.Repeat("\u10D0", 50) + "..."},
+		{"zero max", "anything", 0, ""},
 	}
-}
-
-func TestTruncateRunes_ExactLength(t *testing.T) {
-	s := strings.Repeat("a", 50)
-	got := truncateRunes(s, 50)
-	if got != s {
-		t.Errorf("truncateRunes exact = %q, want %q", got, s)
-	}
-}
-
-func TestTruncateRunes_Long(t *testing.T) {
-	s := strings.Repeat("a", 60)
-	got := truncateRunes(s, 50)
-	want := strings.Repeat("a", 50) + "..."
-	if got != want {
-		t.Errorf("truncateRunes long = %q, want %q", got, want)
-	}
-}
-
-func TestTruncateRunes_Unicode(t *testing.T) {
-	// Georgian characters are multi-byte but each is one rune.
-	s := strings.Repeat("\u10D0", 55) // 55 Georgian "a" runes
-	got := truncateRunes(s, 50)
-	wantPrefix := strings.Repeat("\u10D0", 50) + "..."
-	if got != wantPrefix {
-		t.Errorf("truncateRunes unicode length mismatch")
-	}
-}
-
-func TestTruncateRunes_ZeroMax(t *testing.T) {
-	got := truncateRunes("anything", 0)
-	if got != "" {
-		t.Errorf("truncateRunes zero max = %q, want empty", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := truncateRunes(tc.s, tc.maxLen); got != tc.want {
+				t.Errorf("truncateRunes(%q, %d) = %q, want %q", tc.s, tc.maxLen, got, tc.want)
+			}
+		})
 	}
 }
 

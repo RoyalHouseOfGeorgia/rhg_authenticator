@@ -369,26 +369,7 @@ struct AppModelTests {
         #expect(app.internalErrorMessage == "An internal error occurred — please restart")
     }
 
-    @Test("update events are stored; other events are ignored")
-    func updateEvents() async {
-        let fake = FakeBridge()
-        let app = await startedApp(fake)
-        let status = UpdateStatus(
-            state: .ready, version: "1.3.0", releaseUrl: "https://github.com/o/r/releases/tag/v1.3.0",
-            moveToApplications: false)
-        let notice = UpdatedNotice(version: "1.2.3", releaseUrl: "")
-        fake.emit(.bulkConnecting)
-        fake.emit(.unknown("future.event"))
-        fake.emit(.updateStatus(status))
-        fake.emit(.updateUpdated(notice))
-        #expect(await settle { app.updatedNotice != nil })
-        #expect(app.updateStatus == status)
-        #expect(app.updatedNotice == notice)
-        #expect(app.phase == .ready)
-        #expect(app.internalErrorMessage == nil)
-    }
-
-    @Test("the banner follows update events: none, then each latest status and notice")
+    @Test("update events are stored and the banner follows them: none, then each latest status and notice; other events are ignored")
     func updateBanners() async throws {
         let fake = FakeBridge()
         let app = await startedApp(fake)
@@ -397,9 +378,15 @@ struct AppModelTests {
         let url = "https://github.com/o/r/releases/tag/v1.3.0"
         let ready = UpdateStatus(state: .ready, version: "1.3.0", releaseUrl: url, moveToApplications: false)
         let notice = UpdatedNotice(version: "1.2.3", releaseUrl: "")
+        fake.emit(.bulkConnecting)
+        fake.emit(.unknown("future.event"))
         fake.emit(.updateStatus(ready))
         fake.emit(.updateUpdated(notice))
         #expect(await settle { app.updatedBanner != nil })
+        #expect(app.updateStatus == ready)
+        #expect(app.updatedNotice == notice)
+        #expect(app.phase == .ready)
+        #expect(app.internalErrorMessage == nil)
         #expect(app.updateBanner == (try #require(UpdateBanner(ready))))
         #expect(app.updatedBanner == UpdatedBanner(notice))
         // A later notice replaces the earlier one.

@@ -7,20 +7,97 @@ import (
 	"time"
 )
 
-func TestNewPinCache_StartsDisabled(t *testing.T) {
-	c := NewPinCache()
-	defer c.Close()
-
-	if c.Enabled() {
-		t.Error("new PinCache should be disabled by default")
+func TestPinCache_Ops(t *testing.T) {
+	tests := []struct {
+		name    string
+		ops     func(t *testing.T, c *PinCache)
+		wantPIN string // expected Get result; "" means Get must report no PIN
+	}{
+		{
+			name: "StartsDisabled",
+			ops: func(t *testing.T, c *PinCache) {
+				if c.Enabled() {
+					t.Error("new PinCache should be disabled by default")
+				}
+			},
+		},
+		{
+			name: "SetAndGet",
+			ops: func(t *testing.T, c *PinCache) {
+				c.SetEnabled(true)
+				mustSet(t, c, "123456")
+			},
+			wantPIN: "123456",
+		},
+		{
+			name: "Clear",
+			ops: func(t *testing.T, c *PinCache) {
+				c.SetEnabled(true)
+				mustSet(t, c, "123456")
+				c.Clear()
+			},
+		},
+		{
+			// The cache is disabled by default, so Set is a no-op.
+			name: "SetDisabledIsNoop",
+			ops:  func(t *testing.T, c *PinCache) { mustSet(t, c, "123456") },
+		},
+		{
+			name: "ClearWithoutSet",
+			ops: func(t *testing.T, c *PinCache) {
+				c.SetEnabled(true)
+				c.Clear()
+			},
+		},
+		{
+			name: "SetEmptyPin",
+			ops: func(t *testing.T, c *PinCache) {
+				c.SetEnabled(true)
+				mustSet(t, c, "")
+			},
+		},
 	}
-	pin, ok := c.Get()
-	if ok || pin != "" {
-		t.Errorf("expected empty result from disabled cache, got %q, %v", pin, ok)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := NewPinCache()
+			defer c.Close()
+			tt.ops(t, c)
+			pin, ok := c.Get()
+			if ok != (tt.wantPIN != "") || pin != tt.wantPIN {
+				t.Errorf("Get() = %q, %v; want %q", pin, ok, tt.wantPIN)
+			}
+		})
 	}
 }
 
-func TestPinCache_SetAndGet(t *testing.T) {
+func TestPinCache_Close(t *testing.T) {
+	c := NewPinCache()
+	c.SetEnabled(true)
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
+
+	c.Close()
+
+	pin, ok := c.Get()
+	if ok || pin != "" {
+		t.Errorf("expected empty result after Close, got %q, %v", pin, ok)
+	}
+}
+
+func TestPinCache_DoubleClose(t *testing.T) {
+	c := NewPinCache()
+	c.SetEnabled(true)
+	if err := c.Set("123456"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Double Close should not panic.
+	c.Close()
+	c.Close()
+}
+
+func TestPinCache_EnableDisableEnable(t *testing.T) {
 	c := NewPinCache()
 	defer c.Close()
 
@@ -28,29 +105,29 @@ func TestPinCache_SetAndGet(t *testing.T) {
 	if err := c.Set("123456"); err != nil {
 		t.Fatal(err)
 	}
+	c.SetEnabled(false)
+	c.SetEnabled(true)
 
+	// PIN should be gone after disable, even though we re-enabled.
 	pin, ok := c.Get()
-	if !ok {
-		t.Fatal("expected cached PIN to be valid")
+	if ok || pin != "" {
+		t.Errorf("expected empty result after disable/enable cycle, got %q, %v", pin, ok)
 	}
-	if pin != "123456" {
-		t.Errorf("expected PIN %q, got %q", "123456", pin)
+
+	// But new Set should work.
+	if err := c.Set("654321"); err != nil {
+		t.Fatal(err)
+	}
+	pin, ok = c.Get()
+	if !ok || pin != "654321" {
+		t.Errorf("expected PIN %q after re-enable Set, got %q, %v", "654321", pin, ok)
 	}
 }
 
-func TestPinCache_Clear(t *testing.T) {
-	c := NewPinCache()
-	defer c.Close()
-
-	c.SetEnabled(true)
-	if err := c.Set("123456"); err != nil {
-		t.Fatal(err)
-	}
-	c.Clear()
-
-	pin, ok := c.Get()
-	if ok || pin != "" {
-		t.Errorf("expected empty result after Clear, got %q, %v", pin, ok)
+func mustSet(t *testing.T, c *PinCache, pin string) {
+	t.Helper()
+	if err := c.Set(pin); err != nil {
+		t.Fatalf("Set(%q): %v", pin, err)
 	}
 }
 
@@ -112,89 +189,6 @@ func TestPinCache_ConcurrentAccess(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-}
-
-func TestPinCache_SetDisabledIsNoop(t *testing.T) {
-	c := NewPinCache()
-	defer c.Close()
-
-	// Cache is disabled by default; Set should be a no-op.
-	if err := c.Set("123456"); err != nil {
-		t.Fatal(err)
-	}
-
-	pin, ok := c.Get()
-	if ok || pin != "" {
-		t.Errorf("Set on disabled cache should be a no-op, got %q, %v", pin, ok)
-	}
-}
-
-func TestPinCache_Close(t *testing.T) {
-	c := NewPinCache()
-	c.SetEnabled(true)
-	if err := c.Set("123456"); err != nil {
-		t.Fatal(err)
-	}
-
-	c.Close()
-
-	pin, ok := c.Get()
-	if ok || pin != "" {
-		t.Errorf("expected empty result after Close, got %q, %v", pin, ok)
-	}
-}
-
-func TestPinCache_DoubleClose(t *testing.T) {
-	c := NewPinCache()
-	c.SetEnabled(true)
-	if err := c.Set("123456"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Double Close should not panic.
-	c.Close()
-	c.Close()
-}
-
-func TestPinCache_EnableDisableEnable(t *testing.T) {
-	c := NewPinCache()
-	defer c.Close()
-
-	c.SetEnabled(true)
-	if err := c.Set("123456"); err != nil {
-		t.Fatal(err)
-	}
-	c.SetEnabled(false)
-	c.SetEnabled(true)
-
-	// PIN should be gone after disable, even though we re-enabled.
-	pin, ok := c.Get()
-	if ok || pin != "" {
-		t.Errorf("expected empty result after disable/enable cycle, got %q, %v", pin, ok)
-	}
-
-	// But new Set should work.
-	if err := c.Set("654321"); err != nil {
-		t.Fatal(err)
-	}
-	pin, ok = c.Get()
-	if !ok || pin != "654321" {
-		t.Errorf("expected PIN %q after re-enable Set, got %q, %v", "654321", pin, ok)
-	}
-}
-
-func TestPinCache_ClearWithoutSet(t *testing.T) {
-	c := NewPinCache()
-	defer c.Close()
-	c.SetEnabled(true)
-
-	// Clear without ever setting should not panic.
-	c.Clear()
-
-	pin, ok := c.Get()
-	if ok || pin != "" {
-		t.Errorf("expected empty result, got %q, %v", pin, ok)
-	}
 }
 
 func TestPinCacheTimeout_Constant(t *testing.T) {
@@ -322,21 +316,5 @@ func TestPinCache_SetDuringExpiry(t *testing.T) {
 	}
 	if pin != "second" {
 		t.Errorf("expected PIN %q, got %q (stale timer zeroed the new PIN)", "second", pin)
-	}
-}
-
-func TestPinCache_SetEmptyPin(t *testing.T) {
-	c := NewPinCache()
-	defer c.Close()
-	c.SetEnabled(true)
-
-	err := c.Set("")
-	if err != nil {
-		t.Fatalf("Set empty PIN should return nil, got %v", err)
-	}
-
-	pin, ok := c.Get()
-	if ok || pin != "" {
-		t.Errorf("expected no cached PIN after empty Set, got %q, %v", pin, ok)
 	}
 }

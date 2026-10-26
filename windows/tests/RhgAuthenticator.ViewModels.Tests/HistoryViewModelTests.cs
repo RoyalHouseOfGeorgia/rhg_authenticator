@@ -589,26 +589,6 @@ public sealed class HistoryViewModelTests
     }
 
     [Fact]
-    public async Task RevokeIsDisabledWhileARevocationRuns()
-    {
-        var held = _fake.Hold(RpcMethod.HistoryRevoke);
-        _confirm.Answer(true);
-        var history = await Selected(0);
-        _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
-        var changes = 0;
-        history.RevokeCommand.CanExecuteChanged += (_, _) => changes++;
-        var revoking = history.RevokeCommand.ExecuteAsync(null);
-        Assert.True(await Fixtures.Settle(() => _fake.Count(RpcMethod.HistoryRevoke) == 1));
-        Assert.True(history.IsRevoking);
-        Assert.False(history.RevokeCommand.CanExecute(null));
-        Assert.True(changes > 0);
-        _fake.Respond(RpcMethod.HistoryList, List([1, 2, 3], revoked: [1]));
-        held.Release(new RevokeResult(RevokeStatus.Submitted, 12, "https://github.com/x/pull/12", "Revocation Submitted", "PR #12"));
-        await revoking;
-        Assert.False(history.IsRevoking);
-    }
-
-    [Fact]
     public async Task ConfirmedRevokeOpensThePullRequestReReadsAndShowsTheCoresOutcome()
     {
         var history = await Selected(0);
@@ -777,20 +757,24 @@ public sealed class HistoryViewModelTests
     }
 
     [Fact]
-    public async Task DeleteEntryIsDisabledWhileARevocationRuns()
+    public async Task RevokeAndDeleteEntryAreDisabledWhileARevocationRuns()
     {
         var held = _fake.Hold(RpcMethod.HistoryRevoke);
         _confirm.Answer(true);
         var history = await Selected(0);
         _fake.Respond(RpcMethod.HistoryRecordText, Text(1));
-        var changes = 0;
-        history.DeleteEntryCommand.CanExecuteChanged += (_, _) => changes++;
+        var revokeChanges = 0;
+        var deleteChanges = 0;
+        history.RevokeCommand.CanExecuteChanged += (_, _) => revokeChanges++;
+        history.DeleteEntryCommand.CanExecuteChanged += (_, _) => deleteChanges++;
         var revoking = history.RevokeCommand.ExecuteAsync(null);
         Assert.True(await Fixtures.Settle(() => _fake.Count(RpcMethod.HistoryRevoke) == 1));
         Assert.True(history.IsRevoking);
         Assert.Equal(0, history.SelectedIndex);
+        Assert.False(history.RevokeCommand.CanExecute(null));
         Assert.False(history.DeleteEntryCommand.CanExecute(null));
-        Assert.True(changes > 0);
+        Assert.True(revokeChanges > 0);
+        Assert.True(deleteChanges > 0);
         _fake.Respond(RpcMethod.HistoryList, List([1, 2, 3], revoked: [1]));
         held.Release(s_submitted);
         await revoking;
@@ -861,24 +845,15 @@ public sealed class HistoryViewModelTests
     }
 
     [Fact]
-    public async Task ARevokedRecordsQuestionHasTwoButtons()
-    {
-        var history = await Selected(0, List([1, 2], revoked: [1]));
-        _fake.Respond(RpcMethod.HistoryRecordText, Text(1, offerRevoke: false));
-        await history.DeleteEntryCommand.ExecuteAsync(null);
-        var question = Assert.Single(_confirm.Questions);
-        Assert.Equal(DeleteQuestion(1, offerRevoke: false), question);
-        Assert.Null(question.AlternateTitle);
-    }
-
-    [Fact]
-    public async Task WithoutRevokeInsteadAnAlternateAnswerDoesNothing()
+    public async Task ARevokedRecordsQuestionHasTwoButtonsAndAnAlternateAnswerDoesNothing()
     {
         var history = await Selected(0, List([1, 2], revoked: [1]));
         _fake.Respond(RpcMethod.HistoryRecordText, Text(1, offerRevoke: false));
         _confirm.Answer(ConfirmChoice.Alternate);
         await history.DeleteEntryCommand.ExecuteAsync(null);
-        Assert.Single(_confirm.Questions);
+        var question = Assert.Single(_confirm.Questions);
+        Assert.Equal(DeleteQuestion(1, offerRevoke: false), question);
+        Assert.Null(question.AlternateTitle);
         Assert.Equal(0, _fake.Count(RpcMethod.HistoryRevoke));
         Assert.Equal(0, _fake.Count(RpcMethod.HistoryDeleteEntry));
         Assert.Null(_alerts.Current);
@@ -1353,26 +1328,20 @@ public sealed class HistoryViewModelTests
         Assert.Equal(new AlertState("No Duplicates", "The issuance log has no duplicate entries."), _alerts.Current);
     }
 
-    [Fact]
-    public async Task APreviewFailureShowsRemoveDuplicatesFailedOfferingTheErrorLog()
-    {
-        _fake.Fail(RpcMethod.HistoryDuplicatePreview, new RpcException(RpcErrorCode.Failed, "Cannot read the log."));
-        var history = NewModel();
-        await history.RemoveDuplicatesCommand.ExecuteAsync(null);
-        Assert.Empty(_confirm.Questions);
-        Assert.Equal(
-            new AlertState("Remove Duplicates Failed", "Cannot read the log.", OffersErrorLogExport: true), _alerts.Current);
-    }
-
-    [Fact]
-    public async Task ARemovalFailureShowsRemoveDuplicatesFailedOfferingTheErrorLog()
+    // Preview failure: no question is asked. Removal failure: asked, confirmed, then failed.
+    [Theory]
+    [InlineData(RpcMethod.HistoryDuplicatePreview, "Cannot read the log.", 0)]
+    [InlineData(RpcMethod.HistoryRemoveDuplicates, "Cannot back up the log.", 1)]
+    public async Task ADuplicateRemovalFailureShowsRemoveDuplicatesFailedOfferingTheErrorLog(
+        string failing, string message, int questions)
     {
         _fake.Respond(RpcMethod.HistoryDuplicatePreview, new DuplicatePreviewResult(1, "Remove 1 duplicate entry?"));
-        _fake.Fail(RpcMethod.HistoryRemoveDuplicates, new RpcException(RpcErrorCode.Failed, "Cannot back up the log."));
         _confirm.Answer(true);
+        _fake.Reset(failing);
+        _fake.Fail(failing, new RpcException(RpcErrorCode.Failed, message));
         var history = NewModel();
         await history.RemoveDuplicatesCommand.ExecuteAsync(null);
-        Assert.Equal(
-            new AlertState("Remove Duplicates Failed", "Cannot back up the log.", OffersErrorLogExport: true), _alerts.Current);
+        Assert.Equal(questions, _confirm.Questions.Count);
+        Assert.Equal(new AlertState("Remove Duplicates Failed", message, OffersErrorLogExport: true), _alerts.Current);
     }
 }

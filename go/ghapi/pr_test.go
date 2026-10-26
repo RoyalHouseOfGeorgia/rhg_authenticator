@@ -402,32 +402,66 @@ func assertCleanedUp(t *testing.T, f *prFake) {
 	}
 }
 
-func TestCreateRepoFilePR_GetContentsFails_Cleanup(t *testing.T) {
-	f := &prFake{contentsStatus: []int{429}}
-	c := newPRFake(t, f)
-
-	_, err := runRepoFilePR(c)
-	if err == nil || !strings.Contains(err.Error(), "getting file SHA") {
-		t.Fatalf("error = %v, want 'getting file SHA'", err)
+func TestCreateRepoFilePR_FailureCleansUp(t *testing.T) {
+	tests := []struct {
+		name      string
+		fake      *prFake
+		wantErr   string
+		errCheck  func(error) bool // optional extra check on the returned error
+		wantSteps []string         // optional exact step sequence
+	}{
+		{
+			name:      "GetContentsFails_Cleanup",
+			fake:      &prFake{contentsStatus: []int{429}},
+			wantErr:   "getting file SHA",
+			errCheck:  IsRateLimited,
+			wantSteps: []string{"repoAccess", "getRef", "createRef", "getContents", "deleteRef"},
+		},
+		{
+			// Non-409 errors are not retried.
+			name:      "UpdateContentsFails_Cleanup",
+			fake:      &prFake{putStatus: []int{500}},
+			wantErr:   "updating file",
+			wantSteps: []string{"repoAccess", "getRef", "createRef", "getContents", "updateContents", "deleteRef"},
+		},
+		{
+			name:    "StaleFileSHA409_RetryFails_Cleanup",
+			fake:    &prFake{putStatus: []int{409, 409}},
+			wantErr: "updating file (retry)",
+		},
+		{
+			name:    "StaleFileSHA409_RefetchFails_Cleanup",
+			fake:    &prFake{putStatus: []int{409}, contentsStatus: []int{200, 500}},
+			wantErr: "re-fetching file SHA after 409",
+		},
+		{
+			name:    "CreatePRFails_Cleanup",
+			fake:    &prFake{prStatus: 502},
+			wantErr: "creating pull request",
+			errCheck: func(err error) bool {
+				var ae *APIError
+				return errors.As(err, &ae) && ae.StatusCode == 502
+			},
+			wantSteps: []string{"repoAccess", "getRef", "createRef", "getContents", "updateContents", "createPR", "deleteRef"},
+		},
 	}
-	if !IsRateLimited(err) {
-		t.Errorf("error = %v, want wrapped 429", err)
-	}
-	assertSteps(t, f, "repoAccess", "getRef", "createRef", "getContents", "deleteRef")
-	assertCleanedUp(t, f)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newPRFake(t, tt.fake)
 
-func TestCreateRepoFilePR_UpdateContentsFails_Cleanup(t *testing.T) {
-	f := &prFake{putStatus: []int{500}}
-	c := newPRFake(t, f)
-
-	_, err := runRepoFilePR(c)
-	if err == nil || !strings.Contains(err.Error(), "updating file") {
-		t.Fatalf("error = %v, want 'updating file'", err)
+			_, err := runRepoFilePR(c)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tt.wantErr)
+			}
+			if tt.errCheck != nil && !tt.errCheck(err) {
+				t.Errorf("error = %v, want the wrapped API status", err)
+			}
+			if tt.wantSteps != nil {
+				assertSteps(t, tt.fake, tt.wantSteps...)
+			}
+			assertCleanedUp(t, tt.fake)
+		})
 	}
-	// Non-409 errors are not retried.
-	assertSteps(t, f, "repoAccess", "getRef", "createRef", "getContents", "updateContents", "deleteRef")
-	assertCleanedUp(t, f)
 }
 
 func TestCreateRepoFilePR_StaleFileSHA409_Retries(t *testing.T) {
@@ -446,44 +480,6 @@ func TestCreateRepoFilePR_StaleFileSHA409_Retries(t *testing.T) {
 	if !slices.Equal(f.contentsRefs, []string{branch, branch}) {
 		t.Errorf("contents GET refs = %v, want both %q", f.contentsRefs, branch)
 	}
-}
-
-func TestCreateRepoFilePR_StaleFileSHA409_RetryFails_Cleanup(t *testing.T) {
-	f := &prFake{putStatus: []int{409, 409}}
-	c := newPRFake(t, f)
-
-	_, err := runRepoFilePR(c)
-	if err == nil || !strings.Contains(err.Error(), "updating file (retry)") {
-		t.Fatalf("error = %v, want 'updating file (retry)'", err)
-	}
-	assertCleanedUp(t, f)
-}
-
-func TestCreateRepoFilePR_StaleFileSHA409_RefetchFails_Cleanup(t *testing.T) {
-	f := &prFake{putStatus: []int{409}, contentsStatus: []int{200, 500}}
-	c := newPRFake(t, f)
-
-	_, err := runRepoFilePR(c)
-	if err == nil || !strings.Contains(err.Error(), "re-fetching file SHA after 409") {
-		t.Fatalf("error = %v, want 're-fetching file SHA after 409'", err)
-	}
-	assertCleanedUp(t, f)
-}
-
-func TestCreateRepoFilePR_CreatePRFails_Cleanup(t *testing.T) {
-	f := &prFake{prStatus: 502}
-	c := newPRFake(t, f)
-
-	_, err := runRepoFilePR(c)
-	if err == nil || !strings.Contains(err.Error(), "creating pull request") {
-		t.Fatalf("error = %v, want 'creating pull request'", err)
-	}
-	var ae *APIError
-	if !errors.As(err, &ae) || ae.StatusCode != 502 {
-		t.Errorf("error = %v, want wrapped 502", err)
-	}
-	assertSteps(t, f, "repoAccess", "getRef", "createRef", "getContents", "updateContents", "createPR", "deleteRef")
-	assertCleanedUp(t, f)
 }
 
 func TestCreateRepoFilePR_CleanupFailureLoggedNotFatal(t *testing.T) {

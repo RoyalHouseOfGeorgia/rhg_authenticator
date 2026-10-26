@@ -317,6 +317,7 @@ func TestExecuteSignFlow_LogWriteFailureNonFatal(t *testing.T) {
 func seedEnabledCache(t *testing.T) *yubikey.PinCache {
 	t.Helper()
 	cache := yubikey.NewPinCache()
+	t.Cleanup(cache.Close)
 	cache.SetEnabled(true)
 	if err := cache.Set("123456"); err != nil {
 		t.Fatalf("seeding cache: %v", err)
@@ -327,77 +328,64 @@ func seedEnabledCache(t *testing.T) *yubikey.PinCache {
 	return cache
 }
 
-func TestClearPINCacheOnAuthError_SignFlowErrorClears(t *testing.T) {
-	cache := seedEnabledCache(t)
-
-	err := &signFlowError{
-		Phase: phaseSign,
-		Err:   fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2}),
+func TestClearPINCacheOnAuthError(t *testing.T) {
+	cases := []struct {
+		name    string
+		seeded  bool    // an enabled cache holding a PIN; otherwise a disabled, empty cache
+		errs    []error // applied in order, checking the cache after each
+		wantPIN bool
+	}{
+		{
+			name:   "sign flow error clears",
+			seeded: true,
+			errs:   []error{&signFlowError{Phase: phaseSign, Err: fmt.Errorf("signing failed: %w", piv.AuthErr{Retries: 2})}},
+		},
+		{
+			name:    "non-auth PCSC error preserves",
+			seeded:  true,
+			errs:    []error{errors.New("connecting to smart card: the smart card has been removed")},
+			wantPIN: true,
+		},
+		{
+			// clearLocked nil-guards, so neither call panics on an empty cache.
+			name: "nil and auth error on empty cache",
+			errs: []error{nil, &signFlowError{Phase: phaseSign, Err: piv.AuthErr{}}},
+		},
+		{
+			name:   "bare unwrapped AuthErr clears",
+			seeded: true,
+			errs:   []error{piv.AuthErr{}},
+		},
+		{
+			// The exact shape piv-go produces: a VERIFY failure wrapped "verify pin:
+			// %w", re-wrapped by the adapter, boxed in a signFlowError. If a piv-go
+			// bump changes that %w to %v, errors.As breaks and this fails before a
+			// wrong PIN can be replayed into the PIV retry counter (a signing-key
+			// lockout).
+			name:   "realistic verify pin chain clears",
+			seeded: true,
+			errs: []error{&signFlowError{
+				Phase: phaseSign,
+				Err:   fmt.Errorf("signing failed: %w", fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})),
+			}},
+		},
 	}
-	clearPINCacheOnAuthError(err, cache)
-
-	if _, ok := cache.Get(); ok {
-		t.Error("expected cache to be cleared after auth error")
-	}
-}
-
-func TestClearPINCacheOnAuthError_NonAuthErrorPreserves(t *testing.T) {
-	cache := seedEnabledCache(t)
-
-	// PCSC / "no card" style error — not a PIN authentication failure.
-	err := errors.New("connecting to smart card: the smart card has been removed")
-	clearPINCacheOnAuthError(err, cache)
-
-	if _, ok := cache.Get(); !ok {
-		t.Error("expected cached PIN to survive a non-auth error")
-	}
-}
-
-func TestClearPINCacheOnAuthError_NilAndAuthOnEmptyCache(t *testing.T) {
-	// Empty (disabled) cache: nil error must not panic or clear.
-	cache := yubikey.NewPinCache()
-	clearPINCacheOnAuthError(nil, cache)
-	if _, ok := cache.Get(); ok {
-		t.Error("disabled cache should never report a PIN")
-	}
-
-	// Auth error against an empty cache: clearLocked nil-guards, so no panic.
-	authErr := &signFlowError{Phase: phaseSign, Err: piv.AuthErr{}}
-	clearPINCacheOnAuthError(authErr, cache)
-	if _, ok := cache.Get(); ok {
-		t.Error("disabled cache should never report a PIN")
-	}
-}
-
-func TestClearPINCacheOnAuthError_BareAuthErrClears(t *testing.T) {
-	cache := seedEnabledCache(t)
-
-	// Bare, unwrapped piv.AuthErr — no signFlowError, no %w chain.
-	clearPINCacheOnAuthError(piv.AuthErr{}, cache)
-
-	if _, ok := cache.Get(); ok {
-		t.Error("expected cache to be cleared for a bare AuthErr")
-	}
-}
-
-// TestClearPINCacheOnAuthError_RealisticVerifyPinChain pins the lockout-prevention
-// invariant against the exact error shape piv-go produces: a card VERIFY failure
-// wrapped "verify pin: %w", re-wrapped by the adapter/HandleSign, then boxed in a
-// signFlowError. If a future piv-go bump changes its %w wrap to %v, errors.As
-// breaks and this fails in CI — before a wrong PIN can be silently replayed into
-// the PIV retry counter (a signing-key lockout DoS).
-func TestClearPINCacheOnAuthError_RealisticVerifyPinChain(t *testing.T) {
-	cache := seedEnabledCache(t)
-
-	err := &signFlowError{
-		Phase: phaseSign,
-		Err: fmt.Errorf("signing failed: %w",
-			fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})),
-	}
-	clearPINCacheOnAuthError(err, cache)
-
-	if _, ok := cache.Get(); ok {
-		t.Error("expected cache cleared for a realistically-wrapped verify-pin AuthErr")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cache *yubikey.PinCache
+			if tc.seeded {
+				cache = seedEnabledCache(t)
+			} else {
+				cache = yubikey.NewPinCache()
+				t.Cleanup(cache.Close)
+			}
+			for _, err := range tc.errs {
+				clearPINCacheOnAuthError(err, cache)
+				if _, ok := cache.Get(); ok != tc.wantPIN {
+					t.Errorf("after %v: cache holds PIN = %v, want %v", err, ok, tc.wantPIN)
+				}
+			}
+		})
 	}
 }
 

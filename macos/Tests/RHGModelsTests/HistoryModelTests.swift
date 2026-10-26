@@ -144,10 +144,6 @@ struct HistoryModelTests {
         #expect(HistoryModel.deleteTitle == "Delete Entry…")
         #expect(HistoryModel.emptyDetailText == "Select a record to see its details.")
         #expect(HistoryModel.detailFailedPrefix == "Unable to show this record: ")
-    }
-
-    @Test("tooltips")
-    func tooltips() {
         #expect(HistoryModel.refreshTooltip == "Reread the issuance log and revocations (\u{2318}R)")
         #expect(HistoryModel.searchTooltip == "Filter the list by recipient (\u{2318}F)")
         #expect(HistoryModel.noDuplicatesStatus == "The issuance log has no duplicate entries.")
@@ -437,6 +433,19 @@ struct HistoryModelTests {
         #expect(history.selection == nil)
     }
 
+    @Test("typing re-reads once it pauses, sending only the latest query, with the selection reset")
+    func debounce() async {
+        let fake = FakeBridge()
+        let history = await selected(0, fake, debounce: .milliseconds(50))
+        fake.respond(.historyList, historyList(count: 1))
+        history.setQuery("R")
+        history.setQuery("Re")
+        #expect(history.query == "Re")
+        #expect(await settle { history.snapshot == historyList(count: 1) })
+        #expect(history.selection == nil)
+        #expect(fake.params(.historyList) == [#"{"query":""}"#, #"{"query":"Re"}"#])
+    }
+
     @Test("SettingTheSameQueryDoesNothing")
     func settingTheSameQueryDoesNothing() async {
         let fake = FakeBridge()
@@ -472,19 +481,6 @@ struct HistoryModelTests {
         #expect(history.snapshot == newer)
         #expect(history.selection == nil)
         #expect(history.selectedDetail == nil)
-    }
-
-    @Test("typing re-reads once it pauses, sending only the latest query, with the selection reset")
-    func debounce() async {
-        let fake = FakeBridge()
-        let history = await selected(0, fake, debounce: .milliseconds(50))
-        fake.respond(.historyList, historyList(count: 1))
-        history.setQuery("R")
-        history.setQuery("Re")
-        #expect(history.query == "Re")
-        #expect(await settle { history.snapshot == historyList(count: 1) })
-        #expect(history.selection == nil)
-        #expect(fake.params(.historyList) == [#"{"query":""}"#, #"{"query":"Re"}"#])
     }
 
     @Test("a newer query supersedes a read in flight for the older one")
@@ -710,8 +706,8 @@ struct HistoryModelTests {
         #expect(!history.canRevoke)  // logged out, offline or no revocation list
     }
 
-    @Test("RevokeIsDisabledWhileARevocationRuns")
-    func revokeIsDisabledWhileARevocationRuns() async {
+    @Test("RevokeAndDeleteEntryAreDisabledWhileARevocationRuns")
+    func revokeAndDeleteEntryAreDisabledWhileARevocationRuns() async {
         let fake = FakeBridge()
         let held = fake.hold(.historyRevoke)
         let history = await selected(0, fake)
@@ -720,11 +716,14 @@ struct HistoryModelTests {
         let revoking = Task { await history.confirm() }
         #expect(await settle { fake.count(.historyRevoke) == 1 })
         #expect(history.isRevoking)
+        #expect(history.selection == 0)
         #expect(!history.canRevoke)
+        #expect(!history.canDelete)
         fake.respond(.historyList, historyList(records: [1, 2, 3], revoked: [1]))
         held.release(submitted)
         await revoking.value
         #expect(!history.isRevoking)
+        #expect(fake.count(.historyDeleteEntry) == 0)
     }
 
     @Test("ConfirmedRevokeOpensThePullRequestReReadsAndShowsTheCoresOutcome")
@@ -946,25 +945,6 @@ struct HistoryModelTests {
         #expect(history.canDelete)
     }
 
-    @Test("DeleteEntryIsDisabledWhileARevocationRuns")
-    func deleteEntryIsDisabledWhileARevocationRuns() async {
-        let fake = FakeBridge()
-        let held = fake.hold(.historyRevoke)
-        let history = await selected(0, fake)
-        fake.respond(.historyRecordText, text(1))
-        await history.revokeTapped()
-        let revoking = Task { await history.confirm() }
-        #expect(await settle { fake.count(.historyRevoke) == 1 })
-        #expect(history.isRevoking)
-        #expect(history.selection == 0)
-        #expect(!history.canDelete)
-        fake.respond(.historyList, historyList(records: [1, 2, 3], revoked: [1]))
-        held.release(submitted)
-        await revoking.value
-        #expect(!history.isRevoking)
-        #expect(fake.count(.historyDeleteEntry) == 0)
-    }
-
     @Test("RevokeAndDeleteEntryAreDisabledWhileADeletionRuns")
     func revokeAndDeleteEntryAreDisabledWhileADeletionRuns() async {
         let fake = FakeBridge()
@@ -1013,22 +993,16 @@ struct HistoryModelTests {
         #expect(fake.count(.historyDeleteEntry) == 0)
     }
 
-    @Test("ARevokedRecordsQuestionHasTwoButtons")
-    func aRevokedRecordsQuestionHasTwoButtons() async {
+    @Test("ARevokedRecordsQuestionHasTwoButtonsAndAnAlternateAnswerDoesNothing")
+    func aRevokedRecordsQuestionHasTwoButtonsAndAnAlternateAnswerDoesNothing() async {
         let fake = FakeBridge()
         let history = await selected(0, fake, list: historyList(records: [1, 2], revoked: [1]))
         fake.respond(.historyRecordText, text(1, offerRevoke: false))
         await history.deleteTapped()
+        // Two buttons: no Revoke Instead.
         #expect(history.pendingConfirmation == deleteQuestion(1, offerRevoke: false))
         #expect(history.pendingConfirmation?.alternateTitle == nil)
-    }
-
-    @Test("WithoutRevokeInsteadAnAlternateAnswerDoesNothing")
-    func withoutRevokeInsteadAnAlternateAnswerDoesNothing() async {
-        let fake = FakeBridge()
-        let history = await selected(0, fake, list: historyList(records: [1, 2], revoked: [1]))
-        fake.respond(.historyRecordText, text(1, offerRevoke: false))
-        await history.deleteTapped()
+        // Without Revoke Instead, an alternate answer does nothing.
         await history.alternate()
         #expect(history.pendingConfirmation == nil)
         // No revoke question was asked: that would read the record text again.
