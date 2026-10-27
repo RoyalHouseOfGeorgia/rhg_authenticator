@@ -10,8 +10,11 @@ set -euo pipefail
 # Passing proves users on those releases can update to <zip> in-app.
 # <requirement> overrides the old app's pinned code-signing requirement (the
 # dry-run job's throwaway certificate); omit it to check against the real
-# pinned certificate. Run by sign-macos-dryrun (dry-run requirement, tag
-# v0.0.0). Never run it in a job that received the signing key.
+# pinned certificate. Run by verify-macos on tags (the release tag, no
+# requirement: each old app checks its real pinned certificate, the path an
+# installed app takes) and by sign-macos-dryrun on every other build
+# (dry-run requirement, tag v0.0.0). Never run it in a job that received the
+# signing key.
 #
 # The list is fixed: add a release when its updater should be covered, with
 # its asset's SHA-256 as GitHub recorded it:

@@ -74,7 +74,7 @@ jobs:
       - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
         with:
           languages: go, javascript
-      - run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev libgl1-mesa-dev xorg-dev
+      - run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
       - uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
       - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
 
@@ -91,10 +91,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Required by gitleaks-action for API access
 
-  # Race detection on macOS only. The Windows build job also compiles cgo
-  # (Fyne/GLFW) with the runner's preinstalled MinGW gcc; -race is not run there.
+  # Race detection on macOS only. build-windows also compiles cgo (the
+  # c-shared rhgcore) with the runner's preinstalled MinGW gcc; -race is not
+  # run there.
   test-race:
     runs-on: macos-26
+    # Both build jobs wait on this one: a stalled runner must not hold the
+    # required checks for the default 6 hours.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
@@ -116,24 +120,116 @@ jobs:
         run: go test -race ./... -count=1
       # The PIN-cancel, shutdown-during-PIN and busy-during-bulk flows need the
       # software card, so their tests exist only in the rhgfake build.
-      - working-directory: go
-        run: go test -race -tags rhgfake $RHGFAKE_PKGS -count=1
+      - name: Go race tests (rhgfake)
+        working-directory: go
+        run: |
+          # shellcheck disable=SC2086 # RHGFAKE_PKGS is a package list, split on purpose
+          go test -race -tags rhgfake $RHGFAKE_PKGS -count=1
 
-  # The native Windows app (WPF over the rhgcore DLL): the library built and
-  # smoke-tested, the Go rhgfake tests run on Windows, the .NET bridge and
-  # view models tested against the rhgfake DLL, then the app published as one
-  # self-contained exe embedding the release DLL. Not yet a required check;
-  # its exe is a 7-day workflow artifact only; the release path is wired to
-  # it at the native cutover.
+  # The native macOS app (SwiftUI over the rhgcore C library): the Go module
+  # checked, the library built and smoke-tested, the Swift package tested
+  # against its rhgfake variant, then the app bundle built against the
+  # release variant, ad-hoc signed and zipped, and uploaded as
+  # unsigned-darwin-arm64 (a name kept outside the release pattern; see
+  # release) for sign-macos and sign-macos-dryrun.
+  # Swift comes from the Xcode pinned below (printed in Toolchain versions).
+  build-macos:
+    # Explicit names → stable check contexts "build (darwin-arm64)" /
+    # "build (windows-amd64)" that don't change when a runner label is bumped
+    # (e.g. macos-latest→macos-26). The ruleset's required checks match these.
+    name: build (darwin-arm64)
+    needs: [test-typescript, test-race]
+    runs-on: macos-26
+    # Fail fast if a GitHub-hosted runner stalls at startup (seen on the macos-26
+    # pool) instead of inheriting the default 6-hour job timeout. A green build
+    # here completes in well under 30 min.
+    timeout-minutes: 30
+    steps:
+      # Release versions are always vX.Y.Z (the app's update check ignores
+      # anything else), so a misnamed tag fails here instead of publishing.
+      - name: Release tag is vX.Y.Z
+        if: github.ref_type == 'tag'
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tag '$GITHUB_REF_NAME' must be vX.Y.Z (e.g. v1.5.0)"; exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      # Pinned so a runner image's default-Xcode change cannot change the
+      # Swift compiler or SDK under us; bump deliberately.
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+      - name: Toolchain versions
+        run: |
+          uname -a
+          sw_vers
+          go version
+          cc --version
+          swift --version
+          xcodebuild -version
+      - name: go mod verify
+        working-directory: go
+        run: go mod verify
+      - name: go vet
+        working-directory: go
+        run: go vet ./...
+      - name: go vet (rhgfake)
+        working-directory: go
+        run: |
+          # shellcheck disable=SC2086 # RHGFAKE_PKGS is a package list, split on purpose
+          go vet -tags rhgfake $RHGFAKE_PKGS  # the packages the tag changes
+      - name: govulncheck
+        working-directory: go
+        run: go tool govulncheck ./...
+      - name: Build both library variants and run the C smoke test
+        run: RHGCORE_VERSION="$GITHUB_REF_NAME" bash scripts/rhgcore-smoke.sh
+      - name: Swift tests (rhgfake library)
+        run: |
+          RHGCORE_LIB_DIR="$GITHUB_WORKSPACE/go/release/rhgcore/rhgfake" \
+            swift test --package-path macos --scratch-path macos/.build/lib-rhgfake
+      # The script runs the built app's --version and fails on an rhgfake
+      # build or, for a tag, on a version other than the tag.
+      - name: Build the app (release library)
+        run: |
+          VERSION=0.0.0
+          if [ "$GITHUB_REF_TYPE" = tag ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          RHGCORE_LIB_DIR="$GITHUB_WORKSPACE/go/release/rhgcore/release" bash scripts/build-macos-app.sh "$VERSION"
+      # Zipped, the bundle keeps the exec bit that artifact upload would drop.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: unsigned-darwin-arm64
+          path: release/macos-app/rhg-authenticator-darwin-arm64.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # The native Windows app (WPF over the rhgcore DLL): the Go module checked
+  # and tested on Windows, the library built and smoke-tested, the .NET
+  # bridge and view models tested against the rhgfake DLL, then the app
+  # published as one self-contained exe embedding the release DLL. The exe is
+  # uploaded as rhg-authenticator-windows-amd64, which the release job
+  # publishes on tags as built (no Authenticode signing).
   # The .NET SDK comes from windows/global.json (printed in Toolchain versions).
-  windows-app:
-    name: windows-app
+  build-windows:
+    name: build (windows-amd64)
+    needs: [test-typescript, test-race]
     runs-on: windows-latest
+    # Name and timeout: see build-macos.
     timeout-minutes: 30
     defaults:
       run:
         shell: bash  # Git Bash; the smoke script needs bash and the runner's MinGW gcc
     steps:
+      # Release versions are always vX.Y.Z (the app's update check ignores
+      # anything else), so a misnamed tag fails here instead of publishing.
+      - name: Release tag is vX.Y.Z
+        if: github.ref_type == 'tag'
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tag '$GITHUB_REF_NAME' must be vX.Y.Z (e.g. v1.5.0)"; exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
@@ -148,152 +244,65 @@ jobs:
           go version
           cc --version
           dotnet --info
-      - working-directory: go
-        run: go vet -tags rhgfake $RHGFAKE_PKGS  # the packages the tag changes; build vets the rest
-      - working-directory: go
-        run: go test -tags rhgfake -count=1 $RHGFAKE_PKGS
-      - name: Build both library variants and run the C smoke test
-        run: RHGCORE_VERSION="$GITHUB_REF_NAME" bash scripts/rhgcore-smoke.sh
-      # No RHGCORE_LIB_DIR: the defaults are under test too (tests/ take the
-      # rhgfake library, the app the release one).
-      - name: .NET tests (rhgfake library)
-        run: dotnet test windows/RhgAuthenticator.sln
-      - name: Build the app (release library)
-        shell: pwsh
-        timeout-minutes: 10
-        run: |
-          $version = '0.0.0'
-          if ($env:GITHUB_REF_TYPE -eq 'tag') { $version = $env:GITHUB_REF_NAME -replace '^v', '' }
-          ./scripts/build-windows-app.ps1 -Version $version
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: windows-app
-          path: release/windows-app/rhg-authenticator-windows-amd64.exe
-          retention-days: 7
-
-  # The native macOS app (SwiftUI over the rhgcore C library): the library
-  # built and smoke-tested, the Swift package tested against its rhgfake
-  # variant, then the app bundle built against the release variant, ad-hoc
-  # signed and zipped. Its zip is a 7-day workflow artifact that
-  # sign-macos-dryrun signs and verifies; the release path is wired to it at
-  # the native cutover.
-  # Swift comes from the Xcode pinned below (printed in Toolchain versions).
-  macos-app:
-    name: macos-app
-    runs-on: macos-26
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
-        with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      # Pinned so a runner image's default-Xcode change cannot change the
-      # Swift compiler or SDK under us; bump deliberately.
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.6.app
-      - name: Toolchain versions
-        run: |
-          uname -a
-          go version
-          cc --version
-          swift --version
-          xcodebuild -version
-      - working-directory: go
-        run: go vet -tags rhgfake $RHGFAKE_PKGS  # the packages the tag changes; build vets the rest
-      - name: Build both library variants and run the C smoke test
-        run: RHGCORE_VERSION="$GITHUB_REF_NAME" bash scripts/rhgcore-smoke.sh
-      - name: Swift tests (rhgfake library)
-        run: |
-          RHGCORE_LIB_DIR="$GITHUB_WORKSPACE/go/release/rhgcore/rhgfake" \
-            swift test --package-path macos --scratch-path macos/.build/lib-rhgfake
-      - name: Build the app (release library)
-        run: |
-          VERSION=0.0.0
-          if [ "$GITHUB_REF_TYPE" = tag ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
-          RHGCORE_LIB_DIR="$GITHUB_WORKSPACE/go/release/rhgcore/release" bash scripts/build-macos-app.sh "$VERSION"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: macos-app
-          path: release/macos-app/rhg-authenticator-darwin-arm64.zip
-          retention-days: 7
-
-  build:
-    # Explicit name → stable check contexts "build (darwin-arm64)" /
-    # "build (windows-amd64)" that don't change when a runner label is bumped
-    # (e.g. macos-latest→macos-26). The ruleset's required checks match these.
-    name: build (${{ matrix.suffix }})
-    needs: [test-typescript, test-race]
-    # Fail fast if a GitHub-hosted runner stalls at startup (seen on the macos-26
-    # pool) instead of inheriting the default 6-hour job timeout. A green build
-    # here completes in well under 30 min.
-    timeout-minutes: 30
-    strategy:
-      matrix:
-        include:
-          - os: macos-26
-            suffix: darwin-arm64
-          - os: windows-latest
-            suffix: windows-amd64
-    runs-on: ${{ matrix.os }}
-    # Checks the Go module (vet, Windows tests, govulncheck); it builds no app.
-    # The native apps come from windows-app / macos-app, and the release path
-    # is wired to them at the native cutover. Until then a tag fails here, so
-    # sign-macos, verify-macos and release (which need build) never run.
-    steps:
-      # Release versions are always vX.Y.Z (the app's update check ignores
-      # anything else), so a misnamed tag fails here instead of publishing.
-      - name: Release tag is vX.Y.Z
-        if: github.ref_type == 'tag'
-        shell: bash
-        run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::release tag '$GITHUB_REF_NAME' must be vX.Y.Z (e.g. v1.5.0)"; exit 1
-          fi
-      - name: No release before the native cutover
-        if: github.ref_type == 'tag'
-        shell: bash
-        run: |
-          echo "::error::this workflow builds no release app yet (the Fyne build is removed; the native release path arrives with the cutover)"
-          exit 1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
-        with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      - name: Toolchain versions (macOS)
-        if: runner.os == 'macOS'
-        run: uname -m && sw_vers && xcodebuild -version && go version
-      - name: Toolchain versions (Windows)
-        if: runner.os == 'Windows'
-        run: go version
-      - working-directory: go
+      - name: go mod verify
+        working-directory: go
         run: go mod verify
-      - working-directory: go
+      - name: go vet
+        working-directory: go
         run: go vet ./...
+      - name: go vet (rhgfake)
+        working-directory: go
+        run: |
+          # shellcheck disable=SC2086 # RHGFAKE_PKGS is a package list, split on purpose
+          go vet -tags rhgfake $RHGFAKE_PKGS  # the packages the tag changes
       - name: Go tests
-        if: runner.os == 'Windows'
         working-directory: go
         run: go test ./... -count=1
+      - name: Go tests (rhgfake)
+        working-directory: go
+        run: |
+          # shellcheck disable=SC2086 # RHGFAKE_PKGS is a package list, split on purpose
+          go test -tags rhgfake -count=1 $RHGFAKE_PKGS
       - name: govulncheck
         working-directory: go
         run: go tool govulncheck ./...
-      # Go links every .syso in the package into the binary: never commit one.
+      # Go links every .syso in a package into what it builds, the c-shared
+      # rhgcore DLL included: never commit one.
       - name: No committed .syso files
-        shell: bash
         run: |
           files=$(git ls-files '*.syso')
           if [ -n "$files" ]; then echo "::error::committed .syso files are not allowed: $files"; exit 1; fi
+      - name: Build both library variants and run the C smoke test
+        run: RHGCORE_VERSION="$GITHUB_REF_NAME" bash scripts/rhgcore-smoke.sh
+      # No RHGCORE_LIB_DIR: the defaults are under test too (tests/ take the
+      # rhgfake library, the app the release one). Normal verbosity lists each
+      # test's result, so the Windows-only guard tests can be seen to run.
+      - name: .NET tests (rhgfake library)
+        run: dotnet test windows/RhgAuthenticator.sln --logger "console;verbosity=normal"
+      # The script runs the built app's --version and fails on an rhgfake
+      # build or, for a tag, on a version other than the tag.
+      - name: Build the app (release library)
+        timeout-minutes: 10
+        run: |
+          VERSION=0.0.0
+          if [ "$GITHUB_REF_TYPE" = tag ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          pwsh -NoProfile -File scripts/build-windows-app.ps1 -Version "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: rhg-authenticator-windows-amd64
+          path: release/windows-app/rhg-authenticator-windows-amd64.exe
+          if-no-files-found: error
+          retention-days: 7
 
   # Re-sign the Mac app with the pinned release certificate. Tag-only; the
   # `release` environment (deployment restricted to v* tags) holds the p12.
-  # Nothing from the build runs here: no p12 in the build job (tests,
+  # Nothing from the build runs here: no p12 in the build jobs (tests,
   # govulncheck) and no build binary in this one.
   sign-macos:
     if: github.ref_type == 'tag'
     # Sign only once every release gate has passed, so no signed bundle exists
     # for a tag run that will not publish.
-    needs: [build, security, gitleaks]
+    needs: [build-macos, build-windows, security, gitleaks]
     runs-on: macos-26
     timeout-minutes: 15
     environment: release
@@ -301,8 +310,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      # No job uploads this artifact until the native cutover (build no
-      # longer builds an app); build fails tag runs before this job starts.
+      # build-macos's ad-hoc zip (its name is outside the release pattern).
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: unsigned-darwin-arm64
@@ -319,6 +327,7 @@ jobs:
         with:
           name: rhg-authenticator-darwin-arm64
           path: out/rhg-authenticator-darwin-arm64.zip
+          if-no-files-found: error
           retention-days: 7
 
   # Runs the app's real install-verification path (scanZip, extract,
@@ -340,22 +349,27 @@ jobs:
           path: out
       - name: Verify signed zip with the app's update check
         run: bash scripts/verify-macos.sh out/rhg-authenticator-darwin-arm64.zip "$GITHUB_REF_NAME"
+      # Installed old releases' own update checks, each against its real
+      # pinned certificate: the path an installed app takes to this release.
+      - name: Verify old releases' updaters accept the signed zip
+        run: bash scripts/verify-macos-compat.sh out/rhg-authenticator-darwin-arm64.zip "$GITHUB_REF_NAME"
 
   # Same signing + verification path as sign-macos, with a throwaway cert, on
   # every non-tag build so a broken script surfaces before a release tag. It
-  # signs and verifies the native app's zip (macos-app) and checks that the
-  # v1.5.x updaters accept it. No environment, no repository signing material.
+  # signs and verifies build-macos's zip and checks that the v1.5.x updaters
+  # accept it. No environment, no repository signing material. It does not
+  # wait for build-windows.
   # Required on main (ruleset): it is skipped on tags, which counts as passing.
   sign-macos-dryrun:
     if: github.ref_type != 'tag'
-    needs: macos-app
+    needs: build-macos
     runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          name: macos-app  # native app, ad-hoc build, Info.plist version 0.0.0
+          name: unsigned-darwin-arm64  # ad-hoc build, Info.plist version 0.0.0
           path: in
       # /usr/bin/openssl is LibreSSL; the cert recipe needs OpenSSL 3.
       - name: Sign with a throwaway certificate
@@ -373,10 +387,38 @@ jobs:
       # Installed old releases' own update checks, against the same zip.
       - name: Verify old releases' updaters accept the signed zip
         run: bash scripts/verify-macos-compat.sh out/rhg-authenticator-darwin-arm64.zip v0.0.0 "$(cat gen/requirement.txt)"
+      # Under the name sign-macos uses, so release-dryrun can assemble this
+      # run's assets exactly as a tag's release job would.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: rhg-authenticator-darwin-arm64
+          path: out/rhg-authenticator-darwin-arm64.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  # The release job's assembly (artifact names, download pattern, asset
+  # check, checksums) on every non-tag build, so a mismatch surfaces before
+  # a release tag. Publishes nothing.
+  release-dryrun:
+    if: github.ref_type != 'tag'
+    needs: [sign-macos-dryrun, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: rhg-authenticator-*
+          path: release
+          merge-multiple: true
+      - name: Release assets are exactly the Mac zip and the Windows exe
+        run: bash scripts/check-release-assets.sh release
+      - name: SHA256SUMS
+        run: cd release && sha256sum rhg-authenticator-*
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [verify-macos, sign-macos, build, security, gitleaks]
+    needs: [verify-macos, sign-macos, build-macos, build-windows, security, gitleaks]
     runs-on: ubuntu-latest
     # id-token and attestations needed only by attest-build-provenance step,
     # but GitHub Actions requires job-level permissions. All actions are SHA-pinned;
@@ -389,15 +431,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          # Nothing reaches this job until the native cutover: build fails tag
-          # runs, so sign-macos never uploads the signed zip and no job
-          # uploads a Windows exe.
-          pattern: rhg-authenticator-*  # sign-macos's signed zip plus, from the native cutover, the Windows exe
+          # Only sign-macos's signed zip and build-windows's exe carry
+          # rhg-authenticator-* names: build-macos uploads its ad-hoc zip as
+          # unsigned-darwin-arm64 so it can never be published, and
+          # sign-macos-dryrun's upload exists only in non-tag runs.
+          # release-dryrun runs this same assembly on every push.
+          pattern: rhg-authenticator-*
           path: release
           merge-multiple: true
+      # Publish exactly the two app files, both non-empty: a missing, empty or
+      # unexpected file fails here, before anything is checksummed, attested
+      # or released.
+      - name: Release assets are exactly the Mac zip and the Windows exe
+        run: bash scripts/check-release-assets.sh release
       # SHA256SUMS for convenience; SLSA provenance attestation below provides
       # stronger integrity verification than GPG-signed checksums.
-      - run: cd release && sha256sum rhg-authenticator-* > SHA256SUMS.txt
+      - name: SHA256SUMS
+        run: cd release && sha256sum rhg-authenticator-* > SHA256SUMS.txt
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: 'release/*'
@@ -405,6 +455,8 @@ jobs:
         with:
           files: release/*
           body: |
-            **Mac:** download `rhg-authenticator-darwin-arm64.zip` (Apple Silicon only). **Windows:** download the `.exe`.
+            **Mac:** download `rhg-authenticator-darwin-arm64.zip`. **Windows:** download the `.exe`.
             Install steps: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator#download--install
+            Requires macOS 14 or later (Apple silicon), or Windows 10/11 (x64).
+            Upgrading from v1.x: an installed Mac app updates itself; if it doesn't, download the zip below.
           generate_release_notes: true
