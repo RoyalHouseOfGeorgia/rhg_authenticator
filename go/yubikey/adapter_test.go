@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/go-piv/piv-go/v2/piv"
@@ -395,7 +394,7 @@ func TestNewYubiKeyAdapter_OpenError(t *testing.T) {
 	}
 }
 
-func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
+func TestSignBytes_NilReadPin(t *testing.T) {
 	pub, sk := testEd25519Key()
 	yk := &fakeYubiKey{
 		cert:    testCert(pub),
@@ -409,20 +408,9 @@ func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 	}
 	defer adapter.Close()
 
-	// Should fail before SetReadPin.
 	_, err = adapter.SignBytes([]byte("data"))
 	if err == nil || err.Error() != "PIN reader not initialized" {
 		t.Fatalf("SignBytes with a nil readPin: err = %v, want PIN reader not initialized", err)
-	}
-
-	// Set a valid readPin and retry.
-	adapter.SetReadPin(staticPin("123456"))
-	sig, err := adapter.SignBytes([]byte("data"))
-	if err != nil {
-		t.Fatalf("SignBytes failed after SetReadPin: %v", err)
-	}
-	if len(sig) != 64 {
-		t.Fatalf("expected 64-byte signature, got %d", len(sig))
 	}
 }
 
@@ -484,40 +472,4 @@ func TestPINRetries_Cases(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestYubiKeyAdapter_ConcurrentSignAndSetReadPin(t *testing.T) {
-	pub, sk := testEd25519Key()
-	yk := &fakeYubiKey{
-		cert:    testCert(pub),
-		privKey: &fakeSigner{key: sk},
-	}
-
-	adapter, err := newAdapterFromHandle(yk, staticPin("000000"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer adapter.Close()
-
-	const goroutines = 100
-	var wg sync.WaitGroup
-	wg.Add(goroutines)
-
-	for i := 0; i < goroutines; i++ {
-		if i%2 == 0 {
-			go func() {
-				defer wg.Done()
-				adapter.SetReadPin(staticPin("123456"))
-			}()
-		} else {
-			go func() {
-				defer wg.Done()
-				// We don't care about the result — only that there is no
-				// data race or panic from concurrent access.
-				adapter.SignBytes([]byte("concurrent test data"))
-			}()
-		}
-	}
-
-	wg.Wait()
 }

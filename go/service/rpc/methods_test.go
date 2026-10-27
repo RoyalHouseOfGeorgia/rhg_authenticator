@@ -46,10 +46,6 @@ var appMethods = map[string]string{
 	"Dirty":             "app.canQuit",
 }
 
-// excludedAppMethods are the *service.App methods deliberately not exposed:
-// they serve the Fyne UI's in-memory save flow.
-var excludedAppMethods = []string{"IssuanceLogExport", "ErrorLogExport"}
-
 // nonAppMethods are rpc methods backed by package-level service functions,
 // SignFields or the server itself.
 var nonAppMethods = []string{
@@ -57,27 +53,16 @@ var nonAppMethods = []string{
 	"app.init", "app.exportErrorLog", "pin.submit", "pin.cancel", "update.current",
 }
 
-// TestMethodTable_CoversApp fails when an exported *service.App method is
-// neither exposed nor explicitly excluded, so a new service method can't be
-// silently missed.
+// TestMethodTable_CoversApp fails when an exported *service.App method is not
+// exposed, so a new service method can't be silently missed.
 func TestMethodTable_CoversApp(t *testing.T) {
 	table := methodTable()
 	appType := reflect.TypeOf(&service.App{})
-	excluded := map[string]bool{}
-	for _, m := range excludedAppMethods {
-		excluded[m] = true
-		if _, ok := appType.MethodByName(m); !ok {
-			t.Errorf("excluded method %s no longer exists", m)
-		}
-	}
 	for i := range appType.NumMethod() {
 		name := appType.Method(i).Name
-		if excluded[name] {
-			continue
-		}
 		rpcName, ok := appMethods[name]
 		if !ok {
-			t.Errorf("App.%s is neither exposed nor excluded", name)
+			t.Errorf("App.%s is not exposed", name)
 			continue
 		}
 		if table[rpcName] == nil {

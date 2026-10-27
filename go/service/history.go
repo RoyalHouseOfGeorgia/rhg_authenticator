@@ -28,10 +28,10 @@ const revocationTimeout = 180 * time.Second
 
 // Sentinel errors returned by the history methods. Their text is user-facing.
 var (
-	// ErrRevocationsNotLoaded is returned by Revoke before the revocation list
+	// errRevocationsNotLoaded is returned by Revoke before the revocation list
 	// has loaded.
-	ErrRevocationsNotLoaded = errors.New("Revocation data not loaded. Try refreshing.")
-	// ErrNothingToExport is returned by IssuanceLogExport when the log holds no
+	errRevocationsNotLoaded = errors.New("Revocation data not loaded. Try refreshing.")
+	// ErrNothingToExport is returned by ExportIssuanceLog when the log holds no
 	// records.
 	ErrNothingToExport = errors.New("No credentials have been signed on this computer yet.")
 )
@@ -300,10 +300,10 @@ func (a *App) History(query string) HistorySnapshot {
 // Revoke opens a pull request adding the credential with payload hash
 // payloadSHA256 to the revocation list. A credential already revoked (locally
 // or upstream) or with a revocation PR already open is not a failure: the
-// result says so. It returns ErrNotLoggedIn without a usable session,
-// ErrRevocationsNotLoaded before the revocation list has loaded, ErrBusy while
-// another Revoke runs, and an error matching ErrSessionExpired when GitHub
-// rejected the session (it then logs out). Failures are logged; every error's
+// result says so. It returns ErrNotLoggedIn without a usable session, an error
+// before the revocation list has loaded, ErrBusy while another Revoke runs,
+// and an error matching ErrSessionExpired when GitHub rejected the session
+// (it then logs out). Failures are logged; every error's
 // text is user-facing and GitHub errors stay wrapped. Revoke emits no history
 // events.
 func (a *App) Revoke(ctx context.Context, payloadSHA256 string) (RevokeResult, error) {
@@ -322,7 +322,7 @@ func (a *App) Revoke(ctx context.Context, payloadSHA256 string) (RevokeResult, e
 	case revoked:
 		return RevokeResult{Status: RevokeAlreadyRevoked, Title: "Already Revoked", Message: ghapi.UserMessage(ghapi.ErrAlreadyRevoked)}, nil
 	case !loaded:
-		return RevokeResult{}, ErrRevocationsNotLoaded
+		return RevokeResult{}, errRevocationsNotLoaded
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, revocationTimeout)
@@ -374,10 +374,10 @@ func submittedMessage(prNumber int, url string) string {
 	return created + "\n\nIf several revocation PRs are open, merge them one at a time."
 }
 
-// IssuanceLogExport returns the raw issuance log for the operator to save.
+// issuanceLogExport returns the raw issuance log for the operator to save.
 // It returns ErrNothingToExport when no credential has been logged; other
 // errors are logged and their text is user-facing.
-func (a *App) IssuanceLogExport() ([]byte, error) {
+func (a *App) issuanceLogExport() ([]byte, error) {
 	data, err := os.ReadFile(a.logPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrNothingToExport
@@ -390,12 +390,6 @@ func (a *App) IssuanceLogExport() ([]byte, error) {
 		return nil, ErrNothingToExport
 	}
 	return data, nil
-}
-
-// ErrorLogExport returns the diagnostic log for the operator to save. Errors
-// are logged and their text is user-facing.
-func (a *App) ErrorLogExport() ([]byte, error) {
-	return a.saver().errorLog()
 }
 
 // DuplicatePreview returns how many duplicate entries RemoveDuplicates would

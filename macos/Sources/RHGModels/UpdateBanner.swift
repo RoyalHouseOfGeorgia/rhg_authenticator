@@ -1,10 +1,10 @@
 import Foundation
 import RHGBridge
 
-/// The update banner's status slot, as the Fyne app showed it: an update
-/// ready to install (with Restart now), or one to download by hand. Versions
-/// are canonical "X.Y.Z" (no "v" prefix). The core blanks any release URL
-/// that is not an https://github.com one; an empty URL means no link.
+/// The update banner's status slot: an update ready to install (with Restart
+/// now), or one to download by hand. Versions are canonical "X.Y.Z" (no "v"
+/// prefix). The core blanks any release URL that is not an
+/// https://github.com one; an empty URL means no link.
 public enum UpdateBanner: Sendable, Equatable {
     /// Downloaded: `title`, then `readyDetail` and Restart now.
     case ready(title: String)

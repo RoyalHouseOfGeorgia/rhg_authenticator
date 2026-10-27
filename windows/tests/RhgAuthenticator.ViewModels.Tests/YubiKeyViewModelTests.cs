@@ -7,7 +7,7 @@ public sealed class YubiKeyViewModelTests
     private readonly FakeBridge _fake = new();
 
     [Fact]
-    public void CopyMatchesTheFyneApp()
+    public void Copy()
     {
         Assert.Equal("Check YubiKey", YubiKeyViewModel.CheckTitle);
     }

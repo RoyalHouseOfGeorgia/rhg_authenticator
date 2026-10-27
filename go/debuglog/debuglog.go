@@ -73,8 +73,8 @@ func (l *Logger) Write(p []byte) (int, error) {
 // CaptureStdlib routes the standard library logger to l (and stderr).
 func CaptureStdlib(l *Logger) {
 	stdlog.SetFlags(0)
-	// l must come first: on Windows GUI builds (-H windowsgui) writes to
-	// os.Stderr fail, and io.MultiWriter stops at the first error.
+	// l must come first: in a GUI host with no console (the WPF app) writes
+	// to os.Stderr fail, and io.MultiWriter stops at the first error.
 	stdlog.SetOutput(io.MultiWriter(l, os.Stderr))
 }
 

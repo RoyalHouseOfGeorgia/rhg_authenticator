@@ -11,14 +11,14 @@ import (
 	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 )
 
-// exportFileMode is the mode of a saved file: what a Fyne save dialog's
-// os.Create gives under the usual 022 umask.
+// exportFileMode is the mode of a saved file: what os.Create gives under the
+// usual 022 umask.
 const exportFileMode = 0o644
 
-// ErrProtectedPath is returned by every save (QR code, bulk results, log
+// errProtectedPath is returned by every save (QR code, bulk results, log
 // exports) when the chosen file's folder is the app's data folder, where its
 // logs live.
-var ErrProtectedPath = errors.New("Choose a folder outside the app's data folder.")
+var errProtectedPath = errors.New("Choose a folder outside the app's data folder.")
 
 // errNotAbsolute is returned by every save when the path isn't absolute.
 var errNotAbsolute = errors.New("Choose a file to save to.")
@@ -72,7 +72,7 @@ func (a *App) saver() saver { return saver{dataDir: a.dataDir, logger: a.logger}
 // ErrNothingToExport when no credential has been logged; other errors are
 // as for every save (see saveUserFile).
 func (a *App) ExportIssuanceLog(path string) error {
-	return a.saver().exportTo(path, a.IssuanceLogExport)
+	return a.saver().exportTo(path, a.issuanceLogExport)
 }
 
 // ExportErrorLog saves logger's diagnostic log to path, for a native save
@@ -111,7 +111,7 @@ func (s saver) exportTo(path string, read func() ([]byte, error)) error {
 
 // saveUserFile writes data to path, a file the operator chose, through a
 // temporary file in the same folder, so a failed save never leaves a partial
-// file. It returns errNotAbsolute for a relative path, ErrProtectedPath for a
+// file. It returns errNotAbsolute for a relative path, errProtectedPath for a
 // file whose folder is the data folder, and otherwise a logged error with a
 // fixed user-facing text.
 func (s saver) saveUserFile(path string, data []byte) error {
@@ -132,7 +132,7 @@ func (s saver) checkSavePath(path string) error {
 	}
 	if s.isProtected(path) {
 		s.logger.Logf("save refused in the data folder: %s", core.SanitizeForLog(path))
-		return ErrProtectedPath
+		return errProtectedPath
 	}
 	return nil
 }

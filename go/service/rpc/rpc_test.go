@@ -515,7 +515,7 @@ func TestSign_Offline(t *testing.T) {
 			params = ``
 		}
 		env := h.call(t, method, params)
-		env.fails(t, CodeFailed, service.ErrOffline.Error())
+		env.fails(t, CodeFailed, "Signing is unavailable: the key registry could not be downloaded. Check your internet connection and restart RHG Authenticator.")
 		if env.Error.OfferReport || env.Error.ReportID != "" {
 			t.Errorf("%s offers a report: %s", method, env.raw)
 		}
@@ -618,7 +618,7 @@ func TestRegistry(t *testing.T) {
 		t.Errorf("unloaded snapshot = %s", env.Result)
 	}
 	h.call(t, "registry.addEntry", `{"form":{"authority":"X","from":"2026-01-01","noExpiry":true},"publicKey":"k"}`).
-		fails(t, CodeFailed, service.ErrRegistryNotLoaded.Error())
+		fails(t, CodeFailed, "The registry hasn't loaded yet. Fetch it again.")
 
 	h.call(t, "registry.fetch", ``).ok(t, nil)
 	h.call(t, "registry.snapshot", ``).ok(t, &snap)

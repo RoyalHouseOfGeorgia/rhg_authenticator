@@ -16,18 +16,18 @@ import (
 // accepts. Sign's SignError.Message and a bulk row's error carry the
 // specific text (the key's end date, its allowed honors).
 var (
-	// ErrKeyNotRegistered: no registry entry has the card's key.
-	ErrKeyNotRegistered = errors.New("This YubiKey's key is not in the registry, so the credential would not verify. Use a registered YubiKey.")
-	// ErrKeyExpired: the card's key is registered, but only until before the
+	// errKeyNotRegistered: no registry entry has the card's key.
+	errKeyNotRegistered = errors.New("This YubiKey's key is not in the registry, so the credential would not verify. Use a registered YubiKey.")
+	// errKeyExpired: the card's key is registered, but only until before the
 	// credential date.
-	ErrKeyExpired = errors.New("This YubiKey's key is not valid on the credential date, so the credential would not verify.")
-	// ErrHonorNotAllowed: the card's key is registered for the date, but its
+	errKeyExpired = errors.New("This YubiKey's key is not valid on the credential date, so the credential would not verify.")
+	// errHonorNotAllowed: the card's key is registered for the date, but its
 	// allowed_honors excludes the credential's honor.
-	ErrHonorNotAllowed = errors.New("This YubiKey's key may not sign this honor, so the credential would not verify.")
+	errHonorNotAllowed = errors.New("This YubiKey's key may not sign this honor, so the credential would not verify.")
 )
 
 // keyRejectedError is a key check failure: msg is the user-facing text and
-// reason one of ErrKeyNotRegistered, ErrKeyExpired, ErrHonorNotAllowed.
+// reason one of errKeyNotRegistered, errKeyExpired, errHonorNotAllowed.
 type keyRejectedError struct {
 	msg    string
 	reason error
@@ -72,21 +72,21 @@ func checkSigningKey(reg core.Registry, pub [32]byte, req core.SignRequest) erro
 	}
 	switch {
 	case dateFail != nil && dateFail.To == nil: // a malformed req.Date
-		return &keyRejectedError{msg: ErrKeyExpired.Error(), reason: ErrKeyExpired}
+		return &keyRejectedError{msg: errKeyExpired.Error(), reason: errKeyExpired}
 	case dateFail != nil:
 		return &keyRejectedError{
 			msg: fmt.Sprintf("This YubiKey's key is valid only until %s, before the credential date %s, so the credential would not verify.",
 				core.FormatDateDisplay(*dateFail.To), core.FormatDateDisplay(req.Date)),
-			reason: ErrKeyExpired,
+			reason: errKeyExpired,
 		}
 	case honorFail != nil:
 		return &keyRejectedError{
 			msg: fmt.Sprintf("This YubiKey's key may not sign “%s” credentials (allowed: %s), so the credential would not verify.",
 				honor, restrictionsText(*honorFail)),
-			reason: ErrHonorNotAllowed,
+			reason: errHonorNotAllowed,
 		}
 	default:
-		return &keyRejectedError{msg: ErrKeyNotRegistered.Error(), reason: ErrKeyNotRegistered}
+		return &keyRejectedError{msg: errKeyNotRegistered.Error(), reason: errKeyNotRegistered}
 	}
 }
 

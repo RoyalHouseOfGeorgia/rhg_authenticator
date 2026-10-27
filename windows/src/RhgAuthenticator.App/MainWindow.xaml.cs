@@ -178,8 +178,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Lays the status items out as Fyne's HBox did: the first at the left,
-    /// the last at the right, flexible space between each pair.
+    /// Lays the status items out: the first at the left, the last at the
+    /// right, flexible space between each pair.
     /// </summary>
     private void ShowStatusItems()
     {

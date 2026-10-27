@@ -172,8 +172,8 @@ func TestRegistryEntry_RoundTripThroughUpdateEntry(t *testing.T) {
 
 func TestEditsRefusedUntilLoaded(t *testing.T) {
 	h := newAppHarness(t, nil)
-	if err := h.app.AddEntry(validForm(), testKeyB64(1)); !errors.Is(err, ErrRegistryNotLoaded) {
-		t.Errorf("AddEntry before load = %v, want ErrRegistryNotLoaded", err)
+	if err := h.app.AddEntry(validForm(), testKeyB64(1)); !errors.Is(err, errRegistryNotLoaded) {
+		t.Errorf("AddEntry before load = %v, want errRegistryNotLoaded", err)
 	}
 	if h.app.Dirty() {
 		t.Error("refused edit marked the registry dirty")

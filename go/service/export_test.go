@@ -204,8 +204,8 @@ func TestSave_RefusesDataFolder(t *testing.T) {
 			for sname, save := range saves {
 				t.Run(base+"/"+vname+"/"+sname, func(t *testing.T) {
 					before, _ := os.ReadFile(protected)
-					if err := save(target); !errors.Is(err, ErrProtectedPath) {
-						t.Fatalf("err = %v, want ErrProtectedPath", err)
+					if err := save(target); !errors.Is(err, errProtectedPath) {
+						t.Fatalf("err = %v, want errProtectedPath", err)
 					}
 					// The refusal itself is logged to the debug log, so
 					// that file legitimately grows; the others must not change.
@@ -230,8 +230,8 @@ func TestSave_RefusesDataFolder(t *testing.T) {
 func TestSave_BulkResultsRefusesDataFolder(t *testing.T) {
 	h := newAppHarness(t, nil)
 	h.app.plan = []bulk.Result{{Status: bulk.StatusSigned}}
-	if err := h.app.ExportBulkResults(filepath.Join(h.dir, "r.csv")); !errors.Is(err, ErrProtectedPath) {
-		t.Fatalf("err = %v, want ErrProtectedPath", err)
+	if err := h.app.ExportBulkResults(filepath.Join(h.dir, "r.csv")); !errors.Is(err, errProtectedPath) {
+		t.Fatalf("err = %v, want errProtectedPath", err)
 	}
 }
 

@@ -634,17 +634,6 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	return t.base.RoundTrip(req)
 }
 
-// unwrapAll returns the innermost error in a chain.
-func unwrapAll(err error) error {
-	for {
-		inner := errors.Unwrap(err)
-		if inner == nil {
-			return err
-		}
-		err = inner
-	}
-}
-
 // --- H2: Redirect auth stripping tests ---
 
 func TestDoJSON_RedirectStripsAuth(t *testing.T) {

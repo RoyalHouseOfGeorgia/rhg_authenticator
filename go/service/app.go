@@ -38,8 +38,8 @@ var (
 	// ErrBusy is returned when a conflicting operation is already running
 	// (see App for the guard groups).
 	ErrBusy = errors.New("Another operation is in progress.")
-	// ErrNoBulkPlan is returned when no bulk file has been loaded.
-	ErrNoBulkPlan = errors.New("No bulk file loaded.")
+	// errNoBulkPlan is returned when no bulk file has been loaded.
+	errNoBulkPlan = errors.New("No bulk file loaded.")
 	// ErrNotLoggedIn is returned by SubmitRegistry and Revoke when there is no
 	// usable GitHub session (logged out or offline).
 	ErrNotLoggedIn = errors.New("Not logged in to GitHub.")
@@ -49,10 +49,10 @@ var (
 	// ErrNotFound is matched by a ReportSignError error when the report id is
 	// unknown or no longer the latest reportable failure.
 	ErrNotFound = errors.New("The requested item was not found.")
-	// ErrOffline is matched by a Sign or RunBulk error when New could not
+	// errOffline is matched by a Sign or RunBulk error when New could not
 	// fetch the registry: nothing is signed (the registry is fetched only at
 	// start-up, so signing needs a restart).
-	ErrOffline = errors.New("Signing is unavailable: the key registry could not be downloaded. Check your internet connection and restart RHG Authenticator.")
+	errOffline = errors.New("Signing is unavailable: the key registry could not be downloaded. Check your internet connection and restart RHG Authenticator.")
 )
 
 // reportTimeout bounds ReportSignError's GitHub calls.
@@ -82,8 +82,8 @@ type Prompter interface {
 
 // Events receives progress notifications. Emit may be called from any
 // goroutine, including the UI thread (Logout emits synchronously), and must
-// not block: the implementation queues onto its UI thread (e.g. fyne.Do, never
-// fyne.DoAndWait). A host registers its handlers and then calls App.Start.
+// not block: the implementation queues onto its UI thread without waiting for
+// the handler to run. A host registers its handlers and then calls App.Start.
 type Events interface {
 	Emit(name string, payload any)
 }
@@ -257,9 +257,9 @@ type KeyCheck struct {
 // UpdateEntry, Dirty, History, Start and Close never block, and SaveQR,
 // Logout and ImportCertificate do only short local work
 // (file or keyring I/O; SaveQR renders a PNG in about 0.1 s), so these may be
-// called on a UI thread. IssuanceLogExport, ExportIssuanceLog,
-// DuplicatePreview and RemoveDuplicates read (and RemoveDuplicates rewrites)
-// the whole issuance log, 100-300 ms at 10k records; they and every other
+// called on a UI thread. ExportIssuanceLog, DuplicatePreview and
+// RemoveDuplicates read (and RemoveDuplicates rewrites) the whole issuance
+// log, 100-300 ms at 10k records; they and every other
 // method may block on file, card or network I/O or the PIN prompt and must
 // not be called on a UI thread. ErrBusy comes from independent guards: Sign,
 // LoadBulk, RunBulk, ExportBulkResults, CheckYubiKey and ImportFromYubiKey
@@ -419,11 +419,11 @@ func (f SignFields) Validate() error {
 // credential. A failure is a *SignError, except ErrBusy and a cancelled PIN
 // prompt, which matches context.Canceled. A credential already in the
 // issuance log is returned from it (Existing), even offline, with no card
-// access. Otherwise, offline it fails with ErrOffline before the card is
-// touched, and a key whose credential the verify page would reject fails
-// before the PIN prompt, matching ErrKeyNotRegistered, ErrKeyExpired or
-// ErrHonorNotAllowed. A reportable failure (OfferReport) becomes the one ReportSignError
-// can file, replacing any earlier one. A new issuance record reloads the
+// access. Otherwise, offline it fails before the card is touched, and a key
+// whose credential the verify page would reject (not registered, expired for
+// the date, or not allowed the honor) fails before the PIN prompt; the error
+// text says why. A reportable failure (OfferReport) becomes the one
+// ReportSignError can file, replacing any earlier one. A new issuance record reloads the
 // history (EventHistoryChanged).
 func (a *App) Sign(ctx context.Context, f SignFields) (SignResult, error) {
 	if !a.busy.CompareAndSwap(false, true) {
@@ -626,7 +626,7 @@ func (a *App) LoadBulk(path string) (BulkPlan, error) {
 }
 
 // RunBulk signs the loaded plan's to_sign rows. Offline, a plan with rows to
-// sign returns ErrOffline, leaving the plan untouched; a plan with none still
+// sign fails with the same message as Sign, leaving the plan untouched; a plan with none still
 // completes, so its results can be exported. A row whose credential the
 // inserted key cannot sign (see Sign) fails with that message before the PIN
 // prompt and the batch goes on; a key refused after the PIN (the card was
@@ -650,10 +650,10 @@ func (a *App) RunBulk(ctx context.Context) (BulkOutcome, error) {
 	}
 	a.mu.Unlock()
 	if results == nil {
-		return BulkOutcome{}, ErrNoBulkPlan
+		return BulkOutcome{}, errNoBulkPlan
 	}
 	if offline {
-		return BulkOutcome{}, ErrOffline
+		return BulkOutcome{}, errOffline
 	}
 	defer func() {
 		a.mu.Lock()
@@ -705,7 +705,7 @@ func (a *App) ExportBulkResults(path string) error {
 	results := a.plan
 	a.mu.Unlock()
 	if results == nil {
-		return ErrNoBulkPlan
+		return errNoBulkPlan
 	}
 	data, err := bulkResultsCSV(results)
 	if err != nil {

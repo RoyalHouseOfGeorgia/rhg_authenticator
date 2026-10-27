@@ -136,7 +136,7 @@ function validateEntry(entry: unknown, index: number): KeyEntry {
   // allowed_honors: optional list of exact honor titles. Absent, null, [] or
   // all-blank means unrestricted (field omitted). Blank items are skipped;
   // non-strings, control characters and untrimmed non-blank items are rejected.
-  // Mirrored for display by restrictionsText in go/regmgr/app.go; keep in sync.
+  // Mirrored for display by restrictionsText in go/service/registry.go; keep in sync.
   let allowedHonors: string[] | undefined;
   const rawHonors = record.allowed_honors;
   if (rawHonors !== undefined && rawHonors !== null) {

@@ -46,7 +46,7 @@ public sealed class BulkViewModelTests
     }
 
     [Fact]
-    public void CopyMatchesTheFyneApp()
+    public void Copy()
     {
         Assert.Equal([.. "Bulk Sign from File"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(BulkViewModel.BulkSignTitle));
         Assert.Equal(

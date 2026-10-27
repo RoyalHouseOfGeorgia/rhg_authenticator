@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
-	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
 	"github.com/royalhouseofgeorgia/rhg-authenticator/ghapi"
 	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
 )
@@ -612,7 +611,7 @@ func TestRevoke_Preconditions(t *testing.T) {
 			h.app.mu.Lock()
 			h.app.history.revocationsLoaded = false
 			h.app.mu.Unlock()
-		}, ErrRevocationsNotLoaded, RevokeResult{}},
+		}, errRevocationsNotLoaded, RevokeResult{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -678,7 +677,7 @@ func TestIssuanceLogExport(t *testing.T) {
 			if tc.content != "" {
 				writeRawLog(t, h, tc.content)
 			}
-			data, err := h.app.IssuanceLogExport()
+			data, err := h.app.issuanceLogExport()
 			if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && err != nil) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
@@ -695,31 +694,12 @@ func TestIssuanceLogExport(t *testing.T) {
 func TestIssuanceLogExport_ReadError(t *testing.T) {
 	h := newAppHarness(t, nil)
 	h.app.logPath = h.dir // a directory can't be read as a file
-	_, err := h.app.IssuanceLogExport()
+	_, err := h.app.issuanceLogExport()
 	if err == nil || err.Error() != "Could not read the issuance log." {
 		t.Errorf("err = %v", err)
 	}
 	if !strings.Contains(h.debugLog(t), "history: failed to read log for export: ") {
 		t.Error("read failure not logged")
-	}
-}
-
-func TestErrorLogExport(t *testing.T) {
-	h := newAppHarness(t, nil)
-	h.app.logger.Log("hello diagnostics")
-	data, err := h.app.ErrorLogExport()
-	if err != nil || !strings.Contains(string(data), "hello diagnostics") {
-		t.Errorf("ErrorLogExport = %q, %v", data, err)
-	}
-
-	missing := filepath.Join(h.dir, "absent.log")
-	h.app.logger = debuglog.New(missing)
-	if _, err := h.app.ErrorLogExport(); err == nil || err.Error() != "Could not read the error log." {
-		t.Errorf("err = %v", err)
-	}
-	// The failure is logged to the (now created) log itself.
-	if got, _ := os.ReadFile(missing); !strings.Contains(string(got), "errorlog: failed to read log for export: ") {
-		t.Errorf("failure not logged: %q", got)
 	}
 }
 

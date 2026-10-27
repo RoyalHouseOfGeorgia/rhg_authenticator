@@ -13,7 +13,7 @@ public sealed class PinPromptViewModelTests
     }
 
     [Fact]
-    public void CopyMatchesTheFyneApp()
+    public void Copy()
     {
         Assert.Equal("YubiKey PIN", PinPromptViewModel.Title);
         Assert.Equal("Enter your YubiKey PIN to sign:", PinPromptViewModel.Prompt);

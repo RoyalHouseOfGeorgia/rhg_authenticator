@@ -190,7 +190,7 @@ func signAndLog(
 // signing and log append are all skipped; the response is rebuilt from the
 // logged signature and returned with Existing set. An unreadable log blocks
 // signing (errIssuanceLogUnreadable) since duplicates cannot be ruled out.
-// Otherwise, offline (online false) it returns ErrOffline before any card
+// Otherwise, offline (online false) it returns errOffline before any card
 // access, and a key checkKey refuses is reported (its error unwrapped)
 // before the PIN prompt.
 func executeSignFlow(
@@ -224,7 +224,7 @@ func executeSignFlow(
 		// 1. Offline (no registry) nothing new is signed: the key could not
 		//    be checked against the registry.
 		if !online {
-			return signFlowResult{}, ErrOffline
+			return signFlowResult{}, errOffline
 		}
 		// 1b. Refuse, before asking for the PIN, a card whose key would not
 		//     verify this credential. Reading the key needs no PIN; the card

@@ -318,10 +318,10 @@ func (f EntryForm) entry(publicKey string) (core.KeyEntry, error) {
 	return buildEntry(f.Authority, f.From, to, publicKey, f.Note), nil
 }
 
-// ErrRegistryNotLoaded is returned by AddEntry before the registry has
+// errRegistryNotLoaded is returned by AddEntry before the registry has
 // loaded: edits need a fetched base to be submitted against. (UpdateEntry
 // needs an existing entry, so it is refused by its index check.)
-var ErrRegistryNotLoaded = errors.New("The registry hasn't loaded yet. Fetch it again.")
+var errRegistryNotLoaded = errors.New("The registry hasn't loaded yet. Fetch it again.")
 
 // AddEntry validates f and appends a new entry for publicKey. The error text
 // is user-facing.
@@ -333,7 +333,7 @@ func (a *App) AddEntry(f EntryForm, publicKey string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.baseBytes == nil {
-		return ErrRegistryNotLoaded
+		return errRegistryNotLoaded
 	}
 	a.edit.Keys = append(a.edit.Keys, e)
 	a.dirty = true

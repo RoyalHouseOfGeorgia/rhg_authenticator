@@ -69,7 +69,7 @@ func offerIssueReport(err error) bool {
 	var kr *keyRejectedError
 	_, wrongPIN := yubikey.PINRetries(err)
 	return !errors.Is(err, errPINEntryTimedOut) &&
-		!errors.Is(err, ErrOffline) &&
+		!errors.Is(err, errOffline) &&
 		!wrongPIN &&
 		!isOperatorInputError(err) &&
 		!errors.As(err, &kr)
@@ -128,8 +128,8 @@ func signFlowErrorMessage(err error) string {
 	if errors.As(err, &invalid) {
 		return capitalize(core.SanitizeForError(invalid.Error())) + "."
 	}
-	if errors.Is(err, ErrOffline) {
-		return ErrOffline.Error()
+	if errors.Is(err, errOffline) {
+		return errOffline.Error()
 	}
 	// A key the registry does not accept: its text names the YubiKey, so it
 	// must not reach the hardware classifier below.

@@ -33,7 +33,7 @@ public sealed class SignViewModelTests
     }
 
     [Fact]
-    public void CopyMatchesTheFyneApp()
+    public void Copy()
     {
         Assert.Equal("Recipient", SignViewModel.RecipientLabel);
         Assert.Equal("Honor", SignViewModel.HonorLabel);

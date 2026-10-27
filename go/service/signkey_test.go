@@ -57,51 +57,51 @@ func TestCheckSigningKey(t *testing.T) {
 		msg     string
 	}{
 		{"no expiry, unrestricted", []core.KeyEntry{keyEntry(card, "", "")}, req, nil, ""},
-		{"key absent", []core.KeyEntry{keyEntry(other, "", "")}, req, ErrKeyNotRegistered, ErrKeyNotRegistered.Error()},
-		{"empty registry", nil, req, ErrKeyNotRegistered, ErrKeyNotRegistered.Error()},
+		{"key absent", []core.KeyEntry{keyEntry(other, "", "")}, req, errKeyNotRegistered, errKeyNotRegistered.Error()},
+		{"empty registry", nil, req, errKeyNotRegistered, errKeyNotRegistered.Error()},
 		{"undecodable entry skipped", []core.KeyEntry{undecodable, keyEntry(card, "", "")}, req, nil, ""},
-		{"only undecodable", []core.KeyEntry{undecodable}, req, ErrKeyNotRegistered, ErrKeyNotRegistered.Error()},
-		{"to before the date", []core.KeyEntry{keyEntry(card, "2026-03-13", "")}, req, ErrKeyExpired, msgExpiredBefore},
+		{"only undecodable", []core.KeyEntry{undecodable}, req, errKeyNotRegistered, errKeyNotRegistered.Error()},
+		{"to before the date", []core.KeyEntry{keyEntry(card, "2026-03-13", "")}, req, errKeyExpired, msgExpiredBefore},
 		{"to equal to the date (inclusive)", []core.KeyEntry{keyEntry(card, "2026-03-14", "")}, req, nil, ""},
 		{"backdated: date before from", []core.KeyEntry{func() core.KeyEntry {
 			e := keyEntry(card, "", "")
 			e.From = "2027-01-01"
 			return e
 		}()}, req, nil, ""},
-		{"honor not allowed", []core.KeyEntry{keyEntry(card, "", `["Appointment"]`)}, req, ErrHonorNotAllowed, msgOtherOnlyAppt},
+		{"honor not allowed", []core.KeyEntry{keyEntry(card, "", `["Appointment"]`)}, req, errHonorNotAllowed, msgOtherOnlyAppt},
 		{"honor allowed", []core.KeyEntry{keyEntry(card, "", `["Appointment", "Other"]`)}, req, nil, ""},
 		{"allowed_honors null", []core.KeyEntry{keyEntry(card, "", `null`)}, req, nil, ""},
 		{"allowed_honors empty", []core.KeyEntry{keyEntry(card, "", `[]`)}, req, nil, ""},
 		{"allowed_honors all blank", []core.KeyEntry{keyEntry(card, "", `["", " "]`)}, req, nil, ""},
-		{"allowed_honors invalid accepts nothing", []core.KeyEntry{keyEntry(card, "", `"Other"`)}, req, ErrHonorNotAllowed,
+		{"allowed_honors invalid accepts nothing", []core.KeyEntry{keyEntry(card, "", `"Other"`)}, req, errHonorNotAllowed,
 			"This YubiKey's key may not sign “Other” credentials (allowed: (invalid)), so the credential would not verify."},
-		{"allowed_honors untrimmed item accepts nothing", []core.KeyEntry{keyEntry(card, "", `["Other "]`)}, req, ErrHonorNotAllowed,
+		{"allowed_honors untrimmed item accepts nothing", []core.KeyEntry{keyEntry(card, "", `["Other "]`)}, req, errHonorNotAllowed,
 			"This YubiKey's key may not sign “Other” credentials (allowed: (invalid)), so the credential would not verify."},
-		{"honor compared exactly", []core.KeyEntry{keyEntry(card, "", `["other"]`)}, req, ErrHonorNotAllowed,
+		{"honor compared exactly", []core.KeyEntry{keyEntry(card, "", `["other"]`)}, req, errHonorNotAllowed,
 			"This YubiKey's key may not sign “Other” credentials (allowed: other), so the credential would not verify."},
 		{"honor compared in NFC", []core.KeyEntry{keyEntry(card, "", `["Café"]`)},
 			core.SignRequest{Recipient: "R", Honor: "Café", Detail: "D", Date: "2026-03-14"}, nil, ""},
 		{"precedence: date failure before honor failure", []core.KeyEntry{
 			keyEntry(card, "", `["Appointment"]`), keyEntry(card, "2026-03-13", ""),
-		}, req, ErrKeyExpired, msgExpiredBefore},
+		}, req, errKeyExpired, msgExpiredBefore},
 		{"precedence: date failure listed first", []core.KeyEntry{
 			keyEntry(card, "2026-03-13", ""), keyEntry(card, "", `["Appointment"]`),
-		}, req, ErrKeyExpired, msgExpiredBefore},
+		}, req, errKeyExpired, msgExpiredBefore},
 		{"precedence: an accepting entry wins", []core.KeyEntry{
 			keyEntry(card, "2026-03-13", ""), keyEntry(card, "", `["Appointment"]`), keyEntry(card, "", `["Other"]`),
 		}, req, nil, ""},
 		{"first date failure supplies the date", []core.KeyEntry{
 			keyEntry(card, "2026-03-13", ""), keyEntry(card, "2026-01-01", ""),
-		}, req, ErrKeyExpired, msgExpiredBefore},
+		}, req, errKeyExpired, msgExpiredBefore},
 		{"first honor failure supplies the list", []core.KeyEntry{
 			keyEntry(card, "", `["Appointment"]`), keyEntry(card, "", `["Ennoblement"]`),
-		}, req, ErrHonorNotAllowed, msgOtherOnlyAppt},
+		}, req, errHonorNotAllowed, msgOtherOnlyAppt},
 		{"another key's entries ignored", []core.KeyEntry{
 			keyEntry(other, "", ""), keyEntry(card, "2026-03-13", ""),
-		}, req, ErrKeyExpired, msgExpiredBefore},
+		}, req, errKeyExpired, msgExpiredBefore},
 		{"malformed date never in range", []core.KeyEntry{keyEntry(card, "", "")},
-			core.SignRequest{Recipient: "R", Honor: "Other", Detail: "D", Date: "2026-3-14"}, ErrKeyExpired,
-			ErrKeyExpired.Error()},
+			core.SignRequest{Recipient: "R", Honor: "Other", Detail: "D", Date: "2026-3-14"}, errKeyExpired,
+			errKeyExpired.Error()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := checkSigningKey(registryWith(tc.entries...), pubOf(card), tc.req)
@@ -126,16 +126,16 @@ func TestLogKeyRejected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "debug.log")
 	logger := debuglog.New(path)
 	logKeyRejected(logger, "p: ", errors.New("not a key check error"))
-	logKeyRejected(logger, "p: ", &keyRejectedError{msg: "Other, 2026-Mar-14", reason: ErrHonorNotAllowed})
+	logKeyRejected(logger, "p: ", &keyRejectedError{msg: "Other, 2026-Mar-14", reason: errHonorNotAllowed})
 	data, _ := os.ReadFile(path)
-	if log := string(data); !strings.Contains(log, "p: "+ErrHonorNotAllowed.Error()) ||
+	if log := string(data); !strings.Contains(log, "p: "+errHonorNotAllowed.Error()) ||
 		strings.Contains(log, "not a key check error") || strings.Contains(log, "2026-Mar-14") {
 		t.Errorf("log = %q, want only the fixed reason", log)
 	}
 }
 
 func TestKeyRejected_MessagesAndNoReport(t *testing.T) {
-	for _, reason := range []error{ErrKeyNotRegistered, ErrKeyExpired, ErrHonorNotAllowed} {
+	for _, reason := range []error{errKeyNotRegistered, errKeyExpired, errHonorNotAllowed} {
 		err := &keyRejectedError{msg: "YubiKey text " + reason.Error(), reason: reason}
 		if got := signFlowErrorMessage(err); got != err.msg {
 			t.Errorf("signFlowErrorMessage = %q, want %q (not a hardware message)", got, err.msg)
@@ -181,7 +181,7 @@ func TestReadCardKey(t *testing.T) {
 
 // rejectAll is a keyChecker refusing every key as unregistered.
 func rejectAll([32]byte, core.SignRequest) error {
-	return &keyRejectedError{msg: ErrKeyNotRegistered.Error(), reason: ErrKeyNotRegistered}
+	return &keyRejectedError{msg: errKeyNotRegistered.Error(), reason: errKeyNotRegistered}
 }
 
 func TestExecuteSignFlow_KeyRejectedBeforePIN(t *testing.T) {
@@ -195,8 +195,8 @@ func TestExecuteSignFlow_KeyRejectedBeforePIN(t *testing.T) {
 
 	_, err := executeSignFlow(validSignRequest(), logPath, true, countingOpener(&mockSignAdapter{secretKey: priv}, &keyReads, &signOpens),
 		rejectAll, readPin, func() { connecting = true }, logger)
-	if !errors.Is(err, ErrKeyNotRegistered) {
-		t.Fatalf("err = %v, want ErrKeyNotRegistered", err)
+	if !errors.Is(err, errKeyNotRegistered) {
+		t.Fatalf("err = %v, want errKeyNotRegistered", err)
 	}
 	if keyReads != 1 || signOpens != 0 || pinReads != 0 || connecting {
 		t.Errorf("keyReads=%d signOpens=%d pinReads=%d connecting=%v; want only the key read", keyReads, signOpens, pinReads, connecting)
@@ -204,7 +204,7 @@ func TestExecuteSignFlow_KeyRejectedBeforePIN(t *testing.T) {
 	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("issuance log written: %v", statErr)
 	}
-	if data, _ := os.ReadFile(filepath.Join(tmpDir, "debug.log")); !strings.Contains(string(data), "key check: "+ErrKeyNotRegistered.Error()) {
+	if data, _ := os.ReadFile(filepath.Join(tmpDir, "debug.log")); !strings.Contains(string(data), "key check: "+errKeyNotRegistered.Error()) {
 		t.Errorf("rejection not logged:\n%s", data)
 	}
 }
@@ -246,7 +246,7 @@ func TestSignAndLog_RechecksTheSigningCard(t *testing.T) {
 	adapter := &recordingAdapter{mockSignAdapter: mockSignAdapter{secretKey: priv}, signed: &signed}
 	_, err := signAndLog(validSignRequest(), logPath, countingOpener(adapter, new(int), new(int)), rejectAll, "123456",
 		debuglog.New(filepath.Join(tmpDir, "debug.log")))
-	if !errors.Is(err, ErrKeyNotRegistered) || signed {
+	if !errors.Is(err, errKeyNotRegistered) || signed {
 		t.Errorf("err = %v, signed = %v; want refused before SignBytes", err, signed)
 	}
 	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
@@ -293,7 +293,7 @@ func TestBulkFlow_KeyCheckFailsRowsAndContinues(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), want) {
 		t.Errorf("results CSV lacks the row's message (%v):\n%s", err, data)
 	}
-	if !strings.Contains(debugLogText(t, h), "bulk key check: line 3: "+ErrHonorNotAllowed.Error()) {
+	if !strings.Contains(debugLogText(t, h), "bulk key check: line 3: "+errHonorNotAllowed.Error()) {
 		t.Errorf("row rejection not logged:\n%s", debugLogText(t, h))
 	}
 }
@@ -311,12 +311,12 @@ func TestBulkFlow_KeyRejectedAfterPINStopsBatch(t *testing.T) {
 		if calls <= preChecks { // the pre-check, one call per to_sign row
 			return nil
 		}
-		return &keyRejectedError{msg: ErrKeyNotRegistered.Error(), reason: ErrKeyNotRegistered}
+		return &keyRejectedError{msg: errKeyNotRegistered.Error(), reason: errKeyNotRegistered}
 	}
 	err := runBulkFlow(context.Background(), results, h.logPath, h.openAdapter, checkKey,
 		h.readPin, nil, func(int, int, string) {}, h.logger)
-	if !errors.Is(err, ErrKeyNotRegistered) {
-		t.Fatalf("runBulkFlow err = %v, want ErrKeyNotRegistered", err)
+	if !errors.Is(err, errKeyNotRegistered) {
+		t.Fatalf("runBulkFlow err = %v, want errKeyNotRegistered", err)
 	}
 	if bulkStop(err) != BulkFailed {
 		t.Errorf("stop = %q, want failed", bulkStop(err))
@@ -343,7 +343,7 @@ func TestBulkFlow_EveryRowRejectedAsksNoPIN(t *testing.T) {
 	if h.keyReads != 1 || h.pinReads != 0 || h.opens != 0 || connecting != 0 {
 		t.Errorf("keyReads=%d pinReads=%d opens=%d connecting=%d; want only the key read", h.keyReads, h.pinReads, h.opens, connecting)
 	}
-	if results[0].Err != ErrKeyNotRegistered.Error() {
+	if results[0].Err != errKeyNotRegistered.Error() {
 		t.Errorf("row 0 Err = %q", results[0].Err)
 	}
 }
@@ -383,8 +383,8 @@ func TestSign_OfflineRefusedBeforeAnything(t *testing.T) {
 	h := offlineHarness(t)
 	_, err := h.app.Sign(context.Background(), validFields("Alice"))
 	var se *SignError
-	if !errors.As(err, &se) || !errors.Is(err, ErrOffline) {
-		t.Fatalf("err = %#v, want a SignError matching ErrOffline", err)
+	if !errors.As(err, &se) || !errors.Is(err, errOffline) {
+		t.Fatalf("err = %#v, want a SignError matching errOffline", err)
 	}
 	const want = "Signing is unavailable: the key registry could not be downloaded. Check your internet connection and restart RHG Authenticator."
 	if se.Message != want || se.OfferReport || se.ReportID != "" {
@@ -422,8 +422,8 @@ func TestSign_OfflineReturnsAnIssuedCredential(t *testing.T) {
 	if h.opens != opens || h.prompter.callCount() != prompts {
 		t.Error("offline Sign reached the card or PIN prompt")
 	}
-	if _, err := h.app.Sign(context.Background(), validFields("Bob")); !errors.Is(err, ErrOffline) {
-		t.Errorf("offline Sign of a new credential: err = %v, want ErrOffline", err)
+	if _, err := h.app.Sign(context.Background(), validFields("Bob")); !errors.Is(err, errOffline) {
+		t.Errorf("offline Sign of a new credential: err = %v, want errOffline", err)
 	}
 }
 
@@ -454,8 +454,8 @@ func TestBulk_OfflineLoadWorksRunRefused(t *testing.T) {
 		t.Fatalf("LoadBulk offline = %+v, %v; want the plan", plan, err)
 	}
 	out, err := h.app.RunBulk(context.Background())
-	if err != ErrOffline || !reflect.DeepEqual(out, BulkOutcome{}) {
-		t.Fatalf("RunBulk = %+v, %v; want ErrOffline", out, err)
+	if err != errOffline || !reflect.DeepEqual(out, BulkOutcome{}) {
+		t.Fatalf("RunBulk = %+v, %v; want errOffline", out, err)
 	}
 	if h.opens != 0 || h.prompter.callCount() != 0 {
 		t.Errorf("offline RunBulk reached the card (%d) or PIN prompt (%d)", h.opens, h.prompter.callCount())
@@ -482,11 +482,11 @@ func TestSign_UnregisteredKeyRejectedBeforePIN(t *testing.T) {
 	h.app.reg = registryWith(keyEntry(other, "", ""))
 	_, err := h.app.Sign(context.Background(), validFields("Alice"))
 	var se *SignError
-	if !errors.As(err, &se) || !errors.Is(err, ErrKeyNotRegistered) {
-		t.Fatalf("err = %#v, want a SignError matching %v", err, ErrKeyNotRegistered)
+	if !errors.As(err, &se) || !errors.Is(err, errKeyNotRegistered) {
+		t.Fatalf("err = %#v, want a SignError matching %v", err, errKeyNotRegistered)
 	}
-	if se.Message != ErrKeyNotRegistered.Error() || se.OfferReport || se.ReportID != "" {
-		t.Errorf("SignError = %+v, want message %q and no report", se, ErrKeyNotRegistered.Error())
+	if se.Message != errKeyNotRegistered.Error() || se.OfferReport || se.ReportID != "" {
+		t.Errorf("SignError = %+v, want message %q and no report", se, errKeyNotRegistered.Error())
 	}
 	if h.prompter.callCount() != 0 || h.opens != 1 {
 		t.Errorf("prompts=%d opens=%d; want no PIN, only the key read", h.prompter.callCount(), h.opens)

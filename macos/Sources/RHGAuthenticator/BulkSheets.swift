@@ -144,7 +144,7 @@ struct BulkResultsView: View {
 }
 
 /// A heading over "line N: reason" rows in a fixed-height scroll area. One
-/// Text keeps a 500-row file cheap to lay out, as in the Fyne app.
+/// Text keeps a 500-row file cheap to lay out.
 @MainActor
 struct BulkRowsView: View {
     let heading: String

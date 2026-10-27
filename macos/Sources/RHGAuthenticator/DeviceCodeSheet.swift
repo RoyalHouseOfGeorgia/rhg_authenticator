@@ -2,9 +2,9 @@ import AppKit
 import RHGModels
 import SwiftUI
 
-/// The GitHub login's device-code sheet, as the Fyne app's dialog: the code
-/// to enter at GitHub, Copy Code, Open GitHub and Cancel. The model closes it
-/// when the login ends; Cancel stops the login.
+/// The GitHub login's device-code sheet: the code to enter at GitHub, Copy
+/// Code, Open GitHub and Cancel. The model closes it when the login ends;
+/// Cancel stops the login.
 @MainActor
 struct DeviceCodeSheet: View {
     let login: LoginModel

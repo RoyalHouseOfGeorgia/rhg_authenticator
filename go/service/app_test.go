@@ -869,10 +869,10 @@ func TestApp_InfoWhileSignBlocked(t *testing.T) {
 
 func TestBulk_NoPlan(t *testing.T) {
 	h := newAppHarness(t, nil)
-	if _, err := h.app.RunBulk(context.Background()); !errors.Is(err, ErrNoBulkPlan) {
+	if _, err := h.app.RunBulk(context.Background()); !errors.Is(err, errNoBulkPlan) {
 		t.Errorf("RunBulk err = %v", err)
 	}
-	if err := h.app.ExportBulkResults(filepath.Join(h.dir, "r.csv")); !errors.Is(err, ErrNoBulkPlan) {
+	if err := h.app.ExportBulkResults(filepath.Join(h.dir, "r.csv")); !errors.Is(err, errNoBulkPlan) {
 		t.Errorf("ExportBulkResults err = %v", err)
 	}
 	h.app.CancelBulk() // nothing running: no-op
@@ -889,7 +889,7 @@ func TestBulk_LoadErrors(t *testing.T) {
 	if log := h.debugLog(t); !strings.Contains(log, "bulk load: open ") || !strings.Contains(log, "bulk load: file is empty") {
 		t.Errorf("load failures not logged:\n%s", log)
 	}
-	if _, err := h.app.RunBulk(context.Background()); !errors.Is(err, ErrNoBulkPlan) {
+	if _, err := h.app.RunBulk(context.Background()); !errors.Is(err, errNoBulkPlan) {
 		t.Errorf("failed load left a plan: %v", err)
 	}
 }
@@ -1038,8 +1038,8 @@ func TestLoadBulk_FailedOpenClearsPlan(t *testing.T) {
 	if _, err := h.app.LoadBulk(filepath.Join(h.dir, "missing.csv")); err == nil {
 		t.Fatal("LoadBulk of a missing file succeeded")
 	}
-	if _, err := h.app.RunBulk(context.Background()); !errors.Is(err, ErrNoBulkPlan) {
-		t.Errorf("RunBulk after a failed load: err = %v, want ErrNoBulkPlan (never the earlier file)", err)
+	if _, err := h.app.RunBulk(context.Background()); !errors.Is(err, errNoBulkPlan) {
+		t.Errorf("RunBulk after a failed load: err = %v, want errNoBulkPlan (never the earlier file)", err)
 	}
 	if h.prompter.callCount() != 0 {
 		t.Error("RunBulk prompted for a PIN")

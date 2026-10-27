@@ -26,6 +26,9 @@ import (
 // waitTimeout bounds every wait for an event or a blocked call.
 const waitTimeout = 10 * time.Second
 
+// protectedPathMsg is the core's message for a save into its data folder.
+const protectedPathMsg = "Choose a folder outside the app's data folder."
+
 // eventSink records emitted events and wakes waiters on each one.
 type eventSink struct {
 	mu     sync.Mutex
@@ -681,7 +684,7 @@ func TestExportErrorLog_DuringInit(t *testing.T) {
 		t.Fatalf("state = %v, want initializing", h.state())
 	}
 	h.wantExported(t, dir)
-	h.exportErrorLog(t, filepath.Join(dir, "x.txt")).fails(t, CodeFailed, service.ErrProtectedPath.Error())
+	h.exportErrorLog(t, filepath.Join(dir, "x.txt")).fails(t, CodeFailed, protectedPathMsg)
 	release()
 	decodeEnvelope(t, "app.init", waitFor(t, initDone, "app.init returning")).ok(t, nil)
 	h.wantExported(t, dir)
@@ -700,7 +703,7 @@ func TestExportErrorLog_AfterFailedInit(t *testing.T) {
 	h.wantExported(t, bad)
 
 	for _, target := range []string{filepath.Join(bad, debuglog.FileName), filepath.Join(bad, "x.txt")} {
-		h.exportErrorLog(t, target).fails(t, CodeFailed, service.ErrProtectedPath.Error())
+		h.exportErrorLog(t, target).fails(t, CodeFailed, protectedPathMsg)
 	}
 	if _, err := os.Stat(filepath.Join(bad, "x.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("protected target written: %v", err)
@@ -711,7 +714,7 @@ func TestExportErrorLog_AfterFailedInit(t *testing.T) {
 	h.srv.newService = h.localService
 	dir := h.init(t)
 	h.wantExported(t, dir)
-	h.exportErrorLog(t, filepath.Join(dir, "x.txt")).fails(t, CodeFailed, service.ErrProtectedPath.Error())
+	h.exportErrorLog(t, filepath.Join(dir, "x.txt")).fails(t, CodeFailed, protectedPathMsg)
 	h.exportErrorLog(t, filepath.Join(bad, "x.txt")).ok(t, nil)
 }
 
@@ -721,7 +724,7 @@ func TestExportErrorLog_AfterShutdown(t *testing.T) {
 	h.startAndSettle(t)
 	h.call(t, "app.shutdown", ``).ok(t, nil)
 	h.wantExported(t, dir)
-	h.exportErrorLog(t, filepath.Join(dir, "x.txt")).fails(t, CodeFailed, service.ErrProtectedPath.Error())
+	h.exportErrorLog(t, filepath.Join(dir, "x.txt")).fails(t, CodeFailed, protectedPathMsg)
 }
 
 func TestExportErrorLog_AfterShutdownDuringFailingInit(t *testing.T) {
