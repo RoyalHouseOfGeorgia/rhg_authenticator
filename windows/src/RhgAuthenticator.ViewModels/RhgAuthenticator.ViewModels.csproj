@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The app's view models over the bridge: startup, events, the Sign tab and
+    the PIN prompt. Plain net10.0 without WPF, so it builds and tests on Linux;
+    the WPF app binds to it and implements its host-service interfaces.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RhgAuthenticator.ViewModels.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../RhgAuthenticator.Bridge/RhgAuthenticator.Bridge.csproj" />
+  </ItemGroup>
+</Project>

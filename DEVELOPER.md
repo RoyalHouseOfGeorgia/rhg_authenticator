@@ -1,6 +1,6 @@
 # Developer Guide
 
-This guide covers the **TypeScript verification library**. For the Go signing app, see [go/README.md](go/README.md).
+This guide covers the **TypeScript verification library** and the repository's development process: [where feature logic goes](#where-feature-logic-goes), [CI jobs](#ci-jobs), [releases](#releasing) and the [app icon](#app-icon). The Go core has [go/README.md](go/README.md); the native apps have [macos/README.md](macos/README.md) and [windows/README.md](windows/README.md); how the pieces fit together is in [ARCHITECTURE.md](ARCHITECTURE.md#native-apps-and-the-go-core).
 
 ## Prerequisites
 
@@ -67,14 +67,19 @@ verify/
     ├── registry.json     # Public key registry (all registered signing keys)
     └── revocations.json  # Revocation list (SHA-256 hashes of revoked credentials)
 scripts/
+├── build-macos-app.sh    # Build the Mac app bundle, ad-hoc signed and zipped (macOS only; needs the release rhgcore library)
+├── build-windows-app.ps1 # Build the Windows app as one self-contained exe (Windows, PowerShell 7; needs the release rhgcore.dll)
+├── check-release-assets.sh  # CI: the release assets are exactly the Mac zip and the Windows exe, both non-empty
 ├── gen-macos-cert.sh     # Create the self-signed macOS release certificate (one-time setup; also used by sign-macos-dryrun)
 ├── generate-test-url.ts  # Generate signed test URLs for UI preview
 ├── rebuild_urls.py       # Rebuild verification URLs from a payload+signature, issuance log, or CSV
 ├── rhg_qr.py             # QR code (SVG/PNG) for a verification URL or payload+signature; needs segno; no tests (CodeQL only)
 ├── rhg_revocation_hash.py  # Revocation hash for a verification URL (for revocations.json); no tests (CodeQL only)
+├── rhgcore-smoke.sh      # Build the rhgcore C library (release + rhgfake) and smoke-test its C ABI
 ├── sign-macos.sh         # CI only: sign the Mac app with the release certificate
 ├── test_rebuild_urls.py  # unittest suite for rebuild_urls.py (reads go/testdata/vectors.json)
 ├── update-sri.sh         # Rebuild verify.js and update SRI hash in index.html
+├── verify-macos-compat.sh  # CI only: old releases' updaters accept a signed Mac zip
 └── verify-macos.sh       # CI only: check a signed Mac zip with the app's own --verify-update-zip
 ```
 
@@ -236,7 +241,7 @@ if (result.valid) {
 - No mocking of internal modules — tests exercise the real code paths
 - Verification page tests use `// @vitest-environment happy-dom` per-file directive
 - `fetch` is mocked via `vi.stubGlobal('fetch', vi.fn())` in verify-page tests
-- 423 tests total (10 test files)
+- 318 tests total
 
 ### Regenerating cross-language test vectors
 
@@ -260,9 +265,73 @@ byte-identical: `TestCrossLanguageVectors` (Go) and the vitest
 `scripts/test_rebuild_urls.py`, reads `go/testdata/vectors.json` directly; run
 `python3 -m unittest discover -s scripts` after regenerating.
 
+## Where feature logic goes
+
+All feature logic and user-facing error text live in the Go core; the Mac and Windows apps hold no rules of their own, only presentation. A new feature goes, in order:
+
+1. **`go/service`** — a method on `App` with its rules and messages, tested in Go.
+2. **`go/service/rpc/methods.go`** — expose it in `methodTable()`, and add its params type to `contractParamTypes` in `go/service/rpc/contract_test.go`.
+3. **Contract** — regenerate the golden files from `go/`: `go test ./service/rpc -run TestContract -update` (see [Contract golden files](#contract-golden-files)).
+4. **Bridges** — the Swift types in `macos/Sources/RHGBridge/` (`Bridge.swift`'s `RPCMethod`, `Params.swift`, `Results.swift`) and the .NET ones in `windows/src/RhgAuthenticator.Bridge/` (`RpcMethod.cs`, `Params.cs`, `Results.cs`, `BridgeJsonContext.cs`).
+5. **Models** — `macos/Sources/RHGModels/` and `windows/src/RhgAuthenticator.ViewModels/`.
+6. **Views** — `macos/Sources/RHGAuthenticator/` (SwiftUI) and `windows/src/RhgAuthenticator.App/` (WPF).
+
+The layers and the C ABI between them are described in [ARCHITECTURE.md](ARCHITECTURE.md#native-apps-and-the-go-core).
+
+### Contract golden files
+
+`go/service/rpc/testdata/contract/` holds the RPC surface as JSON: per method `methods/<method>/params.json` and `result*.json`, `methods/index.json`, `errors/<code>.json`, `events/<event>.json` and `pin-truncation.json`, plus a generated `README.md` describing the layout (its `.gitattributes` keeps the files byte-exact). `TestContract` writes them from real `Dispatch` and event output; without `-update` it fails on any missing, extra or changed file. Never edit them by hand.
+
+Both apps' tests read the same files, so a changed method breaks them until the bridge types follow: `macos/Tests/RHGBridgeTests/ContractTests.swift` and `windows/tests/RhgAuthenticator.Bridge.Tests/ContractTests.cs` (each also checks that its method list equals `methods/index.json`).
+
+## CI jobs
+
+`.github/workflows/build.yml` runs on pushes to `main`, on `v*` tags, and on pull requests to `main`. Changes only to Markdown, `docs/`, `scripts/*.py` and a few other paths skip it (`paths-ignore`; tag pushes always run).
+
+| Job (check name) | Runs | What it does |
+|------------------|------|--------------|
+| `test-typescript` | always | Test vectors in sync, `npm run lint`, `npm test`, SRI check, committed `verify.js` matches a fresh build, `npm audit` |
+| `security` (check "CodeQL") | always | CodeQL for Go and JavaScript |
+| `gitleaks` | always | Secret scan of the full history |
+| `test-race` | always | macOS: `gofmt -l`, `go test -race ./...`, and `-race` with `-tags rhgfake` |
+| `build-macos` ("build (darwin-arm64)") | after `test-typescript`, `test-race` | Tag name is `vX.Y.Z`; the Xcode its "Select Xcode" step pins; `go mod verify`, `go vet` (plain and rhgfake), `govulncheck`, `rhgcore-smoke.sh`, `swift test` against the rhgfake library, `build-macos-app.sh` against the release library; uploads `unsigned-darwin-arm64` |
+| `build-windows` ("build (windows-amd64)") | after `test-typescript`, `test-race` | Windows, Git Bash: tag name, `go mod verify`, `go vet` and Go tests (plain and rhgfake), `govulncheck`, no committed `.syso` files, `rhgcore-smoke.sh`, `dotnet test windows/RhgAuthenticator.sln`, `build-windows-app.ps1`; uploads `rhg-authenticator-windows-amd64` |
+| `sign-macos` | tags | After both builds, `security` and `gitleaks`: re-signs the Mac zip with the release certificate (`release` environment) |
+| `verify-macos` | tags | `verify-macos.sh` and `verify-macos-compat.sh` on the signed zip |
+| `release` | tags | `check-release-assets.sh`, `SHA256SUMS.txt`, build provenance attestation, GitHub release |
+| `sign-macos-dryrun` | non-tag | After `build-macos`: the same signing and both verify scripts with a throwaway certificate |
+| `release-dryrun` | non-tag | After `sign-macos-dryrun` and `build-windows`: `check-release-assets.sh` and checksums; publishes nothing |
+
+The `main` ruleset requires `CodeQL`, `build (darwin-arm64)`, `build (windows-amd64)` and `sign-macos-dryrun` (a job skipped on tags counts as passing). The ruleset matches these names, so keep them.
+
+Other workflows: `govulncheck.yml` (weekly, macOS and Windows), `python.yml` (Python tools), `codeql-python.yml` (CodeQL for Python) and `deploy-pages.yml` (publishes `verify/` from `main`).
+
+## Releasing
+
+1. Tag `vX.Y.Z` on `main`; both build jobs fail any other tag name.
+2. Both builds embed the tag as the library version (`RHGCORE_VERSION`); `build-macos-app.sh` and `build-windows-app.ps1` refuse a library whose `--version` is not exactly `vX.Y.Z`.
+3. `sign-macos` re-signs the Mac zip; `verify-macos` checks it with the new app's own update check (`verify-macos.sh`) and with old releases' updaters (`verify-macos-compat.sh`).
+4. `release` checks that the assets are exactly `rhg-authenticator-darwin-arm64.zip` and `rhg-authenticator-windows-amd64.exe` (`check-release-assets.sh`), then publishes them with `SHA256SUMS.txt` and a provenance attestation.
+
+The Windows exe is not Authenticode-signed: code signing (Windows and Apple Developer ID alike) is deferred for now — a certificate costs money every year and needs an organisation identity check — so Windows shows its SmartScreen warning on first run. On every non-tag build, `sign-macos-dryrun` and `release-dryrun` run the same signing, verification and asset assembly without publishing.
+
+### Old releases' updaters
+
+`scripts/verify-macos-compat.sh` runs each release in its `OLD_RELEASES` list against the new zip with that release's own updater, proving installed apps can update in place. After each release is published, add it to that list as the comment at the top of the script describes.
+
+**v1.5.x to v2.** An installed v1.5.x app updates itself to the native app because the native release keeps everything that updater checks: a `vX.Y.Z` release by `github-actions[bot]` with the asset `rhg-authenticator-darwin-arm64.zip`; a zip holding one top-level `.app`; a signature satisfying `PinnedRequirement` (`go/update/requirement.go`: the bundle identifier from `go/packaging/macos/Info.plist` and the release certificate); an executable `Contents/MacOS/<CFBundleExecutable>` (`rhg-authenticator`); and a sealed `CFBundleShortVersionString` equal to the tag. Change any of these and installed apps fall back to a manual download. `go/update/contract_test.go` ties the requirement to `Info.plist` and the asset name to `build.yml`.
+
+## Diagrams
+
+`docs/*.dot` are Graphviz sources for the committed SVGs. After editing one, regenerate its SVG from the repo root:
+
+```bash
+dot -Tsvg docs/X.dot -o docs/X.svg
+```
+
 ## App Icon
 
-`go/icon.png` (1024×1024, transparent) is the single source for the in-app window icon (embedded), the macOS `.icns` (CI "Package macOS app" step, `sips` + `iconutil`) and the Windows `.exe` icon (CI "Embed Windows icon" step, `go-winres` → `go/rsrc_windows_amd64.syso`, gitignored). It is generated from the full-size arms in `royal-arms.png` with the standard ~10% margin (artwork fitted to 824×824, centred). `TestAppIconIsSquare1024` (go/main_test.go) fails if it is replaced by anything that isn't a 1024×1024 PNG with a transparent corner. To regenerate after `royal-arms.png` changes:
+`go/icon.png` (1024×1024, transparent corner, ~10% margin) is the master. `TestAppIconIsSquare1024` (`go/buildinfo/icon_test.go`) guards it, and only it. It is generated from the full-size arms in `royal-arms.png` (artwork fitted to 824×824, centred). To regenerate after `royal-arms.png` changes:
 
 ```bash
 python3 - <<'EOF'
@@ -273,14 +342,54 @@ side = max(art.size)
 sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
 sq.paste(art, ((side - art.width) // 2, (side - art.height) // 2))
 out = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-out.paste(sq.resize((824, 824), Image.LANCZOS), (100, 100))
+out.paste(sq.resize((824, 824), Image.Resampling.LANCZOS), (100, 100))
 out.save("go/icon.png", optimize=True)
 EOF
 ```
 
+- **Mac:** `scripts/build-macos-app.sh` builds `Contents/Resources/icon.icns` from it at every build (`sips` + `iconutil`).
+- **Windows:** `windows/src/RhgAuthenticator.App/app.ico` is committed, generated once from `go/icon.png`. The App project uses it as `ApplicationIcon` (Explorer, taskbar, Alt+Tab) and as a WPF `Resource` (the title bar). No test checks it, so regenerate it whenever `go/icon.png` changes.
+
+`app.ico` holds eight frames: 256 px as PNG; 64, 48, 40, 32, 24, 20 and 16 px as 32-bit BMP frames. Each BMP frame is a `BITMAPINFOHEADER` whose height is 2×size, the BGRA rows bottom-up, then a 1-bpp AND mask with a bit set wherever alpha is 0, each mask row padded to 4 bytes. Pillow cannot write this: an all-PNG icon makes Explorer's Details view draw nothing, and `bitmap_format="bmp"` omits the AND mask while the header still declares height ×2, so the frames are truncated. Pillow is fine for resizing; the snippet below writes the ICO container and DIBs itself. Run it from the repo root:
+
+```bash
+python3 - go/icon.png windows/src/RhgAuthenticator.App/app.ico <<'EOF'
+import io, struct, sys
+from PIL import Image
+
+SRC, OUT = sys.argv[1], sys.argv[2]
+src = Image.open(SRC).convert("RGBA")
+frames = []
+for s in (256, 64, 48, 40, 32, 24, 20, 16):
+    im = src.resize((s, s), Image.Resampling.LANCZOS)
+    if s == 256:
+        buf = io.BytesIO()
+        im.save(buf, "PNG", optimize=True)
+        frames.append((s, buf.getvalue()))
+        continue
+    im = im.transpose(Image.Transpose.FLIP_TOP_BOTTOM)  # DIB rows are bottom-up
+    r, g, b, a = im.split()
+    xor = Image.merge("RGBA", (b, g, r, a)).tobytes()  # BGRA
+    mask = a.point(lambda v: 255 if v == 0 else 0).convert("1", dither=Image.Dither.NONE).tobytes()
+    row, stride = (s + 7) // 8, (s + 31) // 32 * 4  # AND rows padded to 4 bytes
+    andm = b"".join(mask[y * row:(y + 1) * row].ljust(stride, b"\0") for y in range(s))
+    hdr = struct.pack("<IiiHHIIiiII", 40, s, 2 * s, 1, 32, 0, len(xor) + len(andm), 0, 0, 0, 0)
+    frames.append((s, hdr + xor + andm))
+out = struct.pack("<HHH", 0, 1, len(frames))
+off = 6 + 16 * len(frames)
+for s, data in frames:
+    out += struct.pack("<BBBBHHII", s % 256, s % 256, 0, 0, 1, 32, len(data), off)
+    off += len(data)
+with open(OUT, "wb") as f:
+    f.write(out + b"".join(d for _, d in frames))
+EOF
+```
+
+Explorer caches icons per size and path: to see a new icon on Windows, end Explorer, delete `%LOCALAPPDATA%\IconCache.db` and `%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*`, and start Explorer again.
+
 ## macOS release signing (one-time setup)
 
-On `v*` tags, once the build and security jobs pass, the `sign-macos` CI job re-signs the Mac app with a self-signed release certificate, and a separate `verify-macos` job (which never receives the key — a runner holds a job's secrets for the whole job) runs the built app's own update check (`rhg-authenticator --verify-update-zip <zip> <tag>`) against the exact zip that will be published. The in-app updater (`go/update/`; flow in ARCHITECTURE.md "App Update Flow (macOS)") downloads that published `rhg-authenticator-darwin-arm64.zip` and accepts only bundles that satisfy `PinnedRequirement` in `go/update/requirement.go` and were uploaded by `github-actions[bot]`. `release` needs `verify-macos`, so if signing or verification fails nothing is published. On every non-tag build, `sign-macos-dryrun` runs the same scripts with a throwaway certificate; add it to the main ruleset's required checks so a broken signing path cannot merge (it is skipped on tags, which counts as passing).
+On `v*` tags, once both build jobs, `security` and `gitleaks` pass, the `sign-macos` CI job re-signs the Mac app with a self-signed release certificate. A separate `verify-macos` job (which never receives the key — a runner holds a job's secrets for the whole job) runs the built app's own update check (`rhg-authenticator --verify-update-zip <zip> <tag>`) against the exact zip that will be published, then `verify-macos-compat.sh` runs the [old releases' updaters](#old-releases-updaters) against it. The in-app updater (`go/update/`; see [ARCHITECTURE.md](ARCHITECTURE.md)) downloads that published `rhg-authenticator-darwin-arm64.zip` and accepts only bundles that satisfy `PinnedRequirement` in `go/update/requirement.go` and were uploaded by `github-actions[bot]`. `release` needs `verify-macos`, so if signing or verification fails nothing is published. On every non-tag build, `sign-macos-dryrun` runs the same scripts with a throwaway certificate; it is a required check on `main`, so a broken signing path cannot merge (it is skipped on tags, which counts as passing).
 
 1. **Confirm the tag ruleset protects `v*` tags.** It is the only thing keeping anyone else from creating a `v*` tag, and a tag run uses the workflow from the tagged commit, so this is what keeps the signing key from other accounts:
    ```bash
@@ -352,11 +461,11 @@ These are set at the Cloudflare edge by the `verify-security-headers` Transform 
 The `verify/keys/registry.json` file contains all registered signing keys. To add a production key:
 
 1. Generate an Ed25519 key on YubiKey PIV slot 9c (see [go/README.md](go/README.md#yubikey-setup))
-2. Open the **Registry** tab in the signing app
-3. Log in to GitHub (one-time — click "Login to GitHub" and enter the code in your browser)
-4. Click **"Import from YubiKey"** to read the key directly, or **"Import Certificate"** for a `.crt`/`.pem` file
-5. Set `authority` to the formal title, `from` to the registration date (informational), `to` to `null` for an active key
-6. Click **"Submit for Review"** — this creates a GitHub pull request
+2. Open the **Registry** tab in RHG Authenticator
+3. Log in to GitHub (one-time — click **Login to GitHub** on Windows or **Log In to GitHub…** on the Mac, and enter the code in your browser)
+4. Click **Add Entry** (Windows) / **Add Entry…** (Mac); in the form, click **Import from YubiKey** to read the key directly, or **Import Certificate** (Windows) / **Import Certificate…** (Mac) for a `.crt`/`.pem` file
+5. Set **Authority** to the formal title and **From Date** to the registration date (informational), and leave **No expiry** ticked (the default) for an active key
+6. Click **Submit for Review** — this creates a GitHub pull request
 7. The repository admin reviews and merges the PR; the updated registry deploys automatically via GitHub Pages
 
 To restrict a key to specific honors, add `"allowed_honors": ["<exact title>", …]` to its entry by hand in the PR (the Registry tab has no field for it, but preserves it on later edits; its Restrictions column shows the effective value). An empty or all-blank list means unrestricted. Registry PRs run CI, which validates the committed file.

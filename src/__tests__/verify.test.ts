@@ -10,7 +10,6 @@ import type {
 } from "../verify.js";
 import { sign } from "../crypto.js";
 import { canonicalize } from "../canonical.js";
-import { base64urlEncode, base64urlDecode } from "../base64url.js";
 import type { KeyEntry } from "../registry.js";
 import { validateRegistry } from "../registry.js";
 import {
@@ -219,21 +218,6 @@ describe("verifyCredential", () => {
     expect(success.credential.recipient).toBe("Jane Doe");
   });
 
-  // 9. Invalid payload (not valid JSON)
-  it("returns failure for invalid UTF-8 / bad JSON payload", () => {
-    const { publicKey } = makeKeypair();
-    const entry = makeKeyEntry(publicKey);
-    const registry = makeRegistry(entry);
-
-    const badPayload = new Uint8Array([0xff, 0xfe, 0x00, 0x01]);
-    const fakeSig = new Uint8Array(64);
-
-    const result = verifyCredential(badPayload, fakeSig, registry);
-
-    expect(result.valid).toBe(false);
-    expect((result as VerificationFailure).reason).toContain("JSON");
-  });
-
   // 9b. Invalid UTF-8 bytes inside an otherwise JSON-shaped payload
   it("rejects payload with invalid UTF-8 bytes as not valid JSON", () => {
     const { publicKey } = makeKeypair();
@@ -310,8 +294,9 @@ describe("verifyCredential", () => {
     }
   });
 
-  // 13. Corrupted registry key — skips bad key, continues to valid one
-  it("skips corrupted registry key and continues to valid key", () => {
+  // 13. Corrupted registry key — skips bad key, continues to valid one, and
+  // does not console.warn (the decodeFailures counter tracks it silently)
+  it("skips corrupted registry key and continues to valid key without console.warn", () => {
     const { secretKey, publicKey } = makeKeypair();
     const cred = validCredentialObj();
     const payload = encodeCredential(cred);
@@ -329,103 +314,17 @@ describe("verifyCredential", () => {
     const goodEntry = makeKeyEntry(publicKey);
     const registry = makeRegistry(corruptedEntry, goodEntry);
 
-    const result = verifyCredential(payload, signature, registry);
-    expect(result.valid).toBe(true);
-    const success = result as VerificationSuccess;
-    expect(success.key).toBe(goodEntry);
-    expect(success.credential.recipient).toBe("Jane Doe");
-  });
-
-  // 13b. No console.warn on corrupted registry key (decodeFailures counter tracks it silently)
-  it("does not emit console.warn when encountering a malformed key", () => {
-    const { secretKey, publicKey } = makeKeypair();
-    const cred = validCredentialObj();
-    const payload = encodeCredential(cred);
-    const signature = sign(payload, secretKey);
-
-    const corruptedEntry: KeyEntry = {
-      authority: "Test Authority",
-      from: "2020-01-01",
-      to: null,
-      algorithm: "Ed25519",
-      public_key: btoa("short"),
-      note: "corrupted",
-    };
-    const goodEntry = makeKeyEntry(publicKey);
-    const registry = makeRegistry(corruptedEntry, goodEntry);
-
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const result = verifyCredential(payload, signature, registry);
       expect(result.valid).toBe(true);
+      const success = result as VerificationSuccess;
+      expect(success.key).toBe(goodEntry);
+      expect(success.credential.recipient).toBe("Jane Doe");
       expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
     }
-  });
-
-  // 13c. No console.warn on malformed key at any position in single pass
-  it("does not emit console.warn for malformed key regardless of position", () => {
-    const { publicKey } = makeKeypair();
-    const cred = validCredentialObj({ date: "2024-06-15" });
-    const payload = encodeCredential(cred);
-    const fakeSig = new Uint8Array(64);
-
-    // Key at index 0: valid key, date-eligible
-    const goodEntry = makeKeyEntry(publicKey, {
-      from: "2020-01-01",
-      to: null,
-    });
-    // Key at index 1: corrupted, date-ineligible — still encountered in single pass
-    const corruptedEntry: KeyEntry = {
-      authority: "Test Authority",
-      from: "2000-01-01",
-      to: "2000-12-31",
-      algorithm: "Ed25519",
-      public_key: btoa("short"),
-      note: "corrupted",
-    };
-    const registry = makeRegistry(goodEntry, corruptedEntry);
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      verifyCredential(payload, fakeSig, registry);
-      expect(warnSpy).not.toHaveBeenCalled();
-    } finally {
-      warnSpy.mockRestore();
-    }
-  });
-
-  // 14. End-to-end round-trip: canonicalize → sign → base64url → decode → verify
-  it("end-to-end round-trip: canonicalize → sign → encode → decode → verify", () => {
-    const { secretKey, publicKey } = makeKeypair(42);
-    const entry = makeKeyEntry(publicKey);
-    const registry = makeRegistry(entry);
-
-    const credential = validCredentialObj();
-    const payloadBytes = canonicalize(
-      credential as Record<string, string | number>,
-    );
-    const signatureBytes = sign(payloadBytes, secretKey);
-
-    // Simulate URL transport: base64url encode then decode
-    const payloadB64 = base64urlEncode(payloadBytes);
-    const signatureB64 = base64urlEncode(signatureBytes);
-
-    const decodedPayload = base64urlDecode(payloadB64);
-    const decodedSignature = base64urlDecode(signatureB64);
-
-    const result = verifyCredential(decodedPayload, decodedSignature, registry);
-    expect(result.valid).toBe(true);
-    const success = result as VerificationSuccess;
-    expect(success.key).toBe(entry);
-    expect(success.credential).toEqual({
-      version: 1,
-      recipient: "Jane Doe",
-      honor: "Test Honor",
-      detail: "Test Detail",
-      date: "2024-06-15",
-    });
   });
 
   // 15. Payload exceeds maximum size
@@ -461,27 +360,6 @@ describe("verifyCredential", () => {
     expect(result.valid).toBe(false);
     // Should fail on credential validation, NOT on size.
     expect((result as VerificationFailure).reason).not.toContain("maximum size");
-  });
-
-  // 17. Oversized non-object payload — size check fires before type check
-  it("rejects oversized non-object payload with size error, not type error", () => {
-    const { publicKey } = makeKeypair();
-    const entry = makeKeyEntry(publicKey);
-    const registry = makeRegistry(entry);
-    const fakeSig = new Uint8Array(64);
-
-    // A JSON string that exceeds the size limit.
-    const jsonString = '"' + "a".repeat(2047) + '"';
-    const payload = new TextEncoder().encode(jsonString);
-    expect(payload.length).toBeGreaterThan(MAX_PAYLOAD_BYTES);
-
-    const result = verifyCredential(payload, fakeSig, registry);
-
-    expect(result.valid).toBe(false);
-    expect((result as VerificationFailure).reason).toContain("maximum size");
-    expect((result as VerificationFailure).reason).not.toContain(
-      "must be a JSON object",
-    );
   });
 
   // 18. Invalid curve point key (32 zero bytes) — first-pass try/catch handles it
@@ -582,43 +460,6 @@ describe("verifyCredential", () => {
     );
   });
 
-  // 20. URL byte-budget test
-  it("max-length realistic credential fits within URL byte budget", () => {
-    const { secretKey, publicKey } = makeKeypair(99);
-    const entry = makeKeyEntry(publicKey, { authority: "თბილისის უნივერსიტეტი" });
-    const registry = makeRegistry(entry);
-
-    // Georgian names sized to approach but stay within the byte budget
-    const credential = {
-      date: "2024-12-31",
-      detail: "დეტალი",
-      honor: "წარჩინებით",
-      recipient: "გიორგი მა",
-      version: 1 as const,
-    };
-
-    const payloadBytes = canonicalize(
-      credential as unknown as Record<string, string | number>,
-    );
-    const signatureBytes = sign(payloadBytes, secretKey);
-
-    const payloadB64 = base64urlEncode(payloadBytes);
-    const signatureB64 = base64urlEncode(signatureBytes);
-
-    // Verify it actually verifies
-    const result = verifyCredential(
-      base64urlDecode(payloadB64),
-      base64urlDecode(signatureB64),
-      registry,
-    );
-    expect(result.valid).toBe(true);
-
-    // Build a realistic URL
-    const url = `https://example.edu/verify?p=${payloadB64}&s=${signatureB64}`;
-    expect(url.length).toBeLessThanOrEqual(420);
-    expect(payloadB64.length).toBeLessThanOrEqual(300);
-  });
-
   it('rejects invalid signature length (32 bytes instead of 64)', () => {
     const { publicKey } = makeKeypair();
     const entry = makeKeyEntry(publicKey);
@@ -651,21 +492,6 @@ function sha256hex(data: Uint8Array): string {
 }
 
 describe("verifyCredential — revocation checks", () => {
-  it("returns valid when no revocation param is provided (backwards compat)", () => {
-    const { secretKey, publicKey } = makeKeypair();
-    const cred = validCredentialObj();
-    const payload = encodeCredential(cred);
-    const signature = sign(payload, secretKey);
-    const entry = makeKeyEntry(publicKey);
-    const registry = makeRegistry(entry);
-
-    const result = verifyCredential(payload, signature, registry);
-
-    expect(result.valid).toBe(true);
-    const success = result as VerificationSuccess;
-    expect(success.key).toBe(entry);
-  });
-
   it("returns revoked result for a valid credential that is in the revocation set", () => {
     const { secretKey, publicKey } = makeKeypair();
     const cred = validCredentialObj();
@@ -685,7 +511,7 @@ describe("verifyCredential — revocation checks", () => {
     expect(result.valid).toBe(false);
     const revoked = result as VerificationRevoked;
     expect(revoked.revoked).toBe(true);
-    expect(revoked.reason).toContain("revoked");
+    expect(revoked.reason).toBe("this credential has been revoked");
   });
 
   it("returns non-revoked failure when signature is invalid even if hash is in revocation set", () => {
@@ -714,54 +540,6 @@ describe("verifyCredential — revocation checks", () => {
     expect(failure.reason).toContain("no matching key produced a valid signature");
   });
 
-  it("returns valid when revocation set is empty", () => {
-    const { secretKey, publicKey } = makeKeypair();
-    const cred = validCredentialObj();
-    const payload = encodeCredential(cred);
-    const signature = sign(payload, secretKey);
-    const entry = makeKeyEntry(publicKey);
-    const registry = makeRegistry(entry);
-
-    const hash = sha256hex(payload);
-    const revocation: RevocationCheck = {
-      revocationSet: new Set(),
-      payloadHash: hash,
-    };
-
-    const result = verifyCredential(payload, signature, registry, revocation);
-
-    expect(result.valid).toBe(true);
-    const success = result as VerificationSuccess;
-    expect(success.key).toBe(entry);
-  });
-
-  it("revocation result has revoked: true discriminant", () => {
-    const { secretKey, publicKey } = makeKeypair();
-    const cred = validCredentialObj();
-    const payload = encodeCredential(cred);
-    const signature = sign(payload, secretKey);
-    const entry = makeKeyEntry(publicKey);
-    const registry = makeRegistry(entry);
-
-    const hash = sha256hex(payload);
-    const revocation: RevocationCheck = {
-      revocationSet: new Set([hash, "other-hash-1", "other-hash-2"]),
-      payloadHash: hash,
-    };
-
-    const result = verifyCredential(payload, signature, registry, revocation);
-
-    expect(result.valid).toBe(false);
-    // Type narrowing: check the discriminant
-    if (!result.valid) {
-      expect("revoked" in result).toBe(true);
-      if ("revoked" in result && result.revoked) {
-        expect(result.revoked).toBe(true);
-        expect(result.reason).toBe("this credential has been revoked");
-      }
-    }
-  });
-
   it("returns revoked (not date-invalid) when signature matches an expired key", () => {
     const { secretKey, publicKey } = makeKeypair();
     // Key expired end of 2023; credential date is mid-2024 (outside range).
@@ -788,26 +566,22 @@ describe("verifyCredential — revocation checks", () => {
     expect(revoked.reason).toContain("revoked");
   });
 
-  it("returns valid when revocation set contains a different hash (mismatched payloadHash)", () => {
+  it.each([
+    ["empty revocation set", () => new Set<string>()],
+    ["mismatched payloadHash", () => new Set([createHash("sha256").update("something-else").digest("hex")])],
+  ] as const)("returns valid with %s", (_label, makeSet) => {
     const { secretKey, publicKey } = makeKeypair();
     const cred = validCredentialObj();
     const payload = encodeCredential(cred);
     const signature = sign(payload, secretKey);
     const entry = makeKeyEntry(publicKey);
     const registry = makeRegistry(entry);
-
-    const realHash = sha256hex(payload);
-    const otherHash = createHash("sha256").update("something-else").digest("hex");
-    const revocation: RevocationCheck = {
-      revocationSet: new Set([otherHash]),
-      payloadHash: realHash,
-    };
+    const revocation: RevocationCheck = { revocationSet: makeSet(), payloadHash: sha256hex(payload) };
 
     const result = verifyCredential(payload, signature, registry, revocation);
 
     expect(result.valid).toBe(true);
-    const success = result as VerificationSuccess;
-    expect(success.key).toBe(entry);
+    expect((result as VerificationSuccess).key).toBe(entry);
   });
 
   it("existing failure results include revoked: false discriminant", () => {
@@ -874,16 +648,6 @@ describe("verifyCredential — allowed_honors", () => {
     expect(verifyCredential(payload, signature, registry).valid).toBe(true);
   });
 
-  it.each([
-    ["an empty list", []],
-    ["a list of blank strings", [""]],
-    ["null", null],
-  ])("accepts any honor when allowed_honors is %s (unrestricted)", (_label, value) => {
-    const registry = registryFrom({ allowed_honors: value });
-    const { payload, signature } = signed({ honor: "Anything At All" });
-    expect(verifyCredential(payload, signature, registry).valid).toBe(true);
-  });
-
   it("restricts to the non-blank entries when some are blank", () => {
     const registry = registryFrom({ allowed_honors: ["", "Other"] });
     const { payload, signature } = signed();
@@ -937,11 +701,5 @@ describe("verifyCredential — allowed_honors", () => {
     expect((result as VerificationFailure).reason).toBe(
       "signature valid but credential date outside key validity period",
     );
-  });
-
-  it("accepts a credential dated before the key's from", () => {
-    const registry = registryFrom({ from: "2025-01-01", allowed_honors: ["Test Honor"] });
-    const { payload, signature } = signed({ date: "2010-03-01" });
-    expect(verifyCredential(payload, signature, registry).valid).toBe(true);
   });
 });

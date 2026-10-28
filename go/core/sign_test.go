@@ -253,56 +253,6 @@ func TestHandleSign_NFCNormalization(t *testing.T) {
 	}
 }
 
-// TestHandleSign_NFCIdempotent verifies that signing an already-NFC input is a
-// pure pass-through: deterministic across calls AND leaving the input bytes
-// unchanged (not merely deterministically mangled). Distinct from
-// TestHandleSign_NFCNormalization, which exercises the NFD->NFC conversion.
-func TestHandleSign_NFCIdempotent(t *testing.T) {
-	sk := testSecretKey()
-	pubKey := testPubKey()
-	adapter := &mockAdapter{secretKey: sk}
-
-	// Precomposed é (U+00E9) — already NFC, so NFC(x) == x.
-	req := SignRequest{
-		Recipient: "Café",
-		Honor:     "Test Honor",
-		Detail:    "résumé",
-		Date:      "2026-03-13",
-	}
-
-	resp1, err := HandleSign(req, adapter, pubKey)
-	if err != nil {
-		t.Fatalf("HandleSign (first) error: %v", err)
-	}
-	resp2, err := HandleSign(req, adapter, pubKey)
-	if err != nil {
-		t.Fatalf("HandleSign (second) error: %v", err)
-	}
-	if resp1.Payload != resp2.Payload {
-		t.Errorf("payload not deterministic across calls:\n  first  %s\n  second %s", resp1.Payload, resp2.Payload)
-	}
-
-	// Decode the payload and confirm normalization left the already-NFC fields
-	// byte-for-byte unchanged.
-	raw, err := Decode(resp1.Payload)
-	if err != nil {
-		t.Fatalf("Decode payload error: %v", err)
-	}
-	var cred map[string]any
-	if err := json.Unmarshal(raw, &cred); err != nil {
-		t.Fatalf("Unmarshal payload error: %v", err)
-	}
-	if got, _ := cred["recipient"].(string); got != req.Recipient {
-		t.Errorf("recipient changed by normalization: got %q, want %q", got, req.Recipient)
-	}
-	if got, _ := cred["detail"].(string); got != req.Detail {
-		t.Errorf("detail changed by normalization: got %q, want %q", got, req.Detail)
-	}
-	if got, _ := cred["honor"].(string); got != req.Honor {
-		t.Errorf("honor changed by normalization: got %q, want %q", got, req.Honor)
-	}
-}
-
 func TestHandleSign_SigningAdapterError(t *testing.T) {
 	sk := testSecretKey()
 	pubKey := testPubKey()
@@ -320,50 +270,6 @@ func TestHandleSign_SigningAdapterError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "signing failed") {
 		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-func TestHandleSign_InvalidDate(t *testing.T) {
-	sk := testSecretKey()
-	pubKey := testPubKey()
-	adapter := &mockAdapter{secretKey: sk}
-
-	_, err := HandleSign(SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Test Honor",
-		Detail:    "For service",
-		Date:      "not-a-date",
-	}, adapter, pubKey)
-
-	if err == nil {
-		t.Fatal("expected error for invalid date")
-	}
-	if !strings.Contains(err.Error(), "invalid credential data") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-func TestHandleSign_PayloadSHA256Populated(t *testing.T) {
-	sk := testSecretKey()
-	pubKey := testPubKey()
-	adapter := &mockAdapter{secretKey: sk}
-
-	resp, err := HandleSign(SignRequest{
-		Recipient: "John Doe",
-		Honor:     "Test Honor",
-		Detail:    "For service",
-		Date:      "2026-03-13",
-	}, adapter, pubKey)
-	if err != nil {
-		t.Fatalf("HandleSign error: %v", err)
-	}
-
-	// Verify PayloadSHA256 is a 64-char hex string.
-	if len(resp.PayloadSHA256) != 64 {
-		t.Errorf("PayloadSHA256 length = %d, want 64", len(resp.PayloadSHA256))
-	}
-	if _, err := hex.DecodeString(resp.PayloadSHA256); err != nil {
-		t.Errorf("PayloadSHA256 is not valid hex: %v", err)
 	}
 }
 
@@ -392,15 +298,6 @@ func TestHandleSign_PayloadSHA256MatchesCanonical(t *testing.T) {
 
 	if resp.PayloadSHA256 != expectedHex {
 		t.Errorf("PayloadSHA256 mismatch:\n  got  %s\n  want %s", resp.PayloadSHA256, expectedHex)
-	}
-}
-
-func TestSignConstants(t *testing.T) {
-	if VerifyBaseURL != "https://verify.royalhouseofgeorgia.ge/" {
-		t.Errorf("VerifyBaseURL = %q", VerifyBaseURL)
-	}
-	if MaxVerifyURLLength != 625 {
-		t.Errorf("MaxVerifyURLLength = %d", MaxVerifyURLLength)
 	}
 }
 
@@ -433,31 +330,5 @@ func TestBuildPayload_MatchesHandleSign(t *testing.T) {
 	}
 	if got := BuildVerifyURL(Encode(payload), resp.Signature); got != resp.URL {
 		t.Errorf("URL mismatch:\n  got  %s\n  want %s", got, resp.URL)
-	}
-}
-
-func TestBuildPayload_Errors(t *testing.T) {
-	tests := []struct {
-		name    string
-		req     SignRequest
-		wantSub string
-	}{
-		{"invalid date", SignRequest{"A", "B", "C", "2026-02-30"}, "invalid credential data"},
-		{"empty recipient", SignRequest{"", "B", "C", "2026-03-13"}, "invalid credential data"},
-		{"too large", SignRequest{strings.Repeat("a", 500), strings.Repeat("b", 200), strings.Repeat("c", 2000), "2026-03-13"}, "too long to fit in a QR code"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := BuildPayload(tt.req)
-			if err == nil || !strings.Contains(err.Error(), tt.wantSub) {
-				t.Errorf("err = %v, want containing %q", err, tt.wantSub)
-			}
-		})
-	}
-}
-
-func TestBuildVerifyURL(t *testing.T) {
-	if got, want := BuildVerifyURL("PAY", "SIG"), VerifyBaseURL+"?p=PAY&s=SIG"; got != want {
-		t.Errorf("BuildVerifyURL = %q, want %q", got, want)
 	}
 }

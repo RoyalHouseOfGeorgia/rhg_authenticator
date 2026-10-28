@@ -1,0 +1,97 @@
+package service
+
+import (
+	"crypto/rand"
+	"encoding/pem"
+	"os"
+	"strings"
+	"testing"
+)
+
+func TestExtractEd25519Key_ValidPEM(t *testing.T) {
+	certData, err := os.ReadFile("../testdata/test-ed25519.crt")
+	if err != nil {
+		t.Fatalf("failed to read test fixture: %v", err)
+	}
+
+	key, err := extractEd25519Key(certData)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(key) != 44 {
+		t.Errorf("expected 44-char base64 string, got %d chars", len(key))
+	}
+}
+
+func TestExtractEd25519Key_RSACert(t *testing.T) {
+	certData, err := os.ReadFile("../testdata/test-rsa.crt")
+	if err != nil {
+		t.Fatalf("failed to read test fixture: %v", err)
+	}
+
+	_, err = extractEd25519Key(certData)
+	if err == nil {
+		t.Fatal("expected error for RSA cert, got nil")
+	}
+	if got := err.Error(); got != "certificate does not contain an Ed25519 public key" {
+		t.Errorf("unexpected error message: %s", got)
+	}
+}
+
+func TestExtractEd25519Key_InvalidInput(t *testing.T) {
+	garbage := make([]byte, 256)
+	if _, err := rand.Read(garbage); err != nil {
+		t.Fatalf("failed to generate random bytes: %v", err)
+	}
+	corrupted := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: []byte("this is not a valid DER certificate"),
+	})
+
+	cases := []struct {
+		name  string
+		input []byte
+	}{
+		{"random bytes", garbage},
+		{"corrupted PEM", corrupted},
+		{"empty input", []byte{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := extractEd25519Key(tc.input)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if got := err.Error(); !strings.HasPrefix(got, "not a valid certificate: ") {
+				t.Errorf("expected error starting with 'not a valid certificate: ', got: %s", got)
+			}
+		})
+	}
+}
+
+func TestExtractEd25519Key_ValidDER(t *testing.T) {
+	certPEM, err := os.ReadFile("../testdata/test-ed25519.crt")
+	if err != nil {
+		t.Fatalf("failed to read test fixture: %v", err)
+	}
+
+	// Decode PEM to get raw DER bytes.
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("failed to decode PEM block from test fixture")
+	}
+
+	key, err := extractEd25519Key(block.Bytes)
+	if err != nil {
+		t.Fatalf("unexpected error with DER input: %v", err)
+	}
+	if len(key) != 44 {
+		t.Errorf("expected 44-char base64 string, got %d chars", len(key))
+	}
+
+	// Verify DER and PEM paths produce identical keys.
+	keyFromPEM, _ := extractEd25519Key(certPEM)
+	if key != keyFromPEM {
+		t.Errorf("DER and PEM paths returned different keys: %s vs %s", key, keyFromPEM)
+	}
+}

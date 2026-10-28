@@ -25,8 +25,8 @@ const (
 )
 
 // errNotLoggedMsg is the per-row message for a credential signed without an
-// audit-log record.
-const errNotLoggedMsg = "signed but NOT recorded in audit log"
+// issuance-log record.
+const errNotLoggedMsg = "signed but NOT recorded in issuance log"
 
 // Result is the outcome for one input row. Req holds the trimmed request
 // that is signed and exported; Hash is the payload SHA-256 hex when the row

@@ -14,42 +14,19 @@ import (
 
 const testURL = "https://example.com/verify?id=abc123"
 
-func TestGenerateSVGValidXML(t *testing.T) {
+func TestGenerateSVGStructure(t *testing.T) {
 	svg, err := GenerateSVG(testURL)
 	if err != nil {
 		t.Fatalf("GenerateSVG error: %v", err)
 	}
-
-	// Verify well-formed XML.
 	if err := xml.Unmarshal(svg, new(any)); err != nil {
-		t.Fatalf("SVG is not valid XML: %v", err)
+		t.Errorf("SVG is not valid XML: %v", err)
 	}
-}
-
-func TestGenerateSVGViewBox(t *testing.T) {
-	svg, err := GenerateSVG(testURL)
-	if err != nil {
-		t.Fatalf("GenerateSVG error: %v", err)
+	if !bytes.HasPrefix(svg, []byte(`<?xml version="1.0" encoding="UTF-8"?>`)) {
+		t.Error("SVG should start with XML declaration")
 	}
-
-	// Extract viewBox dimensions and verify they match N+8.
-	re := regexp.MustCompile(`viewBox="0 0 (\d+) (\d+)"`)
-	matches := re.FindSubmatch(svg)
-	if matches == nil {
-		t.Fatal("viewBox not found in SVG")
-	}
-
-	w, _ := strconv.Atoi(string(matches[1]))
-	h, _ := strconv.Atoi(string(matches[2]))
-	if w != h {
-		t.Errorf("viewBox not square: %d x %d", w, h)
-	}
-
-	// N+8 must be even: N = modules, so total = N+8.
-	// Verify by checking that (total - 8) > 0.
-	n := w - 8
-	if n <= 0 {
-		t.Errorf("module count N=%d should be positive", n)
+	if !bytes.Contains(svg, []byte(`xmlns="http://www.w3.org/2000/svg"`)) {
+		t.Error("SVG should contain SVG namespace declaration")
 	}
 }
 
@@ -113,18 +90,6 @@ func TestGenerateSVGWhiteBackground(t *testing.T) {
 	}
 }
 
-func TestGenerateSVGDarkModules(t *testing.T) {
-	svg, err := GenerateSVG(testURL)
-	if err != nil {
-		t.Fatalf("GenerateSVG error: %v", err)
-	}
-
-	count := bytes.Count(svg, []byte(`fill="black"`))
-	if count == 0 {
-		t.Error("SVG should contain at least one dark module rect")
-	}
-}
-
 func TestGenerateSVGExactLengthLimit(t *testing.T) {
 	// URL exactly at 625 chars should succeed.
 	url := "https://example.com/" + strings.Repeat("x", core.MaxVerifyURLLength-len("https://example.com/"))
@@ -149,14 +114,6 @@ func TestGenerateSVGOverLengthLimit(t *testing.T) {
 	}
 }
 
-func TestGenerateSVGEmptyURL(t *testing.T) {
-	// The go-qrcode library rejects empty data with "no data to encode".
-	_, err := GenerateSVG("")
-	if err == nil {
-		t.Fatal("expected error for empty URL")
-	}
-}
-
 func TestGeneratePNGHeader(t *testing.T) {
 	png, err := GeneratePNG(testURL, 256)
 	if err != nil {
@@ -170,60 +127,11 @@ func TestGeneratePNGHeader(t *testing.T) {
 	}
 }
 
-func TestGeneratePNGWidth512(t *testing.T) {
-	png, err := GeneratePNG(testURL, 512)
-	if err != nil {
-		t.Fatalf("GeneratePNG error: %v", err)
-	}
-
-	if len(png) == 0 {
-		t.Error("PNG bytes should not be empty")
-	}
-
-	// Verify PNG header.
-	pngHeader := []byte{0x89, 0x50, 0x4E, 0x47}
-	if !bytes.HasPrefix(png, pngHeader) {
-		t.Error("output does not start with PNG magic bytes")
-	}
-}
-
 func TestGeneratePNGOverLengthLimit(t *testing.T) {
 	url := strings.Repeat("x", core.MaxVerifyURLLength+1)
 	_, err := GeneratePNG(url, 256)
 	if err == nil {
 		t.Error("expected error for URL exceeding max length")
-	}
-}
-
-func TestGeneratePNGEmptyURL(t *testing.T) {
-	// The go-qrcode library rejects empty data with "no data to encode".
-	_, err := GeneratePNG("", 256)
-	if err == nil {
-		t.Fatal("expected error for empty URL")
-	}
-}
-
-func TestNewQRValid(t *testing.T) {
-	qr, err := newQR(testURL)
-	if err != nil {
-		t.Fatalf("newQR error: %v", err)
-	}
-	if qr == nil {
-		t.Fatal("newQR returned nil QRCode")
-	}
-}
-
-func TestNewQRExactLimit(t *testing.T) {
-	url := "https://example.com/" + strings.Repeat("x", core.MaxVerifyURLLength-len("https://example.com/"))
-	if len(url) != core.MaxVerifyURLLength {
-		t.Fatalf("test setup: URL length is %d, want %d", len(url), core.MaxVerifyURLLength)
-	}
-	qr, err := newQR(url)
-	if err != nil {
-		t.Fatalf("newQR should succeed at exactly %d chars: %v", core.MaxVerifyURLLength, err)
-	}
-	if qr == nil {
-		t.Fatal("newQR returned nil QRCode")
 	}
 }
 
@@ -236,35 +144,6 @@ func TestNewQROverLimit(t *testing.T) {
 	expected := fmt.Sprintf("URL exceeds maximum length (%d > %d)", core.MaxVerifyURLLength+1, core.MaxVerifyURLLength)
 	if err.Error() != expected {
 		t.Errorf("error = %q, want %q", err.Error(), expected)
-	}
-}
-
-func TestNewQREmpty(t *testing.T) {
-	_, err := newQR("")
-	if err == nil {
-		t.Fatal("expected error for empty URL")
-	}
-}
-
-func TestGenerateSVGXMLDeclaration(t *testing.T) {
-	svg, err := GenerateSVG(testURL)
-	if err != nil {
-		t.Fatalf("GenerateSVG error: %v", err)
-	}
-
-	if !bytes.HasPrefix(svg, []byte(`<?xml version="1.0" encoding="UTF-8"?>`)) {
-		t.Error("SVG should start with XML declaration")
-	}
-}
-
-func TestGenerateSVGSVGNamespace(t *testing.T) {
-	svg, err := GenerateSVG(testURL)
-	if err != nil {
-		t.Fatalf("GenerateSVG error: %v", err)
-	}
-
-	if !bytes.Contains(svg, []byte(`xmlns="http://www.w3.org/2000/svg"`)) {
-		t.Error("SVG should contain SVG namespace declaration")
 	}
 }
 

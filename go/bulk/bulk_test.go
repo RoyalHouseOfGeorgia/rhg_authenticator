@@ -330,22 +330,13 @@ func TestRunNotLogged(t *testing.T) {
 	if err != notLogged {
 		t.Fatalf("err = %v, want original", err)
 	}
-	if res[1].Status != StatusSigned || res[1].URL == "" || res[1].Err != "signed but NOT recorded in audit log" {
+	if res[1].Status != StatusSigned || res[1].URL == "" || res[1].Err != "signed but NOT recorded in issuance log" {
 		t.Errorf("row 1 = %+v", res[1])
 	}
 	for _, r := range res[2:4] {
 		if r.Status != StatusNotAttempted {
 			t.Errorf("row = %+v", r)
 		}
-	}
-}
-
-func TestMarkNotAttempted(t *testing.T) {
-	res := mixedPlan(t)
-	MarkNotAttempted(res)
-	c := Summarize(res)
-	if c.ToSign != 0 || c.NotAttempted != 3 || c.Invalid != 1 || c.AlreadyIssued != 1 {
-		t.Fatalf("counts = %+v", c)
 	}
 }
 

@@ -71,26 +71,3 @@ func TestClassifyHardwareError(t *testing.T) {
 		})
 	}
 }
-
-func TestContainsAny(t *testing.T) {
-	subs := []string{"foo", "bar"}
-	tests := []struct {
-		name string
-		s    string
-		subs []string
-		want bool
-	}{
-		{name: "matches first sub", s: "a foo b", subs: subs, want: true},
-		{name: "matches second sub", s: "a bar b", subs: subs, want: true},
-		{name: "no match", s: "a baz b", subs: subs, want: false},
-		{name: "empty subs", s: "anything", subs: nil, want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := containsAny(tt.s, tt.subs); got != tt.want {
-				t.Errorf("containsAny(%q, %v) = %v, want %v", tt.s, tt.subs, got, tt.want)
-			}
-		})
-	}
-}

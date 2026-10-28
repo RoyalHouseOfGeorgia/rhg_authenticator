@@ -27,9 +27,27 @@ digraph module_architecture {
         canonical [label="canonical.ts\n(JSON serializer)", fillcolor="#dbe4ff", color="#4263eb"];
     }
 
-    // Go signing app
+    // Native desktop apps (front ends over the Go core's C ABI)
+    subgraph cluster_hosts {
+        label="Native Apps";
+        labeljust=l;
+        style="dashed,rounded";
+        color="#7048e8";
+        fontname="Helvetica";
+        fontsize=10;
+        fontcolor="#7048e8";
+
+        mac_views [label="RHGAuthenticator\n(SwiftUI views, macOS)", fillcolor="#e5dbff", color="#7048e8"];
+        mac_models [label="RHGModels\n(app + tab models)", fillcolor="#e5dbff", color="#7048e8"];
+        mac_bridge [label="RHGBridge\n(Swift bridge)", fillcolor="#e5dbff", color="#7048e8"];
+        win_app [label="RhgAuthenticator.App\n(WPF views, Windows)", fillcolor="#e5dbff", color="#7048e8"];
+        win_vm [label="RhgAuthenticator.ViewModels", fillcolor="#e5dbff", color="#7048e8"];
+        win_bridge [label="RhgAuthenticator.Bridge\n(P/Invoke bridge)", fillcolor="#e5dbff", color="#7048e8"];
+    }
+
+    // Go core library
     subgraph cluster_go {
-        label="Go — Desktop Signing App";
+        label="Go — Core Library (librhgcore.a / rhgcore.dll)";
         labeljust=l;
         style="dashed,rounded";
         color="#e67700";
@@ -37,11 +55,12 @@ digraph module_architecture {
         fontsize=10;
         fontcolor="#e67700";
 
-        go_main [label="main.go\n(app wiring, Help menu,\nupdate banner)", fillcolor="#ffe8cc", color="#e67700"];
-        go_gui [label="gui/\n(Fyne GUI — 5 tabs)", fillcolor="#fff3bf", color="#e67700"];
+        go_rhgcore [label="cmd/rhgcore/\n(C ABI: RHGCall, RHGFree,\nRHGSetEventCallback,\nRHGMainCLI)", fillcolor="#ffe8cc", color="#e67700"];
+        go_rpc [label="service/rpc/\n(JSON dispatch, lifecycle,\nPIN bridge, events)", fillcolor="#ffe8cc", color="#e67700"];
+        go_service [label="service/\n(App: all feature logic\nand user-facing text)", fillcolor="#ffe8cc", color="#e67700"];
+        go_host [label="host/\n(start-up: data dir,\nlogs, update config, CLI)", fillcolor="#ffe8cc", color="#e67700"];
         go_bulk [label="bulk/\n(CSV bulk signing)", fillcolor="#fff3bf", color="#e67700"];
         go_core [label="core/\n(credential, canonical,\nregistry, sign)", fillcolor="#fff3bf", color="#e67700"];
-        go_regmgr [label="regmgr/\n(Registry Manager tab)", fillcolor="#fff3bf", color="#e67700"];
         go_ghapi [label="ghapi/\n(GitHub OAuth +\nREST API)", fillcolor="#fff3bf", color="#e67700"];
         go_yubikey [label="yubikey/\n(piv-go PIV adapter\n+ PIN cache)", fillcolor="#fff3bf", color="#e67700"];
         go_qr [label="qr/\n(SVG + PNG)", fillcolor="#fff3bf", color="#e67700"];
@@ -57,7 +76,7 @@ digraph module_architecture {
     // External deps
     noble [label="@noble/curves\n(Ed25519)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
     pivgo [label="piv-go\n(PCSC)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
-    fyne [label="fyne\n(GUI)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
+    qrcode [label="go-qrcode\n(QR encoding)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
     keyring [label="go-keyring\n(OS keychain)", shape=component, fillcolor="#d3f9d8", color="#2b8a3e"];
 
     // Cross-language link
@@ -86,27 +105,45 @@ digraph module_architecture {
     revocation -> validation;
     crypto -> noble;
 
-    // Go internal deps (from `go list`; core is imported by nearly every package)
-    go_main -> go_gui;
-    go_main -> go_regmgr;
-    go_main -> go_update;
-    go_main -> go_buildinfo;
-    go_main -> go_debuglog;
-    go_main -> go_safego;
-    go_main -> go_ghapi;
-    go_main -> go_log;
-    go_main -> go_registry;
-    go_gui -> go_core;
-    go_gui -> go_bulk;
-    go_gui -> go_yubikey;
-    go_gui -> go_qr;
-    go_gui -> go_log;
-    go_gui -> go_registry;
-    go_gui -> go_ghapi;
-    go_gui -> go_debuglog;
-    go_gui -> go_errorreport;
-    go_gui -> go_buildinfo;
-    go_gui -> go_safego;
+    // Native apps -> C ABI
+    mac_views -> mac_models;
+    mac_models -> mac_bridge;
+    mac_bridge -> go_rhgcore [label="C ABI\n(static link)"];
+    win_app -> win_vm;
+    win_vm -> win_bridge;
+    win_bridge -> go_rhgcore [label="C ABI\n(embedded DLL)"];
+    mac_views -> mac_bridge [style=dashed, label="result types"];
+    win_app -> win_bridge [style=dashed, label="loader,\nsingle instance"];
+
+    // Go internal deps (from the non-test import blocks; core is imported by nearly every package)
+    go_rhgcore -> go_rpc;
+    go_rhgcore -> go_host;
+    go_rpc -> go_service;
+    go_rpc -> go_host;
+    go_rpc -> go_update;
+    go_rpc -> go_ghapi;
+    go_rpc -> go_debuglog;
+    go_rpc -> go_safego;
+    go_rpc -> go_core;
+    go_host -> go_service;
+    go_host -> go_update;
+    go_host -> go_registry;
+    go_host -> go_ghapi;
+    go_host -> go_debuglog;
+    go_host -> go_safego;
+    go_host -> go_buildinfo;
+    go_host -> go_core;
+    go_service -> go_core;
+    go_service -> go_bulk;
+    go_service -> go_log;
+    go_service -> go_qr;
+    go_service -> go_registry;
+    go_service -> go_yubikey;
+    go_service -> go_ghapi;
+    go_service -> go_errorreport;
+    go_service -> go_debuglog;
+    go_service -> go_buildinfo;
+    go_service -> go_safego;
     go_qr -> go_core;
     go_bulk -> go_core;
     go_log -> go_core;
@@ -116,16 +153,8 @@ digraph module_architecture {
     go_update -> go_core;
     go_errorreport -> go_core;
     go_errorreport -> go_ghapi;
-    go_regmgr -> go_gui;
-    go_regmgr -> go_core;
-    go_regmgr -> go_ghapi;
-    go_regmgr -> go_yubikey;
-    go_regmgr -> go_registry;
-    go_regmgr -> go_debuglog;
-    go_regmgr -> go_safego;
     go_yubikey -> pivgo;
-    go_gui -> fyne;
-    go_regmgr -> fyne;
+    go_qr -> qrcode;
     go_ghapi -> keyring;
 
     // Cross-language

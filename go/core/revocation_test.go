@@ -108,33 +108,23 @@ func TestValidateRevocationList_HashNotString(t *testing.T) {
 	}
 }
 
-func TestValidateRevocationList_HashTooShort(t *testing.T) {
-	// 63 hex chars
-	hash := strings.Repeat("a", 63)
-	data := fmt.Sprintf(`{"revocations": [{"hash": "%s", "revoked_on": "2025-01-01"}]}`, hash)
-	_, err := ValidateRevocationList([]byte(data))
-	if err == nil || !strings.Contains(err.Error(), "64-character hex string") {
-		t.Fatalf("expected 64-char hex error for 63 chars, got %v", err)
+func TestValidateRevocationList_HashMalformed(t *testing.T) {
+	tests := []struct {
+		name string
+		hash string
+	}{
+		{"HashTooShort", strings.Repeat("a", 63)},
+		{"HashTooLong", strings.Repeat("a", 65)},
+		{"HashNonHex", strings.Repeat("g", 64)},
 	}
-}
-
-func TestValidateRevocationList_HashTooLong(t *testing.T) {
-	// 65 hex chars
-	hash := strings.Repeat("a", 65)
-	data := fmt.Sprintf(`{"revocations": [{"hash": "%s", "revoked_on": "2025-01-01"}]}`, hash)
-	_, err := ValidateRevocationList([]byte(data))
-	if err == nil || !strings.Contains(err.Error(), "64-character hex string") {
-		t.Fatalf("expected 64-char hex error for 65 chars, got %v", err)
-	}
-}
-
-func TestValidateRevocationList_HashNonHex(t *testing.T) {
-	// 64 chars but contains 'g'
-	hash := strings.Repeat("g", 64)
-	data := fmt.Sprintf(`{"revocations": [{"hash": "%s", "revoked_on": "2025-01-01"}]}`, hash)
-	_, err := ValidateRevocationList([]byte(data))
-	if err == nil || !strings.Contains(err.Error(), "64-character hex string") {
-		t.Fatalf("expected hex error, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := fmt.Sprintf(`{"revocations": [{"hash": "%s", "revoked_on": "2025-01-01"}]}`, tt.hash)
+			_, err := ValidateRevocationList([]byte(data))
+			if err == nil || !strings.Contains(err.Error(), "64-character hex string") {
+				t.Fatalf("expected 64-char hex error, got %v", err)
+			}
+		})
 	}
 }
 
@@ -220,52 +210,27 @@ func TestValidateRevocationList_DuplicateHashDedup(t *testing.T) {
 	}
 }
 
-func TestIsRevoked_Found(t *testing.T) {
-	hash := strings.Repeat("a", 64)
-	list := &RevocationList{
-		Revocations: []RevocationEntry{{Hash: hash, RevokedOn: "2025-01-01"}},
+func TestIsRevoked(t *testing.T) {
+	set := BuildRevocationSet(&RevocationList{
+		Revocations: []RevocationEntry{{Hash: strings.Repeat("a", 64), RevokedOn: "2025-01-01"}},
+	})
+	tests := []struct {
+		name string
+		hash string
+		set  map[string]bool
+		want bool
+	}{
+		{"Found", strings.Repeat("a", 64), set, true},
+		{"NotFound", strings.Repeat("b", 64), set, false},
+		{"CaseInsensitive", strings.Repeat("A", 64), set, true},
+		{"NilList", strings.Repeat("a", 64), nil, false},
 	}
-	set := BuildRevocationSet(list)
-	if !IsRevoked(hash, set) {
-		t.Error("expected IsRevoked to return true")
-	}
-}
-
-func TestIsRevoked_NotFound(t *testing.T) {
-	hash := strings.Repeat("a", 64)
-	other := strings.Repeat("b", 64)
-	list := &RevocationList{
-		Revocations: []RevocationEntry{{Hash: hash, RevokedOn: "2025-01-01"}},
-	}
-	set := BuildRevocationSet(list)
-	if IsRevoked(other, set) {
-		t.Error("expected IsRevoked to return false")
-	}
-}
-
-func TestIsRevoked_CaseInsensitive(t *testing.T) {
-	hashLower := strings.Repeat("a", 64)
-	hashUpper := strings.Repeat("A", 64)
-	list := &RevocationList{
-		Revocations: []RevocationEntry{{Hash: hashLower, RevokedOn: "2025-01-01"}},
-	}
-	set := BuildRevocationSet(list)
-	if !IsRevoked(hashUpper, set) {
-		t.Error("expected IsRevoked to be case-insensitive")
-	}
-}
-
-func TestIsRevoked_EmptyList(t *testing.T) {
-	list := &RevocationList{Revocations: []RevocationEntry{}}
-	set := BuildRevocationSet(list)
-	if IsRevoked(strings.Repeat("a", 64), set) {
-		t.Error("expected IsRevoked to return false for empty list")
-	}
-}
-
-func TestIsRevoked_NilList(t *testing.T) {
-	if IsRevoked(strings.Repeat("a", 64), nil) {
-		t.Error("expected IsRevoked to return false for nil list")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsRevoked(tt.hash, tt.set); got != tt.want {
+				t.Errorf("IsRevoked(%q) = %v, want %v", tt.hash, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -384,36 +349,5 @@ func TestAppendRevocationEntry_HashLowercased(t *testing.T) {
 	want := strings.ToLower(hashUpper)
 	if result.Revocations[0].Hash != want {
 		t.Errorf("hash = %q, want lowercased %q", result.Revocations[0].Hash, want)
-	}
-}
-
-func TestAppendRevocationEntry_RevokedOnPassedThrough(t *testing.T) {
-	existing := &RevocationList{Revocations: []RevocationEntry{}}
-	revokedOn := "2099-12-31"
-	result := AppendRevocationEntry(existing, strings.Repeat("a", 64), revokedOn)
-	if result.Revocations[0].RevokedOn != revokedOn {
-		t.Errorf("revoked_on = %q, want %q", result.Revocations[0].RevokedOn, revokedOn)
-	}
-}
-
-func TestIsRevoked_ViaSet(t *testing.T) {
-	hashLower := strings.Repeat("c", 64)
-	list := &RevocationList{
-		Revocations: []RevocationEntry{
-			{Hash: hashLower, RevokedOn: "2025-03-01"},
-		},
-	}
-	set := BuildRevocationSet(list)
-
-	// Mixed-case lookup should match.
-	mixedCase := strings.Repeat("C", 32) + strings.Repeat("c", 32)
-	if !IsRevoked(mixedCase, set) {
-		t.Error("expected IsRevoked to find mixed-case hash in set")
-	}
-
-	// Non-existent hash should not match.
-	absent := strings.Repeat("d", 64)
-	if IsRevoked(absent, set) {
-		t.Error("expected IsRevoked to return false for absent hash")
 	}
 }

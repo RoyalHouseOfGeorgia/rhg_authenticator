@@ -1,6 +1,9 @@
 package buildinfo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestIsRelease(t *testing.T) {
 	tests := []struct {
@@ -29,5 +32,17 @@ func TestIsRelease(t *testing.T) {
 				t.Errorf("IsDebug() = %v for %q, want %v", got, tt.version, !tt.want)
 			}
 		})
+	}
+}
+
+// TestDisplay pins the literal marker the release scripts refuse.
+func TestDisplay(t *testing.T) {
+	got := Display()
+	if FakeBuild {
+		if got != Version+" (rhgfake)" {
+			t.Errorf("Display() = %q, want %q", got, Version+" (rhgfake)")
+		}
+	} else if got != Version || strings.Contains(got, "rhgfake") {
+		t.Errorf("Display() = %q, want %q", got, Version)
 	}
 }

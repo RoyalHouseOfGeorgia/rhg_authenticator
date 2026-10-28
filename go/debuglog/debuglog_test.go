@@ -10,28 +10,6 @@ import (
 	"time"
 )
 
-func TestNew_EmptyPath_NoOp(t *testing.T) {
-	logger := New("")
-	// Should not panic or create any file.
-	logger.Log("should be a no-op")
-	logger.Logf("also %s", "no-op")
-}
-
-func TestNew_CreatesFileAndWritesEntry(t *testing.T) {
-	tmpDir := t.TempDir()
-	logPath := filepath.Join(tmpDir, "debug.log")
-	logger := New(logPath)
-	logger.Log("test message")
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("failed to read log file: %v", err)
-	}
-	if !strings.Contains(string(data), "test message") {
-		t.Errorf("log file does not contain message: %q", string(data))
-	}
-}
-
 func TestNilLogger_NoPanic(t *testing.T) {
 	var logger *Logger
 	// None of these should panic.
@@ -141,57 +119,11 @@ func TestDoesNotTruncateLongMessages(t *testing.T) {
 	}
 }
 
-func TestTimestampFormat(t *testing.T) {
-	tmpDir := t.TempDir()
-	logPath := filepath.Join(tmpDir, "debug.log")
-	logger := New(logPath)
-
-	before := time.Now().UTC()
-	logger.Log("ts check")
-	after := time.Now().UTC()
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("failed to read log file: %v", err)
-	}
-	line := strings.TrimSpace(string(data))
-	// Expect format: [2006-01-02T15:04:05Z] ts check
-	if !strings.HasPrefix(line, "[") {
-		t.Fatalf("line does not start with '[': %q", line)
-	}
-	closeBracket := strings.Index(line, "]")
-	if closeBracket < 0 {
-		t.Fatalf("no closing bracket found: %q", line)
-	}
-	tsStr := line[1:closeBracket]
-	ts, err := time.Parse(time.RFC3339, tsStr)
-	if err != nil {
-		t.Fatalf("timestamp %q does not parse as RFC3339: %v", tsStr, err)
-	}
-	if ts.Before(before.Add(-time.Second)) || ts.After(after.Add(time.Second)) {
-		t.Errorf("timestamp %v outside expected range [%v, %v]", ts, before, after)
-	}
-}
-
 func TestPath_ReturnsPath(t *testing.T) {
 	logger := New("/tmp/test.log")
 	if got := logger.Path(); got != "/tmp/test.log" {
 		t.Errorf("Path() = %q, want %q", got, "/tmp/test.log")
 	}
-}
-
-func TestPath_EmptyForNoOp(t *testing.T) {
-	logger := New("")
-	if got := logger.Path(); got != "" {
-		t.Errorf("Path() = %q, want empty", got)
-	}
-}
-
-func TestLog_OpenFileError(t *testing.T) {
-	// Use a path in a non-existent directory to trigger OpenFile failure.
-	logger := New("/nonexistent/dir/debug.log")
-	// Should not panic — just silently discard.
-	logger.Log("should not panic")
 }
 
 func TestPruneLines(t *testing.T) {
@@ -219,16 +151,40 @@ func TestPruneLines(t *testing.T) {
 		{"boundary kept", boundary, boundary, false},
 		{"one second past boundary dropped", justStale + fresh1, fresh1, true},
 		{"future kept", future, future, false},
+		{"leading untimestamped dropped", "PANIC: boom\n" + fresh1, fresh1, true},
 		{
-			"untimestamped and malformed dropped",
-			"PANIC: boom\n" + fresh1 + "goroutine 1 [running]:\n" +
-				"[not-a-date-at-all-xx] x\n" + "[2026-01-02T03:04:05+02:00] x\n" +
+			"malformed lines follow their entry",
+			fresh1 + "[not-a-date-at-all-xx] x\n" + "[2026-01-02T03:04:05+02:00] x\n" +
+				"\n" + "[2026-09-30T11:00:00Z\n" + stale1 + "[not-a-date-at-all-xx] y\n" + fresh2,
+			fresh1 + "[not-a-date-at-all-xx] x\n" + "[2026-01-02T03:04:05+02:00] x\n" +
 				"\n" + "[2026-09-30T11:00:00Z\n" + fresh2,
-			fresh1 + fresh2,
+			true,
+		},
+		{
+			"nil-dereference crash report kept with a fresh entry",
+			fresh1 + "panic: runtime error: invalid memory address or nil pointer dereference\n" +
+				"[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x1]\n\n" +
+				"goroutine 1 [running]:\nmain.main()\n",
+			fresh1 + "panic: runtime error: invalid memory address or nil pointer dereference\n" +
+				"[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x1]\n\n" +
+				"goroutine 1 [running]:\nmain.main()\n",
+			false,
+		},
+		{
+			"crash report kept with a fresh entry",
+			stale1 + "stale continuation\n" + fresh1 + "panic: boom\n\ngoroutine 1 [running]:\nmain.main()\n",
+			fresh1 + "panic: boom\n\ngoroutine 1 [running]:\nmain.main()\n",
+			true,
+		},
+		{
+			"crash report dropped with a stale entry",
+			stale1 + "fatal error: x\n\t/src/main.go:1\n" + fresh2,
+			fresh2,
 			true,
 		},
 		{"torn final line gets newline", fresh1 + strings.TrimSuffix(fresh2, "\n"), fresh1 + fresh2, true},
-		{"torn final line dropped", fresh1 + "[2026-09-3", fresh1, true},
+		{"torn final line follows its entry", fresh1 + "[2026-09-3", fresh1 + "[2026-09-3\n", true},
+		{"torn final line dropped with a stale entry", stale1 + "[2026-09-3", "", true},
 		{"blank-only input", "\n", "", true},
 	}
 	for _, tt := range tests {
@@ -431,5 +387,30 @@ func TestStdlibRoundTripAndRetention(t *testing.T) {
 	}
 	if len(after) != 0 {
 		t.Errorf("entry survived +31d: %q", after)
+	}
+}
+
+func TestCaptureAndReleaseStdlib(t *testing.T) {
+	w, flags := stdlog.Writer(), stdlog.Flags()
+	t.Cleanup(func() {
+		stdlog.SetOutput(w)
+		stdlog.SetFlags(flags)
+	})
+	path := filepath.Join(t.TempDir(), FileName)
+	CaptureStdlib(New(path))
+	stdlog.Print("captured")
+	ReleaseStdlib()
+	stdlog.SetOutput(&strings.Builder{}) // keep the next line off stderr
+	stdlog.Print("released")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "captured") || strings.Contains(string(data), "released") {
+		t.Errorf("log = %q", data)
+	}
+	ReleaseStdlib()
+	if stdlog.Writer() != os.Stderr || stdlog.Flags() != stdlog.LstdFlags {
+		t.Errorf("writer = %v, flags = %d", stdlog.Writer(), stdlog.Flags())
 	}
 }

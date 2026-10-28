@@ -2,7 +2,6 @@ package core
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 )
 
@@ -90,63 +89,9 @@ func TestDecodePaddedInput(t *testing.T) {
 	}
 }
 
-func TestDecodeUnpaddedInput(t *testing.T) {
-	got, err := Decode("aGVsbG8")
-	if err != nil {
-		t.Fatalf("Decode unpadded error: %v", err)
-	}
-	if string(got) != "hello" {
-		t.Errorf("Decode unpadded = %q, want %q", string(got), "hello")
-	}
-}
-
 func TestDecodeInvalidChars(t *testing.T) {
 	_, err := Decode("!!!!")
 	if err == nil {
 		t.Error("Decode with invalid chars should return error")
-	}
-}
-
-func TestDecodeStandard(t *testing.T) {
-	// Standard base64 for "hello"
-	got, err := DecodeStandard("aGVsbG8=")
-	if err != nil {
-		t.Fatalf("DecodeStandard error: %v", err)
-	}
-	if string(got) != "hello" {
-		t.Errorf("DecodeStandard = %q, want %q", string(got), "hello")
-	}
-}
-
-func TestDecodeStandardMaxLength(t *testing.T) {
-	// 256 chars should be accepted.
-	input256 := strings.Repeat("AAAA", 64) // 256 chars
-	_, err := DecodeStandard(input256)
-	if err != nil {
-		t.Fatalf("DecodeStandard with 256 chars should succeed: %v", err)
-	}
-
-	// 257 chars should be rejected.
-	input257 := strings.Repeat("AAAA", 64) + "A"
-	_, err = DecodeStandard(input257)
-	if err == nil {
-		t.Error("DecodeStandard with 257 chars should return error")
-	}
-}
-
-func TestDecodeStandardInvalid(t *testing.T) {
-	_, err := DecodeStandard("not valid base64!!!")
-	if err == nil {
-		t.Error("DecodeStandard with invalid input should return error")
-	}
-}
-
-func TestDecodeStandardEmpty(t *testing.T) {
-	got, err := DecodeStandard("")
-	if err != nil {
-		t.Fatalf("DecodeStandard empty error: %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("DecodeStandard empty = %v, want empty", got)
 	}
 }

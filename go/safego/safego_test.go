@@ -122,14 +122,6 @@ func TestGo_DefaultHandlerWhenUnset(t *testing.T) {
 	}
 }
 
-func TestSetPanicHandler_NilRestoresDefault(t *testing.T) {
-	setHandler(t, func(any, []byte) {})
-	SetPanicHandler(nil)
-	if handler != nil {
-		t.Error("SetPanicHandler(nil) did not clear the handler")
-	}
-}
-
 // TestNoBareGoStatements fails if any production file outside this package
 // starts a goroutine with a bare go statement instead of safego.Go.
 func TestNoBareGoStatements(t *testing.T) {
@@ -159,7 +151,7 @@ func TestNoBareGoStatements(t *testing.T) {
 		if filepath.Clean(filepath.Dir(rel)) == "safego" {
 			return nil
 		}
-		if rel == "main.go" {
+		if rel == filepath.Join("cmd", "rhgcore", "main.go") {
 			sawMain = true
 		}
 		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
@@ -179,7 +171,7 @@ func TestNoBareGoStatements(t *testing.T) {
 		t.Fatalf("walk: %v", err)
 	}
 	if !sawMain {
-		t.Fatal("main.go was not parsed; walk root is wrong")
+		t.Fatal("cmd/rhgcore/main.go was not parsed; walk root is wrong")
 	}
 	if len(violations) > 0 {
 		t.Errorf("bare go statements found (use safego.Go):\n%s", strings.Join(violations, "\n"))

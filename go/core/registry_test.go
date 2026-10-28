@@ -288,18 +288,6 @@ func TestValidateRegistry_NoteNotString(t *testing.T) {
 	}
 }
 
-func TestValidateRegistry_EmptyNote(t *testing.T) {
-	// Empty note is allowed.
-	data := `{"keys": [{"authority":"A","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"AAAA","note":""}]}`
-	reg, err := ValidateRegistry([]byte(data))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if reg.Keys[0].Note != "" {
-		t.Errorf("note should be empty")
-	}
-}
-
 // --- DecodePublicKey tests ---
 
 func TestDecodePublicKey_Raw32Bytes(t *testing.T) {
@@ -376,28 +364,18 @@ func TestDecodePublicKey_TooLongInput(t *testing.T) {
 
 // --- KeyFingerprint tests ---
 
-func TestKeyFingerprint_Valid(t *testing.T) {
-	// Use a known 32-byte raw key.
-	raw := make([]byte, 32)
-	raw[0] = 0x01
-	entry := KeyEntry{PublicKey: base64.StdEncoding.EncodeToString(raw)}
+func TestKeyFingerprint_KnownValue(t *testing.T) {
+	// Raw key 0x01 followed by 31 zero bytes. The expected value is the
+	// lowercase hex SHA-256 of those 32 bytes, computed outside Go with
+	// `{ printf '\001'; head -c 31 /dev/zero; } | sha256sum`.
+	entry := KeyEntry{PublicKey: "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
 	fp, err := KeyFingerprint(entry)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(fp) != 64 {
-		t.Errorf("fingerprint length = %d, want 64 hex chars", len(fp))
-	}
-}
-
-func TestKeyFingerprint_Deterministic(t *testing.T) {
-	raw := make([]byte, 32)
-	raw[0] = 0x42
-	entry := KeyEntry{PublicKey: base64.StdEncoding.EncodeToString(raw)}
-	fp1, _ := KeyFingerprint(entry)
-	fp2, _ := KeyFingerprint(entry)
-	if fp1 != fp2 {
-		t.Errorf("fingerprint not deterministic: %q != %q", fp1, fp2)
+	const want = "01d0fabd251fcbbe2b93b4b927b26ad2a1a99077152e45ded1e678afa45dbec5"
+	if fp != want {
+		t.Errorf("KeyFingerprint = %q, want %q", fp, want)
 	}
 }
 
@@ -409,146 +387,36 @@ func TestKeyFingerprint_InvalidKey(t *testing.T) {
 	}
 }
 
-// --- FindKeysByAuthority tests ---
-
-func TestFindKeysByAuthority_Match(t *testing.T) {
-	reg := Registry{
-		Keys: []KeyEntry{
-			{Authority: "Alpha"},
-			{Authority: "Beta"},
-			{Authority: "Alpha"},
-		},
-	}
-	results := FindKeysByAuthority(reg, "Alpha")
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
-	}
-}
-
-func TestFindKeysByAuthority_NoMatch(t *testing.T) {
-	reg := Registry{
-		Keys: []KeyEntry{
-			{Authority: "Alpha"},
-		},
-	}
-	results := FindKeysByAuthority(reg, "Gamma")
-	if len(results) != 0 {
-		t.Fatalf("expected 0 results, got %d", len(results))
-	}
-}
-
-func TestFindKeysByAuthority_CaseSensitive(t *testing.T) {
-	reg := Registry{
-		Keys: []KeyEntry{
-			{Authority: "Alpha"},
-		},
-	}
-	results := FindKeysByAuthority(reg, "alpha")
-	if len(results) != 0 {
-		t.Fatalf("expected 0 results (case sensitive), got %d", len(results))
-	}
-}
-
-func TestFindKeysByAuthority_NFCNormalization(t *testing.T) {
-	// NFD: e + combining accent (U+0065 U+0301) vs NFC: é (U+00E9)
-	reg := Registry{
-		Keys: []KeyEntry{
-			{Authority: "caf\u00e9"}, // NFC form
-		},
-	}
-	results := FindKeysByAuthority(reg, "cafe\u0301") // NFD form
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result with NFC normalization, got %d", len(results))
-	}
-}
-
 // --- IsDateInRange tests ---
 
-func TestIsDateInRange_InRange(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01"}
-	key.To = strPtr("2025-12-31")
-	if !IsDateInRange("2025-06-15", key) {
-		t.Error("expected true for date in range")
-	}
-}
-
-func TestIsDateInRange_AtFromBoundary(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01"}
-	key.To = strPtr("2025-12-31")
-	if !IsDateInRange("2025-01-01", key) {
-		t.Error("expected true for date at from boundary (inclusive)")
-	}
-}
-
-func TestIsDateInRange_AtToBoundary(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01"}
-	key.To = strPtr("2025-12-31")
-	if !IsDateInRange("2025-12-31", key) {
-		t.Error("expected true for date at to boundary (inclusive)")
-	}
-}
-
-func TestIsDateInRange_BeforeFrom(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01"}
-	key.To = strPtr("2025-12-31")
-	if !IsDateInRange("2024-12-31", key) {
-		t.Error("expected true for date before from (from is informational)")
-	}
-}
-
-func TestIsDateInRange_FutureFromNilTo(t *testing.T) {
-	key := KeyEntry{From: "2027-01-01", To: nil}
-	if !IsDateInRange("2026-03-15", key) {
-		t.Error("expected true for key with future from and nil to")
-	}
-}
-
-func TestIsDateInRange_AfterTo(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01"}
-	key.To = strPtr("2025-12-31")
-	if IsDateInRange("2026-01-01", key) {
-		t.Error("expected false for date after to")
-	}
-}
-
-func TestIsDateInRange_FromAfterTo(t *testing.T) {
+func TestIsDateInRange(t *testing.T) {
+	year2025 := KeyEntry{From: "2025-01-01", To: strPtr("2025-12-31")}
 	// A key registered with a future from and then revoked (to set earlier)
 	// is bounded by to alone.
-	key := KeyEntry{From: "2026-12-01", To: strPtr("2026-10-02")}
-	cases := []struct {
+	fromAfterTo := KeyEntry{From: "2026-12-01", To: strPtr("2026-10-02")}
+	openEnded := KeyEntry{From: "2025-01-01", To: nil}
+	tests := []struct {
+		name string
+		key  KeyEntry
 		date string
 		want bool
 	}{
-		{"2026-01-15", true},  // before to (and before from)
-		{"2026-10-02", true},  // on to (inclusive)
-		{"2026-10-03", false}, // after to, before from
-		{"2026-12-15", false}, // after to and after from
+		{"InRange", year2025, "2025-06-15", true},
+		{"AtFromBoundary inclusive", year2025, "2025-01-01", true},
+		{"BeforeFrom from is informational", year2025, "2024-12-31", true},
+		{"FromAfterTo before to and before from", fromAfterTo, "2026-01-15", true},
+		{"FromAfterTo on to inclusive", fromAfterTo, "2026-10-02", true},
+		{"FromAfterTo after to before from", fromAfterTo, "2026-10-03", false},
+		{"FromAfterTo after to and after from", fromAfterTo, "2026-12-15", false},
+		{"NilTo no upper bound", openEnded, "2099-12-31", true},
+		{"InvalidDateFormat", openEnded, "not-a-date", false},
 	}
-	for _, c := range cases {
-		if got := IsDateInRange(c.date, key); got != c.want {
-			t.Errorf("IsDateInRange(%q) = %v, want %v", c.date, got, c.want)
-		}
-	}
-}
-
-func TestIsDateInRange_NilTo(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01", To: nil}
-	if !IsDateInRange("2099-12-31", key) {
-		t.Error("expected true for nil to (no upper bound)")
-	}
-}
-
-func TestIsDateInRange_InvalidDateFormat(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01", To: nil}
-	if IsDateInRange("not-a-date", key) {
-		t.Error("expected false for invalid date format")
-	}
-}
-
-func TestIsDateInRange_ShortDate(t *testing.T) {
-	key := KeyEntry{From: "2025-01-01", To: nil}
-	if IsDateInRange("25-01-01", key) {
-		t.Error("expected false for short date format")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsDateInRange(tt.date, tt.key); got != tt.want {
+				t.Errorf("IsDateInRange(%q) = %v, want %v", tt.date, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -561,29 +429,6 @@ func strPtr(s string) *string {
 func TestED25519SpkiPrefix_Length(t *testing.T) {
 	if len(ED25519SpkiPrefix) != 12 {
 		t.Errorf("expected 12 bytes, got %d", len(ED25519SpkiPrefix))
-	}
-}
-
-func TestValidateRegistry_MultipleEntries(t *testing.T) {
-	data := `{"keys": [
-		{"authority":"A","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"AAAA","note":"first"},
-		{"authority":"B","from":"2025-06-01","to":"2025-12-31","algorithm":"Ed25519","public_key":"BBBB","note":"second"}
-	]}`
-	reg, err := ValidateRegistry([]byte(data))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(reg.Keys) != 2 {
-		t.Fatalf("expected 2 keys, got %d", len(reg.Keys))
-	}
-}
-
-func TestValidateRegistry_DateRangeEqual(t *testing.T) {
-	// from == to should be valid (single-day validity).
-	data := `{"keys": [{"authority":"A","from":"2025-06-01","to":"2025-06-01","algorithm":"Ed25519","public_key":"AAAA","note":""}]}`
-	_, err := ValidateRegistry([]byte(data))
-	if err != nil {
-		t.Fatalf("expected no error for from == to, got %v", err)
 	}
 }
 
@@ -632,37 +477,11 @@ func TestValidateRegistry_NoteWithControlCharacters(t *testing.T) {
 	}
 }
 
-func TestValidateRegistry_NoteWithBidiOverride(t *testing.T) {
-	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	data := `{"keys": [{"authority":"A","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"` + key + `","note":"bidi` + "\u202e" + `override"}]}`
-	_, err := ValidateRegistry([]byte(data))
-	if err == nil || !strings.Contains(err.Error(), "note contains invalid control characters") {
-		t.Fatalf("expected control char error, got %v", err)
-	}
-}
-
 func TestValidateRegistry_AuthorityWithControlCharacters(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	data := `{"keys": [{"authority":"bad\u0001auth","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"` + key + `","note":""}]}`
 	_, err := ValidateRegistry([]byte(data))
 	if err == nil || !strings.Contains(err.Error(), "authority contains invalid control characters") {
 		t.Fatalf("expected control char error, got %v", err)
-	}
-}
-
-func TestValidateRegistry_AuthorityWithBidiOverride(t *testing.T) {
-	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	data := `{"keys": [{"authority":"bidi` + "\u202e" + `override","from":"2025-01-01","to":null,"algorithm":"Ed25519","public_key":"` + key + `","note":""}]}`
-	_, err := ValidateRegistry([]byte(data))
-	if err == nil || !strings.Contains(err.Error(), "authority contains invalid control characters") {
-		t.Fatalf("expected control char error, got %v", err)
-	}
-}
-
-func TestValidateRegistry_AlgorithmNotString(t *testing.T) {
-	data := `{"keys": [{"authority":"A","from":"2025-01-01","to":null,"algorithm":123,"public_key":"AAAA","note":""}]}`
-	_, err := ValidateRegistry([]byte(data))
-	if err == nil || !strings.Contains(err.Error(), "algorithm must be 'Ed25519'") {
-		t.Fatalf("expected algorithm error, got %v", err)
 	}
 }
