@@ -6,7 +6,7 @@ import RHGBridge
 /// prefix). The core blanks any release URL that is not an
 /// https://github.com one; an empty URL means no link.
 public enum UpdateBanner: Sendable, Equatable {
-    /// Downloaded: `title`, then `readyDetail` and Restart now.
+    /// Downloaded: `title`, then `readyDetail` and Restart Now.
     case ready(title: String)
     /// `text` then a Download link to `releaseURL`; `moveToApplicationsHint`
     /// is the line under it, or nil.

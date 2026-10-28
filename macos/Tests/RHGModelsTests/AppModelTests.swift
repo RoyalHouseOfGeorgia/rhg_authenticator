@@ -487,7 +487,7 @@ struct AppModelTests {
 
     // MARK: Quit
 
-    @Test("quit: canQuit, then shutdown, relaunching only after Restart now", arguments: [false, true])
+    @Test("quit: canQuit, then shutdown, relaunching only after Restart Now", arguments: [false, true])
     func quit(relaunch: Bool) async {
         let fake = FakeBridge()
         fake.respond(.appCanQuit, CanQuitResult(dirty: false))
@@ -549,7 +549,7 @@ struct AppModelTests {
         #expect(fake.count(.appShutdown) == 1)
     }
 
-    @Test("Restart now pressed while a plain quit checks for edits: that quit relaunches")
+    @Test("Restart Now pressed while a plain quit checks for edits: that quit relaunches")
     func restartDuringQuit() async {
         let fake = FakeBridge()
         let held = fake.hold(.appCanQuit)
@@ -562,7 +562,7 @@ struct AppModelTests {
         #expect(fake.params(.appShutdown) == [#"{"relaunch":true}"#])
     }
 
-    @Test("Restart now declined, then a plain quit: shutdown once, without relaunch")
+    @Test("Restart Now declined, then a plain quit: shutdown once, without relaunch")
     func restartDeclinedThenQuit() async {
         let fake = FakeBridge()
         fake.respond(.appCanQuit, CanQuitResult(dirty: true))

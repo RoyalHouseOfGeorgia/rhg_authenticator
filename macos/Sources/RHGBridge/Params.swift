@@ -20,7 +20,7 @@ public struct AppInitParams: Codable, Sendable, Equatable {
 
 /// app.shutdown.
 public struct ShutdownParams: Codable, Sendable, Equatable {
-    /// Relaunch after applying a ready update ("Restart now").
+    /// Relaunch after applying a ready update ("Restart Now").
     public var relaunch: Bool
 
     public init(relaunch: Bool) {

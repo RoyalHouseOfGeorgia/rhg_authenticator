@@ -24,7 +24,7 @@ public sealed record AppInitParams(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DataDir = null);
 
 /// <summary>app.shutdown.</summary>
-/// <param name="Relaunch">Relaunch after applying a ready update ("Restart now").</param>
+/// <param name="Relaunch">Relaunch after applying a ready update ("Restart Now").</param>
 public sealed record ShutdownParams(bool Relaunch);
 
 /// <summary>

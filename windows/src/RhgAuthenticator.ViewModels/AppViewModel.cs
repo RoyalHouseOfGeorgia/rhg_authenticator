@@ -61,7 +61,7 @@ public sealed partial class AppViewModel : ObservableObject
     public const string HelpTitle = "Help";
 
     /// <summary>The Help tab's line under its Export Error Log button.</summary>
-    public const string HelpText = "Saves the app's diagnostic log to a file you choose, to attach to an issue report.";
+    public const string HelpText = "Saves the app's diagnostic log to a file you choose, to send to the maintainer (for example by email).";
 
     /// <summary>Appended to a startup failure's message.</summary>
     public const string ReportSuffix = CoreLibraryException.ReportSuffix;

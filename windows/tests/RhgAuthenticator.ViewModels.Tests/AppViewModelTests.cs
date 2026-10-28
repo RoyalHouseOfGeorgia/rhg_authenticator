@@ -48,7 +48,7 @@ public sealed class AppViewModelTests
             AppViewModel.QuitConfirmation);
         Assert.Equal([.. "Export Error Log"u8, 0xE2, 0x80, 0xA6], Encoding.UTF8.GetBytes(AppViewModel.ExportErrorLogTitle));
         Assert.Equal(
-            "Saves the app's diagnostic log to a file you choose, to attach to an issue report.", AppViewModel.HelpText);
+            "Saves the app's diagnostic log to a file you choose, to send to the maintainer (for example by email).", AppViewModel.HelpText);
     }
 
     [Fact]

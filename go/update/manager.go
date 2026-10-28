@@ -29,7 +29,7 @@ type State int
 const (
 	// StateIdle: nothing to show.
 	StateIdle State = iota
-	// StateReady: a verified update is staged; offer "Restart now".
+	// StateReady: a verified update is staged; offer "Restart Now".
 	StateReady
 	// StateManualOnly: a newer release exists but must be installed by hand;
 	// offer a Download link.

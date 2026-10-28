@@ -356,9 +356,10 @@ jobs:
 
   # Same signing + verification path as sign-macos, with a throwaway cert, on
   # every non-tag build so a broken script surfaces before a release tag. It
-  # signs and verifies build-macos's zip and checks that the v1.5.x updaters
-  # accept it. No environment, no repository signing material. It does not
-  # wait for build-windows.
+  # signs and verifies build-macos's zip and checks that the old releases'
+  # updaters (OLD_RELEASES in verify-macos-compat.sh) accept it. No
+  # environment, no repository signing material. It does not wait for
+  # build-windows.
   # Required on main (ruleset): it is skipped on tags, which counts as passing.
   sign-macos-dryrun:
     if: github.ref_type != 'tag'

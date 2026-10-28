@@ -6,7 +6,7 @@ digraph issuance_flow {
 
     // Principals
     subgraph cluster_app {
-        label="Desktop App (Go + Fyne GUI)";
+        label="Native app + Go core";
         labeljust=l;
         style="dashed,rounded";
         color="#868e96";
@@ -20,13 +20,14 @@ digraph issuance_flow {
         fits [label="Fits a QR code?\n(URL ≤ 625 chars)", shape=diamond, style=filled, fillcolor="#e6fcf5"];
         refuse_input [label="Refused before PIN:\ninvalid, or too long\n(says how much to cut)", fillcolor="#ffc9c9"];
         dup [label="Already in\nissuance log?\n(payload hash)", shape=diamond, style=filled, fillcolor="#e6fcf5"];
+        key_ok [label="Card key would verify?\n(online; key in registry,\nvalid on date, honor allowed)", shape=diamond, style=filled, fillcolor="#e6fcf5"];
         sign_req [label="Sign via\npiv-go (PCSC)"];
         verify_rt [label="Verify\nround-trip"];
         log [label="Append to\nissuance log"];
         encode [label="Base64URL\nencode"];
         build_url [label="Build\nverification URL"];
         gen_qr [label="QR: PNG preview;\nSVG / 2048px PNG\non save"];
-        refuse [label="Signing refused\n(log unreadable)", fillcolor="#ffc9c9"];
+        refuse [label="Signing refused\n(log unreadable, offline,\nor key would not verify)", fillcolor="#ffc9c9"];
     }
 
     yubikey [label="YubiKey\nPIV slot 9c\nEd25519", shape=cylinder, fillcolor="#fff3bf"];
@@ -39,10 +40,12 @@ digraph issuance_flow {
     canonicalize -> fits [label="canonical bytes"];
     fits -> dup [label="yes"];
     fits -> refuse_input [label="no", style=dashed];
-    dup -> sign_req [label="no"];
+    dup -> key_ok [label="no"];
     dup -> refuse [label="log unreadable", style=dashed];
     dup -> encode [label="yes: reuse logged\nsignature, no PIN,\nno new record", style=dashed];
-    sign_req -> yubikey [label="PIN via\nGUI dialog", style=dashed];
+    key_ok -> sign_req [label="yes"];
+    key_ok -> refuse [label="no (before PIN)", style=dashed];
+    sign_req -> yubikey [label="PIN: pin.request →\nnative PIN prompt →\npin.submit", style=dashed];
     yubikey -> sign_req [label="64-byte signature", style=dashed];
     sign_req -> verify_rt [label="signature"];
     verify_rt -> log;

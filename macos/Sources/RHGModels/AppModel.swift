@@ -205,7 +205,7 @@ public final class AppModel {
         findRequests += 1
     }
 
-    /// Restart now: the next quit relaunches the app after the update
+    /// Restart Now: the next quit relaunches the app after the update
     /// installs. The caller then quits; keeping unsubmitted edits at the
     /// discard confirm calls the restart off.
     public func requestRestart() {
@@ -294,7 +294,7 @@ public final class AppModel {
         if let canQuit = try? await bridge.canQuit(), canQuit.dirty, await !confirmDiscard() {
             return false
         }
-        // Read only now, so a Restart now pressed while canQuit ran counts.
+        // Read only now, so a Restart Now pressed while canQuit ran counts.
         try? await bridge.shutdown(relaunch: restartRequested)
         return true
     }

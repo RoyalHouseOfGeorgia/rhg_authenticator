@@ -16,8 +16,9 @@ set -euo pipefail
 # (dry-run requirement, tag v0.0.0). Never run it in a job that received the
 # signing key.
 #
-# The list is fixed: add a release when its updater should be covered, with
-# its asset's SHA-256 as GitHub recorded it:
+# The list is fixed: add every release once it is published (each ships an
+# updater that installed apps will run), with its asset's SHA-256 as GitHub
+# recorded it (remove one only when no installed app still runs it):
 #   gh release view vX.Y.Z --json assets \
 #     --jq '.assets[] | select(.name == "rhg-authenticator-darwin-arm64.zip") | .digest | ltrimstr("sha256:")'
 OLD_RELEASES="
