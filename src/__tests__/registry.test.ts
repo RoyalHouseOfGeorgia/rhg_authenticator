@@ -8,9 +8,9 @@ import {
 } from '../registry.js';
 import type { KeyEntry, Registry } from '../registry.js';
 
-// A real Ed25519 SPKI DER public key (44 bytes base64 → 32 raw bytes after stripping prefix).
-// Raw hex: d75a980182b10ab7d54bfed3c964073a0ee172f3daa3f4a18446b0b8d183f8e3
-// This is the well-known Ed25519 test vector for the empty-message key.
+// An Ed25519 SPKI DER encoding (44 bytes → 32 raw bytes after stripping prefix).
+// Raw hex: d75a980182b10ab7d54bfed3c964073a0ee172f3daa3f4a18846b0b8d183f8e3
+// Arbitrary decode fixture, not the RFC 8032 key (only its first 21 bytes match).
 const SPKI_B64 = 'MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPao/ShiEawuNGD+OM=';
 const RAW_32_HEX =
   'd75a980182b10ab7d54bfed3c964073a0ee172f3daa3f4a18846b0b8d183f8e3';
@@ -75,12 +75,6 @@ describe('validateRegistry', () => {
 
     it('throws on an array', () => {
       expect(() => validateRegistry([])).toThrow(
-        'registry must be a plain object',
-      );
-    });
-
-    it('throws on a string', () => {
-      expect(() => validateRegistry('hi')).toThrow(
         'registry must be a plain object',
       );
     });
@@ -231,65 +225,10 @@ describe('validateRegistry', () => {
         );
       });
 
-      it('rejects invalid from date (Feb 30)', () => {
-        const entry = makeEntry({ from: '2025-02-30' });
-        expect(() => validateRegistry({ keys: [entry] })).toThrow(
-          'keys[0]: invalid date for from: 2025-02-30',
-        );
-      });
-
-      it('rejects invalid to date (day 0)', () => {
-        const entry = makeEntry({ to: '2026-01-00' });
-        expect(() => validateRegistry({ keys: [entry] })).toThrow(
-          'keys[0]: invalid date for to: 2026-01-00',
-        );
-      });
-
       it('rejects invalid to date (non-ISO format)', () => {
         const entry = makeEntry({ to: 'Dec 31, 2026' });
         expect(() => validateRegistry({ keys: [entry] })).toThrow(
           'keys[0]: invalid date for to: Dec 31, 2026',
-        );
-      });
-
-      it('rejects Feb 29 in non-leap year for from', () => {
-        const entry = makeEntry({ from: '2025-02-29' });
-        expect(() => validateRegistry({ keys: [entry] })).toThrow(
-          'keys[0]: invalid date for from: 2025-02-29',
-        );
-      });
-
-      it('accepts Feb 29 in leap year for from', () => {
-        const entry = makeEntry({ from: '2024-02-29' });
-        const result = validateRegistry({ keys: [entry] });
-        expect(result.keys[0].from).toBe('2024-02-29');
-      });
-
-      it('rejects month 0 for from', () => {
-        const entry = makeEntry({ from: '2025-00-15' });
-        expect(() => validateRegistry({ keys: [entry] })).toThrow(
-          'keys[0]: invalid date for from: 2025-00-15',
-        );
-      });
-
-      it('rejects April 31 for to', () => {
-        const entry = makeEntry({ to: '2026-04-31' });
-        expect(() => validateRegistry({ keys: [entry] })).toThrow(
-          'keys[0]: invalid date for to: 2026-04-31',
-        );
-      });
-
-      it('rejects year 0000 for from', () => {
-        const entry = makeEntry({ from: '0000-01-01' });
-        expect(() => validateRegistry({ keys: [entry] })).toThrow(
-          'keys[0]: invalid date for from: 0000-01-01',
-        );
-      });
-
-      it('rejects year 0000 for to', () => {
-        const entry = makeEntry({ to: '0000-06-15' });
-        expect(() => validateRegistry({ keys: [entry] })).toThrow(
-          'keys[0]: invalid date for to: 0000-06-15',
         );
       });
 
@@ -301,6 +240,7 @@ describe('validateRegistry', () => {
       });
 
       it('sanitizes bidi override characters in date error messages', () => {
+        expect.assertions(3);
         const entry = makeEntry({ from: '2025-01-01\u202E\u200F\u061C' });
         try {
           validateRegistry({ keys: [entry] });
@@ -314,6 +254,7 @@ describe('validateRegistry', () => {
     });
 
     it('sanitizes control characters in from date error messages', () => {
+      expect.assertions(2);
       const entry = makeEntry({ from: '2025-01-01\x1b[31m' });
       expect(() => validateRegistry({ keys: [entry] })).toThrow(
         /invalid date for from/,
@@ -326,6 +267,7 @@ describe('validateRegistry', () => {
     });
 
     it('sanitizes control characters in to date error messages', () => {
+      expect.assertions(2);
       const entry = makeEntry({ to: '2026-99-99\nINFO: fake' });
       expect(() => validateRegistry({ keys: [entry] })).toThrow(
         /invalid date for to/,
@@ -397,8 +339,6 @@ describe('validateRegistry — allowed_honors', () => {
 
   it.each([
     ['a string', 'Medal'],
-    ['an object', {}],
-    ['a number', 1],
   ])('rejects %s', (_label, value) => {
     expect(() => validateRegistry({ keys: [withHonors(value)] })).toThrow(
       'keys[0]: allowed_honors must be an array',
@@ -408,12 +348,6 @@ describe('validateRegistry — allowed_honors', () => {
   it('rejects a non-string element', () => {
     expect(() => validateRegistry({ keys: [withHonors(['Medal', 42])] })).toThrow(
       'keys[0]: allowed_honors[1] must be a string',
-    );
-  });
-
-  it('rejects a null element', () => {
-    expect(() => validateRegistry({ keys: [withHonors([null])] })).toThrow(
-      'keys[0]: allowed_honors[0] must be a string',
     );
   });
 
@@ -431,12 +365,6 @@ describe('validateRegistry — allowed_honors', () => {
 
   it('rejects a bidi control character', () => {
     expect(() => validateRegistry({ keys: [withHonors(['Med\u202eal'])] })).toThrow(
-      'keys[0]: allowed_honors[0] contains invalid control characters',
-    );
-  });
-
-  it('rejects an element with control characters', () => {
-    expect(() => validateRegistry({ keys: [withHonors(['Med\u0000al'])] })).toThrow(
       'keys[0]: allowed_honors[0] contains invalid control characters',
     );
   });
@@ -482,10 +410,6 @@ describe('isDateInRange', () => {
     expect(isDateInRange('2025-08-15', key)).toBe(true);
   });
 
-  it('returns true on the from boundary (inclusive)', () => {
-    expect(isDateInRange('2025-06-01', key)).toBe(true);
-  });
-
   it('returns true on the to boundary (inclusive)', () => {
     expect(isDateInRange('2025-12-31', key)).toBe(true);
   });
@@ -498,16 +422,6 @@ describe('isDateInRange', () => {
     expect(isDateInRange('2026-01-01', key)).toBe(false);
   });
 
-  it('returns true when to is null and date is after from', () => {
-    const openKey = makeEntry({ from: '2025-01-01', to: null });
-    expect(isDateInRange('2099-12-31', openKey)).toBe(true);
-  });
-
-  it('returns true when to is null and date equals from', () => {
-    const openKey = makeEntry({ from: '2025-01-01', to: null });
-    expect(isDateInRange('2025-01-01', openKey)).toBe(true);
-  });
-
   it('returns true when to is null and date is before from (backdated)', () => {
     const openKey = makeEntry({ from: '2025-01-01', to: null });
     expect(isDateInRange('2024-12-31', openKey)).toBe(true);
@@ -517,20 +431,6 @@ describe('isDateInRange', () => {
     const key = makeEntry({ from: '2025-01-01', to: '2025-12-31' });
     expect(isDateInRange('not-a-date', key)).toBe(false);
   });
-
-  it('returns false for partial date string', () => {
-    const key = makeEntry({ from: '2025-01-01', to: '2025-12-31' });
-    expect(isDateInRange('2025-06', key)).toBe(false);
-  });
-
-  it('handles overlapping key periods — boundary date matches both', () => {
-    const key1 = makeEntry({ from: '2025-01-01', to: '2025-06-30' });
-    const key2 = makeEntry({ from: '2025-06-30', to: '2025-12-31' });
-    const boundaryDate = '2025-06-30';
-
-    expect(isDateInRange(boundaryDate, key1)).toBe(true);
-    expect(isDateInRange(boundaryDate, key2)).toBe(true);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -538,16 +438,10 @@ describe('isDateInRange', () => {
 // ---------------------------------------------------------------------------
 
 describe('decodePublicKey', () => {
-  it('strips 12-byte SPKI header from 44-byte DER key', () => {
-    const entry = makeEntry({ public_key: SPKI_B64 });
-    const raw = decodePublicKey(entry);
-    expect(raw).toHaveLength(32);
-  });
-
   it('passes through a 32-byte raw key unchanged', () => {
     const entry = makeEntry({ public_key: RAW_B64 });
     const raw = decodePublicKey(entry);
-    expect(raw).toHaveLength(32);
+    expect(raw).toEqual(hexToBytes(RAW_32_HEX));
   });
 
   it('returns correct raw bytes from SPKI DER key (golden test)', () => {

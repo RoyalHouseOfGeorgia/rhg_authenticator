@@ -1,0 +1,26 @@
+<!--
+  Styles merged into the Resources of each view that shows selectable text.
+  Not in App.xaml: the Fluent dictionary joins the application's resources
+  only after App.xaml loads (App.xaml.cs), so a BasedOn there would build on
+  the classic theme's TextBox; a view's resources load after it.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Display text the operator can select and copy: a read-only TextBox without the field's chrome. -->
+    <Style x:Key="SelectableText" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+        <Setter Property="IsReadOnly" Value="True" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <!-- "line N: reason" rows: one selectable text in a fixed-height scroll area, cheap for a 500-row file. -->
+    <Style x:Key="RowList" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+        <Setter Property="IsReadOnly" Value="True" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Height" Value="120" />
+        <Setter Property="VerticalScrollBarVisibility" Value="Visible" />
+        <Setter Property="VerticalContentAlignment" Value="Top" />
+    </Style>
+</ResourceDictionary>

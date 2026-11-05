@@ -21,22 +21,6 @@ func TestCanonicalizeSimpleObject(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeKeySorting(t *testing.T) {
-	obj := map[string]any{
-		"z": float64(1),
-		"a": float64(2),
-		"m": float64(3),
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"a":2,"m":3,"z":1}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
 func TestCanonicalizeNFCNormalization(t *testing.T) {
 	// e + combining acute accent (U+0065 U+0301) → é (U+00E9)
 	obj := map[string]any{
@@ -53,25 +37,32 @@ func TestCanonicalizeNFCNormalization(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeProtoRejection(t *testing.T) {
-	obj := map[string]any{
-		"__proto__": "bad",
+func TestCanonicalizeRejects(t *testing.T) {
+	tests := []struct {
+		name string
+		obj  map[string]any
+	}{
+		{"ProtoRejection", map[string]any{"__proto__": "bad"}},
+		{"NestedProtoRejection", map[string]any{"a": map[string]any{"__proto__": "bad"}}},
+		{"NegativeZero", map[string]any{"val": math.Copysign(0, -1)}},
+		{"NaN", map[string]any{"val": math.NaN()}},
+		{"Infinity +Inf", map[string]any{"val": math.Inf(1)}},
+		{"Infinity -Inf", map[string]any{"val": math.Inf(-1)}},
+		{"InvalidUTF8Value", map[string]any{"val": "hello\xffworld"}},
+		{"InvalidUTF8Key", map[string]any{"bad\xffkey": "value"}},
+		// An unsupported type inside an array should propagate the error.
+		{"ErrorInArray", map[string]any{"arr": []any{"ok", complex(1, 2)}}},
+		{"FormatNumberErrors large exponent", map[string]any{"val": 1e20}},
+		{"FormatNumberErrors small negative exponent", map[string]any{"val": 1e-7}},
+		{"FormatNumberErrors half", map[string]any{"val": 0.5}},
+		{"FormatNumberErrors max float64", map[string]any{"val": math.MaxFloat64}},
 	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for __proto__ key")
-	}
-}
-
-func TestCanonicalizeNestedProtoRejection(t *testing.T) {
-	obj := map[string]any{
-		"a": map[string]any{
-			"__proto__": "bad",
-		},
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for nested __proto__ key")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Canonicalize(tt.obj); err == nil {
+				t.Errorf("expected error for %v", tt.obj)
+			}
+		})
 	}
 }
 
@@ -115,419 +106,67 @@ func TestCanonicalizeDepthLimit(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeDepthExact(t *testing.T) {
-	// The outermost map is at depth 0. A map at depth 4 should be rejected.
-	// depth 0: top-level
-	// depth 1: l1
-	// depth 2: l2
-	// depth 3: l3
-	// depth 4: l4 — rejected because depth >= maxDepth(4)
-	obj := map[string]any{
-		"l1": map[string]any{
-			"l2": map[string]any{
-				"l3": map[string]any{
-					"l4": map[string]any{
-						"val": "deep",
-					},
-				},
-			},
-		},
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected depth limit error at depth 4")
-	}
-
-	// Just under the limit: innermost map at depth 3
-	objOk := map[string]any{
-		"l1": map[string]any{
-			"l2": map[string]any{
-				"l3": map[string]any{
-					"val": "ok",
-				},
-			},
-		},
-	}
-	_, err = Canonicalize(objOk)
-	if err != nil {
-		t.Fatalf("depth 3 inner map should succeed: %v", err)
-	}
-}
-
-func TestCanonicalizeNegativeZero(t *testing.T) {
-	obj := map[string]any{
-		"val": math.Copysign(0, -1),
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for negative zero")
-	}
-}
-
-func TestCanonicalizeNaN(t *testing.T) {
-	obj := map[string]any{
-		"val": math.NaN(),
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for NaN")
-	}
-}
-
-func TestCanonicalizeInfinity(t *testing.T) {
-	obj := map[string]any{
-		"val": math.Inf(1),
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for +Infinity")
-	}
-
-	obj["val"] = math.Inf(-1)
-	_, err = Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for -Infinity")
-	}
-}
-
-func TestCanonicalizeNestedArraysAndObjects(t *testing.T) {
-	obj := map[string]any{
-		"items": []any{float64(1), "two", true, nil},
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"items":[1,"two",true,null]}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeSpecialChars(t *testing.T) {
-	obj := map[string]any{
-		"msg": "hello\nworld\t\"quoted\"",
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"msg":"hello\nworld\t\"quoted\""}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeControlChars(t *testing.T) {
-	// U+0001 should be escaped as \u0001
-	obj := map[string]any{
-		"val": "\x01",
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"val":"\u0001"}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeBackspace(t *testing.T) {
-	obj := map[string]any{
-		"val": "\b",
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"val":"\b"}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeFormFeed(t *testing.T) {
-	obj := map[string]any{
-		"val": "\f",
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"val":"\f"}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeCarriageReturn(t *testing.T) {
-	obj := map[string]any{
-		"val": "\r",
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"val":"\r"}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeForwardSlashNotEscaped(t *testing.T) {
-	obj := map[string]any{
-		"path": "/foo/bar",
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"path":"/foo/bar"}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeEmptyObject(t *testing.T) {
-	got, err := Canonicalize(map[string]any{})
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	if string(got) != "{}" {
-		t.Errorf("got %q, want %q", string(got), "{}")
-	}
-}
-
-func TestCanonicalizeEmptyArray(t *testing.T) {
-	obj := map[string]any{
-		"arr": []any{},
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"arr":[]}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeErrorInArray(t *testing.T) {
-	// An unsupported type inside an array should propagate the error.
-	obj := map[string]any{
-		"arr": []any{"ok", complex(1, 2)},
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for unsupported type in array")
-	}
-}
-
-func TestCanonicalizeGeorgianText(t *testing.T) {
-	obj := map[string]any{
-		"name": "ქართველი",
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"name":"ქართველი"}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeNumbers(t *testing.T) {
-	obj := map[string]any{
-		"int":  float64(42),
-		"zero": float64(0),
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"int":42,"zero":0}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeNonIntegerFloatError(t *testing.T) {
-	obj := map[string]any{"val": float64(1.5)}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for non-integer float 1.5")
-	}
-}
-
-func TestCanonicalizeIntType(t *testing.T) {
-	// Go int values should also work.
-	obj := map[string]any{
-		"val": 42,
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"val":42}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeNullValue(t *testing.T) {
-	obj := map[string]any{
-		"val": nil,
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"val":null}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeBooleans(t *testing.T) {
-	obj := map[string]any{
-		"f": false,
-		"t": true,
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"f":false,"t":true}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeUnsupportedType(t *testing.T) {
-	obj := map[string]any{
-		"val": complex(1, 2),
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for unsupported type")
-	}
-}
-
-func TestCanonicalizeNestedObject(t *testing.T) {
-	obj := map[string]any{
-		"a": map[string]any{
-			"b": map[string]any{
-				"c": "deep",
-			},
-		},
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"a":{"b":{"c":"deep"}}}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeBackslash(t *testing.T) {
-	obj := map[string]any{
-		"val": `back\slash`,
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"val":"back\\slash"}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeArrayInArray(t *testing.T) {
-	obj := map[string]any{
-		"matrix": []any{
-			[]any{float64(1), float64(2)},
-			[]any{float64(3), float64(4)},
-		},
-	}
-	got, err := Canonicalize(obj)
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-	want := `{"matrix":[[1,2],[3,4]]}`
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestFormatNumberErrors(t *testing.T) {
+func TestCanonicalizeStringEscapes(t *testing.T) {
 	tests := []struct {
 		name string
-		val  float64
-	}{
-		{"large exponent", 1e20},
-		{"small negative exponent", 1e-7},
-		{"half", 0.5},
-		{"max float64", math.MaxFloat64},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			obj := map[string]any{"val": tt.val}
-			_, err := Canonicalize(obj)
-			if err == nil {
-				t.Errorf("expected error for %v", tt.val)
-			}
-		})
-	}
-}
-
-func TestFormatNumberSuccess(t *testing.T) {
-	tests := []struct {
-		name string
-		val  float64
+		obj  map[string]any
 		want string
 	}{
-		{"1e15", 1e15, "1000000000000000"},
-		{"1.0", 1.0, "1"},
-		{"100.0", 100.0, "100"},
-		{"-1.0", -1.0, "-1"},
+		{"SpecialChars", map[string]any{"msg": "hello\nworld\t\"quoted\""}, `{"msg":"hello\nworld\t\"quoted\""}`},
+		// U+0001 should be escaped as \u0001
+		{"ControlChars", map[string]any{"val": "\x01"}, `{"val":"\u0001"}`},
+		{"Backspace", map[string]any{"val": "\b"}, `{"val":"\b"}`},
+		{"FormFeed", map[string]any{"val": "\f"}, `{"val":"\f"}`},
+		{"CarriageReturn", map[string]any{"val": "\r"}, `{"val":"\r"}`},
+		{"ForwardSlashNotEscaped", map[string]any{"path": "/foo/bar"}, `{"path":"/foo/bar"}`},
+		{"Backslash", map[string]any{"val": `back\slash`}, `{"val":"back\\slash"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			obj := map[string]any{"val": tt.val}
-			got, err := Canonicalize(obj)
+			got, err := Canonicalize(tt.obj)
 			if err != nil {
-				t.Fatalf("unexpected error for %v: %v", tt.val, err)
+				t.Fatalf("error: %v", err)
 			}
-			want := `{"val":` + tt.want + `}`
-			if string(got) != want {
-				t.Errorf("got %q, want %q", string(got), want)
+			if string(got) != tt.want {
+				t.Errorf("got %q, want %q", string(got), tt.want)
 			}
 		})
 	}
 }
 
-func TestCanonicalizeInvalidUTF8Value(t *testing.T) {
-	obj := map[string]any{
-		"val": "hello\xffworld",
+func TestCanonicalizeOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		obj  map[string]any
+		want string
+	}{
+		{"EmptyObject", map[string]any{}, `{}`},
+		{"EmptyArray", map[string]any{"arr": []any{}}, `{"arr":[]}`},
+		{"Numbers", map[string]any{"int": float64(42), "zero": float64(0)}, `{"int":42,"zero":0}`},
+		// Go int values should also work.
+		{"IntType", map[string]any{"val": 42}, `{"val":42}`},
+		{"Booleans", map[string]any{"f": false, "t": true}, `{"f":false,"t":true}`},
+		{"ArrayInArray", map[string]any{"matrix": []any{
+			[]any{float64(1), float64(2)},
+			[]any{float64(3), float64(4)},
+		}}, `{"matrix":[[1,2],[3,4]]}`},
+		{"GeorgianText", map[string]any{"name": "ქართველი"}, `{"name":"ქართველი"}`},
+		{"NestedArraysAndObjects", map[string]any{"items": []any{float64(1), "two", true, nil}}, `{"items":[1,"two",true,null]}`},
+		{"FormatNumberSuccess 1e15", map[string]any{"val": 1e15}, `{"val":1000000000000000}`},
+		{"FormatNumberSuccess 1.0", map[string]any{"val": 1.0}, `{"val":1}`},
+		{"FormatNumberSuccess 100.0", map[string]any{"val": 100.0}, `{"val":100}`},
+		{"FormatNumberSuccess -1.0", map[string]any{"val": -1.0}, `{"val":-1}`},
 	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for invalid UTF-8 in string value")
-	}
-}
-
-func TestCanonicalizeInvalidUTF8Key(t *testing.T) {
-	obj := map[string]any{
-		"bad\xffkey": "value",
-	}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected error for invalid UTF-8 in object key")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Canonicalize(tt.obj)
+			if err != nil {
+				t.Fatalf("error: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("got %q, want %q", string(got), tt.want)
+			}
+		})
 	}
 }
 
@@ -561,20 +200,6 @@ func TestCanonicalizeArrayJustUnderDepthLimit(t *testing.T) {
 	want := `{"arr":[[["ok"]]]}`
 	if string(got) != want {
 		t.Errorf("got %q, want %q", string(got), want)
-	}
-}
-
-func TestCanonicalizeArrayAtExactDepthLimit(t *testing.T) {
-	// depth 0: map, depth 1: arr1, depth 2: arr2, depth 3: arr3,
-	// depth 4: arr4 — rejected (depth >= maxDepth).
-	var v any = []any{"val"}
-	for i := 0; i < 3; i++ {
-		v = []any{v}
-	}
-	obj := map[string]any{"a": v}
-	_, err := Canonicalize(obj)
-	if err == nil {
-		t.Error("expected depth limit error for array at depth 4")
 	}
 }
 

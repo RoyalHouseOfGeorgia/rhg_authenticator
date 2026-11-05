@@ -21,12 +21,6 @@ const (
 	issueNewURL         = "https://github.com/" + repoOwner + "/" + repoName + "/issues/new"
 )
 
-// Package-level function variables for test injection.
-var (
-	restoreSessionFunc = ghapi.RestoreSession
-	newClientFunc      = ghapi.NewClient
-)
-
 // BuildIssueTitle constructs the issue title. The result is truncated
 // to maxTitleLen characters.
 func BuildIssueTitle(errType, shortDesc string) string {
@@ -53,26 +47,18 @@ func BuildIssueBody(version, errType, errMsg string) string {
 	return b.String()
 }
 
-// ReportIssue attempts to file a GitHub issue via the API. If the user
-// is not logged in or offline, it returns a pre-filled browser URL instead.
-func ReportIssue(ctx context.Context, kr ghapi.Keyring, configDir string, title, body string) (resultURL string, err error) {
-	tok, _, loggedIn, offline, err := restoreSessionFunc(ctx, kr, configDir)
+// ReportIssue files a GitHub issue through client (the logged-in session) and
+// returns its URL with filed set. With a nil client (logged out or offline),
+// or when the API call fails, it returns a pre-filled browser URL instead.
+func ReportIssue(ctx context.Context, client *ghapi.Client, title, body string) (resultURL string, filed bool) {
+	if client == nil {
+		return browserURL(title, body), false
+	}
+	result, err := client.CreateIssue(ctx, title, body, []string{"bug", "auto-reported"})
 	if err != nil {
-		return browserURL(title, body), nil
+		return browserURL(title, body), false
 	}
-
-	if loggedIn && !offline {
-		client := newClientFunc(tok.AccessToken)
-		result, createErr := client.CreateIssue(ctx, title, body, []string{"bug", "auto-reported"})
-		if createErr != nil {
-			// Fall through to browser URL on API failure.
-			return browserURL(title, body), nil
-		}
-		return result.HTMLURL, nil
-	}
-
-	// Logged in but offline, or not logged in — use browser fallback.
-	return browserURL(title, body), nil
+	return result.HTMLURL, true
 }
 
 // browserURL constructs a pre-filled GitHub new-issue URL. The body is

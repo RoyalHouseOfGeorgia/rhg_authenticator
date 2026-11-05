@@ -29,7 +29,7 @@ type State int
 const (
 	// StateIdle: nothing to show.
 	StateIdle State = iota
-	// StateReady: a verified update is staged; offer "Restart now".
+	// StateReady: a verified update is staged; offer "Restart Now".
 	StateReady
 	// StateManualOnly: a newer release exists but must be installed by hand;
 	// offer a Download link.
@@ -112,7 +112,7 @@ func defaultManagerDeps() managerDeps {
 // Manager runs the update lifecycle: startup cleanup, the "Updated to"
 // notice, then a check at launch and every checkInterval until an update is
 // Ready, downloading and staging it when the app can update itself. The
-// update is applied only by ApplyIfReady, after the UI has exited.
+// update is applied only by ApplyIfReady, at app shutdown.
 //
 // Errors are logged, never shown: the user only ever sees a Status.
 type Manager struct {
@@ -189,9 +189,9 @@ func (m *Manager) currentStatus() Status {
 // relaunch is set, starts the app again — the new version, or the unchanged
 // old one if the install failed (the user asked for a restart; the old app
 // offers the update again, or as a Download if apply marked it failed). It
-// does nothing unless an update is Ready, and applies at most once. Call it
-// on the main goroutine after the UI has exited, as the last thing before
-// exit.
+// does nothing unless an update is Ready, and applies at most once. The
+// core's app.shutdown calls it once the App is closed; the host exits after
+// shutdown returns.
 func (m *Manager) ApplyIfReady(relaunch bool) {
 	m.mu.Lock()
 	if m.status.State != StateReady || m.applied {

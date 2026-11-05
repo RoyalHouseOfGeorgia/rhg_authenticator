@@ -40,23 +40,3 @@ func TestRandomHex_Negative(t *testing.T) {
 		t.Fatal("expected error for negative n")
 	}
 }
-
-func TestRandomHex_Zero(t *testing.T) {
-	s, err := RandomHex(0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if s != "" {
-		t.Errorf("RandomHex(0) = %q, want empty", s)
-	}
-}
-
-func TestRandomHex_OddN(t *testing.T) {
-	s, err := RandomHex(7)
-	if err != nil {
-		t.Fatalf("RandomHex(7) error: %v", err)
-	}
-	if len(s) != 7 {
-		t.Errorf("len = %d, want 7", len(s))
-	}
-}

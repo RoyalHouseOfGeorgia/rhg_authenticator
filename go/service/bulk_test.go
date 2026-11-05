@@ -1,0 +1,583 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/go-piv/piv-go/v2/piv"
+
+	"github.com/royalhouseofgeorgia/rhg-authenticator/bulk"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
+	"github.com/royalhouseofgeorgia/rhg-authenticator/debuglog"
+	issuancelog "github.com/royalhouseofgeorgia/rhg-authenticator/log"
+)
+
+// authErrSignAdapter has a valid ExportPublicKey but fails SignBytes with a
+// PIV PIN authentication error, as a wrong PIN would.
+type authErrSignAdapter struct {
+	secretKey ed25519.PrivateKey
+}
+
+func (a *authErrSignAdapter) ExportPublicKey() ([32]byte, error) {
+	var key [32]byte
+	copy(key[:], a.secretKey.Public().(ed25519.PublicKey))
+	return key, nil
+}
+
+func (a *authErrSignAdapter) SignBytes(data []byte) ([]byte, error) {
+	return nil, piv.AuthErr{Retries: 2}
+}
+
+// bulkHarness bundles a temp issuance log, debug logger, and call-counting
+// openAdapter/readPin fakes backed by an in-test ed25519 key. opens counts
+// the signing opens (given the PIN), keyReads the PIN-free key reads, and
+// keyReadsOpen the key reads not yet closed: readPin fails while one is open,
+// since no card handle may be held across PIN entry.
+type bulkHarness struct {
+	logPath      string
+	debugLogPath string
+	logger       *debuglog.Logger
+	priv         ed25519.PrivateKey
+	opens        int
+	keyReads     int
+	pinReads     int
+
+	keyReadsOpen int
+	pinErr       error
+	newSigner    func(ed25519.PrivateKey) core.SigningAdapter
+}
+
+func newBulkHarness(t *testing.T) *bulkHarness {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	dir := t.TempDir()
+	debugLogPath := filepath.Join(dir, "debug.log")
+	return &bulkHarness{
+		logPath:      filepath.Join(dir, "issuances.json"),
+		debugLogPath: debugLogPath,
+		logger:       debuglog.New(debugLogPath),
+		priv:         priv,
+		newSigner: func(k ed25519.PrivateKey) core.SigningAdapter {
+			return &mockSignAdapter{secretKey: k}
+		},
+	}
+}
+
+// debugLog returns the debug log's contents ("" if nothing was logged).
+func (h *bulkHarness) debugLog(t *testing.T) string {
+	t.Helper()
+	data, _ := os.ReadFile(h.debugLogPath)
+	return string(data)
+}
+
+func (h *bulkHarness) openAdapter(rp func() (string, error)) (core.SigningAdapter, io.Closer, error) {
+	if pin, _ := rp(); pin == "" {
+		h.keyReads++
+		h.keyReadsOpen++
+		return h.newSigner(h.priv), closeFunc(func() { h.keyReadsOpen-- }), nil
+	}
+	h.opens++
+	return h.newSigner(h.priv), nopCloser{}, nil
+}
+
+func (h *bulkHarness) readPin() (string, error) {
+	h.pinReads++
+	if h.keyReadsOpen != 0 {
+		return "", errors.New("PIN asked while a key-read handle is open")
+	}
+	if h.pinErr != nil {
+		return "", h.pinErr
+	}
+	return "123456", nil
+}
+
+func (h *bulkHarness) run(t *testing.T, ctx context.Context, results []bulk.Result, onProgress func(done, total int, name string)) error {
+	t.Helper()
+	if onProgress == nil {
+		onProgress = func(int, int, string) {}
+	}
+	return runBulkFlow(ctx, results, h.logPath, h.openAdapter, acceptAnyKey, h.readPin, nil, onProgress, h.logger)
+}
+
+func (h *bulkHarness) plan(t *testing.T, csvText string) []bulk.Result {
+	t.Helper()
+	results, err := loadBulkPlan(strings.NewReader(csvText), h.logPath, h.logger)
+	if err != nil {
+		t.Fatalf("loadBulkPlan: %v", err)
+	}
+	return results
+}
+
+func (h *bulkHarness) logCount(t *testing.T) int {
+	t.Helper()
+	records, err := issuancelog.ReadLog(h.logPath)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	return len(records)
+}
+
+func assertCountsInvariant(t *testing.T, results []bulk.Result) bulk.Counts {
+	t.Helper()
+	c := bulk.Summarize(results)
+	if c.ToSign != 0 {
+		t.Errorf("%d rows left to_sign", c.ToSign)
+	}
+	if sum := c.Signed + c.AlreadyIssued + c.Invalid + c.Failed + c.NotAttempted; sum != c.Total {
+		t.Errorf("counts sum %d != total %d (%+v)", sum, c.Total, c)
+	}
+	return c
+}
+
+func statuses(results []bulk.Result) []string {
+	out := make([]string, len(results))
+	for i, r := range results {
+		out[i] = r.Status
+	}
+	return out
+}
+
+func assertStatuses(t *testing.T, results []bulk.Result, want ...string) {
+	t.Helper()
+	got := statuses(results)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("statuses = %v, want %v", got, want)
+	}
+}
+
+const threeRowCSV = "name,honor,detail,date\n" +
+	"Alice,Other,Service,2026-03-14\n" +
+	"Bob,Appointment,Advisor,2026-03-14\n" +
+	"Dave,Other,Help,2026-03-14\n"
+
+func TestBulkFlow_EndToEndReRunIsIdempotent(t *testing.T) {
+	const csvText = "name,honor,detail,date\n" +
+		"Alice,Other,Service,2026-03-14\n" +
+		"Bob,Appointment,Advisor,2026-03-14\n" +
+		"Carol,Not A Title,Whatever,2026-03-14\n" +
+		"Alice,Other,Service,2026-03-14\n" +
+		"Dave,Other,Help,2026-03-14\n"
+	h := newBulkHarness(t)
+
+	first := h.plan(t, csvText)
+	if err := h.run(t, context.Background(), first, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	assertStatuses(t, first,
+		bulk.StatusSigned, bulk.StatusSigned, bulk.StatusInvalid, bulk.StatusInvalid, bulk.StatusSigned)
+	c := assertCountsInvariant(t, first)
+	if c.Signed != 3 {
+		t.Errorf("Signed = %d, want 3", c.Signed)
+	}
+	for _, i := range []int{0, 1, 4} {
+		if first[i].URL == "" {
+			t.Errorf("row %d: empty URL", i)
+		}
+	}
+	if !strings.Contains(first[3].Err, "duplicate of line") {
+		t.Errorf("row 3 Err = %q, want duplicate", first[3].Err)
+	}
+	if n := h.logCount(t); n != 3 {
+		t.Errorf("log records = %d, want 3", n)
+	}
+	if h.pinReads != 1 || h.opens != 3 || h.keyReads != 1 {
+		t.Errorf("pinReads=%d opens=%d keyReads=%d, want 1, 3 and 1", h.pinReads, h.opens, h.keyReads)
+	}
+
+	h.pinReads, h.opens, h.keyReads = 0, 0, 0
+	second := h.plan(t, csvText)
+	if err := h.run(t, context.Background(), second, nil); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	assertStatuses(t, second,
+		bulk.StatusAlreadyIssued, bulk.StatusAlreadyIssued, bulk.StatusInvalid, bulk.StatusInvalid, bulk.StatusAlreadyIssued)
+	for _, i := range []int{0, 1, 4} {
+		if second[i].URL != first[i].URL {
+			t.Errorf("row %d URL changed:\n first=%s\nsecond=%s", i, first[i].URL, second[i].URL)
+		}
+	}
+	if n := h.logCount(t); n != 3 {
+		t.Errorf("log records after re-run = %d, want 3", n)
+	}
+	if h.pinReads != 0 || h.opens != 0 || h.keyReads != 0 {
+		t.Errorf("re-run touched the card: pinReads=%d opens=%d keyReads=%d", h.pinReads, h.opens, h.keyReads)
+	}
+}
+
+func TestBulkFlow_SingleSignInterop(t *testing.T) {
+	h := newBulkHarness(t)
+	req := core.SignRequest{
+		Recipient: "José Pérez",
+		Honor:     "Other",
+		Detail:    "Café service",
+		Date:      "2026-03-14",
+	}
+	single, err := executeSignFlow(req, h.logPath, true, h.openAdapter, acceptAnyKey, h.readPin, nil, h.logger)
+	if err != nil {
+		t.Fatalf("executeSignFlow: %v", err)
+	}
+
+	// Same credential, whitespace-padded, recipient/detail in NFD form.
+	csvText := "name,honor,detail,date\n" +
+		"  José Pérez  , Other ,  Café service ,2026-03-14 \n"
+	results := h.plan(t, csvText)
+	assertStatuses(t, results, bulk.StatusAlreadyIssued)
+	if results[0].URL != single.Response.URL {
+		t.Errorf("URL mismatch:\n  bulk=%s\nsingle=%s", results[0].URL, single.Response.URL)
+	}
+}
+
+func TestBulkFlow_ReadPinCalledOncePerBatch(t *testing.T) {
+	h := newBulkHarness(t)
+	connecting := 0
+	var progress []int
+	results := h.plan(t, threeRowCSV)
+	err := runBulkFlow(context.Background(), results, h.logPath, h.openAdapter, acceptAnyKey, h.readPin,
+		func() { connecting++ },
+		func(done, total int, name string) {
+			if total != 3 {
+				t.Errorf("total = %d, want 3", total)
+			}
+			progress = append(progress, done)
+		},
+		h.logger)
+	if err != nil {
+		t.Fatalf("runBulkFlow: %v", err)
+	}
+	if h.pinReads != 1 {
+		t.Errorf("readPin called %d times, want 1", h.pinReads)
+	}
+	if h.opens != 3 {
+		t.Errorf("openAdapter called %d times, want 3 (fresh per row)", h.opens)
+	}
+	if connecting != 1 {
+		t.Errorf("onConnecting called %d times, want 1", connecting)
+	}
+	if len(progress) != 3 {
+		t.Errorf("onProgress calls = %v, want 3", progress)
+	}
+	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusSigned, bulk.StatusSigned)
+}
+
+func TestBulkFlow_WrongPINStops(t *testing.T) {
+	h := newBulkHarness(t)
+	h.newSigner = func(k ed25519.PrivateKey) core.SigningAdapter { return &authErrSignAdapter{secretKey: k} }
+	results := h.plan(t, threeRowCSV)
+
+	err := h.run(t, context.Background(), results, nil)
+	var authErr piv.AuthErr
+	if !errors.As(err, &authErr) {
+		t.Fatalf("errors.As(err, piv.AuthErr) = false; err = %v", err)
+	}
+	assertStatuses(t, results, bulk.StatusFailed, bulk.StatusNotAttempted, bulk.StatusNotAttempted)
+	if !strings.Contains(results[0].Err, "Incorrect PIN") {
+		t.Errorf("row 0 Err = %q, want Incorrect PIN message", results[0].Err)
+	}
+	assertCountsInvariant(t, results)
+	if h.opens != 1 {
+		t.Errorf("openAdapter called %d times, want 1", h.opens)
+	}
+	// The failure is logged once, where it happened, though it is described
+	// for its row and again for the stop message.
+	log := h.debugLog(t)
+	if n := strings.Count(log, "\n"); n != 1 || !strings.Contains(log, "HandleSign") {
+		t.Errorf("debug log has %d lines, want 1 (the HandleSign failure):\n%s", n, log)
+	}
+}
+
+// A logged record counts as the issued credential only with a well-formed
+// signature, its hash matched case-insensitively and the first such record
+// winning, as in Sign's duplicate check.
+func TestLoadBulkPlan_IssuedSignatureRules(t *testing.T) {
+	sig := func(b byte) string { return core.Encode(bytes.Repeat([]byte{b}, ed25519.SignatureSize)) }
+	const malformed = "not-a-signature"
+	cases := []struct {
+		name    string
+		logged  []string // signatures logged for row 0's hash, in order
+		upper   bool     // log the hash in upper case
+		wantSig string   // "" when row 0 is still to sign
+	}{
+		{"malformed only", []string{malformed}, false, ""},
+		{"malformed then valid", []string{malformed, sig(1)}, false, sig(1)},
+		{"valid then malformed", []string{sig(1), malformed}, false, sig(1)},
+		{"first valid wins", []string{sig(1), sig(2)}, false, sig(1)},
+		{"upper-case hash", []string{sig(3)}, true, sig(3)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newBulkHarness(t)
+			hash := h.plan(t, threeRowCSV)[0].Hash
+			if tc.upper {
+				hash = strings.ToUpper(hash)
+			}
+			for _, s := range tc.logged {
+				rec := issuancelog.IssuanceRecord{Timestamp: "2026-03-14T00:00:00Z", PayloadSHA256: hash, SignatureB64URL: s}
+				if err := issuancelog.AppendRecord(h.logPath, rec); err != nil {
+					t.Fatalf("AppendRecord: %v", err)
+				}
+			}
+			row := h.plan(t, threeRowCSV)[0]
+			if tc.wantSig == "" {
+				if row.Status != bulk.StatusToSign {
+					t.Errorf("Status = %q, want to_sign", row.Status)
+				}
+				return
+			}
+			if row.Status != bulk.StatusAlreadyIssued || !strings.HasSuffix(row.URL, tc.wantSig) {
+				t.Errorf("Status = %q, URL = %q, want already_issued ending in %q", row.Status, row.URL, tc.wantSig)
+			}
+		})
+	}
+}
+
+func TestLoadBulkPlan_UnreadableLogRefuses(t *testing.T) {
+	results, err := loadBulkPlan(strings.NewReader(threeRowCSV), t.TempDir(), nil)
+	if err == nil {
+		t.Fatal("expected error for a directory log path")
+	}
+	if err.Error() != "Cannot read the issuance log; bulk signing needs it to avoid duplicates." {
+		t.Errorf("err = %q", err)
+	}
+	if results != nil {
+		t.Errorf("results = %v, want nil", results)
+	}
+}
+
+func TestLoadBulkPlan_InputErrorsPropagate(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "issuances.json")
+	cases := []struct {
+		name, input, want string
+	}{
+		{"empty", "", "File is empty."},
+		{"missing header", "name,honor,detail\nA,Other,x\n", `Missing required column "date" (need name, honor, detail, date).`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			results, err := loadBulkPlan(strings.NewReader(tc.input), logPath, nil)
+			if err == nil || err.Error() != tc.want {
+				t.Errorf("err = %v, want containing %q", err, tc.want)
+			}
+			if results != nil {
+				t.Errorf("results = %v, want nil", results)
+			}
+		})
+	}
+}
+
+func TestBulkFlow_LogAppendFailureStopsBatch(t *testing.T) {
+	h := newBulkHarness(t)
+	results := h.plan(t, threeRowCSV)
+	h.logPath = filepath.Join(t.TempDir(), "missing", "log.json")
+
+	err := h.run(t, context.Background(), results, nil)
+	if !errors.Is(err, core.ErrNotLogged) {
+		t.Fatalf("errors.Is(err, ErrNotLogged) = false; err = %v", err)
+	}
+	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusNotAttempted, bulk.StatusNotAttempted)
+	if results[0].URL == "" {
+		t.Error("row 0: expected URL for signed-but-unlogged credential")
+	}
+	if results[0].Err != "signed but NOT recorded in issuance log" {
+		t.Errorf("row 0 Err = %q", results[0].Err)
+	}
+	assertCountsInvariant(t, results)
+	if msg := bulkStopMessage(bulkStop(err), err); !strings.HasPrefix(msg, "Batch stopped: Credential signed but NOT recorded") {
+		t.Errorf("bulkStopMessage = %q", msg)
+	}
+}
+
+func TestBulkFlow_ReadPinErrorSignsNothing(t *testing.T) {
+	for _, pinErr := range []error{errSigningCancelled, errPINEntryTimedOut} {
+		t.Run(pinErr.Error(), func(t *testing.T) {
+			h := newBulkHarness(t)
+			h.pinErr = pinErr
+			results := h.plan(t, threeRowCSV)
+
+			err := h.run(t, context.Background(), results, nil)
+			if err != pinErr {
+				t.Fatalf("err = %v, want %v unchanged", err, pinErr)
+			}
+			if h.pinReads != 1 || h.opens != 0 {
+				t.Errorf("pinReads=%d opens=%d, want 1 and 0", h.pinReads, h.opens)
+			}
+			c := assertCountsInvariant(t, results)
+			if c.Signed != 0 || c.NotAttempted != 3 {
+				t.Errorf("counts = %+v, want 0 signed, 3 not_attempted", c)
+			}
+			if n := h.logCount(t); n != 0 {
+				t.Errorf("log records = %d, want 0", n)
+			}
+		})
+	}
+}
+
+func TestBulkFlow_CancelDuringProgress(t *testing.T) {
+	h := newBulkHarness(t)
+	results := h.plan(t, threeRowCSV)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Cancelling while row 2 is announced lets row 2 finish; row 3 is skipped.
+	err := h.run(t, ctx, results, func(done, total int, name string) {
+		if done == 1 {
+			cancel()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	assertStatuses(t, results, bulk.StatusSigned, bulk.StatusSigned, bulk.StatusNotAttempted)
+	assertCountsInvariant(t, results)
+	if msg := bulkStopMessage(bulkStop(err), err); msg != "Cancelled." {
+		t.Errorf("bulkStopMessage = %q, want Cancelled.", msg)
+	}
+	if n := h.logCount(t); n != 2 {
+		t.Errorf("log records = %d, want 2", n)
+	}
+}
+
+func TestBulkStopMessage(t *testing.T) {
+	if got := bulkStopMessage(bulkStop(nil), nil); got != "" {
+		t.Errorf("nil: got %q, want empty", got)
+	}
+	if got := bulkStopMessage(BulkCancelled, context.Canceled); got != "Cancelled." {
+		t.Errorf("context.Canceled: got %q", got)
+	}
+	if got := bulkStopMessage(BulkCancelled, errSigningCancelled); got != "Cancelled." {
+		t.Errorf("errSigningCancelled: got %q", got)
+	}
+	if got := bulkStopMessage(BulkFailed, errors.New("something odd")); !strings.HasPrefix(got, "Batch stopped: ") {
+		t.Errorf("generic: got %q, want 'Batch stopped: ' prefix", got)
+	}
+}
+
+func TestBulkStop(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want BulkStop
+	}{
+		{nil, BulkCompleted},
+		{context.Canceled, BulkCancelled},
+		{fmt.Errorf("bulk: %w", context.Canceled), BulkCancelled},
+		{errSigningCancelled, BulkCancelled},
+		{errPINEntryTimedOut, BulkFailed},
+		{errors.New("something odd"), BulkFailed},
+	} {
+		if got := bulkStop(tc.err); got != tc.want {
+			t.Errorf("bulkStop(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+}
+
+func TestBulkSummaryLine(t *testing.T) {
+	tests := []struct {
+		name string
+		c    bulk.Counts
+		want string
+	}{
+		{"zero", bulk.Counts{}, "Processed 0 rows: 0 successful (0 newly signed, 0 already issued), 0 invalid, 0 failed/not attempted."},
+		{
+			"mixed",
+			bulk.Counts{Total: 10, Signed: 3, AlreadyIssued: 2, Invalid: 1, Failed: 1, NotAttempted: 3},
+			"Processed 10 rows: 5 successful (3 newly signed, 2 already issued), 1 invalid, 4 failed/not attempted.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bulkSummaryLine(tt.c); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBulkConfirmText(t *testing.T) {
+	toSign := func(name string) bulk.Result {
+		return bulk.Result{Req: core.SignRequest{Recipient: name}, Status: bulk.StatusToSign}
+	}
+	invalid := func(line int, msg string) bulk.Result {
+		r := bulk.Result{Status: bulk.StatusInvalid, Err: msg}
+		r.Line = line
+		return r
+	}
+	issued := bulk.Result{Req: core.SignRequest{Recipient: "Old"}, Status: bulk.StatusAlreadyIssued}
+
+	tests := []struct {
+		name        string
+		results     []bulk.Result
+		wantCounts  string
+		wantPreview []string
+		wantInvalid []string
+	}{
+		{"empty", nil, "0 rows: 0 to sign, 0 already issued, 0 invalid", nil, nil},
+		{
+			"mixed",
+			[]bulk.Result{toSign("Alice"), issued, invalid(4, "date: bad"), toSign("Bob")},
+			"4 rows: 2 to sign, 1 already issued, 1 invalid",
+			[]string{"Alice", "Bob"},
+			[]string{"line 4: date: bad"},
+		},
+		{
+			"preview capped at five",
+			[]bulk.Result{toSign("A"), toSign("B"), toSign("C"), toSign("D"), toSign("E"), toSign("F"), invalid(8, "x"), invalid(9, "y")},
+			"8 rows: 6 to sign, 0 already issued, 2 invalid",
+			[]string{"A", "B", "C", "D", "E"},
+			[]string{"line 8: x", "line 9: y"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			counts, preview, inv := bulkConfirmText(tt.results)
+			if counts != tt.wantCounts {
+				t.Errorf("counts = %q, want %q", counts, tt.wantCounts)
+			}
+			if strings.Join(preview, "|") != strings.Join(tt.wantPreview, "|") {
+				t.Errorf("preview = %v, want %v", preview, tt.wantPreview)
+			}
+			if strings.Join(inv, "|") != strings.Join(tt.wantInvalid, "|") {
+				t.Errorf("invalid = %v, want %v", inv, tt.wantInvalid)
+			}
+		})
+	}
+}
+
+func TestBulkResultsFilename(t *testing.T) {
+	tests := []struct {
+		name string
+		t    time.Time
+		want string
+	}{
+		{"utc", time.Date(2026, 9, 23, 7, 5, 9, 0, time.UTC), "rhg-bulk-results-2026-09-23-070509.csv"},
+		{"converted to utc", time.Date(2026, 1, 1, 1, 30, 0, 0, time.FixedZone("UTC+4", 4*3600)), "rhg-bulk-results-2025-12-31-213000.csv"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bulkResultsFilename(tt.t); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBulkResultsCSV(t *testing.T) {
+	results := []bulk.Result{{Req: core.SignRequest{Recipient: "Alice", Honor: "Other", Detail: "D", Date: "2026-03-14"}, Status: bulk.StatusSigned, URL: "https://example/v"}}
+	got, err := bulkResultsCSV(results)
+	if err != nil {
+		t.Fatalf("bulkResultsCSV: %v", err)
+	}
+	if !strings.Contains(string(got), "Alice,Other,D,2026-03-14,https://example/v,signed,") {
+		t.Errorf("unexpected CSV:\n%s", got)
+	}
+}

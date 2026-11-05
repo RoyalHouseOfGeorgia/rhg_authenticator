@@ -126,14 +126,10 @@ type PRResult struct {
 	HTMLURL string `json:"html_url"`
 }
 
-// SafeRedirect is an alias for core.SafeRedirect, kept for in-package callers.
-// For unauthenticated HTTP clients only.
-var SafeRedirect = core.SafeRedirect
-
 // safeCheckRedirect strips the Authorization header when a redirect targets
 // a host outside *.github.com. For authenticated API clients only.
 //
-// Unauthenticated clients should use SafeRedirect instead, which rejects
+// Unauthenticated clients should use core.SafeRedirect instead, which rejects
 // non-HTTPS redirects entirely.
 func safeCheckRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) == 0 {
@@ -161,6 +157,28 @@ func IsGitHubHost(host string) bool {
 	}
 	// Leading dot prevents suffix confusion (e.g., evil-github.com → false).
 	return h == "github.com" || strings.HasSuffix(h, ".github.com")
+}
+
+// GitHubURLOrEmpty returns rawURL if ParseGitHubURL accepts it, else "", so
+// only https github.com links reach the user.
+func GitHubURLOrEmpty(rawURL string) string {
+	if ParseGitHubURL(rawURL) == nil {
+		return ""
+	}
+	return rawURL
+}
+
+// ParseGitHubURL validates and parses a URL as HTTPS github.com without
+// embedded credentials. Returns nil if invalid.
+func ParseGitHubURL(rawURL string) *url.URL {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil
+	}
+	if u.Scheme != "https" || u.Host != "github.com" || u.User != nil {
+		return nil
+	}
+	return u
 }
 
 // NewClient returns a Client configured with default owner/repo and a 30s timeout.

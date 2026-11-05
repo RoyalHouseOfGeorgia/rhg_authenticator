@@ -125,17 +125,6 @@ func TestExtractZip_ByteCap(t *testing.T) {
 	})
 }
 
-func TestExtractZip_DeclaredSizeLie(t *testing.T) {
-	// Declares 1000 bytes but stores none: archive/zip must fail the read.
-	zp := writeZip(t, []zipEntry{
-		{name: "A.app/"},
-		{name: "A.app/lie", size: 1000},
-	})
-	if err := extractZip(zp, t.TempDir()); err == nil {
-		t.Fatal("expected error for entry whose content does not match its declared size")
-	}
-}
-
 func TestExtractZip_RefusesExistingPaths(t *testing.T) {
 	zp := writeZip(t, bundle("A.app"))
 

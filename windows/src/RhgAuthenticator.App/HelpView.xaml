@@ -1,0 +1,27 @@
+<UserControl x:Class="RhgAuthenticator.App.HelpView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels">
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Style="{StaticResource CommandRow}">
+            <!-- Works in every phase: the log may explain a slow or failed startup. -->
+            <Button Style="{StaticResource AccentButtonStyle}" ContentTemplate="{StaticResource CommandContent}"
+                    Tag="&#xE78C;" Content="{x:Static vm:AppViewModel.ExportErrorLogTitle}"
+                    AutomationProperties.Name="{x:Static vm:AppViewModel.ExportErrorLogTitle}"
+                    Command="{Binding ExportErrorLogCommand}" />
+        </StackPanel>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="24,0,24,16">
+                <!-- While the core starts: the loading text and progress, above the usual content. -->
+                <StackPanel Margin="0,0,0,16" HorizontalAlignment="Left"
+                            Visibility="{Binding IsStarting, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock Text="{x:Static vm:AppViewModel.LoadingText}" />
+                    <!-- Bound, not True: the animation stops once startup ends, not merely hides. -->
+                    <ProgressBar Width="240" Margin="0,8,0,0" HorizontalAlignment="Left"
+                                 IsIndeterminate="{Binding IsStarting, Mode=OneWay}" />
+                </StackPanel>
+                <TextBlock TextWrapping="Wrap" Text="{x:Static vm:AppViewModel.HelpText}" />
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

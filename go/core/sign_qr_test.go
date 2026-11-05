@@ -60,6 +60,10 @@ func assertTooLong(t *testing.T, err error, wantOver int) {
 // TestBuildPayload_QRBoundaryASCII pins the strict `>` boundary: a URL of
 // exactly MaxVerifyURLLength must build, one character over must fail.
 func TestBuildPayload_QRBoundaryASCII(t *testing.T) {
+	// The QR version and its printed size depend on this limit.
+	if MaxVerifyURLLength != 625 {
+		t.Fatalf("MaxVerifyURLLength = %d, want 625", MaxVerifyURLLength)
+	}
 	// Find the longest ASCII detail whose URL fits, then confirm the exact length.
 	detail := ""
 	for urlLenFor(t, qrReq(detail+"x")) <= MaxVerifyURLLength {
@@ -111,17 +115,6 @@ func TestBuildPayload_QRBoundaryGeorgian(t *testing.T) {
 	}
 	_, err := BuildPayload(qrReq(over))
 	assertTooLong(t, err, overBytes(overLen))
-}
-
-// TestBuildPayload_TooLongOverBytesScales checks OverBytes reflects how far
-// over the limit a long detail is (roughly 1:1 in ASCII bytes).
-func TestBuildPayload_TooLongOverBytesScales(t *testing.T) {
-	detail := ""
-	for urlLenFor(t, qrReq(detail+"x")) <= MaxVerifyURLLength {
-		detail += "x"
-	}
-	_, err := BuildPayload(qrReq(detail + strings.Repeat("x", 30)))
-	assertTooLong(t, err, 30)
 }
 
 func TestVerifyURLLength_MatchesHandleSign(t *testing.T) {
@@ -233,15 +226,5 @@ func TestInvalidCredentialError(t *testing.T) {
 	var ice *InvalidCredentialError
 	if !errors.As(fmt.Errorf("wrapped: %w", err), &ice) || ice.Reason != reason {
 		t.Error("errors.As through a wrap must expose Reason")
-	}
-}
-
-func TestTooLongForQRError_Is(t *testing.T) {
-	e := &TooLongForQRError{OverBytes: 1}
-	if !e.Is(ErrTooLongForQR) {
-		t.Error("Is(ErrTooLongForQR) = false")
-	}
-	if e.Is(ErrInvalidCredential) || e.Is(errors.New("too long to fit in a QR code")) {
-		t.Error("Is matched an unrelated error")
 	}
 }

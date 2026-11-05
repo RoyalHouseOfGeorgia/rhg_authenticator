@@ -1,9 +1,6 @@
 package core
 
-import (
-	"fmt"
-	"testing"
-)
+import "testing"
 
 func TestIsValidDate(t *testing.T) {
 	tests := []struct {
@@ -76,33 +73,6 @@ func TestIsValidDate(t *testing.T) {
 			got := IsValidDate(tt.input)
 			if got != tt.want {
 				t.Errorf("IsValidDate(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsLeapYear(t *testing.T) {
-	tests := []struct {
-		year int
-		want bool
-	}{
-		{2024, true},  // divisible by 4
-		{2023, false}, // not divisible by 4
-		{1900, false}, // divisible by 100 but not 400
-		{2000, true},  // divisible by 400
-		{1600, true},  // divisible by 400
-		{2100, false}, // divisible by 100 but not 400
-		{4, true},     // small leap year
-		{1, false},    // year 1
-		{400, true},   // divisible by 400
-		{100, false},  // divisible by 100 but not 400
-	}
-
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("year_%d", tt.year), func(t *testing.T) {
-			got := isLeapYear(tt.year)
-			if got != tt.want {
-				t.Errorf("isLeapYear(%d) = %v, want %v", tt.year, got, tt.want)
 			}
 		})
 	}

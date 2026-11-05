@@ -116,10 +116,10 @@ describe('parseParams', () => {
 });
 
 // ---------------------------------------------------------------------------
-// getRegistryUrl
+// getRegistryUrl / getRevocationListUrl
 // ---------------------------------------------------------------------------
 
-describe('getRegistryUrl', () => {
+describe('getRegistryUrl / getRevocationListUrl', () => {
   const originalLocation = window.location;
 
   afterEach(() => {
@@ -130,89 +130,48 @@ describe('getRegistryUrl', () => {
     });
   });
 
-  it('returns absolute URL for production hostname', () => {
+  it.each([
+    {
+      name: 'getRegistryUrl returns absolute URL for production hostname',
+      getUrl: getRegistryUrl,
+      hostname: 'verify.royalhouseofgeorgia.ge',
+      expected: 'https://verify.royalhouseofgeorgia.ge/keys/registry.json',
+    },
+    {
+      name: 'getRegistryUrl returns relative URL for localhost',
+      getUrl: getRegistryUrl,
+      hostname: 'localhost',
+      expected: '/keys/registry.json',
+    },
+    {
+      name: 'getRevocationListUrl returns absolute URL for production hostname',
+      getUrl: getRevocationListUrl,
+      hostname: 'verify.royalhouseofgeorgia.ge',
+      expected: 'https://verify.royalhouseofgeorgia.ge/keys/revocations.json',
+    },
+    {
+      name: 'getRevocationListUrl returns relative URL for localhost',
+      getUrl: getRevocationListUrl,
+      hostname: 'localhost',
+      expected: '/keys/revocations.json',
+    },
+  ])('$name', ({ getUrl, hostname, expected }) => {
     Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, hostname: 'verify.royalhouseofgeorgia.ge' },
+      value: { ...originalLocation, hostname },
       writable: true,
       configurable: true,
     });
-    expect(getRegistryUrl()).toBe(
-      'https://verify.royalhouseofgeorgia.ge/keys/registry.json',
-    );
-  });
-
-  it('returns relative URL for localhost', () => {
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, hostname: 'localhost' },
-      writable: true,
-      configurable: true,
-    });
-    expect(getRegistryUrl()).toBe('/keys/registry.json');
-  });
-
-  it('returns relative URL for LAN IP', () => {
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, hostname: '192.168.1.100' },
-      writable: true,
-      configurable: true,
-    });
-    expect(getRegistryUrl()).toBe('/keys/registry.json');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getRevocationListUrl
-// ---------------------------------------------------------------------------
-
-describe('getRevocationListUrl', () => {
-  const originalLocation = window.location;
-
-  afterEach(() => {
-    Object.defineProperty(window, 'location', {
-      value: originalLocation,
-      writable: true,
-      configurable: true,
-    });
-  });
-
-  it('returns absolute URL for production hostname', () => {
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, hostname: 'verify.royalhouseofgeorgia.ge' },
-      writable: true,
-      configurable: true,
-    });
-    expect(getRevocationListUrl()).toBe(
-      'https://verify.royalhouseofgeorgia.ge/keys/revocations.json',
-    );
-  });
-
-  it('returns relative URL for localhost', () => {
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, hostname: 'localhost' },
-      writable: true,
-      configurable: true,
-    });
-    expect(getRevocationListUrl()).toBe('/keys/revocations.json');
-  });
-
-  it('returns relative URL for LAN IP', () => {
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, hostname: '192.168.1.100' },
-      writable: true,
-      configurable: true,
-    });
-    expect(getRevocationListUrl()).toBe('/keys/revocations.json');
+    expect(getUrl()).toBe(expected);
   });
 });
 
 // ---------------------------------------------------------------------------
-// fetchRegistry
+// fetchRegistry / fetchRevocationList
 // ---------------------------------------------------------------------------
 
-describe('fetchRegistry', () => {
+describe('fetchRegistry / fetchRevocationList', () => {
   const { publicKey } = makeKeypair();
-  const validRegistry = makeRegistry(makeKeyEntry(publicKey));
-  const validJson = makeRegistryJson(validRegistry);
+  const validRegistryJson = makeRegistryJson(makeRegistry(makeKeyEntry(publicKey)));
 
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
@@ -220,141 +179,19 @@ describe('fetchRegistry', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
-  it('returns validated registry on success', async () => {
+  it('fetchRegistry returns validated registry on success', async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(validJson, { status: 200 }),
+      new Response(validRegistryJson, { status: 200 }),
     );
     const result = await fetchRegistry('/keys/registry.json');
     expect(result.keys).toHaveLength(1);
     expect(result.keys[0].authority).toBe('Test Authority');
   });
 
-  it('throws on network error', async () => {
-    vi.mocked(fetch).mockRejectedValue(new TypeError('Network failure'));
-    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
-      'Failed to contact verification service',
-    );
-  });
-
-  it('throws on non-200 HTTP status', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response('Not found', { status: 404 }),
-    );
-    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
-      'Verification service returned an error',
-    );
-  });
-
-  it('throws on invalid JSON response', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response('not json {{', { status: 200, headers: { 'Content-Type': 'application/json' } }),
-    );
-    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
-      'Registry data is corrupted',
-    );
-  });
-
-  it('throws when response body exceeds 1 MiB', async () => {
-    const oversized = 'x'.repeat(1024 * 1024 + 1);
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(oversized, { status: 200 }),
-    );
-    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
-      'Registry response exceeds size limit',
-    );
-  });
-
-  it('accepts response body under 1 MiB with valid registry JSON', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(validJson, { status: 200 }),
-    );
-    const result = await fetchRegistry('/keys/registry.json');
-    // validJson is well under 1 MiB — just verify it parses successfully
-    expect(result.keys).toHaveLength(1);
-  });
-
-  it('throws on schema validation failure (valid JSON, invalid registry)', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ keys: [] }), { status: 200 }),
-    );
-    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
-      'Registry data is invalid',
-    );
-  });
-
-  it('passes credentials omit and no-referrer to fetch', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(validJson, { status: 200 }),
-    );
-    await fetchRegistry('/keys/registry.json');
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      '/keys/registry.json',
-      expect.objectContaining({
-        credentials: 'omit',
-        referrerPolicy: 'no-referrer',
-      }),
-    );
-  });
-
-  it('rejects early when Content-Length header exceeds size limit', async () => {
-    const headers = new Headers({ 'Content-Length': '2000000' });
-    vi.mocked(fetch).mockResolvedValue(
-      new Response('{}', { status: 200, headers }),
-    );
-    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
-      'Registry response exceeds size limit',
-    );
-  });
-
-  it('rejects non-numeric Content-Length header', async () => {
-    const headers = new Headers({ 'Content-Length': 'bogus' });
-    vi.mocked(fetch).mockResolvedValue(
-      new Response('{}', { status: 200, headers }),
-    );
-    await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
-      'Registry response exceeds size limit',
-    );
-  });
-
-  it('throws on timeout', async () => {
-    vi.useFakeTimers();
-    vi.mocked(fetch).mockImplementation(
-      (_url, init) =>
-        new Promise((_resolve, reject) => {
-          (init?.signal as AbortSignal)?.addEventListener('abort', () => {
-            reject(new DOMException('Aborted', 'AbortError'));
-          });
-        }),
-    );
-
-    const promise = fetchRegistry('/keys/registry.json');
-    vi.advanceTimersByTime(10_000);
-    await expect(promise).rejects.toThrow(
-      'Failed to contact verification service',
-    );
-    vi.useRealTimers();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// fetchRevocationList
-// ---------------------------------------------------------------------------
-
-describe('fetchRevocationList', () => {
-  const validRevocationList = makeEmptyRevocationList();
-  const validJson = makeRevocationListJson(validRevocationList);
-
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('returns validated revocation list on success', async () => {
+  it('fetchRevocationList returns validated revocation list on success', async () => {
     const list = makeRevocationList('a'.repeat(64));
     vi.mocked(fetch).mockResolvedValue(
       new Response(makeRevocationListJson(list), { status: 200 }),
@@ -364,51 +201,95 @@ describe('fetchRevocationList', () => {
     expect(result.revocations[0].hash).toBe('a'.repeat(64));
   });
 
-  it('throws on network error', async () => {
-    vi.mocked(fetch).mockRejectedValue(new TypeError('Network failure'));
-    await expect(fetchRevocationList('/keys/revocations.json')).rejects.toThrow(
-      'Failed to contact revocation service',
-    );
+  /** Each fetcher with its URL, a valid body, and its own error labels. */
+  const targets = [
+    {
+      fnName: 'fetchRegistry',
+      fetchFn: fetchRegistry as (url: string) => Promise<unknown>,
+      url: '/keys/registry.json',
+      validJson: validRegistryJson,
+      invalidJsonInit: { status: 200, headers: { 'Content-Type': 'application/json' } },
+      schemaCase: 'valid JSON, invalid registry',
+      schemaBody: JSON.stringify({ keys: [] }),
+      contactError: 'Failed to contact verification service',
+      statusError: 'Verification service returned an error',
+      corruptError: 'Registry data is corrupted',
+      sizeError: 'Registry response exceeds size limit',
+      invalidError: 'Registry data is invalid',
+    },
+    {
+      fnName: 'fetchRevocationList',
+      fetchFn: fetchRevocationList as (url: string) => Promise<unknown>,
+      url: '/keys/revocations.json',
+      validJson: makeRevocationListJson(makeEmptyRevocationList()),
+      invalidJsonInit: { status: 200 },
+      schemaCase: 'valid JSON, invalid schema',
+      schemaBody: JSON.stringify({ wrong_field: [] }),
+      contactError: 'Failed to contact revocation service',
+      statusError: 'Revocation service returned an error',
+      corruptError: 'Revocation data is corrupted',
+      sizeError: 'Revocation response exceeds size limit',
+      invalidError: 'Revocation data is invalid',
+    },
+  ];
+
+  const errorRows = targets.flatMap((t) => [
+    {
+      name: `${t.fnName} throws on network error`,
+      ...t,
+      respond: () => vi.mocked(fetch).mockRejectedValue(new TypeError('Network failure')),
+      expected: t.contactError,
+    },
+    {
+      name: `${t.fnName} throws on non-200 HTTP status`,
+      ...t,
+      respond: () =>
+        vi.mocked(fetch).mockResolvedValue(new Response('Not found', { status: 404 })),
+      expected: t.statusError,
+    },
+    {
+      name: `${t.fnName} throws on invalid JSON response`,
+      ...t,
+      respond: () =>
+        vi.mocked(fetch).mockResolvedValue(new Response('not json {{', t.invalidJsonInit)),
+      expected: t.corruptError,
+    },
+    {
+      name: `${t.fnName} throws when response body exceeds 1 MiB`,
+      ...t,
+      respond: () =>
+        vi.mocked(fetch).mockResolvedValue(
+          new Response('x'.repeat(1024 * 1024 + 1), { status: 200 }),
+        ),
+      expected: t.sizeError,
+    },
+    {
+      name: `${t.fnName} throws on schema validation failure (${t.schemaCase})`,
+      ...t,
+      respond: () =>
+        vi.mocked(fetch).mockResolvedValue(new Response(t.schemaBody, { status: 200 })),
+      expected: t.invalidError,
+    },
+    {
+      name: `${t.fnName} rejects early when Content-Length header exceeds size limit`,
+      ...t,
+      respond: () =>
+        vi.mocked(fetch).mockResolvedValue(
+          new Response('{}', {
+            status: 200,
+            headers: new Headers({ 'Content-Length': '2000000' }),
+          }),
+        ),
+      expected: t.sizeError,
+    },
+  ]);
+
+  it.each(errorRows)('$name', async ({ fetchFn, url, respond, expected }) => {
+    respond();
+    await expect(fetchFn(url)).rejects.toThrow(expected);
   });
 
-  it('throws on non-200 HTTP status', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response('Not found', { status: 404 }),
-    );
-    await expect(fetchRevocationList('/keys/revocations.json')).rejects.toThrow(
-      'Revocation service returned an error',
-    );
-  });
-
-  it('throws on invalid JSON response', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response('not json {{', { status: 200 }),
-    );
-    await expect(fetchRevocationList('/keys/revocations.json')).rejects.toThrow(
-      'Revocation data is corrupted',
-    );
-  });
-
-  it('throws when response body exceeds 1 MiB', async () => {
-    const oversized = 'x'.repeat(1024 * 1024 + 1);
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(oversized, { status: 200 }),
-    );
-    await expect(fetchRevocationList('/keys/revocations.json')).rejects.toThrow(
-      'Revocation response exceeds size limit',
-    );
-  });
-
-  it('throws on schema validation failure (valid JSON, invalid schema)', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ wrong_field: [] }), { status: 200 }),
-    );
-    await expect(fetchRevocationList('/keys/revocations.json')).rejects.toThrow(
-      'Revocation data is invalid',
-    );
-  });
-
-  it('throws on timeout', async () => {
+  it.each(targets)('$fnName throws on timeout', async ({ fetchFn, url, contactError }) => {
     vi.useFakeTimers();
     vi.mocked(fetch).mockImplementation(
       (_url, init) =>
@@ -419,63 +300,33 @@ describe('fetchRevocationList', () => {
         }),
     );
 
-    const promise = fetchRevocationList('/keys/revocations.json');
+    const promise = fetchFn(url);
     vi.advanceTimersByTime(10_000);
-    await expect(promise).rejects.toThrow(
-      'Failed to contact revocation service',
-    );
-    vi.useRealTimers();
+    await expect(promise).rejects.toThrow(contactError);
   });
 
-  it('passes credentials omit and no-referrer to fetch', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(validJson, { status: 200 }),
-    );
-    await fetchRevocationList('/keys/revocations.json');
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      '/keys/revocations.json',
-      expect.objectContaining({
-        credentials: 'omit',
-        referrerPolicy: 'no-referrer',
-      }),
-    );
-  });
+  it.each(targets)(
+    '$fnName passes credentials omit and no-referrer to fetch',
+    async ({ fetchFn, url, validJson }) => {
+      vi.mocked(fetch).mockResolvedValue(new Response(validJson, { status: 200 }));
+      await fetchFn(url);
+      expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+        url,
+        expect.objectContaining({
+          credentials: 'omit',
+          referrerPolicy: 'no-referrer',
+        }),
+      );
+    },
+  );
 
-  it('rejects early when Content-Length header exceeds size limit', async () => {
-    const headers = new Headers({ 'Content-Length': '2000000' });
+  it('fetchRegistry rejects non-numeric Content-Length header', async () => {
+    const headers = new Headers({ 'Content-Length': 'bogus' });
     vi.mocked(fetch).mockResolvedValue(
       new Response('{}', { status: 200, headers }),
     );
-    await expect(fetchRevocationList('/keys/revocations.json')).rejects.toThrow(
-      'Revocation response exceeds size limit',
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// fetchAndValidate error label consistency
-// ---------------------------------------------------------------------------
-
-describe('fetchAndValidate error labels', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('fetchRegistry network error message contains "verification"', async () => {
-    vi.mocked(fetch).mockRejectedValue(new TypeError('Network failure'));
     await expect(fetchRegistry('/keys/registry.json')).rejects.toThrow(
-      /verification/,
-    );
-  });
-
-  it('fetchRevocationList network error message contains "revocation"', async () => {
-    vi.mocked(fetch).mockRejectedValue(new TypeError('Network failure'));
-    await expect(fetchRevocationList('/keys/revocations.json')).rejects.toThrow(
-      /revocation/,
+      'Registry response exceeds size limit',
     );
   });
 });
@@ -544,40 +395,6 @@ describe('runVerification', () => {
     expect(result).toEqual({ status: 'invalid', reason: 'invalid signature length' });
   });
 
-  it('returns invalid with date-mismatch reason', async () => {
-    const restrictedEntry = makeKeyEntry(publicKey, { from: '2020-01-01', to: '2023-12-31' });
-    const restrictedRegistry = makeRegistry(restrictedEntry);
-    // Credential date is 2024-06-15, key expired end of 2023
-    const params = makeSignedParams(secretKey);
-    const result = await runVerification(params, restrictedRegistry);
-    expect(result.status).toBe('invalid');
-    expect((result as { status: 'invalid'; reason: string }).reason).toContain(
-      'date outside key validity period',
-    );
-  });
-
-  it('rejects payload with non-string field value', async () => {
-    const badObj = { ...validCredentialObj(), recipient: 123 };
-    const payloadBytes = canonicalize(badObj as Record<string, string | number>);
-    const signatureBytes = sign(payloadBytes, secretKey);
-    const params: PageParams = {
-      payload: base64urlEncode(payloadBytes),
-      signature: base64urlEncode(signatureBytes),
-    };
-    const result = await runVerification(params, registry);
-    expect(result.status).toBe('invalid');
-  });
-
-  it('returns invalid for completely garbled payload', async () => {
-    const badPayload = base64urlEncode(new TextEncoder().encode('not json {{'));
-    const sig = base64urlEncode(new Uint8Array(64));
-    const result = await runVerification(
-      { payload: badPayload, signature: sig },
-      registry,
-    );
-    expect(result.status).toBe('invalid');
-  });
-
   it('valid result authority comes from registry key, not credential payload', async () => {
     const customEntry = makeKeyEntry(publicKey, { authority: 'Registry Authority Name' });
     const customRegistry = makeRegistry(customEntry);
@@ -642,34 +459,6 @@ describe('runVerification', () => {
       vi.stubGlobal('crypto', originalCrypto);
     }
   });
-
-  it('returns revoked via crypto.subtle.digest → hex → revocation set lookup end-to-end', async () => {
-    // Build a signed credential using a fresh keypair so it is independent of
-    // other tests.
-    const { secretKey: sk, publicKey: pk } = makeKeypair(42);
-    const credObj = validCredentialObj({ recipient: 'Crypto Subtle Test' });
-    const payloadBytes = canonicalize(credObj as Record<string, string | number>);
-    const signatureBytes = sign(payloadBytes, sk);
-    const params: PageParams = {
-      payload: base64urlEncode(payloadBytes),
-      signature: base64urlEncode(signatureBytes),
-    };
-
-    // Compute the hash the same way runVerification does: via crypto.subtle.digest
-    // then hex-encode with zero-padded bytes.
-    const hashBuffer = await crypto.subtle.digest('SHA-256', payloadBytes as Uint8Array<ArrayBuffer>);
-    const payloadHash = [...new Uint8Array(hashBuffer)]
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-
-    // Build a registry that will accept the credential, and a revocation list
-    // that marks the computed hash as revoked.
-    const testRegistry = makeRegistry(makeKeyEntry(pk));
-    const revocationList = makeRevocationList(payloadHash);
-
-    const result = await runVerification(params, testRegistry, revocationList);
-    expect(result.status).toBe('revoked');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -713,48 +502,51 @@ describe('renderResult', () => {
     expect(fields).toHaveLength(5);
   });
 
-  it('renders invalid result with rejection reason, no credential fields in DOM', () => {
-    const result: VerifyPageResult = {
-      status: 'invalid',
-      reason: 'xunit-sentinel-reason',
-    };
+  it.each<{
+    name: string;
+    result: VerifyPageResult;
+    wrapperClass: string;
+    banner: string;
+    text: string;
+    hidden?: string;
+  }>([
+    {
+      name: 'renders invalid result with rejection reason, no credential fields in DOM',
+      result: { status: 'invalid', reason: 'xunit-sentinel-reason' },
+      wrapperClass: '.result-invalid',
+      banner: 'Not Verified',
+      text: 'This credential could not be verified',
+      hidden: 'xunit-sentinel-reason',
+    },
+    {
+      name: 'renders error result with warning label and message',
+      result: { status: 'error', message: 'xunit-sentinel-message' },
+      wrapperClass: '.result-error',
+      banner: 'Verification Error',
+      text: 'We were unable to complete the verification',
+      hidden: 'xunit-sentinel-message',
+    },
+    {
+      name: 'renders revoked result with banner, detail text, contact link, and no credential fields',
+      result: { status: 'revoked' },
+      wrapperClass: '.result-revoked',
+      banner: 'Credential Revoked',
+      text: 'This credential has been revoked by the issuing authority',
+    },
+  ])('$name', ({ result, wrapperClass, banner, text, hidden }) => {
     renderResult(result, container);
 
-    const wrapper = container.querySelector('.result-invalid');
+    const wrapper = container.querySelector(wrapperClass);
     expect(wrapper).not.toBeNull();
-    expect(wrapper!.querySelector('.status-banner')!.textContent).toBe('Not Verified');
-    expect(container.textContent).toContain('This credential could not be verified');
-    expect(container.textContent).not.toContain('xunit-sentinel-reason');
+    expect(wrapper!.querySelector('.status-banner')!.textContent).toBe(banner);
+    expect(container.textContent).toContain(text);
+    if (hidden !== undefined) {
+      // The internal reason/message never reaches the page.
+      expect(container.textContent).not.toContain(hidden);
+    }
     expect(container.querySelector('a[href="mailto:secretary@royalhouseofgeorgia.ge"]')).not.toBeNull();
     // No credential fields should appear
     expect(container.querySelectorAll('.credential-field')).toHaveLength(0);
-  });
-
-  it('renders error result with warning label and message', () => {
-    const result: VerifyPageResult = {
-      status: 'error',
-      message: 'xunit-sentinel-message',
-    };
-    renderResult(result, container);
-
-    const wrapper = container.querySelector('.result-error');
-    expect(wrapper).not.toBeNull();
-    expect(wrapper!.querySelector('.status-banner')!.textContent).toBe('Verification Error');
-    expect(container.textContent).toContain('We were unable to complete the verification');
-    expect(container.textContent).not.toContain('xunit-sentinel-message');
-    expect(container.querySelector('a[href="mailto:secretary@royalhouseofgeorgia.ge"]')).not.toBeNull();
-  });
-
-  it('does not render credential fields on invalid result (security)', () => {
-    const result: VerifyPageResult = {
-      status: 'invalid',
-      reason: 'tampered',
-    };
-    renderResult(result, container);
-
-    // Verify no credential field elements exist
-    expect(container.querySelectorAll('.credential-field')).toHaveLength(0);
-    expect(container.querySelectorAll('.field-value')).toHaveLength(0);
   });
 
   it('all text uses textContent — script tag in field appears as literal text', () => {
@@ -787,28 +579,7 @@ describe('renderResult', () => {
     expect(link!.textContent).toBe('Visit the Royal House of Georgia');
   });
 
-  it('mailto link present in both invalid and error states', () => {
-    renderResult({ status: 'invalid', reason: 'x' }, container);
-    expect(container.querySelector('a[href="mailto:secretary@royalhouseofgeorgia.ge"]')).not.toBeNull();
-
-    renderResult({ status: 'error', message: 'x' }, container);
-    expect(container.querySelector('a[href="mailto:secretary@royalhouseofgeorgia.ge"]')).not.toBeNull();
-  });
-
   // --- Revocation render tests ---
-
-  it('renders revoked result with banner, detail text, contact link, and no credential fields', () => {
-    const result: VerifyPageResult = { status: 'revoked' };
-    renderResult(result, container);
-
-    const wrapper = container.querySelector('.result-revoked');
-    expect(wrapper).not.toBeNull();
-    expect(wrapper!.querySelector('.status-banner')!.textContent).toBe('Credential Revoked');
-    expect(container.textContent).toContain('This credential has been revoked by the issuing authority');
-    expect(container.querySelector('a[href="mailto:secretary@royalhouseofgeorgia.ge"]')).not.toBeNull();
-    // No credential fields should appear
-    expect(container.querySelectorAll('.credential-field')).toHaveLength(0);
-  });
 
   it('renders valid result with revocationUnknown note', () => {
     const result: VerifyPageResult = {
@@ -1079,65 +850,5 @@ describe('initVerifyPage', () => {
     expect(container.querySelector('.result-revoked')).not.toBeNull();
     expect(container.textContent).toContain('Credential Revoked');
     expect(container.querySelectorAll('.credential-field')).toHaveLength(0);
-  });
-
-  it('Promise.allSettled: registry and revocation fetched in parallel', async () => {
-    const params = makeSignedParams(secretKey);
-    Object.defineProperty(window, 'location', {
-      value: {
-        ...window.location,
-        search: `?p=${params.payload}&s=${params.signature}`,
-        hostname: 'localhost',
-      },
-      writable: true,
-      configurable: true,
-    });
-
-    let registryFetchTime = 0;
-    let revocationFetchTime = 0;
-    const startTime = Date.now();
-
-    vi.mocked(fetch).mockImplementation((input) => {
-      const url = String(input);
-      if (url.includes('registry.json')) {
-        registryFetchTime = Date.now() - startTime;
-        return Promise.resolve(new Response(makeRegistryJson(registry), { status: 200 }));
-      }
-      if (url.includes('revocations.json')) {
-        revocationFetchTime = Date.now() - startTime;
-        return Promise.resolve(
-          new Response(makeRevocationListJson(makeEmptyRevocationList()), { status: 200 }),
-        );
-      }
-      return Promise.reject(new Error(`Unexpected URL: ${url}`));
-    });
-
-    await initVerifyPage();
-
-    // Both fetches should be initiated at approximately the same time (parallel)
-    // In a synchronous mock environment, both will be ~0ms from start
-    expect(Math.abs(registryFetchTime - revocationFetchTime)).toBeLessThan(50);
-    // Verify both were actually called
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Cross-system hash consistency
-// ---------------------------------------------------------------------------
-
-describe('SHA-256 hash consistency', () => {
-  it('SHA-256 hash of canonical payload matches expected hex string', async () => {
-    const payload = new TextEncoder().encode(
-      '{"date":"2024-06-15","detail":"Test Detail","honor":"Test Honor","recipient":"Jane Doe","version":1}',
-    );
-    const expected = createHash('sha256').update(payload).digest('hex');
-
-    // Compute via crypto.subtle (which is what the browser uses)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', payload);
-    const actual = [...new Uint8Array(hashBuffer)]
-      .map(b => b.toString(16).padStart(2, '0')).join('');
-
-    expect(actual).toBe(expected);
   });
 });

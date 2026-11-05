@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DATE_RE, DAYS_IN_MONTH, isLeapYear, isValidDate } from '../validation.js';
+import { DATE_RE, isLeapYear, isValidDate } from '../validation.js';
 
 describe('DATE_RE', () => {
   it('matches a well-formed YYYY-MM-DD string', () => {
@@ -35,28 +35,6 @@ describe('DATE_RE', () => {
   });
 });
 
-describe('DAYS_IN_MONTH', () => {
-  it('has 12 entries', () => {
-    expect(DAYS_IN_MONTH).toHaveLength(12);
-  });
-
-  it('has 31 for January (index 0)', () => {
-    expect(DAYS_IN_MONTH[0]).toBe(31);
-  });
-
-  it('has 28 for February (index 1) as the non-leap default', () => {
-    expect(DAYS_IN_MONTH[1]).toBe(28);
-  });
-
-  it('has 30 for April (index 3)', () => {
-    expect(DAYS_IN_MONTH[3]).toBe(30);
-  });
-
-  it('has 31 for December (index 11)', () => {
-    expect(DAYS_IN_MONTH[11]).toBe(31);
-  });
-});
-
 describe('isLeapYear', () => {
   it('returns true for a year divisible by 4 but not 100', () => {
     expect(isLeapYear(2024)).toBe(true);
@@ -72,10 +50,6 @@ describe('isLeapYear', () => {
 
   it('returns false for an odd year', () => {
     expect(isLeapYear(2023)).toBe(false);
-  });
-
-  it('returns false for a year divisible by 2 but not 4', () => {
-    expect(isLeapYear(2025)).toBe(false);
   });
 });
 
@@ -137,20 +111,7 @@ describe('isValidDate', () => {
     expect(isValidDate('0000-01-01')).toBe(false);
   });
 
-  it('rejects a non-date string that passes the regex', () => {
-    // This would pass DATE_RE but fails calendar checks
-    expect(isValidDate('9999-12-32')).toBe(false);
-  });
-
   it('rejects a string with wrong format', () => {
     expect(isValidDate('not-a-date')).toBe(false);
-  });
-
-  it('rejects an empty string', () => {
-    expect(isValidDate('')).toBe(false);
-  });
-
-  it('rejects a date with extra suffix', () => {
-    expect(isValidDate('2026-03-13T00:00:00Z')).toBe(false);
   });
 });

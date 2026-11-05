@@ -10,6 +10,72 @@ tags.
 
 ## [Unreleased]
 
+## [v2.0.0] — 2026-10-27
+
+Requires macOS 14 or later (Apple silicon) or Windows 10/11 (x64).
+
+### Added
+- **Delete Entry…** on the History tab removes the selected record from the
+  issuance log. For a credential that is still valid, the question warns that
+  its QR code keeps verifying and that it can no longer be revoked from the
+  app, and offers **Revoke Instead**. A backup of the log is saved first.
+- **Keyboard shortcuts.** Windows: F5 refreshes the History, Registry or Audit
+  tab, Ctrl+F (on the History tab) jumps to its search, Del deletes the
+  selected History record. Mac: ⌘1–⌘5 switch tabs, ⌘R refreshes, ⌘F finds in
+  History, Delete deletes the selected History record, ⌘C copies the selected
+  Registry row.
+- **One Windows app at a time.** Opening the app again brings the running
+  window (or its open dialog) to the front, restoring it if minimized.
+- **Export Error Log…** works while the app is still starting (Windows: on the
+  Help tab).
+
+### Changed
+- **Native apps.** The app is rebuilt as a native Mac app (SwiftUI) and a
+  native Windows app (WPF, a single `.exe`), both running the same signing core
+  as before. Signing, the issuance log, the registry and revocation work as in
+  v1.5.
+- **New layout.** On Windows, the tabs sit in one Office-style row with a
+  **Help** tab, and each tab has a row of command buttons; on a Mac, the tabs
+  are in the toolbar and the commands are also in the menu bar. Sign and
+  History show two panes side by side (History shows the selected record's
+  details on the right). The Registry is a native table.
+- **One login button.** History and Registry share a **Login to GitHub** (Mac:
+  **Log In to GitHub…**) / **Offline — Reconnect** button, replacing **Connect
+  to GitHub**. On a Mac it becomes a menu with **Log Out…** when logged in.
+- **Signing is refused when the credential would not verify.** If the key
+  registry couldn't be downloaded at startup, nothing new is signed (restart
+  the app to retry; an already-issued credential is still shown). Before the
+  PIN prompt, the app refuses a YubiKey whose key isn't in the registry, isn't
+  valid on the credential date, or may not sign the chosen honor. A wrong or
+  blocked PIN no longer offers **Report Issue**.
+- **YubiKey check.** Offline, **Check YubiKey** says the registry is
+  unavailable instead of reporting the key as not found; it also shows the
+  key's restrictions.
+- **Audit tab.** A commit opens on GitHub only from **Open on GitHub**, a
+  double-click or Enter/Return — selecting a row no longer opens it.
+- **Safer confirmations.** Destructive questions default to **Cancel** on
+  Windows; on a Mac they have no default button (Return does nothing, Escape
+  cancels).
+- **Bulk Sign summary** lists the rows that failed, with their line numbers.
+- **Mac updates.** v1.5.x installed in Applications updates itself to this
+  version; releases are signed with the same certificate as before.
+- **New app icon** with the new arms.
+- Dependency updates via Dependabot (CodeQL action 4.39.1; dev tooling:
+  vitest 5.0.5, happy-dom 21.0.4).
+
+### Removed
+- **The Fyne app** and about 30 dependencies that came with it.
+
+### Fixed
+- **Log backups never overwrite each other.** Remove Duplicates (and the new
+  Delete Entry) always save a new `issuances.json.bak-<UTC timestamp>` file,
+  adding `-2`, `-3`, … if one with that name already exists.
+
+### Security
+- **Windows loads `Winscard.dll` only from System32**, so a planted DLL beside
+  the app (e.g. in Downloads) can't be loaded in its place.
+- Built with Go 1.27.3 for the `crypto/x509` fix GO-2026-6809.
+
 ## [v1.5.2] — 2026-10-16
 
 ### Changed
@@ -361,7 +427,8 @@ verifying Royal honors.
 - SLSA build provenance attestations and `SHA256SUMS.txt` on all release
   binaries.
 
-[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.2...HEAD
+[Unreleased]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v2.0.0...HEAD
+[v2.0.0]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.2...v2.0.0
 [v1.5.2]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.1...v1.5.2
 [v1.5.1]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.5.0...v1.5.1
 [v1.5.0]: https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/compare/v1.4...v1.5.0

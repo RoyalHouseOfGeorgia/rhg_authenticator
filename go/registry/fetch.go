@@ -123,14 +123,8 @@ func FetchRevocationList(remoteURL string) (*core.RevocationList, error) {
 	return list, nil
 }
 
-// FindMatchingAuthority finds the authority name for a given public key in the registry.
-// Checks date range against today's date.
-func FindMatchingAuthority(reg core.Registry, pubKey [32]byte) (string, error) {
-	return FindMatchingAuthorityAt(reg, pubKey, time.Now().UTC().Format("2006-01-02"))
-}
-
-// FindMatchingEntryAt returns the full KeyEntry for a matching public key and date.
-// Returns nil if no match found.
+// FindMatchingEntryAt returns the registry entry whose public key matches
+// pubKey and whose validity covers date, or nil if none does.
 func FindMatchingEntryAt(reg core.Registry, pubKey [32]byte, date string) *core.KeyEntry {
 	for i := range reg.Keys {
 		decoded, err := core.DecodePublicKey(reg.Keys[i])
@@ -146,14 +140,4 @@ func FindMatchingEntryAt(reg core.Registry, pubKey [32]byte, date string) *core.
 		return &reg.Keys[i]
 	}
 	return nil
-}
-
-// FindMatchingAuthorityAt is like FindMatchingAuthority but uses a specific date
-// instead of time.Now(). Useful for testing.
-func FindMatchingAuthorityAt(reg core.Registry, pubKey [32]byte, date string) (string, error) {
-	entry := FindMatchingEntryAt(reg, pubKey, date)
-	if entry == nil {
-		return "", fmt.Errorf("no active registry entry matches the YubiKey public key")
-	}
-	return entry.Authority, nil
 }

@@ -73,18 +73,27 @@ func (l *Logger) Write(p []byte) (int, error) {
 // CaptureStdlib routes the standard library logger to l (and stderr).
 func CaptureStdlib(l *Logger) {
 	stdlog.SetFlags(0)
-	// l must come first: on Windows GUI builds (-H windowsgui) writes to
-	// os.Stderr fail, and io.MultiWriter stops at the first error.
+	// l must come first: in a GUI host with no console (the WPF app) writes
+	// to os.Stderr fail, and io.MultiWriter stops at the first error.
 	stdlog.SetOutput(io.MultiWriter(l, os.Stderr))
+}
+
+// ReleaseStdlib undoes CaptureStdlib: the standard library logger writes to
+// stderr alone, with its default flags.
+func ReleaseStdlib() {
+	stdlog.SetOutput(os.Stderr)
+	stdlog.SetFlags(stdlog.LstdFlags)
 }
 
 // tsLen is the length of the "[2006-01-02T15:04:05Z]" prefix Log writes.
 const tsLen = len("[2006-01-02T15:04:05Z]")
 
-// pruneLines keeps only lines that start with a Log-style UTC timestamp no
-// older than maxAge relative to now. Untimestamped lines (legacy panic dumps),
-// torn lines and malformed timestamps are dropped. Future timestamps (clock
-// skew) are kept. Non-empty output always ends with "\n".
+// pruneLines keeps only entries that start with a Log-style UTC timestamp no
+// older than maxAge relative to now. Any other line (the runtime's crash
+// report, written after the last entry, including its "[signal ...]" line, or
+// a torn or malformed line) continues the entry before it and is kept or
+// dropped with it; at the start of the data it is dropped. Future timestamps
+// (clock skew) are kept. Non-empty output always ends with "\n".
 //
 // dropped reports whether out differs from data: besides dropped lines, a
 // kept final line lacking its "\n" also counts, so Prune rewrites the file
@@ -100,8 +109,13 @@ func pruneLines(data []byte, maxAge time.Duration, now time.Time) (out []byte, d
 		dropped = true
 	}
 	out = make([]byte, 0, len(data)+1)
+	keepEntry := false
 	for _, line := range bytes.Split(body, []byte("\n")) {
-		if keepLine(line, maxAge, now) {
+		// Any other line is a continuation and follows its entry.
+		if ts, ok := entryTime(line); ok {
+			keepEntry = now.Sub(ts) <= maxAge
+		}
+		if keepEntry {
 			out = append(out, line...)
 			out = append(out, '\n')
 		} else {
@@ -111,20 +125,18 @@ func pruneLines(data []byte, maxAge time.Duration, now time.Time) (out []byte, d
 	return out, dropped
 }
 
-func keepLine(line []byte, maxAge time.Duration, now time.Time) bool {
+// entryTime returns the timestamp of a line that starts a Log entry.
+func entryTime(line []byte) (time.Time, bool) {
 	if len(line) < tsLen || line[0] != '[' || line[tsLen-1] != ']' {
-		return false
+		return time.Time{}, false
 	}
 	ts, err := time.Parse(time.RFC3339, string(line[1:tsLen-1]))
-	if err != nil {
-		return false
-	}
-	return now.Sub(ts) <= maxAge
+	return ts, err == nil
 }
 
-// Prune rewrites the log at path, dropping entries older than maxAge and any
-// lines without a valid timestamp. A missing file is not an error, and the
-// file is left untouched when nothing would change. The rewrite goes through
+// Prune rewrites the log at path, dropping entries older than maxAge with
+// their continuation lines (see pruneLines). A missing file is not an error,
+// and the file is left untouched when nothing would change. The rewrite goes through
 // a temporary file and rename so a crash never leaves a half-written log.
 func Prune(path string, maxAge time.Duration, now time.Time) error {
 	data, err := os.ReadFile(path)

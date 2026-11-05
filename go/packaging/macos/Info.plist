@@ -16,17 +16,17 @@
 	<string>APPL</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
-	<!-- Overwritten by the "Package macOS app" step in .github/workflows/build.yml -->
+	<!-- Overwritten by scripts/build-macos-app.sh -->
 	<key>CFBundleShortVersionString</key>
 	<string>0.0.0</string>
 	<key>CFBundleVersion</key>
 	<string>0</string>
-	<!-- Go 1.25+ binaries require macOS 12 -->
+	<!-- The app supports macOS 14 and later; scripts/build-macos-app.sh sets the same value -->
 	<key>LSMinimumSystemVersion</key>
-	<string>12.0</string>
+	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<!-- Shown in the macOS Files and Folders prompt on first Desktop access (Fyne draws its own save dialog) -->
+	<!-- Shown in the macOS Files and Folders prompt on first Desktop access -->
 	<key>NSDesktopFolderUsageDescription</key>
 	<string>RHG Authenticator saves QR codes and exported logs to your Desktop.</string>
 </dict>

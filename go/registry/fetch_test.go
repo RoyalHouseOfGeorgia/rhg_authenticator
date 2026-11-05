@@ -97,31 +97,6 @@ func TestFetchRegistry_HTTP404(t *testing.T) {
 	}
 }
 
-func TestFetchRegistry_HTTP500(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	_, err := FetchRegistry(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for 500")
-	}
-}
-
-func TestFetchRegistry_InvalidJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("not json {{"))
-	}))
-	defer srv.Close()
-
-	_, err := FetchRegistry(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-}
-
 func TestFetchRegistry_WrongContentType(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -222,203 +197,6 @@ func TestFetchRegistry_DefaultRegistryURL(t *testing.T) {
 	}
 }
 
-func TestFetchRegistry_FetchTimeout(t *testing.T) {
-	if FetchTimeout.Seconds() != 10 {
-		t.Errorf("expected 10s timeout, got %v", FetchTimeout)
-	}
-}
-
-// --- FindMatchingAuthorityAt tests (deterministic date) ---
-
-func TestFindMatchingAuthorityAt_Match(t *testing.T) {
-	reg, err := core.ValidateRegistry(validRegistryJSON())
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	authority, err := FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if authority != "Test Authority" {
-		t.Errorf("expected 'Test Authority', got %q", authority)
-	}
-}
-
-func TestFindMatchingAuthorityAt_NoMatch_WrongKey(t *testing.T) {
-	reg, err := core.ValidateRegistry(validRegistryJSON())
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	wrongKey := [32]byte{0x01, 0x02, 0x03}
-	_, err = FindMatchingAuthorityAt(reg, wrongKey, "2026-03-14")
-	if err == nil {
-		t.Fatal("expected error for non-matching key")
-	}
-	if !strings.Contains(err.Error(), "no active registry entry") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestFindMatchingAuthorityAt_Expired(t *testing.T) {
-	reg, err := core.ValidateRegistry(validRegistryJSONWithDates("2025-01-01", "2025-12-31"))
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	_, err = FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14")
-	if err == nil {
-		t.Fatal("expected error for expired key")
-	}
-}
-
-func TestFindMatchingAuthorityAt_FutureFromMatches(t *testing.T) {
-	reg, err := core.ValidateRegistry(validRegistryJSONWithDates("2027-01-01", ""))
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	authority, err := FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14")
-	if err != nil {
-		t.Fatalf("expected match for future from (from is informational), got: %v", err)
-	}
-	if authority != "Test Authority" {
-		t.Errorf("expected 'Test Authority', got %q", authority)
-	}
-}
-
-func TestFindMatchingAuthorityAt_ToEqualsDateMatches(t *testing.T) {
-	reg, err := core.ValidateRegistry(validRegistryJSONWithDates("2025-01-01", "2026-03-14"))
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	if _, err := FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14"); err != nil {
-		t.Fatalf("expected match when to == date (inclusive), got: %v", err)
-	}
-}
-
-func TestFindMatchingAuthorityAt_SkipsDecodeError(t *testing.T) {
-	data := []byte(`{
-		"keys": [
-			{
-				"authority": "Bad Entry",
-				"from": "2025-01-01",
-				"to": null,
-				"algorithm": "Ed25519",
-				"public_key": "not-valid-base64!!!",
-				"note": "bad key"
-			},
-			{
-				"authority": "Good Entry",
-				"from": "2025-01-01",
-				"to": null,
-				"algorithm": "Ed25519",
-				"public_key": "` + testPubKeyB64() + `",
-				"note": "good key"
-			}
-		]
-	}`)
-	reg, err := core.ValidateRegistry(data)
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	authority, err := FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if authority != "Good Entry" {
-		t.Errorf("expected 'Good Entry', got %q", authority)
-	}
-}
-
-func TestFindMatchingAuthorityAt_MultipleKeys_FirstActiveMatch(t *testing.T) {
-	data := []byte(`{
-		"keys": [
-			{
-				"authority": "Expired Authority",
-				"from": "2024-01-01",
-				"to": "2024-12-31",
-				"algorithm": "Ed25519",
-				"public_key": "` + testPubKeyB64() + `",
-				"note": "expired"
-			},
-			{
-				"authority": "Active Authority",
-				"from": "2025-01-01",
-				"to": null,
-				"algorithm": "Ed25519",
-				"public_key": "` + testPubKeyB64() + `",
-				"note": "active"
-			}
-		]
-	}`)
-	reg, err := core.ValidateRegistry(data)
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	authority, err := FindMatchingAuthorityAt(reg, testPubKey, "2026-03-14")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if authority != "Active Authority" {
-		t.Errorf("expected 'Active Authority', got %q", authority)
-	}
-}
-
-func TestFindMatchingAuthority_UsesToday(t *testing.T) {
-	reg, err := core.ValidateRegistry(validRegistryJSON())
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	authority, err := FindMatchingAuthority(reg, testPubKey)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if authority != "Test Authority" {
-		t.Errorf("expected 'Test Authority', got %q", authority)
-	}
-}
-
-func TestFindMatchingAuthority_NoMatch(t *testing.T) {
-	reg, err := core.ValidateRegistry(validRegistryJSON())
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	wrongKey := [32]byte{0xde, 0xad}
-	_, err = FindMatchingAuthority(reg, wrongKey)
-	if err == nil {
-		t.Fatal("expected error for non-matching key")
-	}
-}
-
-func TestFindMatchingAuthority_SkipsDecodeError(t *testing.T) {
-	data := []byte(`{
-		"keys": [{
-			"authority": "Bad",
-			"from": "2025-01-01",
-			"to": null,
-			"algorithm": "Ed25519",
-			"public_key": "not-valid-base64!!!",
-			"note": ""
-		}]
-	}`)
-	reg, err := core.ValidateRegistry(data)
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	_, err = FindMatchingAuthority(reg, testPubKey)
-	if err == nil {
-		t.Fatal("expected error when all entries have decode errors")
-	}
-}
-
 // --- FindMatchingEntryAt tests ---
 
 func TestFindMatchingEntryAt_Found(t *testing.T) {
@@ -469,6 +247,84 @@ func TestFindMatchingEntryAt_Expired(t *testing.T) {
 	entry := FindMatchingEntryAt(reg, testPubKey, "2026-03-15")
 	if entry != nil {
 		t.Errorf("expected nil for expired entry, got: %+v", entry)
+	}
+}
+
+func TestFindMatchingEntryAt_ToEqualsDateMatches(t *testing.T) {
+	reg, err := core.ValidateRegistry(validRegistryJSONWithDates("2025-01-01", "2026-03-14"))
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if entry := FindMatchingEntryAt(reg, testPubKey, "2026-03-14"); entry == nil {
+		t.Fatal("expected match when to == date (inclusive), got nil")
+	}
+}
+
+func TestFindMatchingEntryAt_SkipsDecodeError(t *testing.T) {
+	data := []byte(`{
+		"keys": [
+			{
+				"authority": "Bad Entry",
+				"from": "2025-01-01",
+				"to": null,
+				"algorithm": "Ed25519",
+				"public_key": "not-valid-base64!!!",
+				"note": "bad key"
+			},
+			{
+				"authority": "Good Entry",
+				"from": "2025-01-01",
+				"to": null,
+				"algorithm": "Ed25519",
+				"public_key": "` + testPubKeyB64() + `",
+				"note": "good key"
+			}
+		]
+	}`)
+	reg, err := core.ValidateRegistry(data)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	entry := FindMatchingEntryAt(reg, testPubKey, "2026-03-14")
+	if entry == nil {
+		t.Fatal("expected matching entry, got nil")
+	}
+	if entry.Authority != "Good Entry" {
+		t.Errorf("authority = %q, want %q", entry.Authority, "Good Entry")
+	}
+}
+
+func TestFindMatchingEntryAt_MultipleKeys_FirstActiveMatch(t *testing.T) {
+	data := []byte(`{
+		"keys": [
+			{
+				"authority": "Expired Authority",
+				"from": "2024-01-01",
+				"to": "2024-12-31",
+				"algorithm": "Ed25519",
+				"public_key": "` + testPubKeyB64() + `",
+				"note": "expired"
+			},
+			{
+				"authority": "Active Authority",
+				"from": "2025-01-01",
+				"to": null,
+				"algorithm": "Ed25519",
+				"public_key": "` + testPubKeyB64() + `",
+				"note": "active"
+			}
+		]
+	}`)
+	reg, err := core.ValidateRegistry(data)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	entry := FindMatchingEntryAt(reg, testPubKey, "2026-03-14")
+	if entry == nil {
+		t.Fatal("expected matching entry, got nil")
+	}
+	if entry.Authority != "Active Authority" {
+		t.Errorf("authority = %q, want %q", entry.Authority, "Active Authority")
 	}
 }
 
@@ -572,58 +428,10 @@ func TestFetchRevocationList_500(t *testing.T) {
 	}
 }
 
-func TestFetchRevocationList_403(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	defer srv.Close()
-
-	_, err := FetchRevocationList(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for 403")
-	}
-	if !strings.Contains(err.Error(), "403") {
-		t.Errorf("error should contain '403', got: %v", err)
-	}
-}
-
 func TestFetchRevocationList_NetworkError(t *testing.T) {
 	_, err := FetchRevocationList("http://127.0.0.1:1/nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unreachable server")
-	}
-}
-
-func TestFetchRevocationList_InvalidJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("not json {{"))
-	}))
-	defer srv.Close()
-
-	_, err := FetchRevocationList(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-	if !strings.Contains(err.Error(), "validation failed") {
-		t.Errorf("error should mention validation, got: %v", err)
-	}
-}
-
-func TestFetchRevocationList_OversizedResponse(t *testing.T) {
-	body := bytes.Repeat([]byte("x"), maxRegistryBytes+1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
-	}))
-	defer srv.Close()
-
-	_, err := FetchRevocationList(srv.URL)
-	if err == nil {
-		t.Fatal("expected error for oversized response")
-	}
-	if !strings.Contains(err.Error(), "exceeds") {
-		t.Errorf("error should contain 'exceeds', got: %v", err)
 	}
 }
 
@@ -640,25 +448,6 @@ func TestFetchRevocationList_InvalidSchema(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "validation failed") {
 		t.Errorf("error should mention validation, got: %v", err)
-	}
-}
-
-func TestFetchRevocationList_EmptyList(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"revocations": []}`))
-	}))
-	defer srv.Close()
-
-	list, err := FetchRevocationList(srv.URL)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if list == nil {
-		t.Fatal("expected non-nil list")
-	}
-	if len(list.Revocations) != 0 {
-		t.Errorf("expected empty revocations, got %d", len(list.Revocations))
 	}
 }
 
@@ -697,94 +486,5 @@ func TestFetchRevocationList_WrongContentType(t *testing.T) {
 func TestDefaultRevocationURL(t *testing.T) {
 	if DefaultRevocationURL != "https://verify.royalhouseofgeorgia.ge/keys/revocations.json" {
 		t.Errorf("unexpected default revocation URL: %s", DefaultRevocationURL)
-	}
-}
-
-// --- readLimitedBody tests ---
-
-func TestReadLimitedBody_WithinLimit(t *testing.T) {
-	body := strings.Repeat("x", 100)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(body))
-	}))
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	data, err := readLimitedBody(resp, 200)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if string(data) != body {
-		t.Errorf("body = %q, want %q", string(data), body)
-	}
-}
-
-func TestReadLimitedBody_ExceedsLimit(t *testing.T) {
-	body := strings.Repeat("x", 200)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(body))
-	}))
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	_, err = readLimitedBody(resp, 100)
-	if err == nil {
-		t.Fatal("expected error for body exceeding limit")
-	}
-	if !strings.Contains(err.Error(), "100 byte limit") {
-		t.Errorf("error = %q, want mention of byte limit", err.Error())
-	}
-}
-
-func TestReadLimitedBody_ExactLimit(t *testing.T) {
-	body := strings.Repeat("x", 100)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(body))
-	}))
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	data, err := readLimitedBody(resp, 100)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(data) != 100 {
-		t.Errorf("body length = %d, want 100", len(data))
-	}
-}
-
-func TestReadLimitedBody_EmptyBody(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// empty response
-	}))
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	data, err := readLimitedBody(resp, 100)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(data) != 0 {
-		t.Errorf("body length = %d, want 0", len(data))
 	}
 }

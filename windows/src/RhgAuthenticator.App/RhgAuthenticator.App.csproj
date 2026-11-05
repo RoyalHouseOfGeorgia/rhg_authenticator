@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The native Windows app: WPF views over RhgAuthenticator.ViewModels, with
+    the Go core (rhgcore.dll) embedded as a resource and unpacked at start-up
+    (Program.cs). scripts/build-windows-app.ps1 publishes it as one exe.
+
+    rhgcore.dll comes from RhgCoreLibDir (Directory.Build.props). On Windows a
+    missing rhgcore.dll fails the build. Elsewhere (EnableWindowsTargeting, so
+    the solution builds on Linux) it is usually absent: the app is built
+    without it and reports the missing library at start-up.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Program.Main is the entry point: App.xaml is then a default Page item, for which WPF generates no Main. -->
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <AssemblyName>rhg-authenticator</AssemblyName>
+    <RootNamespace>RhgAuthenticator.App</RootNamespace>
+    <Product>RHG Authenticator</Product>
+    <!-- asInvoker, Windows 10/11, themed common controls: see the file. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The exe's icon (Explorer, taskbar, Alt+Tab): go/icon.png at 16–256 px; MainWindow shows it too. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- Lets the solution build and run its tests (and dotnet format) on Linux. -->
+    <EnableWindowsTargeting Condition="'$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../RhgAuthenticator.ViewModels/RhgAuthenticator.ViewModels.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- For MainWindow's Icon (the title bar); the exe's own icon is ApplicationIcon above. -->
+    <Resource Include="app.ico" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <RhgCoreLibPath>$([System.IO.Path]::Combine('$(RhgCoreLibDir)', 'rhgcore.dll'))</RhgCoreLibPath>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(RhgCoreLibPath)')">
+    <!-- LogicalName must equal Program.LibraryResourceName. -->
+    <EmbeddedResource Include="$(RhgCoreLibPath)" LogicalName="rhgcore.dll" />
+  </ItemGroup>
+
+  <!--
+    Records the embedded library's SHA-256 as AssemblyMetadata RhgCoreSha256,
+    which CoreLibrary.Extract checks the unpacked file against. Runs before
+    the assembly attributes are gathered, so a changed library regenerates
+    the assembly info.
+  -->
+  <Target Name="RhgCoreLibraryHash" BeforeTargets="GetAssemblyAttributes">
+    <Error Condition="'$(OS)' == 'Windows_NT' And !Exists('$(RhgCoreLibPath)')"
+           Text="$(RhgCoreLibPath) not found: run `bash scripts/rhgcore-smoke.sh` from the repo root, or set RHGCORE_LIB_DIR to the directory holding rhgcore.dll." />
+    <Message Condition="!Exists('$(RhgCoreLibPath)')" Importance="high"
+             Text="RhgAuthenticator.App: $(RhgCoreLibPath) not found; building without the core library (the app will not start)." />
+    <GetFileHash Condition="Exists('$(RhgCoreLibPath)')" Files="$(RhgCoreLibPath)" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Hash" PropertyName="RhgCoreSha256" />
+    </GetFileHash>
+    <ItemGroup Condition="'$(RhgCoreSha256)' != ''">
+      <AssemblyMetadata Include="RhgCoreSha256" Value="$(RhgCoreSha256.ToLowerInvariant())" />
+    </ItemGroup>
+  </Target>
+</Project>
