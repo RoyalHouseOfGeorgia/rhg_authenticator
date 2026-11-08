@@ -73,7 +73,7 @@ scripts/
 ├── gen-macos-cert.sh     # Create the self-signed macOS release certificate (one-time setup; also used by sign-macos-dryrun)
 ├── generate-test-url.ts  # Generate signed test URLs for UI preview
 ├── rebuild_urls.py       # Rebuild verification URLs from a payload+signature, issuance log, or CSV
-├── rhg_qr.py             # QR code (SVG/PNG) for a verification URL or payload+signature; needs segno; no tests (CodeQL only)
+├── rhg_qr.py             # QR code (SVG/PNG) for a verification URL or payload+signature, or picked from an issuance log; needs segno; no tests (CodeQL only)
 ├── rhg_revocation_hash.py  # Revocation hash for a verification URL (for revocations.json); no tests (CodeQL only)
 ├── rhgcore-smoke.sh      # Build the rhgcore C library (release + rhgfake) and smoke-test its C ABI
 ├── sign-macos.sh         # CI only: sign the Mac app with the release certificate

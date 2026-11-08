@@ -54,7 +54,7 @@
 | **Go core** | Go (C library) | All signing, YubiKey, registry, history, GitHub and update logic, built as a C library (`go/cmd/rhgcore`) that both apps call |
 | **Verification library** | TypeScript | Core crypto, credential validation, key registry, revocation list |
 | **Verification page** | TypeScript | Public GitHub Pages site for QR code verification |
-| **Python tools** | Python | `scripts/rebuild_urls.py` (rebuild verification URLs from existing signatures, no YubiKey), `scripts/rhg_qr.py` (QR image from a URL), `scripts/rhg_revocation_hash.py` (revocation hash for a URL) |
+| **Python tools** | Python | `scripts/rebuild_urls.py` (rebuild verification URLs from existing signatures, no YubiKey), `scripts/rhg_qr.py` (QR image from a URL or the issuance log), `scripts/rhg_revocation_hash.py` (revocation hash for a URL) |
 
 1176 tests passing (824 Go + 318 TypeScript + 34 Python) — the Go core, the TypeScript verifier and the Python tools; the Swift and .NET suites of the two apps run in CI too.
 
@@ -314,15 +314,19 @@ python3 scripts/rebuild_urls.py credentials.csv
 #### QR code and revocation hash
 
 ```bash
-# QR code for a URL or a payload/signature pair: SVG by default, --png for PNG
+# QR code for a URL, a payload/signature pair or credentials picked from an issuance log: SVG by default, --png for PNG
 python3 scripts/rhg_qr.py -o ~/Desktop/credential.svg '<verification URL>'
 python3 scripts/rhg_qr.py --png -o ~/Desktop/credential.png --payload=<p> --signature=<s>
+
+# List the log's credentials matching "knight", pick which to write into ~/Desktop/qr
+python3 scripts/rhg_qr.py --log=rhg-issuances-2026-09-25.json -o ~/Desktop/qr knight
 
 # Revocation hash for verify/keys/revocations.json (prints recipient | honor | date to stderr)
 python3 scripts/rhg_revocation_hash.py '<verification URL>'
 ```
 
 - `rhg_qr.py` needs [segno](https://pypi.org/project/segno/): `pip install segno` (Debian: `sudo apt install python3-segno`). It never overwrites an existing file; pass `-o` so QR images of real credentials don't land in the checkout. It uses error-correction level Q, like the app, and refuses URLs over 625 characters — the app's limit for a printable QR code.
+- With `--log`, `rhg_qr.py` lists the log's credentials newest first, numbered — only those whose recipient, honor, detail or date contains the search term (ignoring case), or all of them without one — and asks which to generate: comma-separated numbers (`1,3`) or `all`; an empty answer writes nothing. A credential signed more than once is listed once. `-o` is then an existing folder (default: the current folder), and each file is named automatically, `<date>-<recipient>-<first 8 hex digits of the payload hash>.svg` (`.png` with `--png`). Existing files are reported and skipped; records whose hash doesn't match their fields are skipped with a message.
 - These two scripts are maintainer tools with no tests; changes to them don't trigger the Python test workflow (CodeQL still scans them).
 
 ## Documentation

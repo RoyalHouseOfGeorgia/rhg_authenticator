@@ -28,6 +28,9 @@ Requires macOS 14 or later (Apple silicon) or Windows 10/11 (x64).
   window (or its open dialog) to the front, restoring it if minimized.
 - **Export Error Log…** works while the app is still starting (Windows: on the
   Help tab).
+- **`rhg_qr.py --log` writes QR codes from the issuance log.** It lists the
+  log's credentials (optionally only those matching a search term) and writes a
+  QR code for each one you pick, named by date, recipient and payload hash.
 
 ### Changed
 - **Native apps.** The app is rebuilt as a native Mac app (SwiftUI) and a
@@ -70,6 +73,10 @@ Requires macOS 14 or later (Apple silicon) or Windows 10/11 (x64).
 - **Log backups never overwrite each other.** Remove Duplicates (and the new
   Delete Entry) always save a new `issuances.json.bak-<UTC timestamp>` file,
   adding `-2`, `-3`, … if one with that name already exists.
+- **`rhg_qr.py` refuses a truncated or edited URL** instead of printing a QR
+  code that won't verify: a URL now gets the same checks as `--payload` and
+  `--signature`. An output path it can't write gives a one-line error, not a
+  traceback.
 
 ### Security
 - **Windows loads `Winscard.dll` only from System32**, so a planted DLL beside
