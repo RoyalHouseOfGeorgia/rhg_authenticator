@@ -35,11 +35,12 @@ struct SignView: View {
                 .disabled(isSigningBusy)
                 Spacer(minLength: 0)
             }
-            HSplitView {
+            SplitPanes(leadingMinWidth: 340, trailingMinWidth: 300) {
                 inputPane
-                    .frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } trailing: {
                 resultPane
-                    .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .padding(16)

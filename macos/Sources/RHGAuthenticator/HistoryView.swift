@@ -17,12 +17,13 @@ struct HistoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             commandRow
-            HSplitView {
+            SplitPanes(leadingMinWidth: 340, trailingMinWidth: 300) {
                 listPane
                     .padding(.trailing, 12)
-                    .frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } trailing: {
                 detailPane
-                    .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .padding(16)
