@@ -25,6 +25,7 @@ OLD_RELEASES="
 v1.5.0 a4d3426f9183d473ad2d15b49db6738898276c6603f3ccec7bcf783e3d6c37a6
 v1.5.1 4c27d78fb18847623adc68ae9659355f87b652cacb0e37df3eb663ecda234cc6
 v1.5.2 36a1cb3a3d1c0bf74f9db5c9a20bc734e9f46cfc86b18d96d613ef0c7c828692
+v2.0.0 a83f93f3211989d9240c5e6c88022f8ba77ea73c29c26403f38400428a389b2a
 "
 ASSET="rhg-authenticator-darwin-arm64.zip"
 RELEASES_URL="https://github.com/RoyalHouseOfGeorgia/rhg_authenticator/releases/download"
