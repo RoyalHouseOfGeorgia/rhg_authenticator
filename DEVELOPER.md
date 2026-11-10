@@ -295,7 +295,7 @@ Both apps' tests read the same files, so a changed method breaks them until the 
 | `gitleaks` | always | Secret scan of the full history |
 | `test-race` | always | macOS: `gofmt -l`, `go test -race ./...`, and `-race` with `-tags rhgfake` |
 | `build-macos` ("build (darwin-arm64)") | after `test-typescript`, `test-race` | Tag name is `vX.Y.Z`; the Xcode its "Select Xcode" step pins; `go mod verify`, `go vet` (plain and rhgfake), `govulncheck`, `rhgcore-smoke.sh`, `swift test` against the rhgfake library, `build-macos-app.sh` against the release library; uploads `unsigned-darwin-arm64` |
-| `build-windows` ("build (windows-amd64)") | after `test-typescript`, `test-race` | Windows, Git Bash: tag name, `go mod verify`, `go vet` and Go tests (plain and rhgfake), `govulncheck`, no committed `.syso` files, `rhgcore-smoke.sh`, `dotnet test windows/RhgAuthenticator.sln`, `build-windows-app.ps1`; uploads `rhg-authenticator-windows-amd64` |
+| `build-windows` ("build (windows-amd64)") | after `test-typescript`, `test-race` | Windows, Git Bash: tag name, `go mod verify`, `go vet` and Go tests (plain and rhgfake), `govulncheck`, no committed `.syso` files, `rhgcore-smoke.sh`, `dotnet test --solution RhgAuthenticator.sln` (in `windows/`), `build-windows-app.ps1`; uploads `rhg-authenticator-windows-amd64` |
 | `sign-macos` | tags | After both builds, `security` and `gitleaks`: re-signs the Mac zip with the release certificate (`release` environment) |
 | `verify-macos` | tags | `verify-macos.sh` and `verify-macos-compat.sh` on the signed zip |
 | `release` | tags | `check-release-assets.sh`, `SHA256SUMS.txt`, build provenance attestation, GitHub release |
