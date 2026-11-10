@@ -63,8 +63,9 @@ Requires macOS 14 or later (Apple silicon) or Windows 10/11 (x64).
 - **Mac updates.** v1.5.x installed in Applications updates itself to this
   version; releases are signed with the same certificate as before.
 - **New app icon** with the new arms.
-- Dependency updates via Dependabot (`golang.org/x/sys` 0.50.0; CodeQL action
-  4.39.3, release action 3.0.4; dev tooling: vitest 5.1.0, happy-dom 21.0.4).
+- Dependency updates via Dependabot (`golang.org/x/sys` 0.50.0; .NET SDK
+  10.0.403; CodeQL action 4.39.3, release action 3.0.4, setup-dotnet 6.1.0; dev
+  tooling: vitest 5.1.0, happy-dom 21.0.4, xunit.v3 4.0.2).
 
 ### Removed
 - **The Fyne app** and about 30 dependencies that came with it.

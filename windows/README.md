@@ -38,8 +38,10 @@ bash scripts/rhgcore-smoke.sh
 Then:
 
 ```bash
-dotnet test windows/RhgAuthenticator.sln
+(cd windows && dotnet test --solution RhgAuthenticator.sln)
 ```
+
+The `cd` is there because `windows/global.json` selects the test runner; in PowerShell, run `dotnet test --solution RhgAuthenticator.sln` from `windows/` instead.
 
 The tests load the rhgfake core: `go/release/rhgcore/rhgfake/librhgcore.so` on Linux, `rhgcore.dll` on Windows. Set `RHGCORE_LIB_DIR` to use another directory. On Linux the solution builds with `EnableWindowsTargeting`, set automatically; the App project is built there without the core library and reports the missing library at start-up.
 

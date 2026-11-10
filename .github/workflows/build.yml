@@ -275,10 +275,12 @@ jobs:
       - name: Build both library variants and run the C smoke test
         run: RHGCORE_VERSION="$GITHUB_REF_NAME" bash scripts/rhgcore-smoke.sh
       # No RHGCORE_LIB_DIR: the defaults are under test too (tests/ take the
-      # rhgfake library, the app the release one). Normal verbosity lists each
+      # rhgfake library, the app the release one). Detailed output lists each
       # test's result, so the Windows-only guard tests can be seen to run.
+      # Runs in windows/, where global.json selects the test runner.
       - name: .NET tests (rhgfake library)
-        run: dotnet test windows/RhgAuthenticator.sln --logger "console;verbosity=normal"
+        working-directory: windows
+        run: dotnet test --solution RhgAuthenticator.sln --output Detailed --no-progress
       # The script runs the built app's --version and fails on an rhgfake
       # build or, for a tag, on a version other than the tag.
       - name: Build the app (release library)
