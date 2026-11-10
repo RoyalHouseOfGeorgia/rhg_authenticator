@@ -15,11 +15,13 @@ are refused.
 Never overwrites an existing file. Use the "=" form for --payload/--signature:
 signatures may start with "-".
 
-With --log, lists the issuance log's credentials newest first (only those
-whose recipient, honor, detail or date contains SEARCH, ignoring case), asks
-which to generate (e.g. 1,3 or all) and writes each into PATH, an existing
-folder (default: the current folder), as <date>-<recipient>-<hash>.svg. A
-credential signed more than once is listed once, as its newest copy.
+With --log, lists the issuance log's credentials, most recently signed first
+(only those whose recipient, honor, detail or date contains SEARCH, ignoring
+case; quote a SEARCH of several words), asks which to generate (e.g. 1,3 or
+all) and writes each into PATH, an existing folder (default: the current
+folder), as <date>-<recipient>-<first 8 hex of the payload hash>.svg (.png
+with --png). A credential signed more than once is listed once, as its newest
+copy.
 
 Exit status: 0 success, 1 error, 2 usage error. With --log, 1 also when any
 picked file wasn't written (including one that already exists) or a log
@@ -61,7 +63,9 @@ def checked_url(url: str) -> str:
     """
     parts = urlsplit(url)
     if f"{parts.scheme}://{parts.netloc}{parts.path}" != VERIFY_BASE_URL:
-        raise ValueError(f"not a verification URL (must start with {VERIFY_BASE_URL}?)")
+        raise ValueError(
+            f'not a verification URL (must start with "{VERIFY_BASE_URL}?")'
+        )
     query = parse_qs(parts.query)
     if sorted(query) != ["p", "s"] or any(len(v) != 1 for v in query.values()):
         raise ValueError("URL must have exactly one p and one s parameter")
@@ -82,14 +86,24 @@ def import_segno() -> ModuleType | None:
 
 
 def write_qr(segno: ModuleType, url: str, out: Path, png: bool) -> None:
-    """Write url's QR code to the new file out; raises OSError if it can't."""
+    """Write url's QR code to the new file out; raises OSError if it can't.
+
+    A write that fails part-way removes the file, so a later run doesn't skip
+    a truncated image as already written.
+    """
     qr = segno.make(url, error="q")  # level Q, as the app (skip2 qrcode.High)
-    with out.open("xb") as f:
-        if png:
-            qr.save(f, kind="png", scale=20)
-        else:
-            # viewBox only (scales to any print size); white background like the app.
-            qr.save(f, kind="svg", omitsize=True, light="white")
+    # Outside the try, so a file that was already there is never removed.
+    f = out.open("xb")
+    try:
+        with f:  # closed before the unlink below, which Windows requires
+            if png:
+                qr.save(f, kind="png", scale=20)
+            else:
+                # viewBox only (scales to any print size); white background like the app.
+                qr.save(f, kind="svg", omitsize=True, light="white")
+    except BaseException:
+        out.unlink(missing_ok=True)
+        raise
 
 
 def fold(s: str) -> str:
@@ -107,7 +121,9 @@ def load_entries(path: Path) -> tuple[list[dict[str, str]], list[str]]:
     seen: set[str] = set()
     entries = []
     for row in reversed(rows):
-        payload = canonical_payload(*(row[k] for k in SEARCH_FIELDS))
+        payload = canonical_payload(
+            row["name"], row["honor"], row["detail"], row["date"]
+        )
         digest = hashlib.sha256(payload).hexdigest()
         if digest not in seen:
             seen.add(digest)

@@ -178,7 +178,7 @@ Every credential signed on this computer, newest first. Search by recipient; sel
 
 - **Revoke** — revokes the selected credential: the app opens a pull request that adds it to the public revocation list; once the maintainer merges it, the verification page shows the credential as revoked. Needs a GitHub login with **Write (collaborator) access** to this repository; without it the app says to ask the maintainer to add you as a collaborator. If the credential is already revoked, or a revocation for it is already waiting, no new request is made and the app says so. If the revocation list couldn't be loaded, the History tab shows **Revocation unavailable**; click **Refresh** to try again.
 - **Delete Entry…** — see [Deleting an entry](#deleting-an-entry).
-- **Export Issuance Log…** — saves a copy of the log as `rhg-issuances-YYYY-MM-DD.json` (for example to email to the maintainer). It holds every recipient's details.
+- **Export Issuance Log…** — saves a copy of the log as `rhg-issuances-YYYY-MM-DD.json`. It holds every recipient's details.
 - **Remove Duplicates…** — removes extra records of a credential that was signed more than once, keeping the earliest. A backup of the log is saved first (named like the Delete Entry backup below). The removed records were the same credential, so any QR code already printed from them still verifies.
 
 #### Deleting an entry
@@ -318,15 +318,15 @@ python3 scripts/rebuild_urls.py credentials.csv
 python3 scripts/rhg_qr.py -o ~/Desktop/credential.svg '<verification URL>'
 python3 scripts/rhg_qr.py --png -o ~/Desktop/credential.png --payload=<p> --signature=<s>
 
-# List the log's credentials matching "knight", pick which to write into ~/Desktop/qr
-python3 scripts/rhg_qr.py --log=rhg-issuances-2026-09-25.json -o ~/Desktop/qr knight
+# List the log's credentials matching "grand cross", pick which to write into ~/Desktop/qr
+python3 scripts/rhg_qr.py --log=rhg-issuances-2026-09-25.json -o ~/Desktop/qr 'grand cross'
 
 # Revocation hash for verify/keys/revocations.json (prints recipient | honor | date to stderr)
 python3 scripts/rhg_revocation_hash.py '<verification URL>'
 ```
 
 - `rhg_qr.py` needs [segno](https://pypi.org/project/segno/): `pip install segno` (Debian: `sudo apt install python3-segno`). It never overwrites an existing file; pass `-o` so QR images of real credentials don't land in the checkout. It uses error-correction level Q, like the app, and refuses URLs over 625 characters — the app's limit for a printable QR code.
-- With `--log`, `rhg_qr.py` lists the log's credentials newest first, numbered — only those whose recipient, honor, detail or date contains the search term (ignoring case), or all of them without one — and asks which to generate: comma-separated numbers (`1,3`) or `all`; an empty answer writes nothing. A credential signed more than once is listed once. `-o` is then an existing folder (default: the current folder), and each file is named automatically, `<date>-<recipient>-<first 8 hex digits of the payload hash>.svg` (`.png` with `--png`). Existing files are reported and skipped; records whose hash doesn't match their fields are skipped with a message.
+- With `--log`, `rhg_qr.py` lists the log's credentials, most recently signed first and numbered — only those whose recipient, honor, detail or date contains the search term (ignoring case; quote a term of several words), or all of them without one — and asks which to generate: comma-separated numbers (`1,3`) or `all`; an empty answer writes nothing. A credential signed more than once is listed once, as its newest copy. `-o` is then an existing folder (default: the current folder), and each file is named automatically, `<date>-<recipient>-<first 8 hex digits of the payload hash>.svg` (`.png` with `--png`). Existing files are reported and skipped. Records that can't be used (a missing or invalid field, or a hash that doesn't match their fields) are skipped with a message; any skip, including an existing file, makes the exit status 1.
 - These two scripts are maintainer tools with no tests; changes to them don't trigger the Python test workflow (CodeQL still scans them).
 
 ## Documentation
