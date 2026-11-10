@@ -1,0 +1,31 @@
+<Project>
+  <!--
+    Shared settings for every project under windows/.
+
+    RhgCoreLibDir is the directory holding the Go core's shared library
+    (rhgcore.dll on Windows, librhgcore.so on Linux), built by
+    scripts/rhgcore-smoke.sh. It comes from the RHGCORE_LIB_DIR environment
+    variable and defaults to the build named by RhgCoreVariant: the release
+    build, except under tests/ (tests/Directory.Build.props), whose projects
+    need the rhgfake test build.
+  -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <!-- Also lets the build enforce IDE0005 (unnecessary usings). -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <RhgCoreLibDir Condition="'$(RhgCoreLibDir)' == ''">$(RHGCORE_LIB_DIR)</RhgCoreLibDir>
+    <RhgCoreVariant Condition="'$(RhgCoreVariant)' == ''">release</RhgCoreVariant>
+    <RhgCoreLibDir Condition="'$(RhgCoreLibDir)' == ''">$(MSBuildThisFileDirectory)../go/release/rhgcore/$(RhgCoreVariant)</RhgCoreLibDir>
+    <RhgCoreLibDir>$([System.IO.Path]::GetFullPath('$(RhgCoreLibDir)'))</RhgCoreLibDir>
+  </PropertyGroup>
+</Project>

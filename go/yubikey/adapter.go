@@ -5,11 +5,9 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/go-piv/piv-go/v2/piv"
 )
@@ -31,7 +29,6 @@ var DefaultPIVProvider = PIVProvider{
 type YubiKeyAdapter struct {
 	yk      yubiKeyHandle
 	pubKey  [32]byte
-	mu      sync.Mutex
 	readPin func() (string, error)
 }
 
@@ -99,15 +96,6 @@ func newAdapterFromHandle(yk yubiKeyHandle, readPin func() (string, error)) (*Yu
 	}, nil
 }
 
-// SetReadPin replaces the PIN reader callback. Supports two-phase init where the
-// adapter is created at startup (before the GUI window exists) and the PIN dialog
-// is set later. Safe for concurrent use with SignBytes.
-func (a *YubiKeyAdapter) SetReadPin(readPin func() (string, error)) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.readPin = readPin
-}
-
 // ExportPublicKey returns the cached Ed25519 public key from the YubiKey certificate.
 func (a *YubiKeyAdapter) ExportPublicKey() ([32]byte, error) {
 	return a.pubKey, nil
@@ -116,18 +104,13 @@ func (a *YubiKeyAdapter) ExportPublicKey() ([32]byte, error) {
 // SignBytes signs data using the YubiKey's Ed25519 private key in PIV slot 9c.
 // The readPin callback is invoked to obtain the PIN for authentication.
 func (a *YubiKeyAdapter) SignBytes(data []byte) ([]byte, error) {
-	// Narrow lock: read readPin reference only. Do not hold during PIN
-	// prompt or hardware signing — those block on user input and PCSC I/O.
-	a.mu.Lock()
-	rp := a.readPin
-	a.mu.Unlock()
-	if rp == nil {
+	if a.readPin == nil {
 		return nil, errors.New("PIN reader not initialized")
 	}
 	priv, err := a.yk.PrivateKey(
 		piv.SlotSignature,
 		ed25519.PublicKey(a.pubKey[:]),
-		piv.KeyAuth{PINPrompt: rp},
+		piv.KeyAuth{PINPrompt: a.readPin},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get private key handle: %w", err)
@@ -181,22 +164,4 @@ func PINRetries(err error) (retries int, ok bool) {
 		return ae.Retries, true
 	}
 	return 0, false
-}
-
-// ReadPublicKey opens a YubiKey, reads the Ed25519 public key from PIV slot 9c,
-// and returns it as a base64-encoded string suitable for a registry entry's
-// public_key field. No PIN required — only reads the certificate.
-func ReadPublicKey() (string, error) {
-	adapter, err := NewYubiKeyAdapter(func() (string, error) { return "", nil })
-	if err != nil {
-		return "", err
-	}
-	defer adapter.Close()
-
-	pubKey, err := adapter.ExportPublicKey()
-	if err != nil {
-		return "", err
-	}
-
-	return base64.StdEncoding.EncodeToString(pubKey[:]), nil
 }

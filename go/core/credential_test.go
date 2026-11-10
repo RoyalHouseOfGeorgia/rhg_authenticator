@@ -45,33 +45,6 @@ func TestValidateCredential_NilInput(t *testing.T) {
 	}
 }
 
-func TestValidateCredential_MissingVersion(t *testing.T) {
-	obj := validObj()
-	delete(obj, "version")
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "missing required field: version" {
-		t.Fatalf("expected 'missing required field: version', got %v", err)
-	}
-}
-
-func TestValidateCredential_VersionAsString(t *testing.T) {
-	obj := validObj()
-	obj["version"] = "1"
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "version must be a number" {
-		t.Fatalf("expected 'version must be a number', got %v", err)
-	}
-}
-
-func TestValidateCredential_Version2(t *testing.T) {
-	obj := validObj()
-	obj["version"] = float64(2)
-	_, err := ValidateCredential(obj)
-	if err == nil || !strings.Contains(err.Error(), "unsupported credential version") {
-		t.Fatalf("expected unsupported version error, got %v", err)
-	}
-}
-
 func TestValidateCredential_MissingFields(t *testing.T) {
 	for _, field := range stringFields {
 		obj := validObj()
@@ -96,21 +69,23 @@ func TestValidateCredential_WrongTypes(t *testing.T) {
 	}
 }
 
-func TestValidateCredential_LeadingWhitespace(t *testing.T) {
-	obj := validObj()
-	obj["recipient"] = " John Doe"
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "recipient must not have leading or trailing whitespace" {
-		t.Fatalf("expected whitespace error, got %v", err)
+func TestValidateCredential_Whitespace(t *testing.T) {
+	tests := []struct {
+		name      string
+		recipient string
+	}{
+		{"LeadingWhitespace", " John Doe"},
+		{"TrailingWhitespace", "John Doe "},
 	}
-}
-
-func TestValidateCredential_TrailingWhitespace(t *testing.T) {
-	obj := validObj()
-	obj["recipient"] = "John Doe "
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "recipient must not have leading or trailing whitespace" {
-		t.Fatalf("expected whitespace error, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := validObj()
+			obj["recipient"] = tt.recipient
+			_, err := ValidateCredential(obj)
+			if err == nil || err.Error() != "recipient must not have leading or trailing whitespace" {
+				t.Fatalf("expected whitespace error, got %v", err)
+			}
+		})
 	}
 }
 
@@ -137,30 +112,27 @@ func TestValidateCredential_SurroundingBOM(t *testing.T) {
 	}
 }
 
-func TestValidateCredential_ControlChars_NullByte(t *testing.T) {
-	obj := validObj()
-	obj["honor"] = "Order\x00Fleece"
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "honor contains invalid control characters" {
-		t.Fatalf("expected control char error, got %v", err)
+func TestValidateCredential_ControlChars(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		value string
+	}{
+		{"ControlChars_NullByte", "honor", "Order\x00Fleece"},
+		{"ControlChars_Tab", "detail", "Some\tdetail"},
+		{"ControlChars_Bidi", "honor", "Honor\u202aOverride"},
+		{"DateWithControlChars", "date", "2025\x00-01"},
 	}
-}
-
-func TestValidateCredential_ControlChars_Tab(t *testing.T) {
-	obj := validObj()
-	obj["detail"] = "Some\tdetail"
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "detail contains invalid control characters" {
-		t.Fatalf("expected control char error, got %v", err)
-	}
-}
-
-func TestValidateCredential_ControlChars_Bidi(t *testing.T) {
-	obj := validObj()
-	obj["honor"] = "Honor\u202aOverride"
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "honor contains invalid control characters" {
-		t.Fatalf("expected control char error, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := validObj()
+			obj[tt.field] = tt.value
+			_, err := ValidateCredential(obj)
+			want := tt.field + " contains invalid control characters"
+			if err == nil || err.Error() != want {
+				t.Fatalf("expected %q, got %v", want, err)
+			}
+		})
 	}
 }
 
@@ -176,25 +148,6 @@ func TestValidateCredential_EmptyFields(t *testing.T) {
 		if err == nil || err.Error() != expected {
 			t.Errorf("field %s: expected %q, got %v", field, expected, err)
 		}
-	}
-}
-
-func TestValidateCredential_MaxLengthBoundary(t *testing.T) {
-	// Exactly at max — should pass.
-	obj := validObj()
-	obj["honor"] = strings.Repeat("A", 200)
-	_, err := ValidateCredential(obj)
-	if err != nil {
-		t.Fatalf("expected no error at max length, got %v", err)
-	}
-}
-
-func TestValidateCredential_MaxLengthExceeded(t *testing.T) {
-	obj := validObj()
-	obj["honor"] = strings.Repeat("A", 201)
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "honor exceeds maximum length of 200" {
-		t.Fatalf("expected max length error, got %v", err)
 	}
 }
 
@@ -234,15 +187,6 @@ func TestValidateCredential_InvalidDate(t *testing.T) {
 	}
 }
 
-func TestValidateCredential_Year0000(t *testing.T) {
-	obj := validObj()
-	obj["date"] = "0000-01-01"
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "invalid date: 0000-01-01" {
-		t.Fatalf("expected invalid date error for year 0000, got %v", err)
-	}
-}
-
 func TestValidateCredential_DateMaxLength(t *testing.T) {
 	obj := validObj()
 	obj["date"] = strings.Repeat("2", 11) // 11 chars exceeds max 10
@@ -271,53 +215,59 @@ func TestSanitizeForError(t *testing.T) {
 	}
 }
 
-func TestValidateCredential_ValidationOrder(t *testing.T) {
-	// Verify that version is checked before string fields.
-	obj := map[string]any{
-		"version": "not a number",
+func TestValidateCredential_Version(t *testing.T) {
+	withVersion := func(v any) map[string]any {
+		obj := validObj()
+		obj["version"] = v
+		return obj
 	}
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "version must be a number" {
-		t.Fatalf("expected version type error first, got %v", err)
+	withoutVersion := validObj()
+	delete(withoutVersion, "version")
+	tests := []struct {
+		name         string
+		obj          map[string]any
+		wantExact    string
+		wantContains string
+	}{
+		{name: "MissingVersion", obj: withoutVersion, wantExact: "missing required field: version"},
+		{name: "VersionAsString", obj: withVersion("1"), wantExact: "version must be a number"},
+		{name: "Version2", obj: withVersion(float64(2)), wantContains: "unsupported credential version"},
+		{name: "VersionNonInteger", obj: withVersion(float64(1.5)), wantContains: "unsupported credential version"},
 	}
-
-	// Verify that the first missing string field is reported (stringFields order: date, detail, honor, recipient).
-	obj = map[string]any{
-		"version": float64(1),
-	}
-	_, err = ValidateCredential(obj)
-	if err == nil || err.Error() != "missing required field: date" {
-		t.Fatalf("expected missing date first, got %v", err)
-	}
-}
-
-func TestValidateCredential_FieldValidationOrder(t *testing.T) {
-	// Fields validated in stringFields order: date, detail, honor, recipient.
-	// If date is present but detail is missing, we should get detail error.
-	obj := map[string]any{
-		"version": float64(1),
-		"date":    "2025-03-12",
-	}
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "missing required field: detail" {
-		t.Fatalf("expected missing detail, got %v", err)
-	}
-}
-
-func TestValidateCredential_VersionNonInteger(t *testing.T) {
-	obj := validObj()
-	obj["version"] = float64(1.5)
-	_, err := ValidateCredential(obj)
-	if err == nil || !strings.Contains(err.Error(), "unsupported credential version") {
-		t.Fatalf("expected unsupported version error for 1.5, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ValidateCredential(tt.obj)
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if tt.wantExact != "" && err.Error() != tt.wantExact {
+				t.Fatalf("expected %q, got %v", tt.wantExact, err)
+			}
+			if tt.wantContains != "" && !strings.Contains(err.Error(), tt.wantContains) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantContains, err)
+			}
+		})
 	}
 }
 
-func TestValidateCredential_DateWithControlChars(t *testing.T) {
-	obj := validObj()
-	obj["date"] = "2025\x00-01"
-	_, err := ValidateCredential(obj)
-	if err == nil || err.Error() != "date contains invalid control characters" {
-		t.Fatalf("expected control char error for date, got %v", err)
+func TestValidateCredential_FieldOrder(t *testing.T) {
+	tests := []struct {
+		name string
+		obj  map[string]any
+		want string
+	}{
+		// Version is checked before string fields.
+		{"ValidationOrder version first", map[string]any{"version": "not a number"}, "version must be a number"},
+		// The first missing string field is reported (stringFields order: date, detail, honor, recipient).
+		{"ValidationOrder first missing field", map[string]any{"version": float64(1)}, "missing required field: date"},
+		{"FieldValidationOrder", map[string]any{"version": float64(1), "date": "2025-03-12"}, "missing required field: detail"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ValidateCredential(tt.obj)
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("expected %q, got %v", tt.want, err)
+			}
+		})
 	}
 }

@@ -1,0 +1,2 @@
+A stand-in for the embedded core library: LoaderTests unpacks it with
+CoreLibrary.ExtractEmbedded, against the hash the build records.

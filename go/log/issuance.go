@@ -3,9 +3,12 @@ package log
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,17 +31,28 @@ type IssuanceRecord struct {
 	SignatureB64URL string `json:"signature_b64url"`
 }
 
-// writeMu serializes log writes (AppendRecord, RemoveDuplicates) so a
-// read-modify-write cannot interleave with another and lose records.
+// writeMu serializes log writes (AppendRecord, and RemoveDuplicates and
+// RemoveRecord through rewriteWithBackup) so a read-modify-write cannot
+// interleave with another and lose records.
 var writeMu sync.Mutex
+
+// Errors returned by the log rewrites.
+var (
+	// ErrLogUnreadable is matched by a RemoveDuplicates or RemoveRecord error
+	// when the log exists but can't be read or parsed.
+	ErrLogUnreadable = errors.New("issuance log unreadable")
+	// ErrRecordNotFound is returned by RemoveRecord when no record is equal to
+	// the one to remove.
+	ErrRecordNotFound = errors.New("record not in the issuance log")
+)
 
 // AppendRecord atomically appends a record to the issuance log, creating it if
 // it doesn't exist. It reads the entire log, appends, and rewrites (see
 // writeLog): O(n), but acceptable for the expected volume (~100s of records),
 // and incremental append would sacrifice atomic-write crash safety.
 //
-// Serialized in-process with RemoveDuplicates by writeMu; exclusion across
-// processes relies on Fyne's single-instance app ID.
+// Serialized in-process with RemoveDuplicates and RemoveRecord by writeMu;
+// exclusion across processes relies on a single running instance of the app.
 func AppendRecord(logPath string, record IssuanceRecord) error {
 	writeMu.Lock()
 	defer writeMu.Unlock()
@@ -108,6 +122,17 @@ func SignatureWellFormed(sigB64 string) bool {
 	return err == nil && len(sig) == ed25519.SignatureSize
 }
 
+// IssuedKey returns rec's payload hash lower-cased, and whether rec can be the
+// issued credential for that hash: the hash is non-empty and the signature is
+// well-formed. Dedupe, the Sign tab's duplicate check and the History delete
+// question all count records by this rule.
+func IssuedKey(rec IssuanceRecord) (key string, ok bool) {
+	if rec.PayloadSHA256 == "" || !SignatureWellFormed(rec.SignatureB64URL) {
+		return "", false
+	}
+	return strings.ToLower(rec.PayloadSHA256), true
+}
+
 // Dedupe returns records with later copies of the same payload hash
 // (case-insensitive) dropped, keeping the earliest well-formed record by log
 // order, and the number dropped. Records with an empty hash are always kept,
@@ -117,15 +142,12 @@ func Dedupe(records []IssuanceRecord) (kept []IssuanceRecord, removed int) {
 	seen := make(map[string]bool, len(records))
 	kept = make([]IssuanceRecord, 0, len(records))
 	for _, rec := range records {
-		if rec.PayloadSHA256 != "" {
-			key := strings.ToLower(rec.PayloadSHA256)
-			if seen[key] {
-				removed++
-				continue
-			}
-			if SignatureWellFormed(rec.SignatureB64URL) {
-				seen[key] = true
-			}
+		if seen[strings.ToLower(rec.PayloadSHA256)] {
+			removed++
+			continue
+		}
+		if key, ok := IssuedKey(rec); ok {
+			seen[key] = true
 		}
 		kept = append(kept, rec)
 	}
@@ -133,38 +155,93 @@ func Dedupe(records []IssuanceRecord) (kept []IssuanceRecord, removed int) {
 }
 
 // RemoveDuplicates rewrites the log without duplicate records (see
-// Dedupe). Before rewriting, the original bytes are saved to a
-// timestamped ".bak-" file next to the log; if that fails the log is left
-// untouched. Writes nothing when there are no duplicates or no log.
+// Dedupe), backing it up first (see rewriteWithBackup). Writes nothing when
+// there are no duplicates or no log.
 func RemoveDuplicates(logPath string) (removed int, backupPath string, err error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-
-	data, err := os.ReadFile(logPath)
+	backupPath, err = rewriteWithBackup(logPath, func(records []IssuanceRecord) ([]IssuanceRecord, bool, error) {
+		var kept []IssuanceRecord
+		kept, removed = Dedupe(records)
+		return kept, removed > 0, nil
+	})
 	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, "", nil
-		}
-		return 0, "", fmt.Errorf("reading log file: %w", err)
-	}
-	records, err := parseLog(data)
-	if err != nil {
-		return 0, "", err
-	}
-
-	kept, removed := Dedupe(records)
-	if removed == 0 {
-		return 0, "", nil
-	}
-
-	backupPath = logPath + ".bak-" + time.Now().UTC().Format("20060102T150405Z")
-	if err := os.WriteFile(backupPath, data, 0o600); err != nil {
-		return 0, "", fmt.Errorf("writing backup: %w", err)
-	}
-	if err := writeLog(logPath, kept); err != nil {
 		return 0, "", err
 	}
 	return removed, backupPath, nil
+}
+
+// RemoveRecord rewrites the log without the first record equal to rec (every
+// field, exact string equality), backing it up first (see rewriteWithBackup).
+// It returns ErrRecordNotFound, writing nothing, when no record is equal,
+// including when there is no log.
+func RemoveRecord(logPath string, rec IssuanceRecord) (backupPath string, err error) {
+	return rewriteWithBackup(logPath, func(records []IssuanceRecord) ([]IssuanceRecord, bool, error) {
+		i := slices.Index(records, rec)
+		if i < 0 {
+			return nil, false, ErrRecordNotFound
+		}
+		return slices.Delete(records, i, i+1), true, nil
+	})
+}
+
+// rewriteWithBackup applies transform to the log's records under writeMu. A
+// missing log reads as no records; a log that can't be read or parsed is an
+// error matching ErrLogUnreadable. transform's error is returned unwrapped.
+// When transform reports a change, the log's original bytes are saved to a
+// new backup (see createBackup) before the log is rewritten; if the backup
+// fails the log is left untouched. It returns the backup path, or "" when
+// nothing changed.
+func rewriteWithBackup(logPath string, transform func([]IssuanceRecord) ([]IssuanceRecord, bool, error)) (backupPath string, err error) {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+
+	records := []IssuanceRecord{}
+	data, err := os.ReadFile(logPath)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return "", fmt.Errorf("%w: reading log file: %w", ErrLogUnreadable, err)
+	default:
+		if records, err = parseLog(data); err != nil {
+			return "", fmt.Errorf("%w: %w", ErrLogUnreadable, err)
+		}
+	}
+
+	out, changed, err := transform(records)
+	if err != nil || !changed {
+		return "", err
+	}
+	backupPath, err = createBackup(logPath+".bak-"+time.Now().UTC().Format("20060102T150405Z"), data)
+	if err != nil {
+		return "", err
+	}
+	if err := writeLog(logPath, out); err != nil {
+		return "", err
+	}
+	return backupPath, nil
+}
+
+// createBackup writes data to a new 0600 file at base, or at base-2, base-3,
+// … when that exists, so no earlier backup is ever overwritten. A file it
+// created but could not finish writing is removed. It returns the path
+// written.
+func createBackup(base string, data []byte) (string, error) {
+	path := base
+	for n := 2; ; n++ {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, fs.ErrExist) {
+			path = fmt.Sprintf("%s-%d", base, n)
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("creating backup: %w", err)
+		}
+		_, werr := f.Write(data)
+		if err := errors.Join(werr, f.Close()); err != nil {
+			os.Remove(path)
+			return "", fmt.Errorf("writing backup: %w", err)
+		}
+		return path, nil
+	}
 }
 
 // CleanStaleTmpFiles removes any stale .tmp.* files in the log directory.

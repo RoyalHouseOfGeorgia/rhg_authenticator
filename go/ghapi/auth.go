@@ -83,6 +83,13 @@ const maxTokenAge = 90 * 24 * time.Hour
 // Tests MUST use t.Cleanup() to restore the original value.
 var timeNow = time.Now
 
+// Device-flow failures PollForToken returns, matchable with errors.Is.
+var (
+	ErrDeviceCodeExpired = errors.New("device code expired")
+	ErrAccessDenied      = errors.New("access denied by user")
+	ErrMissingScope      = errors.New("token missing required scope: public_repo")
+)
+
 // Endpoint variables — tests override these to point at httptest servers.
 var (
 	deviceCodeEndpoint  = deviceCodeURL
@@ -335,13 +342,25 @@ func pollForTokenInternal(ctx context.Context, deviceCode string, interval, expi
 		expiresIn = maxExpiresIn
 	}
 
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(expiresIn)*time.Second)
 	defer cancel()
+	// stopped is the error for a poll loop ended by ctx: ErrDeviceCodeExpired
+	// when only its own expiry deadline fired, else the caller's error.
+	stopped := func() error {
+		if parent.Err() == nil && ctx.Err() != nil {
+			return ErrDeviceCodeExpired
+		}
+		return ctx.Err()
+	}
 
 	client := newAuthHTTPClient()
 
 	for {
 		if err := sleepFn(ctx, time.Duration(interval)*time.Second); err != nil {
+			if ctx.Err() != nil {
+				return Token{}, stopped()
+			}
 			return Token{}, err
 		}
 
@@ -361,7 +380,7 @@ func pollForTokenInternal(ctx context.Context, deviceCode string, interval, expi
 		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return Token{}, ctx.Err()
+				return Token{}, stopped()
 			}
 			return Token{}, fmt.Errorf("polling for token: %w", err)
 		}
@@ -388,9 +407,9 @@ func pollForTokenInternal(ctx context.Context, deviceCode string, interval, expi
 				}
 				continue
 			case "expired_token":
-				return Token{}, fmt.Errorf("device code expired")
+				return Token{}, ErrDeviceCodeExpired
 			case "access_denied":
-				return Token{}, fmt.Errorf("access denied by user")
+				return Token{}, ErrAccessDenied
 			default:
 				return Token{}, fmt.Errorf("unexpected OAuth error: %s", core.SanitizeForLog(pr.Error))
 			}
@@ -398,7 +417,7 @@ func pollForTokenInternal(ctx context.Context, deviceCode string, interval, expi
 
 		if pr.AccessToken != "" {
 			if !hasRequiredScope(pr.Scope) {
-				return Token{}, fmt.Errorf("token missing required scope: public_repo")
+				return Token{}, ErrMissingScope
 			}
 			return Token{
 				AccessToken: pr.AccessToken,

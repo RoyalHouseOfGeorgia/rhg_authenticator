@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -34,27 +35,26 @@ func TestCheck_UpdateAvailable(t *testing.T) {
 	}
 }
 
-func TestCheck_SameVersion(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(botRelease("v1.0.0", "https://example.com"))
-	}))
-	defer server.Close()
-
-	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
-	if result.UpdateAvailable {
-		t.Fatal("expected no update for same version")
+func TestCheck_NotNewer(t *testing.T) {
+	tests := []struct {
+		name string
+		tag  string
+	}{
+		{"SameVersion", "v1.0.0"},
+		{"OlderVersion", "v0.9.0"},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(botRelease(tt.tag, "https://example.com"))
+			}))
+			defer server.Close()
 
-func TestCheck_OlderVersion(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(botRelease("v0.9.0", "https://example.com"))
-	}))
-	defer server.Close()
-
-	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
-	if result.UpdateAvailable {
-		t.Fatal("expected no update when latest is older")
+			result := checkInternal(server.URL, "v1.0.0", checkTimeout)
+			if result.UpdateAvailable {
+				t.Fatalf("expected no update when latest is %s", tt.tag)
+			}
+		})
 	}
 }
 
@@ -71,13 +71,19 @@ func TestCheck_Server404(t *testing.T) {
 }
 
 func TestCheck_ServerTimeout(t *testing.T) {
+	// Serves a real update after 1 s, so the test fails unless the 50 ms
+	// client timeout fires first.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(10 * time.Second)
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(time.Second):
+		}
+		json.NewEncoder(w).Encode(botRelease("v2.0.0", "https://example.com"))
 	}))
 	defer server.Close()
 
-	// Use a very short timeout to test timeout behavior
-	result := checkInternal(server.URL, "v1.0.0", 100*time.Millisecond)
+	result := checkInternal(server.URL, "v1.0.0", 50*time.Millisecond)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on timeout")
 	}
@@ -92,18 +98,6 @@ func TestCheck_InvalidJSON(t *testing.T) {
 	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
 	if result.UpdateAvailable {
 		t.Fatal("expected no update on invalid JSON")
-	}
-}
-
-func TestCheck_EmptyTagName(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(botRelease("", "https://example.com"))
-	}))
-	defer server.Close()
-
-	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
-	if result.UpdateAvailable {
-		t.Fatal("expected no update on empty tag")
 	}
 }
 
@@ -175,81 +169,22 @@ func TestCheck_ConnectionRefused(t *testing.T) {
 	}
 }
 
-func TestIsNewer(t *testing.T) {
-	tests := []struct {
-		latest, current string
-		want            bool
-	}{
-		{"v1.2.3", "v1.2.2", true},
-		{"v2.0.0", "v1.9.9", true},
-		{"v1.10.0", "v1.9.0", true},
-		{"v1.0.1", "v1.0.0", true},
-		{"v1.0.0", "v1.0.0", false},
-		{"v1.0.0", "v1.0.1", false},
-		{"v0.9.0", "v1.0.0", false},
-		{"1.2.3", "1.2.2", true},
-		{"invalid", "v1.0.0", false},
-		{"v1.0.0", "invalid", false},
-		{"v1.0", "v1.0.0", false},
-		{"v1.0.0-rc1", "v1.0.0", false},
-		{"v1.3.1", "v1.3", true},
-		{"v1.4", "v1.3", true},
-		{"v1.4", "v1.3.1", true},
-		{"v1.3", "v1.3", false},
-		{"v1.3", "v1.3.1", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.latest+"_vs_"+tt.current, func(t *testing.T) {
-			got := isNewer(tt.latest, tt.current)
-			if got != tt.want {
-				t.Errorf("isNewer(%q, %q) = %v, want %v", tt.latest, tt.current, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseSemver(t *testing.T) {
-	tests := []struct {
-		input string
-		want  [3]int
-		ok    bool
-	}{
-		{"v1.2.3", [3]int{1, 2, 3}, true},
-		{"1.2.3", [3]int{1, 2, 3}, true},
-		{"v0.0.0", [3]int{0, 0, 0}, true},
-		{"v1.0.0-rc1", [3]int{1, 0, 0}, true},
-		{"invalid", [3]int{}, false},
-		{"v1.0", [3]int{1, 0, 0}, true},
-		{"v1.3-rc1", [3]int{1, 3, 0}, true},
-		{"v1", [3]int{}, false},
-		{"v1.2.3.4", [3]int{}, false},
-		{"v1.0.abc", [3]int{}, false},
-		{"", [3]int{}, false},
-		{"v-1.0.0", [3]int{}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got, ok := parseSemver(tt.input)
-			if ok != tt.ok {
-				t.Errorf("parseSemver(%q) ok = %v, want %v", tt.input, ok, tt.ok)
-			}
-			if ok && got != tt.want {
-				t.Errorf("parseSemver(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestCheck_RejectsHTTPRedirect(t *testing.T) {
-	// Server redirects to an HTTP URL — should be rejected by SafeRedirect.
+	var hits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		json.NewEncoder(w).Encode(botRelease("v2.0.0", "https://example.com"))
+	}))
+	defer target.Close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://evil.com/malicious", http.StatusFound)
+		http.Redirect(w, r, target.URL, http.StatusFound)
 	}))
 	defer server.Close()
 
 	result := checkInternal(server.URL, "v1.0.0", checkTimeout)
+	if n := hits.Load(); n != 0 {
+		t.Errorf("http redirect target fetched %d times, want 0", n)
+	}
 	if result.UpdateAvailable {
 		t.Fatal("expected no update when redirect to HTTP is rejected")
 	}

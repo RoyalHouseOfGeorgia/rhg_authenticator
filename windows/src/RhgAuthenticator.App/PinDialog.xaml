@@ -1,0 +1,28 @@
+<Window x:Class="RhgAuthenticator.App.PinDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
+        Title="{x:Static vm:PinPromptViewModel.Title}"
+        SizeToContent="WidthAndHeight" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        FocusManager.FocusedElement="{Binding ElementName=PinBox}">
+    <StackPanel Margin="20" Width="320">
+        <TextBlock Text="{x:Static vm:PinPromptViewModel.Prompt}" TextWrapping="Wrap" />
+        <Grid Margin="0,8,0,0">
+            <PasswordBox x:Name="PinBox" AutomationProperties.Name="{x:Static vm:PinPromptViewModel.Placeholder}"
+                         PasswordChanged="OnPasswordChanged" PreviewTextInput="OnPreviewTextInput" />
+            <TextBlock Style="{StaticResource Placeholder}" Text="{x:Static vm:PinPromptViewModel.Placeholder}"
+                       Visibility="{Binding Pin, Converter={StaticResource EmptyToVisibility}}" />
+        </Grid>
+        <TextBlock Margin="0,4,0,0" FontSize="12" Text="{Binding Hint}"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        <CheckBox Margin="0,8,0,0" Content="{x:Static vm:PinPromptViewModel.RememberLabel}"
+                  IsChecked="{Binding Remember}" />
+        <StackPanel Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button MinWidth="80" IsDefault="True" Style="{StaticResource AccentButtonStyle}" Content="{x:Static vm:PinPromptViewModel.OkTitle}"
+                    Command="{Binding SubmitCommand}" />
+            <!-- Closes the window; closing it cancels the prompt (OnClosing). -->
+            <Button MinWidth="80" Margin="8,0,0,0" IsCancel="True" Content="{x:Static vm:PinPromptViewModel.CancelTitle}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

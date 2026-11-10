@@ -1,0 +1,106 @@
+<Window x:Class="RhgAuthenticator.App.EntryFormDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:RhgAuthenticator.ViewModels;assembly=RhgAuthenticator.ViewModels"
+        Title="{Binding Title}"
+        Width="520" SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        FocusManager.FocusedElement="{Binding ElementName=AuthorityBox}">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="TextStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <!-- A form label, beside its field, level with the field's first line of text (as the Sign tab's). -->
+            <Style x:Key="FieldLabel" TargetType="TextBlock">
+                <Setter Property="Grid.Column" Value="0" />
+                <Setter Property="Margin" Value="0,18,12,0" />
+                <Setter Property="HorizontalAlignment" Value="Right" />
+                <Setter Property="VerticalAlignment" Value="Top" />
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+    <StackPanel Margin="20">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Style="{StaticResource FieldLabel}" Margin="0,6,12,0"
+                       Text="{x:Static vm:EntryFormViewModel.AuthorityLabel}" />
+            <Grid Grid.Row="0" Grid.Column="1">
+                <TextBox x:Name="AuthorityBox" AutomationProperties.Name="{x:Static vm:EntryFormViewModel.AuthorityLabel}"
+                         Text="{Binding Authority, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Style="{StaticResource Placeholder}" Text="{x:Static vm:EntryFormViewModel.AuthorityPlaceholder}"
+                           Visibility="{Binding Text, ElementName=AuthorityBox, Converter={StaticResource EmptyToVisibility}}" />
+            </Grid>
+
+            <!--
+              Picked only, never typed: Loaded makes each picker's text box read-only.
+              They show YYYY-Mon-DD: Program sets the app's short date (DisplayDate.Culture).
+            -->
+            <TextBlock Grid.Row="1" Style="{StaticResource FieldLabel}" Text="{x:Static vm:EntryFormViewModel.FromLabel}" />
+            <DatePicker Grid.Row="1" Grid.Column="1" Margin="0,12,0,0"
+                        AutomationProperties.Name="{x:Static vm:EntryFormViewModel.FromLabel}"
+                        HorizontalAlignment="Stretch" Loaded="OnDatePickerLoaded"
+                        SelectedDate="{Binding SelectedFrom, Mode=TwoWay}" />
+
+            <CheckBox Grid.Row="2" Grid.Column="1" Margin="0,12,0,0"
+                      Content="{x:Static vm:EntryFormViewModel.NoExpiryLabel}" IsChecked="{Binding NoExpiry}" />
+
+            <!-- Unused with no expiry: disabled then. -->
+            <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="{x:Static vm:EntryFormViewModel.ToLabel}" />
+            <DatePicker Grid.Row="3" Grid.Column="1" Margin="0,12,0,0"
+                        AutomationProperties.Name="{x:Static vm:EntryFormViewModel.ToLabel}"
+                        HorizontalAlignment="Stretch" Loaded="OnDatePickerLoaded"
+                        IsEnabled="{Binding NoExpiry, Converter={StaticResource Not}}"
+                        SelectedDate="{Binding SelectedTo, Mode=TwoWay}" />
+
+            <!-- The key (or why the import failed), selectable; an Add form imports it with the buttons under it. -->
+            <TextBlock Grid.Row="4" Style="{StaticResource FieldLabel}" Margin="0,12,12,0"
+                       Text="{x:Static vm:EntryFormViewModel.PublicKeyLabel}" />
+            <StackPanel Grid.Row="4" Grid.Column="1" Margin="0,12,0,0">
+                <TextBox Style="{StaticResource SelectableText}" AutomationProperties.Name="{x:Static vm:EntryFormViewModel.PublicKeyLabel}"
+                         Text="{Binding KeyText, Mode=OneWay}" />
+                <WrapPanel Visibility="{Binding IsAdding, Converter={StaticResource BoolToVisibility}}">
+                    <Button Margin="0,8,8,0" Content="{x:Static vm:EntryFormViewModel.ImportCertificateTitle}"
+                            Command="{Binding ImportCertificateCommand}" />
+                    <Button Margin="0,8,8,0" Content="{x:Static vm:EntryFormViewModel.ImportFromYubiKeyTitle}"
+                            Command="{Binding ImportFromYubiKeyCommand}" />
+                </WrapPanel>
+            </StackPanel>
+
+            <TextBlock Grid.Row="5" Style="{StaticResource FieldLabel}" Text="{x:Static vm:EntryFormViewModel.NoteLabel}" />
+            <Grid Grid.Row="5" Grid.Column="1" Margin="0,12,0,0">
+                <TextBox x:Name="NoteBox" AutomationProperties.Name="{x:Static vm:EntryFormViewModel.NoteLabel}"
+                         Text="{Binding Note, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Style="{StaticResource Placeholder}" Text="{x:Static vm:EntryFormViewModel.NotePlaceholder}"
+                           Visibility="{Binding Text, ElementName=NoteBox, Converter={StaticResource EmptyToVisibility}}" />
+            </Grid>
+        </Grid>
+
+        <!-- Why the core refused the entry or the certificate import, or that the YubiKey was busy; none until there is one. -->
+        <TextBox Margin="0,12,0,0" Style="{StaticResource SelectableText}"
+                 Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                 Text="{Binding ErrorText, Mode=OneWay}"
+                 Visibility="{Binding ErrorText, Converter={StaticResource NonEmptyToVisibility}}" />
+
+        <!-- Add / Save is the primary (Enter); while it runs both buttons are disabled and closing is refused (OnClosing). Cancel, Escape and the close button cancel. -->
+        <StackPanel Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button MinWidth="80" IsDefault="True" Style="{StaticResource AccentButtonStyle}"
+                    Content="{Binding ConfirmTitle}" Click="OnConfirmClick"
+                    IsEnabled="{Binding IsSubmitting, Converter={StaticResource Not}}" />
+            <Button MinWidth="80" Margin="8,0,0,0" IsCancel="True" Content="{x:Static vm:EntryFormViewModel.CancelTitle}"
+                    IsEnabled="{Binding IsSubmitting, Converter={StaticResource Not}}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

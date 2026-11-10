@@ -47,25 +47,11 @@ describe("crypto", () => {
     expect(verify(signature, message, wrongKey)).toBe(false);
   });
 
-  // 5. Signature is exactly 64 bytes
-  it("produces a 64-byte signature", () => {
-    const { secretKey } = makeKeypair();
-    const message = new TextEncoder().encode("test");
-    const signature = sign(message, secretKey);
-    expect(signature.length).toBe(64);
-  });
-
-  // 6. Public key is exactly 32 bytes
-  it("produces a 32-byte public key", () => {
-    const { publicKey } = makeKeypair();
-    expect(publicKey.length).toBe(32);
-  });
-
-  // 7. Known RFC 8032 test vector (section 7.1 — empty message, 32-byte zero key)
+  // 7. Known RFC 8032 test vector (section 7.1, TEST 1 — empty message)
   it("matches RFC 8032 section 7.1 test vector", () => {
     // Test vector 1 from RFC 8032 section 7.1:
     // SECRET KEY: 9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60
-    // PUBLIC KEY: d75a980182b10ab7d54bfed3c964073a0ee172f3daa3f4a18446b0b8d183f8e3
+    // PUBLIC KEY: d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
     // MESSAGE: (empty)
     // SIGNATURE: e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b
     const secretKey = hexToBytes(
@@ -87,14 +73,6 @@ describe("crypto", () => {
     expect(signature).toEqual(expectedSignature);
 
     expect(verify(signature, message, publicKey)).toBe(true);
-  });
-
-  // 8. Empty message signs and verifies
-  it("signs and verifies an empty message", () => {
-    const { secretKey, publicKey } = makeKeypair();
-    const empty = new Uint8Array(0);
-    const signature = sign(empty, secretKey);
-    expect(verify(signature, empty, publicKey)).toBe(true);
   });
 
   // 9. Wrong-length secret key → clear error

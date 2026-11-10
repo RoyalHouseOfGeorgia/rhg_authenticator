@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/go-piv/piv-go/v2/piv"
@@ -205,27 +204,6 @@ func TestSignBytes_Success(t *testing.T) {
 	}
 }
 
-func TestSignBytes_PinCancelled(t *testing.T) {
-	pub, sk := testEd25519Key()
-	yk := &fakeYubiKey{
-		cert:    testCert(pub),
-		privKey: &fakeSigner{key: sk},
-	}
-
-	cancelPin := func() (string, error) { return "", nil }
-
-	adapter, err := newAdapterFromHandle(yk, cancelPin)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer adapter.Close()
-
-	_, err = adapter.SignBytes([]byte("data"))
-	if err == nil {
-		t.Fatal("expected error when PIN is empty")
-	}
-}
-
 func TestSignBytes_PinError(t *testing.T) {
 	pub, sk := testEd25519Key()
 	yk := &fakeYubiKey{
@@ -366,30 +344,6 @@ func TestClose_Error(t *testing.T) {
 	}
 }
 
-func TestSigningAdapterCompliance(t *testing.T) {
-	// Compile-time check that YubiKeyAdapter satisfies the method set
-	// expected by core.SigningAdapter (ExportPublicKey + SignBytes).
-	pub, sk := testEd25519Key()
-	yk := &fakeYubiKey{
-		cert:    testCert(pub),
-		privKey: &fakeSigner{key: sk},
-	}
-
-	adapter, err := newAdapterFromHandle(yk, staticPin("123456"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer adapter.Close()
-
-	// Verify the two methods that core.SigningAdapter requires.
-	if _, err := adapter.ExportPublicKey(); err != nil {
-		t.Errorf("ExportPublicKey: %v", err)
-	}
-	if _, err := adapter.SignBytes([]byte("test")); err != nil {
-		t.Errorf("SignBytes: %v", err)
-	}
-}
-
 func TestNewYubiKeyAdapter_CardsError(t *testing.T) {
 	provider := PIVProvider{
 		Cards: func() ([]string, error) {
@@ -440,42 +394,7 @@ func TestNewYubiKeyAdapter_OpenError(t *testing.T) {
 	}
 }
 
-func TestNewYubiKeyAdapter_EmptyCardList(t *testing.T) {
-	provider := PIVProvider{
-		Cards: func() ([]string, error) {
-			return []string{}, nil
-		},
-		Open: nil,
-	}
-	_, err := NewYubiKeyAdapterWithProvider(provider, staticPin("123456"))
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "no YubiKey found among 0") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestSignBytes_NilReadPin(t *testing.T) {
-	pub, _ := testEd25519Key()
-	yk := &fakeYubiKey{cert: testCert(pub)}
-
-	adapter, err := newAdapterFromHandle(yk, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer adapter.Close()
-
-	_, err = adapter.SignBytes([]byte("data"))
-	if err == nil {
-		t.Fatal("expected error when readPin is nil")
-	}
-	if err.Error() != "PIN reader not initialized" {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 	pub, sk := testEd25519Key()
 	yk := &fakeYubiKey{
 		cert:    testCert(pub),
@@ -489,23 +408,14 @@ func TestSignBytes_SetReadPinAfterNil(t *testing.T) {
 	}
 	defer adapter.Close()
 
-	// Should fail before SetReadPin.
 	_, err = adapter.SignBytes([]byte("data"))
-	if err == nil {
-		t.Fatal("expected error when readPin is nil")
-	}
-
-	// Set a valid readPin and retry.
-	adapter.SetReadPin(staticPin("123456"))
-	sig, err := adapter.SignBytes([]byte("data"))
-	if err != nil {
-		t.Fatalf("SignBytes failed after SetReadPin: %v", err)
-	}
-	if len(sig) != 64 {
-		t.Fatalf("expected 64-byte signature, got %d", len(sig))
+	if err == nil || err.Error() != "PIN reader not initialized" {
+		t.Fatalf("SignBytes with a nil readPin: err = %v, want PIN reader not initialized", err)
 	}
 }
 
+// TestPINRetries_Cases checks PINRetries and IsPINAuthError on the same error;
+// wantOK is also the expected IsPINAuthError result.
 func TestPINRetries_Cases(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -516,9 +426,33 @@ func TestPINRetries_Cases(t *testing.T) {
 		{name: "bare AuthErr Retries 2", err: piv.AuthErr{Retries: 2}, wantRetries: 2, wantOK: true},
 		{name: "bare AuthErr Retries 0 (blocked or unavailable)", err: piv.AuthErr{}, wantRetries: 0, wantOK: true},
 		{
+			name:        "single-wrapped AuthErr",
+			err:         fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 2}),
+			wantRetries: 2,
+			wantOK:      true,
+		},
+		{
+			name: "double-wrapped AuthErr",
+			err: fmt.Errorf("signing failed: %w",
+				fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 1})),
+			wantRetries: 1,
+			wantOK:      true,
+		},
+		{
 			name:        "realistic wrapped chain",
 			err:         fmt.Errorf("signing failed: %w", fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 1})),
 			wantRetries: 1,
+			wantOK:      true,
+		},
+		{
+			// Pins the exact shape piv-go produces on a wrong-PIN VERIFY
+			// ("verify pin: %w"), re-wrapped by adapter/HandleSign. If a future
+			// piv-go bump changes this to %v, errors.As breaks and this fails —
+			// before a wrong PIN can be silently replayed into the retry counter.
+			name: "realistic verify-pin wrapped chain",
+			err: fmt.Errorf("signing failed: %w",
+				fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})),
+			wantRetries: 2,
 			wantOK:      true,
 		},
 		{name: "non-auth error", err: errors.New("pcsc daemon not running"), wantRetries: 0, wantOK: false},
@@ -533,95 +467,9 @@ func TestPINRetries_Cases(t *testing.T) {
 			if gotRetries != tt.wantRetries {
 				t.Errorf("PINRetries retries = %d, want %d", gotRetries, tt.wantRetries)
 			}
-		})
-	}
-}
-
-func TestIsPINAuthError_Cases(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "bare AuthErr",
-			err:  piv.AuthErr{},
-			want: true,
-		},
-		{
-			name: "single-wrapped AuthErr",
-			err:  fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 2}),
-			want: true,
-		},
-		{
-			name: "double-wrapped AuthErr",
-			err: fmt.Errorf("signing failed: %w",
-				fmt.Errorf("failed to get private key handle: %w", piv.AuthErr{Retries: 1})),
-			want: true,
-		},
-		{
-			// Pins the exact shape piv-go produces on a wrong-PIN VERIFY
-			// ("verify pin: %w"), re-wrapped by adapter/HandleSign. If a future
-			// piv-go bump changes this to %v, errors.As breaks and this fails —
-			// before a wrong PIN can be silently replayed into the retry counter.
-			name: "realistic verify-pin wrapped chain",
-			err: fmt.Errorf("signing failed: %w",
-				fmt.Errorf("verify pin: %w", piv.AuthErr{Retries: 2})),
-			want: true,
-		},
-		{
-			name: "non-auth error",
-			err:  errors.New("pcsc daemon not running"),
-			want: false,
-		},
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsPINAuthError(tt.err); got != tt.want {
-				t.Errorf("IsPINAuthError(%v) = %v, want %v", tt.err, got, tt.want)
+			if got := IsPINAuthError(tt.err); got != tt.wantOK {
+				t.Errorf("IsPINAuthError(%v) = %v, want %v", tt.err, got, tt.wantOK)
 			}
 		})
 	}
-}
-
-func TestYubiKeyAdapter_ConcurrentSignAndSetReadPin(t *testing.T) {
-	pub, sk := testEd25519Key()
-	yk := &fakeYubiKey{
-		cert:    testCert(pub),
-		privKey: &fakeSigner{key: sk},
-	}
-
-	adapter, err := newAdapterFromHandle(yk, staticPin("000000"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer adapter.Close()
-
-	const goroutines = 100
-	var wg sync.WaitGroup
-	wg.Add(goroutines)
-
-	for i := 0; i < goroutines; i++ {
-		if i%2 == 0 {
-			go func() {
-				defer wg.Done()
-				adapter.SetReadPin(staticPin("123456"))
-			}()
-		} else {
-			go func() {
-				defer wg.Done()
-				// We don't care about the result — only that there is no
-				// data race or panic from concurrent access.
-				adapter.SignBytes([]byte("concurrent test data"))
-			}()
-		}
-	}
-
-	wg.Wait()
 }

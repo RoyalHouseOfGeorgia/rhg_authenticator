@@ -1,0 +1,48 @@
+<Application x:Class="RhgAuthenticator.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:RhgAuthenticator.App"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <local:NullToVisibilityConverter x:Key="NullToVisibility" />
+        <local:EmptyToVisibilityConverter x:Key="EmptyToVisibility" />
+        <local:NonEmptyToVisibilityConverter x:Key="NonEmptyToVisibility" />
+        <local:NotConverter x:Key="Not" />
+        <local:DisplayDateConverter x:Key="DisplayDate" />
+        <local:HonorConverter x:Key="Honor" />
+        <local:PngImageConverter x:Key="PngImage" />
+        <local:JoinLinesConverter x:Key="JoinLines" />
+        <!-- A field's placeholder, over the field while it is empty; clicks go through to the field. -->
+        <Style x:Key="Placeholder" TargetType="TextBlock">
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Setter Property="Margin" Value="12,6,32,6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+        </Style>
+        <!-- An icon glyph; every glyph used is in both fonts (Segoe MDL2 Assets on Windows 10). -->
+        <Style x:Key="IconFont" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <!--
+          A command button's content: the button's Tag as an icon glyph, then
+          its Content as the label. No Foreground here, so the button's own
+          (accent, disabled) reaches both.
+        -->
+        <DataTemplate x:Key="CommandContent">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource IconFont}"
+                           Text="{Binding Tag, RelativeSource={RelativeSource AncestorType=Button}}" />
+                <TextBlock Margin="8,0,0,0" VerticalAlignment="Center" Text="{Binding}" />
+            </StackPanel>
+        </DataTemplate>
+        <!-- A tab's command row: its actions, left-aligned in one row, over the tab's content. -->
+        <Style x:Key="CommandRow" TargetType="StackPanel">
+            <Setter Property="Orientation" Value="Horizontal" />
+            <Setter Property="Margin" Value="24,16" />
+        </Style>
+    </Application.Resources>
+</Application>

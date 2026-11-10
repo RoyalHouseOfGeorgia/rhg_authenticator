@@ -467,12 +467,6 @@ func TestWriteLastVersion_Errors(t *testing.T) {
 	}
 }
 
-func TestStagingRoot(t *testing.T) {
-	if got, want := stagingRoot("/data"), filepath.Join("/data", "update"); got != want {
-		t.Fatalf("stagingRoot = %q, want %q", got, want)
-	}
-}
-
 func TestCleanup_DropsStagedWithApplyFailedMarker(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "staged-1.5.0"), 0o700); err != nil {

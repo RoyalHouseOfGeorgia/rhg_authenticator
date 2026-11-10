@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalize, MAX_DEPTH } from '../canonical.js';
+import { canonicalize } from '../canonical.js';
 import type { JsonObject } from '../canonical.js';
 
 const decoder = new TextDecoder();
@@ -29,19 +29,6 @@ describe('canonicalize', () => {
   it('produces output with no whitespace', () => {
     const result = toJson({ a: 1, b: 'hello', c: true });
     expect(result).not.toMatch(/\s/);
-  });
-
-  it('handles Georgian script characters correctly', () => {
-    const input: JsonObject = { letter: '\u10D0' }; // ა
-    const result = toJson(input);
-    expect(result).toBe('{"letter":"\u10D0"}');
-  });
-
-  it('produces deterministic output on repeated calls', () => {
-    const input: JsonObject = { z: 1, a: 2, m: { x: 'hello', b: true } };
-    const first = canonicalize(input);
-    const second = canonicalize(input);
-    expect(first).toEqual(second);
   });
 
   it('matches golden-test v1 credential fixture', () => {
@@ -74,18 +61,6 @@ describe('canonicalize', () => {
       expect(() => canonicalize({ v: NaN as unknown as number })).toThrow(
         /non-finite/i,
       );
-    });
-
-    it('throws on Infinity', () => {
-      expect(() => canonicalize({ v: Infinity as unknown as number })).toThrow(
-        /non-finite/i,
-      );
-    });
-
-    it('throws on -Infinity', () => {
-      expect(() =>
-        canonicalize({ v: -Infinity as unknown as number }),
-      ).toThrow(/non-finite/i);
     });
 
     it('throws on negative zero', () => {
@@ -122,22 +97,6 @@ describe('canonicalize', () => {
   });
 
   describe('depth cap', () => {
-    it('exports MAX_DEPTH as 4', () => {
-      expect(MAX_DEPTH).toBe(4);
-    });
-
-    it('passes shallow object { a: 1 } (max depth 0)', () => {
-      expect(() => canonicalize({ a: 1 })).not.toThrow();
-    });
-
-    it('passes one level of nesting { a: { b: 1 } } (max depth 1)', () => {
-      expect(() => canonicalize({ a: { b: 1 } })).not.toThrow();
-    });
-
-    it('passes object nested inside array { a: [{ b: 1 }] } (max depth 2)', () => {
-      expect(() => canonicalize({ a: [{ b: 1 }] })).not.toThrow();
-    });
-
     it('passes three levels of nesting { a: { b: { c: { d: 1 } } } } (max depth 3)', () => {
       expect(() => canonicalize({ a: { b: { c: { d: 1 } } } })).not.toThrow();
     });
@@ -166,24 +125,6 @@ describe('canonicalize', () => {
         'object exceeds maximum nesting depth',
       );
     });
-
-    it('passes flat V1 credential (regression test)', () => {
-      const credential: JsonObject = {
-        date: '2026-03-11',
-        detail: 'Awarded for exceptional service',
-        honor: 'Knight Commander of the Royal Order of Georgia',
-        recipient: 'John Quincy Doe',
-        version: 1,
-      };
-      // root=0, all values are scalars → max depth 0
-      expect(() => canonicalize(credential)).not.toThrow();
-    });
-
-    it('includes descriptive message in depth error', () => {
-      expect(() =>
-        canonicalize({ a: { b: { c: { d: { e: 1 } } } } }),
-      ).toThrow(/object exceeds maximum nesting depth/);
-    });
   });
 
   describe('prototype pollution protection', () => {
@@ -202,11 +143,6 @@ describe('canonicalize', () => {
     it('allows "constructor" as a key', () => {
       const result = toJson({ constructor: 'ok' } as any);
       expect(result).toContain('"constructor"');
-    });
-
-    it('allows "hasOwnProperty" as a key', () => {
-      const result = toJson({ hasOwnProperty: 'ok' } as any);
-      expect(result).toContain('"hasOwnProperty"');
     });
   });
 

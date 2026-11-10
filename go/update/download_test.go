@@ -10,19 +10,18 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
-
-	"github.com/royalhouseofgeorgia/rhg-authenticator/core"
 )
 
 // useTLSServer starts an httptest TLS server running h and points
-// downloadClient at a client that trusts it (keeping SafeRedirect).
+// downloadClient at a client that trusts it (keeping its CheckRedirect).
 func useTLSServer(t *testing.T, h http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	server := httptest.NewTLSServer(h)
-	client := server.Client()
-	client.CheckRedirect = core.SafeRedirect
 	orig := downloadClient
+	client := server.Client()
+	client.CheckRedirect = orig.CheckRedirect
 	downloadClient = client
 	t.Cleanup(func() {
 		downloadClient = orig
@@ -185,11 +184,21 @@ func TestDownload_RejectsNonHTTPS(t *testing.T) {
 }
 
 func TestDownload_RejectsHTTPRedirect(t *testing.T) {
+	var hits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("zip"))
+	}))
+	defer target.Close()
 	server := useTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://example.com/a.zip", http.StatusFound)
+		http.Redirect(w, r, target.URL+"/a.zip", http.StatusFound)
 	})
 	dir := t.TempDir()
-	if _, err := download(context.Background(), server.URL, dir, "v1.5.0"); err == nil {
+	_, err := download(context.Background(), server.URL, dir, "v1.5.0")
+	if n := hits.Load(); n != 0 {
+		t.Errorf("http redirect target fetched %d times, want 0", n)
+	}
+	if err == nil {
 		t.Fatal("expected redirect to http to be rejected")
 	}
 	assertNoLeftovers(t, dir)

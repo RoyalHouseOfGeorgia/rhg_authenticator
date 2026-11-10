@@ -1,0 +1,7 @@
+<Project>
+  <!-- The tests drive the core through the rhgfake build's test.* methods. -->
+  <PropertyGroup>
+    <RhgCoreVariant>rhgfake</RhgCoreVariant>
+  </PropertyGroup>
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+</Project>

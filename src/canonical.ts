@@ -3,7 +3,7 @@ export type JsonValue = string | number | boolean | null | JsonObject | JsonValu
 export type JsonObject = { [key: string]: JsonValue };
 
 /** Maximum allowed nesting depth for canonicalized objects. */
-export const MAX_DEPTH = 4;
+const MAX_DEPTH = 4;
 
 /**
  * Compare strings by Unicode code point. Go's sort.Strings orders by UTF-8

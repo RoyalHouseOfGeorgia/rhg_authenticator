@@ -113,9 +113,9 @@ type SignResponse struct {
 }
 
 // ErrNotLogged indicates a credential was signed but its issuance record could
-// not be appended to the audit log. Callers that require the audit guarantee
+// not be appended to the issuance log. Callers that require the record
 // (bulk signing) treat it as fatal; single-sign treats it as non-fatal.
-var ErrNotLogged = errors.New("signed but not recorded in audit log")
+var ErrNotLogged = errors.New("signed but not recorded in issuance log")
 
 // BuildPayload NFC-normalizes and validates req, then returns its canonical
 // JSON payload bytes. It is the single source of the bytes HandleSign signs.

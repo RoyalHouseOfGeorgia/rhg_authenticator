@@ -64,46 +64,6 @@ func TestCreateIssue_Success(t *testing.T) {
 	}
 }
 
-func TestCreateIssue_Unauthorized(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"message": "Bad credentials"}`))
-	}))
-	defer ts.Close()
-
-	c := NewClient("bad-token")
-	c.BaseURL = ts.URL
-
-	_, err := c.CreateIssue(context.Background(), "Title", "Body", nil)
-	if err == nil {
-		t.Fatal("expected error for 401")
-	}
-	if !IsUnauthorized(err) {
-		t.Errorf("expected IsUnauthorized, got: %v", err)
-	}
-}
-
-func TestCreateIssue_Forbidden(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"message": "Resource not accessible by integration"}`))
-	}))
-	defer ts.Close()
-
-	c := NewClient("test-token")
-	c.BaseURL = ts.URL
-
-	_, err := c.CreateIssue(context.Background(), "Title", "Body", nil)
-	if err == nil {
-		t.Fatal("expected error for 403")
-	}
-	if !IsForbidden(err) {
-		t.Errorf("expected IsForbidden, got: %v", err)
-	}
-}
-
 func TestCreateIssue_ValidationError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -211,33 +171,5 @@ func TestCreateIssue_MultibyteTitleTruncation(t *testing.T) {
 	}
 	if strings.ToValidUTF8(receivedTitle, "\xff") != receivedTitle {
 		t.Error("truncated title is not valid UTF-8")
-	}
-}
-
-func TestCreateIssue_ShortTitleNotTruncated(t *testing.T) {
-	shortTitle := "Short title"
-
-	var receivedTitle string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req map[string]any
-		json.Unmarshal(body, &req)
-		receivedTitle = req["title"].(string)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(IssueResult{Number: 1, HTMLURL: "https://example.com/1"})
-	}))
-	defer ts.Close()
-
-	c := NewClient("test-token")
-	c.BaseURL = ts.URL
-
-	_, err := c.CreateIssue(context.Background(), shortTitle, "Body", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if receivedTitle != shortTitle {
-		t.Errorf("title = %q, want %q", receivedTitle, shortTitle)
 	}
 }

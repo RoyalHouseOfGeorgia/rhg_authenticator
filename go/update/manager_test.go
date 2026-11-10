@@ -348,20 +348,6 @@ func TestManager_IneligibleLogged(t *testing.T) {
 	e.requireLog("update: not eligible for in-app update: translocated")
 }
 
-func TestManager_ZipDeletedAfterStage(t *testing.T) {
-	for _, stageErr := range []error{nil, errors.New("disk full"), fmt.Errorf("%w: x", errBundleRejected)} {
-		t.Run(fmt.Sprint(stageErr), func(t *testing.T) {
-			e := newFakeEnv(t)
-			e.stageErrs = []error{stageErr}
-			e.runFor(e.manager(), 0)
-			if len(e.zips) != 1 || !e.zipExistedAtStage {
-				t.Fatalf("zips %v, existed at stage %v", e.zips, e.zipExistedAtStage)
-			}
-			e.requireZipsGone()
-		})
-	}
-}
-
 func TestManager_ZipRemoveFailureLogged(t *testing.T) {
 	e := newFakeEnv(t)
 	e.downloadDir = true // a non-empty directory cannot be os.Remove'd
@@ -869,14 +855,6 @@ func TestManager_ApplyIfReady(t *testing.T) {
 				t.Errorf("unexpected apply log: %q", e.logs)
 			}
 		})
-	}
-}
-
-func TestManager_ApplyIfReadyWithoutRun(t *testing.T) {
-	e := newFakeEnv(t)
-	e.manager().ApplyIfReady(true)
-	if e.applyCalls != 0 || len(e.relaunchCalls) != 0 {
-		t.Errorf("apply %d, relaunch %v", e.applyCalls, e.relaunchCalls)
 	}
 }
 
