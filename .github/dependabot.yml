@@ -55,3 +55,7 @@ updates:
       interval: weekly
     cooldown:
       default-days: 5
+    # SDK majors arrive with a new TargetFramework; take them deliberately.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
