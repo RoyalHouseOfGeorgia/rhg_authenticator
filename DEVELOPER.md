@@ -275,6 +275,7 @@ All feature logic and user-facing error text live in the Go core; the Mac and Wi
 4. **Bridges** — the Swift types in `macos/Sources/RHGBridge/` (`Bridge.swift`'s `RPCMethod`, `Params.swift`, `Results.swift`) and the .NET ones in `windows/src/RhgAuthenticator.Bridge/` (`RpcMethod.cs`, `Params.cs`, `Results.cs`, `BridgeJsonContext.cs`).
 5. **Models** — `macos/Sources/RHGModels/` and `windows/src/RhgAuthenticator.ViewModels/`.
 6. **Views** — `macos/Sources/RHGAuthenticator/` (SwiftUI) and `windows/src/RhgAuthenticator.App/` (WPF).
+7. **Docs** — user-visible behaviour of the apps or the verification page is described in [README.md](README.md) and, for non-technical readers, in [OVERVIEW.md](OVERVIEW.md); update both in the same pull request.
 
 The layers and the C ABI between them are described in [ARCHITECTURE.md](ARCHITECTURE.md#native-apps-and-the-go-core).
 

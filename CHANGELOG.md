@@ -10,6 +10,9 @@ tags.
 
 ## [Unreleased]
 
+### Changed
+- The non-technical overview is now [OVERVIEW.md](OVERVIEW.md), updated for the native apps. The March 2026 PDF it replaces is removed (it remains in the repository's history).
+
 ## [v2.0.0] — 2026-11-10
 
 Requires macOS 14 or later (Apple silicon) or Windows 10/11 (x64).
