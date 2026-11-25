@@ -331,7 +331,7 @@ python3 scripts/rhg_revocation_hash.py '<verification URL>'
 
 ## Documentation
 
-- **[Royal House of Georgia — Digital Authenticator](Royal%20House%20of%20Georgia%20-%20Digital%20Authenticator.pdf)** — Non-technical overview: what the system does, how verification works, threat model, privacy
+- **[Overview](OVERVIEW.md)** — Non-technical overview: what the system does, how verification works, what cannot be faked, privacy
 - **README.md** (this file) — Install the apps and use them
 - **[go/README.md](go/README.md)** — Go core: package layout, building the C library, YubiKey setup
 - **[macos/README.md](macos/README.md)** — Mac app: layout, build and test
